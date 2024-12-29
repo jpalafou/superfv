@@ -9,13 +9,13 @@ repository = "https://github.com/jpalafou/shine"
 # homepage = ...
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.9"
 numpy = "*"
 rationalpy = "*"
 stencilpal = { git = "https://github.com/jpalafou/stencilpal" }
 
 [tool.poetry.dev-dependencies]
-pytest = "^6.2.5"
+pytest = "*"
 
 # [tool.poetry.urls]
 # documentation = "https://yourprojectdocumentation.com"
