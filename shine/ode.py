@@ -1,8 +1,12 @@
-from abc import ABC, abstractmethod
-from .tools.array_management import ArrayType, ArrayManager
-from .tools.timer import Timer
-import numpy as np
 import os
+import subprocess
+from abc import ABC, abstractmethod
+
+import numpy as np
+
+from .tools.array_management import ArrayManager, ArrayType
+from .tools.timer import Timer
+
 
 def _dt_ceil(t: float, dt: float, t_max: float = None) -> None:
     """
@@ -16,7 +20,8 @@ def _dt_ceil(t: float, dt: float, t_max: float = None) -> None:
     Returns:
         Time-step size that does not overshoot t_max.
     """
-    return target - t if t_max is not None and t + dt > t_max else dt
+    return t_max - t if t_max is not None and t + dt > t_max else dt
+
 
 class ExplicitODE(ABC):
     """
@@ -62,7 +67,6 @@ class ExplicitODE(ABC):
         self.snapshots = {}
         self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
-
 
     def _get_commit_details(self) -> dict:
         """

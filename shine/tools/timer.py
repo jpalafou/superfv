@@ -1,6 +1,7 @@
-import numpy as np
 import time
 from typing import Tuple
+
+import numpy as np
 
 
 class Timer:
@@ -30,7 +31,7 @@ class Timer:
             cat: Category.
         """
         if cat in self.cats:
-            raise ValueError(f"Category '{c}' already exists.")
+            raise ValueError(f"Category '{cat}' already exists.")
         self.cats.add(cat)
         self.start_time[cat] = None
         self.cum_time[cat] = 0.0

@@ -1,15 +1,17 @@
-import numpy as np
-from typing import Dict, List, Union
 import warnings
+from typing import Dict, List, Union
+
+import numpy as np
 
 try:
     import cupy as cp
 
     CUPY_AVAILABLE = True
-    ArrayType = Union[np.ndarray, cp.ndarray] 
+    ArrayType = Union[np.ndarray, cp.ndarray]
 except Exception:
     CUPY_AVAILABLE = False
     ArrayType = np.ndarray
+
 
 class ArrayManager:
     """
@@ -127,11 +129,15 @@ class ArrayManager:
             all_but: List of array names to keep.
         """
         if all_but:
-            self.arrays = {name: array for name, array in self.arrays.items() if name in all_but}
+            self.arrays = {
+                name: array for name, array in self.arrays.items() if name in all_but
+            }
         else:
             self.arrays = {}
 
-    def __call__(self, name: str, asnumpy:bool=False, copy:bool=False) -> ArrayType:
+    def __call__(
+        self, name: str, asnumpy: bool = False, copy: bool = False
+    ) -> ArrayType:
         """
         Get an array from the manager.
 
@@ -145,8 +151,8 @@ class ArrayManager:
         """
         self._check_name_exists(name)
         if self.using_cupy and asnumpy:
-            return cp.asnumpy(array)
+            return cp.asnumpy(self.arrays[name])
         return self.arrays[name].copy() if copy else self.arrays[name]
 
     def to_dict(self) -> dict:
-        return dict(names=list(self.arrays.keys()), using_cupy=self.using_cupy) 
+        return dict(names=list(self.arrays.keys()), using_cupy=self.using_cupy)
