@@ -2,22 +2,23 @@
 name = "shine"
 version = "0.1.0"
 description = "A solver library for mathematical and computational problems"
-authors = ["Jonathan Palafoutas"]
+authors = ["Jonathan Palafoutas <jpalafou@princeton.edu>"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/jpalafou/shine"
-# homepage = "https://yourprojecthomepage.com"
+# homepage = ...
 
 [tool.poetry.dependencies]
-python = "^3.9"  # Specify the Python version you want to support
-numpy = "*"  # Example dependency, add your actual dependencies here
-# "rationalpy" = { git = "https://github.com/yourusername/rationalpy", rev = "0.1.0" }  # Uncomment and adjust as necessary
+python = "^3.10"
+numpy = "*"
+rationalpy = "*"
+"stencilpal" = { git = "https://github.com/jpalafou/stencilpal", rev = "0.1.0" }
 
 [tool.poetry.dev-dependencies]
-pytest = "*"  # For testing
+pytest = "^6.2.5"
 
-[tool.poetry.urls]
-# documentation = "https://yourprojectdocumentation.com"  # Replace with your documentation URL
+# [tool.poetry.urls]
+# documentation = "https://yourprojectdocumentation.com"
 
 # Optional: Define additional configurations for packaging, building, etc.
 [build-system]
