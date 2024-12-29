@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "shine"
+version = "0.1.0"
+description = "A solver library for mathematical and computational problems"
+authors = ["Jonathan Palafoutas"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/jpalafou/shine"
+# homepage = "https://yourprojecthomepage.com"
+
+dependencies = [
+    "numpy",  # Example dependency, add your actual dependencies here
+    # "rationalpy @ git+https://github.com/yourusername/rationalpy@0.1.0",  # Replace with actual GitHub repository and version for rationalpy
+]
+
+dev-dependencies = [
+    "pytest",  # For testing
+]
+
+[tool.poetry.urls]
+# documentation = "https://yourprojectdocumentation.com"  # Replace with your documentation URL
+
+# Optional: Define additional configurations for packaging, building, etc.
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
