@@ -12,7 +12,7 @@ repository = "https://github.com/jpalafou/shine"
 python = "^3.10"
 numpy = "*"
 rationalpy = "*"
-"stencilpal" = { git = "https://github.com/jpalafou/stencilpal", rev = "0.1.0" }
+stencilpal = { git = "https://github.com/jpalafou/stencilpal" }
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.5"
