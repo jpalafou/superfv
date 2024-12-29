@@ -154,5 +154,14 @@ class ArrayManager:
             return cp.asnumpy(self.arrays[name])
         return self.arrays[name].copy() if copy else self.arrays[name]
 
+    def get_numpy(self, name: str, copy: bool = False) -> np.ndarray:
+        """
+        get a numpy array from the array manager.
+        args:
+            name (str) : name of the array
+            copy (bool) : whether to return a copy of the array
+        """
+        return self.__call__(name, asnumpy=True, copy=copy)
+
     def to_dict(self) -> dict:
         return dict(names=list(self.arrays.keys()), using_cupy=self.using_cupy)

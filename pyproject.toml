@@ -8,14 +8,13 @@ readme = "README.md"
 repository = "https://github.com/jpalafou/shine"
 # homepage = "https://yourprojecthomepage.com"
 
-dependencies = [
-    "numpy",  # Example dependency, add your actual dependencies here
-    # "rationalpy @ git+https://github.com/yourusername/rationalpy@0.1.0",  # Replace with actual GitHub repository and version for rationalpy
-]
+[tool.poetry.dependencies]
+python = "^3.9"  # Specify the Python version you want to support
+numpy = "*"  # Example dependency, add your actual dependencies here
+# "rationalpy" = { git = "https://github.com/yourusername/rationalpy", rev = "0.1.0" }  # Uncomment and adjust as necessary
 
-dev-dependencies = [
-    "pytest",  # For testing
-]
+[tool.poetry.dev-dependencies]
+pytest = "*"  # For testing
 
 [tool.poetry.urls]
 # documentation = "https://yourprojectdocumentation.com"  # Replace with your documentation URL
