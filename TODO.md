@@ -1,1 +1,1 @@
-* switch from poetry to hatch
+* working advection example
