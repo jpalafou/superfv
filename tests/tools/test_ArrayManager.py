@@ -85,11 +85,19 @@ def test_get_cupy_as_numpy(array_manager):
         assert isinstance(np_array, np.ndarray)
 
 
-def test_call(array_manager):
+def test_getitem(array_manager):
     """Test the __call__ method."""
     array = np.random.rand(5, 5)
     array_manager.add("test_array", array)
-    assert np.all(array_manager("test_array") == array)
+    assert np.all(array_manager["test_array"] == array)
+
+
+def test_setitem(array_manager):
+    """Test the __setitem__ method."""
+    array = np.random.rand(5, 5)
+    array_manager.add("test_array", np.zeros((5, 5)))
+    array_manager["test_array"] = array
+    assert np.all(array_manager["test_array"] == array)
 
 
 def test_to_dict(array_manager):

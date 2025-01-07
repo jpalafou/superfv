@@ -1,7 +1,17 @@
 import time
-from typing import Tuple
+from typing import Dict, Iterable, Union, cast
 
 import numpy as np
+
+
+def method_timer(method, cat):
+    def wrapper(self, *args, **kwargs):
+        self.timer.start(cat)
+        result = method(self, *args, **kwargs)
+        self.timer.stop(cat)
+        return result
+
+    return wrapper
 
 
 class Timer:
@@ -9,17 +19,17 @@ class Timer:
     Timer class for timing code execution.
     """
 
-    def __init__(self, cats: Tuple[str] = (), precision: int = 2):
+    def __init__(self, cats: Iterable[str] = ("main",), precision: int = 2):
         """
         Initializes the timer.
 
         Args:
-            cats: Tuple of categories.
-            precision: Precision of the time values.
+            cats (Tuple[str, ...]): Tuple of categories.
+            precision (int): Precision of the time values.
         """
         self.cats = set(cats)
-        self.start_time = {}
-        self.cum_time = {}
+        self.start_time: Dict[str, Union[None, float]] = {cat: None for cat in cats}
+        self.cum_time: Dict[str, float] = {cat: 0.0 for cat in cats}
 
         self.precision = precision
 
@@ -28,7 +38,7 @@ class Timer:
         Add a new timer category.
 
         Args:
-            cat: Category.
+            cat (str): Category.
         """
         if cat in self.cats:
             raise ValueError(f"Category '{cat}' already exists.")
@@ -45,31 +55,36 @@ class Timer:
         Start timer of a category.
 
         Args:
-            cat: Category.
+            cat (str): Category.
         """
-        self.check_cat_existence(cat)
-        if self.start_time[cat] is not None:
+        self._check_cat_existence(cat)
+        if self.start_time[cat] is None:
+            self.start_time[cat] = time.time()
+        else:
             raise RuntimeError(
                 f"Cannot start '{cat}' timer since it is already in progress."
             )
-        self.start_time[cat] = time.time()
 
     def stop(self, cat: str):
         """
         Stop timer of a category.
 
         Args:
-            cat: Category.
+            cat (str): Category.
         """
-        self.check_cat_existence(cat)
-        if self._start_time[cat] is None:
+        self._check_cat_existence(cat)
+        if self.start_time[cat] is None:
             raise RuntimeError(
                 f"Cannot stop '{cat}' timer since it is not in progress."
             )
-        self.cum_time[cat] += time.time() - self._start_time[cat]
-        self._start_time[cat] = None
+        else:
+            self.cum_time[cat] += time.time() - cast(float, self.start_time[cat])
+            self.start_time[cat] = None
 
     def to_dict(self) -> dict:
+        """
+        Return the cumulative times for all categories as a dictionary.
+        """
         out = {cat: np.round(t, self.precision) for cat, t in self.cum_time.items()}
         return out
 

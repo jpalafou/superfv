@@ -14,8 +14,16 @@ numpy = "*"
 rationalpy = "*"
 stencilpal = { git = "https://github.com/jpalafou/stencilpal" }
 
-[tool.poetry.dev-dependencies]
-pytest = "*"
+[tool.poetry.group.dev.dependencies]
+nox = "*"
+pre-commit = "*"
+
+[tool.poetry.group.typecheck.dependencies]
+mypy = "*"
+types-tqdm = "*"
+
+[tool.poetry.group.test.dependencies]
+pytest="*"
 
 # [tool.poetry.urls]
 # documentation = "https://yourprojectdocumentation.com"
