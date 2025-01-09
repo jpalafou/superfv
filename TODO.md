@@ -1,1 +1,10 @@
-* working advection example
+- [x] working advection example
+- [ ] steamline initial conditions
+- [ ] 3D smooth error convergence test
+- [ ] code symmetry test
+- [ ] dirichlet boundary conditions for rotation of a slotted disk
+- [ ] a posteriori slope limiting
+- [ ] gauss-legendre or transverse flux quadrature options
+- [ ] a priori slope limitng
+- [ ] working euler example
+- [ ] CI

@@ -68,7 +68,7 @@ class ExplicitODESolver(ABC):
         """
         pass
 
-    @partial(method_timer, "READING")
+    @partial(method_timer, cat="READING")
     def read_snapshots(self) -> bool:
         """
         Read snapshots from the snapshot directory. Override to load more data.
@@ -78,7 +78,7 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("read_snapshots method not implemented.")
 
-    @partial(method_timer, "WRITING")
+    @partial(method_timer, cat="WRITING")
     def write_snapshots(self, overwrite: bool = False):
         """
         Write snapshots to the snapshot directory. Override to save more data.
@@ -88,7 +88,7 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("write_snapshots method not implemented.")
 
-    @partial(method_timer, "READING")
+    @partial(method_timer, cat="READING")
     def snapshot(self):
         """
         Snapshot function. Override to save more data to `self.snapshots`.
@@ -120,13 +120,13 @@ class ExplicitODESolver(ABC):
         self.step_count = 0
 
         # initialize array manager
-        self.am = ArrayManager()
+        self.arrays = ArrayManager()
         if cupy:
-            self.am.enable_cupy()
-        self.am.add("y", y0)
+            self.arrays.enable_cupy()
+        self.arrays.add("y", y0)
 
         # initialize timer, snapshots, progress bar, and git commit details
-        self.timer = Timer(cats=["ODE_INT", "SNAPSHOTS"])
+        self.timer = Timer(cats=["ODE_INT", "SNAPSHOTS", "READING", "WRITING"])
         self.snapshots = {}
         self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
@@ -242,7 +242,7 @@ class ExplicitODESolver(ABC):
                 self.timer.start("SNAPSHOTS")
                 self.snapshot()
                 self.timer.stop("SNAPSHOTS")
-                if self.t == target_time:
+                if self.t == target_time and self.t < T_max:
                     target_time = target_times.pop(0)
         self.timer.stop("ODE_INT")
 
@@ -260,8 +260,9 @@ class ExplicitODESolver(ABC):
         Args:
             target_time (Optional[float]): Time to avoid overshooting.
         """
-        dt, ynext = self.stepper(self.t, self.am["y"], target_time=target_time)
-        self.am["y"] = ynext
+        dt, ynext = self.stepper(self.t, self.arrays["y"], target_time=target_time)
+        self.t += dt
+        self.arrays["y"] = ynext
         self.timestamps.append(self.t)
         self.step_count += 1
         self.called_at_end_of_step()
@@ -293,6 +294,49 @@ class ExplicitODESolver(ABC):
             dt, dudt = self.f(t, u)
             dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
             unext = u + dt * dudt
+            return dt, unext
+
+        self.stepper = stepper
+        self.integrate(*args, **kwargs)
+
+    def ssprk2(self, *args, **kwargs) -> None:
+        self.integrator = "ssprk2"
+
+        def stepper(t, u, target_time=None):
+            dt, k0 = self.f(t, u)
+            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
+            u1 = u + dt * k0
+            _, k1 = self.f(t, u1)
+            unext = 0.5 * u + 0.5 * (u1 + dt * k1)
+            return dt, unext
+
+        self.stepper = stepper
+        self.integrate(*args, **kwargs)
+
+    def ssprk3(self, *args, **kwargs) -> None:
+        self.integrator = "ssprk3"
+
+        def stepper(t, u, target_time=None):
+            dt, k0 = self.f(t, u)
+            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
+            _, k1 = self.f(t + dt, u + dt * k0)
+            _, k2 = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
+            unext = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+            return dt, unext
+
+        self.stepper = stepper
+        self.integrate(*args, **kwargs)
+
+    def rk4(self, *args, **kwargs) -> None:
+        self.integrator = "rk4"
+
+        def stepper(t, u, target_time=None):
+            dt, k0 = self.f(t, u)
+            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
+            _, k1 = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
+            _, k2 = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
+            _, k3 = self.f(t + dt, u + dt * k2)
+            unext = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
             return dt, unext
 
         self.stepper = stepper

@@ -100,6 +100,14 @@ def test_setitem(array_manager):
     assert np.all(array_manager["test_array"] == array)
 
 
+def test_contains(array_manager):
+    """Test the __contains__ method."""
+    array = np.random.rand(5, 5)
+    array_manager.add("test_array", array)
+    assert "test_array" in array_manager
+    assert "non_existent_array" not in array_manager
+
+
 def test_to_dict(array_manager):
     """Test the to_dict method."""
     array_manager.add("test_array", np.random.rand(5, 5))

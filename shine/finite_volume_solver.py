@@ -1,10 +1,15 @@
 from abc import abstractmethod
-from typing import Callable, Tuple
+from typing import Callable, List, Tuple, Union
 
 import numpy as np
 
 from .boundary_conditions import BoundaryConditions
 from .explicit_ODE_solver import ExplicitODESolver
+from .stencil import (
+    conservative_interpolation_weights,
+    stencil_sweep,
+    uniform_quadrature_weights,
+)
 from .tools.array_management import ArrayLike, ArrayManager, ArraySlicer
 
 
@@ -25,15 +30,16 @@ class FiniteVolumeSolver(ExplicitODESolver):
         pass
 
     @abstractmethod
-    def get_dt_and_fluxes(
-        self, t: float, y: ArrayLike
+    def compute_dt_and_fluxes(
+        self, t: float, u: ArrayLike, p: int
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
         """
         Compute the time-step size and the fluxes.
 
         Args:
             t (float): Time value.
-            y (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            p (int): Polynomial degree of the spatial discretization.
 
         Returns:
             dt (float): Time-step size.
@@ -48,36 +54,24 @@ class FiniteVolumeSolver(ExplicitODESolver):
     def __init__(
         self,
         ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        bc: BoundaryConditions,
+        xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         xlim: Tuple[float, float] = (0, 1),
         ylim: Tuple[float, float] = (0, 1),
         zlim: Tuple[float, float] = (0, 1),
         nx: int = 1,
         ny: int = 1,
         nz: int = 1,
-        px: int = 0,
-        py: int = 0,
-        pz: int = 0,
+        p: int = 0,
         CFL: float = 0.8,
         cupy: bool = False,
     ):
+        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
         self._init_array_slicer()
+        self._init_ic(ic, cupy)
         self._init_array_manager(cupy)
-        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, px, py, pz, CFL)
-        self._init_ic(ic)
-
-    def _init_array_slicer(self):
-        self.vars = self.conserved_vars()
-        self.array_slicer = ArraySlicer({var: i for i, var in enumerate(self.vars)})
-
-    def _init_array_manager(self, cupy: bool):
-        self.arrays = ArrayManager()
-        self.interpolation_cache = ArrayManager()
-        self.integration_cache = ArrayManager()
-        if cupy:
-            self.arrays.enable_cupy()
-            self.interpolation_cache.enable_cupy()
-            self.integration_cache.enable_cupy()
+        self._init_bc(xbc, ybc, zbc)
 
     def _init_mesh(
         self,
@@ -87,16 +81,14 @@ class FiniteVolumeSolver(ExplicitODESolver):
         nx: int,
         ny: int,
         nz: int,
-        px: int,
-        py: int,
-        pz: int,
+        p: int,
         CFL: float,
     ):
         if any([xlim[1] < xlim[0], ylim[1] < ylim[0], zlim[1] < zlim[0]]):
             raise ValueError("The upper limit must be greater than the lower limit.")
         if any([nx < 1, ny < 1, nz < 1]):
             raise ValueError("The number of cells must be at least 1.")
-        if any([px < 0, py < 0, pz < 0]):
+        if p < 0:
             raise ValueError("The polynomial degree must be non-negative.")
         if CFL <= 0:
             raise ValueError("The CFL number must be positive.")
@@ -109,16 +101,14 @@ class FiniteVolumeSolver(ExplicitODESolver):
         self.hx = (xlim[1] - xlim[0]) / nx
         self.hy = (ylim[1] - ylim[0]) / ny
         self.hz = (zlim[1] - zlim[0]) / nz
-        self.px = px
-        self.py = py
-        self.pz = pz
         self.using_xdim = nx > 1
         self.using_ydim = ny > 1
         self.using_zdim = nz > 1
         self.n = (nx, ny, nz)
         self.h = (self.hx, self.hy, self.hz)
-        self.p = (px, py, pz)
         self.using_dim = (nx > 1, ny > 1, nz > 1)
+        self.ndim = sum(self.using_dim)
+        self.p = p
         self.CFL = CFL
 
         def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz):
@@ -132,34 +122,187 @@ class FiniteVolumeSolver(ExplicitODESolver):
 
         self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
 
-    def _init_ic(self, ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
-        self.arrays.add("y", ic(self.X, self.Y, self.Z))
+        self.F_shape = (len(self.conserved_vars()), nx + 1, ny, nz)
+        self.G_shape = (len(self.conserved_vars()), nx, ny + 1, nz)
+        self.H_shape = (len(self.conserved_vars()), nx, ny, nz + 1)
 
-    def _init_bc(self, bc: BoundaryConditions):
-        self.bc = bc
+    def _init_array_slicer(self):
+        self.vars = self.conserved_vars()
+        self.array_slicer = ArraySlicer({var: i for i, var in enumerate(self.vars)}, 4)
 
-    def f(self, t: float, y: ArrayLike) -> Tuple[float, ArrayLike]:
+    def _init_array_manager(self, cupy: bool):
+        self.interpolation_cache = ArrayManager()
+        if cupy:
+            self.interpolation_cache.enable_cupy()
+
+    def _init_ic(
+        self, ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike], cupy
+    ):
+        super().__init__(ic(self.X, self.Y, self.Z), cupy=cupy)
+
+    def _init_bc(
+        self,
+        xbc: Union[str, Tuple[str, str]],
+        ybc: Union[str, Tuple[str, str]],
+        zbc: Union[str, Tuple[str, str]],
+    ):
+        self.bc = BoundaryConditions(self.array_slicer, xbc, ybc, zbc)
+
+    def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
         """
         Compute the right-hand side of the ODE.
 
         Args:
             t (float): Time value.
-            y (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
 
         Returns:
             dt (float): Time-step size.
-            dydt (ArrayLike): Right-hand side of the ODE. Has shape
+            dudt (ArrayLike): Right-hand side of the ODE. Has shape
                 (n_vars, nx, ny, nz).
         """
-        dt, fluxes = self.get_dt_and_fluxes(t, y)
-        return dt, self.RHS(y, *fluxes)
+        dt, fluxes = self.compute_dt_and_fluxes(t, u, p=self.p)
+        return dt, self.RHS(u, *fluxes)
 
-    def RHS(self, y: ArrayLike, F: ArrayLike, G: ArrayLike, H: ArrayLike) -> ArrayLike:
+    def interpolate(
+        self,
+        u: ArrayLike,
+        x: Union[int, float, str] = 0,
+        y: Union[int, float, str] = 0,
+        z: Union[int, float, str] = 0,
+        p: int = 0,
+        sweep_order: str = "xyz",
+        stencil_type: str = "conservative-interpolation",
+    ) -> ArrayLike:
+        """
+        Interpolates a node value from the finite-volume cell averages.
+
+        Args:
+            u (ArrayLike): Array to interpolate. Has shape (n_vars, nx, ny, nz).
+            x (Union[int, float, str]): x-coordinate of the desired node. Must be
+                between -1 (leftmost cell face) and nx (rightmost cell face).
+                Alternatively, can be "l", "r", or "c" for left, right, or center.
+            y (Union[int, float, str]): y-coordinate of the desired node. Must be
+                between -1 (leftmost cell face) and nx (rightmost cell face).
+                Alternatively, can be "l", "r", or "c" for left, right, or center.
+            z (Union[int, float, str]): z-coordinate of the desired node. Must be
+                between -1 (leftmost cell face) and nx (rightmost cell face).
+                Alternatively, can be "l", "r", or "c" for left, right, or center.
+            p (int): Polynomial degree of the interpolation.
+            sweep_order (str): Order of the direction of the interpolation sweeps. Any
+                combination of "x", "y", and "z".
+            stencil_type (str): Type of stencil weights to use for the interpolation.
+                - "conservative-interpolation": Uses conservative interpolation weights.
+                - "uniform-quadrature": Uses uniform quadrature weights.
+
+        Returns:
+            ArrayLike: Interpolated node values. Has shape
+                (n_vars, <= nx, <= ny, <= nz).
+
+        Notes:
+            - This function utilizes a caching system (`self.interpolation_cache`) to
+                store intermediate results (planes and lines) for efficiency. Use
+                `self.interpolation_cache.clear()` to clear the cache.
+        """
+        coordinates = {"x": x, "y": y, "z": z}
+        axes = {"x": 1, "y": 2, "z": 3}
+        weight_functions = {
+            "conservative-interpolation": lambda p, coord: conservative_interpolation_weights(
+                p, coord
+            ),
+            "uniform-quadrature": lambda p, _: uniform_quadrature_weights(p),
+        }
+        key_functions = {
+            "conservative-interpolation": lambda direction, coord: f"{direction}={coord}",
+            "uniform-quadrature": lambda direction, _: direction,
+        }
+        if stencil_type not in weight_functions:
+            raise ValueError(f"Unsupported stencil_type: {stencil_type}")
+
+        # initialize the interpolation
+        current_data = u
+        key = None
+        weight_function = weight_functions[stencil_type]
+        key_function = key_functions[stencil_type]
+
+        # loop over directions
+        for direction in sweep_order:
+            key = (
+                key_function(direction, coordinates[direction])
+                if key is None
+                else (f"{key}, {key_function(direction, coordinates[direction])}")
+            )
+
+            # if the interpolated data is not in the cache, compute it
+            if key not in self.interpolation_cache:
+                if getattr(self, f"using_{direction}dim"):
+                    self.interpolation_cache[key] = stencil_sweep(
+                        current_data,
+                        stencil_weights=weight_function(p, coordinates[direction]),
+                        axis=axes[direction],
+                    )
+                else:
+                    self.interpolation_cache[key] = current_data
+
+            # update the current data
+            current_data = self.interpolation_cache[key]
+
+        return current_data
+
+    def interpolate_face_nodes(
+        self, averages: ArrayLike, p: int, mode: str
+    ) -> List[Tuple[ArrayLike, ArrayLike]]:
+        """
+        Interpolate face nodes from cell averages.
+
+        Args:
+            averages (ArrayLike): Cell averages. Has shape (n_vars, nx, ny, nz).
+            p (int): Polynomial degree of the interpolation.
+            mode (str): Mode of interpolation. Can be "face-centers".
+
+        Returns:
+            List[Tuple[ArrayLike, ArrayLike]]: Interpolated face nodes.
+                - Each face node is a tuple of two arrays: the left and right face nodes.
+                - The left and right face nodes have shape
+                    (n_vars, <= nx, <= ny, <= nz).
+                - If a face node does not exist in a given direction, the corresponding
+                    element in the list will be `None`.
+        """
+        self.interpolation_cache.clear()
+        sweep_orders = {"x": "yzx", "y": "zxy", "z": "xyz"}
+        face_nodes = []
+        if mode == "face-centers":
+            for dim in "xyz":
+                face_nodes.append(
+                    (
+                        self.interpolate(
+                            averages,
+                            **{dim: "l"},
+                            p=p,
+                            sweep_order=sweep_orders[dim],
+                            stencil_type="conservative-interpolation",
+                        ),
+                        self.interpolate(
+                            averages,
+                            **{dim: "r"},
+                            p=p,
+                            sweep_order=sweep_orders[dim],
+                            stencil_type="conservative-interpolation",
+                        ),
+                    )
+                    if getattr(self, f"using_{dim}dim")
+                    else (np.array([]), np.array([]))
+                )
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
+        return face_nodes
+
+    def RHS(self, u: ArrayLike, F: ArrayLike, G: ArrayLike, H: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the conservation law.
 
         Args:
-            y (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
             F (ArrayLike): Flux in the x-direction. Has shape (n_vars, nx + 1, ny, nz).
             G (ArrayLike): Flux in the y-direction. Has shape (n_vars, nx, ny + 1, nz).
             H (ArrayLike): Flux in the z-direction. Has shape (n_vars, nx, ny, nz + 1).
@@ -168,7 +311,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
             dydt (ArrayLike): Right-hand side of the conservation law. Has shape
                 (n_vars, nx, ny, nz).
         """
-        dydt = np.zeros_like(y)
+        dydt = np.zeros_like(u)
         if self.using_xdim:
             dydt += -(1 / self.hx) * (F[:, 1:, :, :] - F[:, :-1, :, :])
         if self.using_ydim:
@@ -186,7 +329,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
             *args: Arguments to pass to the Runge-Kutta method.
             **kwargs: Keyword arguments to pass to the Runge-Kutta method.
         """
-        q = min(max(self.p), 3)
+        q = min(self.p, 3)
         match q:
             case 0:
                 self.euler(*args, **kwargs)

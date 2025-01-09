@@ -72,7 +72,12 @@ class BoundaryConditions:
         # initialize array with boundary conditions
         out = np.pad(
             arr,
-            pad_width=pad_width,
+            pad_width=(
+                (0, 0),
+                (pad_width[0], pad_width[0]),
+                (pad_width[1], pad_width[1]),
+                (pad_width[2], pad_width[2]),
+            ),
             mode="empty",
         )
 
@@ -80,13 +85,14 @@ class BoundaryConditions:
         for (i, dim), (j, pos) in product(enumerate("xyz"), enumerate("lr")):
             bc_type = getattr(self, dim)[j]
             slab_thickness = pad_width[i]
+            axis = i + 1
 
             if slab_thickness == 0:
                 continue
 
             match bc_type:
                 case "periodic":
-                    self._apply_periodic_bc(out, slab_thickness, i, pos)
+                    self._apply_periodic_bc(out, slab_thickness, axis, pos)
 
         return out
 

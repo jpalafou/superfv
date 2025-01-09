@@ -24,6 +24,46 @@ ArrayLike = Union[np.ndarray, cp.ndarray]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
+def crop_to_center(array: np.ndarray, target_shape: tuple) -> np.ndarray:
+    """
+    Crops the input array to the target shape by removing an equal amount from both
+    ends along each axis.
+
+    Args:
+        array (np.ndarray): The input array to be cropped.
+        target_shape (tuple): The desired shape of the output array. Must have lengths
+            less than or equal to the input array along each axis.
+
+    Returns:
+        np.ndarray: A cropped version of the input array with the target shape.
+
+    Raises:
+        ValueError: If the target shape is invalid or cropping cannot remove an even
+            amount along any axis.
+    """
+    if len(target_shape) != array.ndim:
+        raise ValueError(
+            "Target shape must have the same number of dimensions as the input array."
+        )
+    if any(t > s for t, s in zip(target_shape, array.shape)):
+        raise ValueError(
+            "Target shape must be less than or equal to the input array's shape in all dimensions."
+        )
+
+    slices = []
+    for dim_length, target_length in zip(array.shape, target_shape):
+        crop = dim_length - target_length
+        if crop % 2 != 0:
+            raise ValueError(
+                f"Cannot evenly crop dimension from {dim_length} to {target_length}."
+            )
+        start = crop // 2
+        end = dim_length - crop // 2
+        slices.append(slice(start, end))
+
+    return array[tuple(slices)]
+
+
 @dataclass
 class ArraySlicer:
     """
@@ -280,6 +320,9 @@ class ArrayManager:
             array (ArrayLike): Array to set.
         """
         self.arrays[name] = array
+
+    def __contains__(self, name: str) -> bool:
+        return name in self.arrays
 
     def to_dict(self) -> dict:
         return dict(names=list(self.arrays.keys()), using_cupy=self.using_cupy)

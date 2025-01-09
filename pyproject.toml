@@ -10,9 +10,11 @@ repository = "https://github.com/jpalafou/shine"
 
 [tool.poetry.dependencies]
 python = "^3.9"
+matplotlib = "*"
 numpy = "*"
 rationalpy = "*"
 stencilpal = { git = "https://github.com/jpalafou/stencilpal" }
+tqdm = "*"
 
 [tool.poetry.group.dev.dependencies]
 nox = "*"
@@ -24,6 +26,9 @@ types-tqdm = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest="*"
+
+[tool.mypy]
+mypy_path = "stubs"
 
 # [tool.poetry.urls]
 # documentation = "https://yourprojectdocumentation.com"
