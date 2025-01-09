@@ -9,7 +9,7 @@ repository = "https://github.com/jpalafou/shine"
 # homepage = ...
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 matplotlib = "*"
 numpy = "*"
 rationalpy = "*"

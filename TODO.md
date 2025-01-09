@@ -1,4 +1,4 @@
-- [x] steamline initial conditions
+- [x] CI
 - [ ] snapshots and plotting
 - [ ] 3D smooth error convergence test
 - [ ] code symmetry test
@@ -7,5 +7,4 @@
 - [ ] gauss-legendre or transverse flux quadrature options
 - [ ] a priori slope limitng
 - [ ] working euler example
-- [ ] CI
 - [ ] change name to shinyFV (Super High-order integrator for Numerical hYperbolic conservation laws using the Finite-Volume method)
