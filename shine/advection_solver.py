@@ -1,9 +1,12 @@
-from typing import Callable, Tuple, Union
+from functools import partial
+from typing import Tuple, Union
 
 import numpy as np
 
 from .finite_volume_solver import FiniteVolumeSolver
+from .initial_conditions import InitialCondition
 from .tools.array_management import ArrayLike, crop_to_center
+from .tools.timer import method_timer
 
 
 class AdvectionSolver(FiniteVolumeSolver):
@@ -16,7 +19,7 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic: InitialCondition,
         xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -30,8 +33,27 @@ class AdvectionSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         cupy: bool = False,
     ):
+        """
+        Initialize the advection solver.
+
+        Args:
+            ic (InitialCondition): Initial condition object.
+            xbc (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
+            ybc (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
+            zbc (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
+            xlim (Tuple[float, float]): x-limits of the domain.
+            ylim (Tuple[float, float]): y-limits of the domain.
+            zlim (Tuple[float, float]): z-limits of the domain.
+            nx (int): Number of cells in the x-direction.
+            ny (int): Number of cells in the y-direction.
+            nz (int): Number of cells in the z-direction.
+            p (int): Polynomial degree of the spatial discretization.
+            CFL (float): CFL number.
+            cupy (bool): Whether to use CuPy for array operations.
+        """
         super().__init__(ic, xbc, ybc, zbc, xlim, ylim, zlim, nx, ny, nz, p, CFL, cupy)
 
+    @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
         self, t: float, u: ArrayLike, p: int
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
@@ -62,11 +84,10 @@ class AdvectionSolver(FiniteVolumeSolver):
             f = self.upwinding_riemann_solver(
                 (xr[:, :-1, ...], xl[:, 1:, ...]), dim="x"
             )
-            F = self.interpolate(
-                f, p=p, stencil_type="uniform-quadrature", sweep_order="yz"
+            F = crop_to_center(
+                self.compute_flux_integral(f, dim="x", p=p, mode="transverse"),
+                self.F_shape,
             )
-            F = crop_to_center(F, self.F_shape)
-            self.interpolation_cache.clear()
         else:
             F = np.array([])
 
@@ -76,11 +97,10 @@ class AdvectionSolver(FiniteVolumeSolver):
             g = self.upwinding_riemann_solver(
                 (yr[:, :, :-1, ...], yl[:, :, 1:, ...]), dim="y"
             )
-            G = self.interpolate(
-                g, p=p, stencil_type="uniform-quadrature", sweep_order="xz"
+            G = crop_to_center(
+                self.compute_flux_integral(g, dim="y", p=p, mode="transverse"),
+                self.G_shape,
             )
-            G = crop_to_center(G, self.G_shape)
-            self.interpolation_cache.clear()
         else:
             G = np.array([])
 
@@ -90,16 +110,16 @@ class AdvectionSolver(FiniteVolumeSolver):
             h = self.upwinding_riemann_solver(
                 (zr[:, :, :, :-1], zl[:, :, :, 1:]), dim="z"
             )
-            H = self.interpolate(
-                h, p=p, stencil_type="uniform-quadrature", sweep_order="xy"
+            H = crop_to_center(
+                self.compute_flux_integral(h, dim="z", p=p, mode="transverse"),
+                self.H_shape,
             )
-            H = crop_to_center(H, self.H_shape)
-            self.interpolation_cache.clear()
         else:
             H = np.array([])
 
         return dt, (F, G, H)
 
+    @partial(method_timer, cat="AdvectionSolver.get_dt")
     def get_dt(self, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
@@ -111,12 +131,13 @@ class AdvectionSolver(FiniteVolumeSolver):
             dt (float): Time-step size.
         """
         _slc = self.array_slicer
-        _h = min(self.h)
-        _vx = np.max(np.abs(u[_slc("vx")]))
-        _vy = np.max(np.abs(u[_slc("vy")]))
-        _vz = np.max(np.abs(u[_slc("vz")]))
-        return (self.CFL * _h / (_vx + _vy + _vz)).item()
+        h = min(self.h)
+        vx = np.max(np.abs(u[_slc("vx")]))
+        vy = np.max(np.abs(u[_slc("vy")]))
+        vz = np.max(np.abs(u[_slc("vz")]))
+        return (self.CFL * h / (vx + vy + vz)).item()
 
+    @partial(method_timer, cat="AdvectionSolver.upwinding_riemann_solver")
     def upwinding_riemann_solver(
         self, riemann_problem: Tuple[ArrayLike, ArrayLike], dim: str
     ) -> ArrayLike:

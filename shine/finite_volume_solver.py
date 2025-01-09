@@ -1,19 +1,22 @@
-from abc import abstractmethod
-from typing import Callable, List, Tuple, Union
+from abc import ABC, abstractmethod
+from functools import partial
+from typing import List, Tuple, Union
 
 import numpy as np
 
 from .boundary_conditions import BoundaryConditions
 from .explicit_ODE_solver import ExplicitODESolver
+from .initial_conditions import InitialCondition
 from .stencil import (
     conservative_interpolation_weights,
     stencil_sweep,
     uniform_quadrature_weights,
 )
 from .tools.array_management import ArrayLike, ArrayManager, ArraySlicer
+from .tools.timer import method_timer
 
 
-class FiniteVolumeSolver(ExplicitODESolver):
+class FiniteVolumeSolver(ExplicitODESolver, ABC):
     """
     Solve a nonlinear conservation law using the finite volume method in up to three
     dimensions.
@@ -30,6 +33,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
         pass
 
     @abstractmethod
+    @partial(method_timer, cat="?.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
         self, t: float, u: ArrayLike, p: int
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
@@ -53,7 +57,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
 
     def __init__(
         self,
-        ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic: InitialCondition,
         xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -67,6 +71,24 @@ class FiniteVolumeSolver(ExplicitODESolver):
         CFL: float = 0.8,
         cupy: bool = False,
     ):
+        """
+        Initialize the finite volume solver.
+
+        Args:
+            ic (InitialCondition): Initial condition object.
+            xbc (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
+            ybc (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
+            zbc (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
+            xlim (Tuple[float, float]): x-limits of the domain.
+            ylim (Tuple[float, float]): y-limits of the domain.
+            zlim (Tuple[float, float]): z-limits of the domain.
+            nx (int): Number of cells in the x-direction.
+            ny (int): Number of cells in the y-direction.
+            nz (int): Number of cells in the z-direction.
+            p (int): Polynomial degree of the spatial discretization.
+            CFL (float): CFL number.
+            cupy (bool): Whether to use CuPy for array operations.
+        """
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
         self._init_array_slicer()
         self._init_ic(ic, cupy)
@@ -108,6 +130,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
         self.h = (self.hx, self.hy, self.hz)
         self.using_dim = (nx > 1, ny > 1, nz > 1)
         self.ndim = sum(self.using_dim)
+        self.dims = "".join(dim for dim, using in zip("xyz", self.using_dim) if using)
         self.p = p
         self.CFL = CFL
 
@@ -135,10 +158,9 @@ class FiniteVolumeSolver(ExplicitODESolver):
         if cupy:
             self.interpolation_cache.enable_cupy()
 
-    def _init_ic(
-        self, ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike], cupy
-    ):
-        super().__init__(ic(self.X, self.Y, self.Z), cupy=cupy)
+    def _init_ic(self, ic: InitialCondition, cupy):
+        _ic = ic(self.array_slicer, self.dims)
+        super().__init__(_ic(self.X, self.Y, self.Z), cupy=cupy)
 
     def _init_bc(
         self,
@@ -148,6 +170,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
     ):
         self.bc = BoundaryConditions(self.array_slicer, xbc, ybc, zbc)
 
+    @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
         """
         Compute the right-hand side of the ODE.
@@ -164,6 +187,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
         dt, fluxes = self.compute_dt_and_fluxes(t, u, p=self.p)
         return dt, self.RHS(u, *fluxes)
 
+    @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
     def interpolate(
         self,
         u: ArrayLike,
@@ -249,6 +273,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
 
         return current_data
 
+    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_face_nodes")
     def interpolate_face_nodes(
         self, averages: ArrayLike, p: int, mode: str
     ) -> List[Tuple[ArrayLike, ArrayLike]]:
@@ -258,7 +283,8 @@ class FiniteVolumeSolver(ExplicitODESolver):
         Args:
             averages (ArrayLike): Cell averages. Has shape (n_vars, nx, ny, nz).
             p (int): Polynomial degree of the interpolation.
-            mode (str): Mode of interpolation. Can be "face-centers".
+            mode (str): Mode of interpolation. Possible values:
+                - "face-centers": Interpolate nodes at the cell face centers.
 
         Returns:
             List[Tuple[ArrayLike, ArrayLike]]: Interpolated face nodes.
@@ -297,6 +323,33 @@ class FiniteVolumeSolver(ExplicitODESolver):
             raise ValueError(f"Invalid mode: {mode}")
         return face_nodes
 
+    @partial(method_timer, cat="FiniteVolumeSolver.compute_flux_integral")
+    def compute_flux_integral(
+        self, node_values: ArrayLike, dim: str, p: int, mode: str
+    ) -> ArrayLike:
+        """
+        Compute the flux integral in a given direction.
+
+        Args:
+            node_values (ArrayLike): Node values. Has shape (n_vars, nx, ny, nz).
+            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
+            p (int): Polynomial degree of the interpolation.
+            mode (str): Mode of the flux. Possible values:
+                - "transverse": Compute the transverse flux integral.
+
+        Returns:
+            ArrayLike: Flux integral. Has shape (n_vars, <= nx, <= ny, <= nz).
+        """
+        if mode == "transverse":
+            flux_integrals = self.interpolate(
+                node_values,
+                p=p,
+                stencil_type="uniform-quadrature",
+                sweep_order={"x": "yz", "y": "xz", "z": "xy"}[dim],
+            )
+        self.interpolation_cache.clear()
+        return flux_integrals
+
     def RHS(self, u: ArrayLike, F: ArrayLike, G: ArrayLike, H: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the conservation law.
@@ -320,6 +373,7 @@ class FiniteVolumeSolver(ExplicitODESolver):
             dydt += -(1 / self.hz) * (H[:, :, :, 1:] - H[:, :, :, :-1])
         return dydt
 
+    @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, **kwargs):
         """
         Solve the conservation law using a Runge-Kutta method whose order matches the

@@ -6,6 +6,8 @@ import numpy as np
 
 def method_timer(method, cat):
     def wrapper(self, *args, **kwargs):
+        if cat not in self.timer:
+            self.timer.add_cat(cat)
         self.timer.start(cat)
         result = method(self, *args, **kwargs)
         self.timer.stop(cat)
@@ -120,3 +122,6 @@ class Timer:
             report_str += f"{cat:<{max_cat_len}} {time_str:>{max_time_len}}\n"
 
         return report_str
+
+    def __contains__(self, cat: str) -> bool:
+        return cat in self.cats

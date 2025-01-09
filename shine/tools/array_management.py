@@ -77,6 +77,9 @@ class ArraySlicer:
     var_idx_map: Dict[str, int]
     ndim: int
 
+    def __post_init__(self):
+        self.vars = set(self.var_idx_map.keys())
+
     def __hash__(self):
         return id(self)
 

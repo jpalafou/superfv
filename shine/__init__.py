@@ -1,4 +1,4 @@
+from . import initial_conditions
 from .advection_solver import AdvectionSolver
-from .boundary_conditions import BoundaryConditions
 
-__all__ = ["AdvectionSolver", "BoundaryConditions"]
+__all__ = ["AdvectionSolver", "initial_conditions"]
