@@ -1,6 +1,16 @@
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
 import numpy as np
 
@@ -64,23 +74,76 @@ def crop_to_center(array: np.ndarray, target_shape: tuple) -> np.ndarray:
     return array[tuple(slices)]
 
 
+def _idxs_to_slice_or_array(
+    idxs: List[int],
+) -> Union[slice, np.ndarray[Any, np.dtype[np.int_]]]:
+    """
+    Convert a list of indices to a slice or numpy array.
+
+    Args:
+        idxs (List[int]): List of indices.
+    """
+    _idxs = sorted(idxs)
+    if _idxs == list(range(_idxs[0], _idxs[-1] + 1)):
+        return slice(_idxs[0], _idxs[-1] + 1)
+    return np.array(_idxs)
+
+
 @dataclass
 class ArraySlicer:
     """
     Class for slicing multivariable fields.
 
     Args:
-        var_idx_map (Dict[str, int]): Dictionary mapping variable names to indices.
+        var_idx_map (
+            Dict[str, Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]]
+            ): Dictionary mapping variable names to slices along the first axis.
         ndim (int): Number of dimensions in the field.
     """
 
-    var_idx_map: Dict[str, int]
+    var_idx_map: Dict[str, Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]]
     ndim: int
 
     def __post_init__(self):
-        self.vars = set(self.var_idx_map.keys())
+        self.var_names = set(self.var_idx_map.keys())
+        self.idxs = {v for v in self.var_idx_map.values() if isinstance(v, int)}
+
+    def add_var(self, var: str, idx: int):
+        """
+        Add a variable to the slicer.
+
+        Args:
+            var (str): Variable name.
+            idx (int): Variable index.
+        """
+        if var in self.var_idx_map:
+            raise ValueError(f"Variable '{var}' already exists.")
+        self.var_idx_map[var] = idx
+        self.__post_init__()
+
+    def create_var_group(self, group_name: str, variables: Tuple[str, ...]):
+        """
+        Create a group of variables.
+
+        Args:
+            group_name (str): Name of the group.
+            variables (Tuple[str, ...]): Tuple of variable names.
+        """
+        if any(var not in self.var_idx_map for var in variables):
+            raise ValueError(f"Variables not found: {variables}")
+        if group_name in self.var_idx_map:
+            raise ValueError(f"Variable group '{group_name}' already exists.")
+        if any(not isinstance(self.var_idx_map[var], int) for var in variables):
+            raise ValueError("Variables must be indexed by integers.")
+        self.var_idx_map[group_name] = _idxs_to_slice_or_array(
+            [cast(int, self.var_idx_map[var]) for var in variables]
+        )
+        self.__post_init__()
 
     def __hash__(self):
+        """
+        Returns the hash of the object based on its memory address.
+        """
         return id(self)
 
     def __call__(
@@ -92,12 +155,18 @@ class ArraySlicer:
         axis: Optional[int] = None,
         cut: Optional[SliceBounds] = None,
         step: Optional[int] = None,
-    ) -> Union[slice, int, np.ndarray, Tuple[Union[slice, int, np.ndarray], ...]]:
+    ) -> Union[
+        slice,
+        int,
+        np.ndarray,
+        Tuple[Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]], ...],
+    ]:
         """
         Generate a slice object for a multivariable field.
 
         Args:
-            var (Optional[Union[str, Tuple[str, ...]]]): Variable name or tuple of variable names.
+            var (Optional[Union[str, Tuple[str, ...]]]): Variable name or tuple of
+                variable names.
             x (Optional[SliceBounds]: Start and stop indices for the x-axis.
             y (Optional[SliceBounds]): Start and stop indices for the y-axis.
             z (Optional[SliceBounds]): Start and stop indices for the z-axis.
@@ -116,9 +185,9 @@ class ArraySlicer:
                 if var not in self.var_idx_map:
                     raise ValueError(f"Variable '{var}' not found.")
                 var_idx = self.var_idx_map[var]
-                if not isinstance(var_idx, int):
+                if not isinstance(var_idx, (int, slice, np.ndarray)):
                     raise ValueError(
-                        f"Variable index must be an integer, not {type(var_idx)}."
+                        f"Variable index must be an integer, slice, or numpy.ndarray, not {type(var_idx)}."
                     )
                 slices[0] = var_idx
             elif isinstance(var, tuple):
@@ -126,7 +195,11 @@ class ArraySlicer:
                 missing_vars = set(var) - set(self.var_idx_map.keys())
                 if missing_vars:
                     raise ValueError(f"Variables not found: {missing_vars}")
-                slices[0] = np.array(list(map(self.var_idx_map.get, var)))
+                if any(not isinstance(self.var_idx_map[v], int) for v in var):
+                    raise ValueError("Multiple variables must be indexed by integers.")
+                slices[0] = _idxs_to_slice_or_array(
+                    [cast(int, self.var_idx_map[v]) for v in var]
+                )
             else:
                 raise ValueError(f"Invalid type for var: {type(var)}")
 

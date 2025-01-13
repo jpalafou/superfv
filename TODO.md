@@ -1,4 +1,3 @@
-- [x] CI
 - [ ] snapshots and plotting
 - [ ] 3D smooth error convergence test
 - [ ] code symmetry test

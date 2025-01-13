@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import List, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 
 from .boundary_conditions import BoundaryConditions
 from .explicit_ODE_solver import ExplicitODESolver
-from .initial_conditions import InitialCondition
 from .stencil import (
     conservative_interpolation_weights,
     stencil_sweep,
@@ -23,12 +22,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     """
 
     @abstractmethod
-    def conserved_vars(self) -> Tuple[str, ...]:
+    def define_vars(self) -> ArraySlicer:
         """
-        Define the names of the conserved variables.
+        Define the names of the solver variables.
 
         Returns:
-            A tuple of strings, each representing a conserved variable.
+            ArraySlicer: ArraySlicer object.
         """
         pass
 
@@ -42,22 +41,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Args:
             t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
             p (int): Polynomial degree of the spatial discretization.
 
         Returns:
             dt (float): Time-step size.
             fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]]): Tuple of fluxes. The
                 fluxes have the following shapes:
-                - F: (n_vars, nx + 1, ny, nz)
-                - G: (n_vars, nx, ny + 1, nz)
-                - H: (n_vars, nx, ny, nz + 1)
+                - F: (nvars, nx + 1, ny, nz)
+                - G: (nvars, nx, ny + 1, nz)
+                - H: (nvars, nx, ny, nz + 1)
         """
         pass
 
     def __init__(
         self,
-        ic: InitialCondition,
+        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic_passives: Optional[
+            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
+        ] = None,
         xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -75,7 +77,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Initialize the finite volume solver.
 
         Args:
-            ic (InitialCondition): Initial condition object.
+            ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
+                Initial condition function. The function must accept the following
+                arguments:
+                - array_slicer (ArraySlicer): ArraySlicer object.
+                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
+                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
+                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+                The function must return an array with shape (nvars, nx, ny, nz).
+            ic_passives (Optional[Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]]):
+                Initial condition functions for passive variables. The dictionary keys
+                are the names of the passive variables, and the values are the
+                corresponding initial condition functions. Each function must accept
+                the following arguments:
+                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
+                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
+                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+                The function must return an array with shape (nx, ny, nz).
             xbc (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
             ybc (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
             zbc (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
@@ -90,10 +108,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cupy (bool): Whether to use CuPy for array operations.
         """
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
-        self._init_array_slicer()
-        self._init_ic(ic, cupy)
-        self._init_array_manager(cupy)
+        self._init_ic(ic, ic_passives, cupy)
         self._init_bc(xbc, ybc, zbc)
+        self._init_array_manager(cupy)
 
     def _init_mesh(
         self,
@@ -145,22 +162,61 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
 
-        self.F_shape = (len(self.conserved_vars()), nx + 1, ny, nz)
-        self.G_shape = (len(self.conserved_vars()), nx, ny + 1, nz)
-        self.H_shape = (len(self.conserved_vars()), nx, ny, nz + 1)
+    def _init_ic(
+        self,
+        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic_passives: Optional[
+            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
+        ],
+        cupy,
+    ):
+        self.array_slicer = self.define_vars()
+        self.has_passives = bool(ic_passives)
+        _n_active_vars = max(self.array_slicer.idxs) + 1
+        _n_passive_vars = len(cast(dict, ic_passives)) if self.has_passives else 0
+        self.nvars = _n_active_vars + _n_passive_vars
 
-    def _init_array_slicer(self):
-        self.vars = self.conserved_vars()
-        self.array_slicer = ArraySlicer({var: i for i, var in enumerate(self.vars)}, 4)
+        # check indices are consecutive
+        if self.array_slicer.idxs != set(range(_n_active_vars)):
+            raise ValueError("Variable indices must be consecutive.")
 
-    def _init_array_manager(self, cupy: bool):
-        self.interpolation_cache = ArrayManager()
-        if cupy:
-            self.interpolation_cache.enable_cupy()
+        # check name conflicts
+        if ic_passives is not None:
+            reserved_name = "passives"
+            existing_var_names = self.array_slicer.var_names
+            passive_var_names = set(cast(dict, ic_passives).keys())
 
-    def _init_ic(self, ic: InitialCondition, cupy):
-        _ic = ic(self.array_slicer, self.dims)
-        super().__init__(_ic(self.X, self.Y, self.Z), cupy=cupy)
+            if reserved_name in existing_var_names:
+                raise ValueError(f"Variable name '{reserved_name}' is reserved.")
+            if passive_var_names & existing_var_names:
+                taken_names = passive_var_names & existing_var_names
+                raise ValueError(f"Variable name(s) {taken_names} are already in use.")
+
+        # define callable to get the full ic array
+        def callable_ic(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
+            ic_arr = ic(self.array_slicer, x, y, z)
+
+            if self.has_passives:
+                ic_passives_arrs = []
+                for i, f in cast(dict, ic_passives).items():
+                    passive_ic_arr = np.expand_dims(f(x, y, z), axis=0)
+                    ic_passives_arrs.append(passive_ic_arr)
+                ic_arr = np.concatenate([ic_arr, *ic_passives_arrs], axis=0)
+
+            return ic_arr
+
+        self.callable_ic = callable_ic
+
+        # modify array slicer
+        if self.has_passives:
+            for i, name in enumerate(cast(dict, ic_passives).keys()):
+                self.array_slicer.add_var(name, i + _n_active_vars)
+            self.array_slicer.create_var_group(
+                "passives", tuple(cast(dict, ic_passives).keys())
+            )
+
+        # initialize the ODE solver and array manager
+        super().__init__(callable_ic(self.X, self.Y, self.Z), cupy=cupy)
 
     def _init_bc(
         self,
@@ -170,6 +226,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         self.bc = BoundaryConditions(self.array_slicer, xbc, ybc, zbc)
 
+    def _init_array_manager(self, cupy: bool):
+        self.interpolation_cache = ArrayManager()
+        if cupy:
+            self.interpolation_cache.enable_cupy()
+
+        # initialize flux arrays
+        nvars, nx, ny, nz = self.nvars, self.nx, self.ny, self.nz
+        self.arrays.add("F", np.zeros((nvars, nx + 1, ny, nz)))
+        self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
+        self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
+
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
         """
@@ -177,12 +244,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Args:
             t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
 
         Returns:
             dt (float): Time-step size.
             dudt (ArrayLike): Right-hand side of the ODE. Has shape
-                (n_vars, nx, ny, nz).
+                (nvars, nx, ny, nz).
         """
         dt, fluxes = self.compute_dt_and_fluxes(t, u, p=self.p)
         return dt, self.RHS(u, *fluxes)
@@ -202,7 +269,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Interpolates a node value from the finite-volume cell averages.
 
         Args:
-            u (ArrayLike): Array to interpolate. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Array to interpolate. Has shape (nvars, nx, ny, nz).
             x (Union[int, float, str]): x-coordinate of the desired node. Must be
                 between -1 (leftmost cell face) and nx (rightmost cell face).
                 Alternatively, can be "l", "r", or "c" for left, right, or center.
@@ -221,7 +288,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Returns:
             ArrayLike: Interpolated node values. Has shape
-                (n_vars, <= nx, <= ny, <= nz).
+                (nvars, <= nx, <= ny, <= nz).
 
         Notes:
             - This function utilizes a caching system (`self.interpolation_cache`) to
@@ -281,7 +348,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Interpolate face nodes from cell averages.
 
         Args:
-            averages (ArrayLike): Cell averages. Has shape (n_vars, nx, ny, nz).
+            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
             p (int): Polynomial degree of the interpolation.
             mode (str): Mode of interpolation. Possible values:
                 - "face-centers": Interpolate nodes at the cell face centers.
@@ -290,7 +357,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             List[Tuple[ArrayLike, ArrayLike]]: Interpolated face nodes.
                 - Each face node is a tuple of two arrays: the left and right face nodes.
                 - The left and right face nodes have shape
-                    (n_vars, <= nx, <= ny, <= nz).
+                    (nvars, <= nx, <= ny, <= nz).
                 - If a face node does not exist in a given direction, the corresponding
                     element in the list will be `None`.
         """
@@ -331,14 +398,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the flux integral in a given direction.
 
         Args:
-            node_values (ArrayLike): Node values. Has shape (n_vars, nx, ny, nz).
+            node_values (ArrayLike): Node values. Has shape (nvars, nx, ny, nz).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
             p (int): Polynomial degree of the interpolation.
             mode (str): Mode of the flux. Possible values:
                 - "transverse": Compute the transverse flux integral.
 
         Returns:
-            ArrayLike: Flux integral. Has shape (n_vars, <= nx, <= ny, <= nz).
+            ArrayLike: Flux integral. Has shape (nvars, <= nx, <= ny, <= nz).
         """
         if mode == "transverse":
             flux_integrals = self.interpolate(
@@ -355,14 +422,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the right-hand side of the conservation law.
 
         Args:
-            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
-            F (ArrayLike): Flux in the x-direction. Has shape (n_vars, nx + 1, ny, nz).
-            G (ArrayLike): Flux in the y-direction. Has shape (n_vars, nx, ny + 1, nz).
-            H (ArrayLike): Flux in the z-direction. Has shape (n_vars, nx, ny, nz + 1).
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            F (ArrayLike): Flux in the x-direction. Has shape (nvars, nx + 1, ny, nz).
+            G (ArrayLike): Flux in the y-direction. Has shape (nvars, nx, ny + 1, nz).
+            H (ArrayLike): Flux in the z-direction. Has shape (nvars, nx, ny, nz + 1).
 
         Returns:
             dydt (ArrayLike): Right-hand side of the conservation law. Has shape
-                (n_vars, nx, ny, nz).
+                (nvars, nx, ny, nz).
         """
         dydt = np.zeros_like(u)
         if self.using_xdim:

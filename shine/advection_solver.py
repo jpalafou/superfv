@@ -1,11 +1,10 @@
 from functools import partial
-from typing import Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 
 from .finite_volume_solver import FiniteVolumeSolver
-from .initial_conditions import InitialCondition
-from .tools.array_management import ArrayLike, crop_to_center
+from .tools.array_management import ArrayLike, ArraySlicer, crop_to_center
 from .tools.timer import method_timer
 
 
@@ -14,12 +13,15 @@ class AdvectionSolver(FiniteVolumeSolver):
     Solve the advection of a scalar `u` in up to three dimensions.
     """
 
-    def conserved_vars(self) -> Tuple[str, ...]:
-        return ("u", "vx", "vy", "vz")
+    def define_vars(self) -> ArraySlicer:
+        return ArraySlicer({"u": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
 
     def __init__(
         self,
-        ic: InitialCondition,
+        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic_passives: Optional[
+            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
+        ] = None,
         xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -51,7 +53,9 @@ class AdvectionSolver(FiniteVolumeSolver):
             CFL (float): CFL number.
             cupy (bool): Whether to use CuPy for array operations.
         """
-        super().__init__(ic, xbc, ybc, zbc, xlim, ylim, zlim, nx, ny, nz, p, CFL, cupy)
+        super().__init__(
+            ic, ic_passives, xbc, ybc, zbc, xlim, ylim, zlim, nx, ny, nz, p, CFL, cupy
+        )
 
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
@@ -86,7 +90,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             )
             F = crop_to_center(
                 self.compute_flux_integral(f, dim="x", p=p, mode="transverse"),
-                self.F_shape,
+                self.arrays["F"].shape,
             )
         else:
             F = np.array([])
@@ -99,7 +103,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             )
             G = crop_to_center(
                 self.compute_flux_integral(g, dim="y", p=p, mode="transverse"),
-                self.G_shape,
+                self.arrays["G"].shape,
             )
         else:
             G = np.array([])
@@ -112,7 +116,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             )
             H = crop_to_center(
                 self.compute_flux_integral(h, dim="z", p=p, mode="transverse"),
-                self.H_shape,
+                self.arrays["H"].shape,
             )
         else:
             H = np.array([])
@@ -125,7 +129,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         Compute the time-step size based on the CFL condition.
 
         Args:
-            u (ArrayLike): Solution value. Has shape (n_vars, nx, ny, nz).
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
 
         Returns:
             dt (float): Time-step size.
@@ -146,12 +150,12 @@ class AdvectionSolver(FiniteVolumeSolver):
 
         Args:
             riemann_problem (Tuple[ArrayLike, ArrayLike]): Tuple of left and right
-                states. Each state has shape (n_vars, nx, ny, nz).
+                states. Each state has shape (nvars, nx, ny, nz).
             dim (str): Dimension to solve in ("x", "y", or "z").
 
         Returns:
             out (ArrayLike): Point-wise solution to the Riemann problem. Has shape
-                (n_vars, nx, ny, nz).
+                (nvars, nx, ny, nz).
         """
         _slc = self.array_slicer
         yl, yr = riemann_problem
@@ -162,4 +166,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         out[_slc("u")] = v * np.where(
             v > 0, yl[_slc("u")], np.where(v < 0, yr[_slc("u")], 0)
         )
+        if self.has_passives:
+            out[_slc("passives")] = v * np.where(
+                v > 0, yl[_slc("passives")], np.where(v < 0, yr[_slc("passives")], 0)
+            )
         return out
