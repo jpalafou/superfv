@@ -350,6 +350,18 @@ class ArrayManager:
         else:
             self.arrays = {}
 
+    def rename(self, old_name: str, new_name: str):
+        """
+        Rename an array.
+
+        Args:
+            old_name (str): Old name of the array.
+            new_name (str): New name of the array.
+        """
+        self._check_name_exists(old_name)
+        self._check_name_available(new_name)
+        self.arrays[new_name] = self.arrays.pop(old_name)
+
     def __getitem__(
         self, name: str, asnumpy: bool = False, copy: bool = False
     ) -> ArrayLike:

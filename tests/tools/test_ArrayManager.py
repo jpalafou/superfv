@@ -67,6 +67,37 @@ def test_rm_non_existing_array_raises_error(array_manager):
         array_manager.rm("non_existent_array")
 
 
+def test_clear_all_arrays(array_manager):
+    """
+    Test clearing all arrays.
+    """
+    for i in range(20):
+        array = np.random.rand(5, 5)
+        array_manager.add(f"test_array_{i}", array)
+    array_manager.clear()
+    assert len(array_manager.arrays) == 0
+
+
+def test_clear_all_arrays_except_some(array_manager):
+    """
+    Test clearing all arrays except some.
+    """
+    for i in range(20):
+        array = np.random.rand(5, 5)
+        array_manager.add(f"test_array_{i}", array)
+    array_manager.clear(all_but=["test_array_5", "test_array_10"])
+    assert array_manager.arrays.keys() == {"test_array_5", "test_array_10"}
+
+
+def test_rename(array_manager):
+    """Test renaming an array."""
+    array = np.random.rand(5, 5)
+    array_manager.add("test_array", array)
+    array_manager.rename("test_array", "new_name")
+    assert "test_array" not in array_manager.arrays
+    assert "new_name" in array_manager.arrays
+
+
 def test_get_numpy(array_manager):
     """Test retrieving an array as a NumPy array."""
     array = np.random.rand(5, 5)

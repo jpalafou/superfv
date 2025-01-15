@@ -14,7 +14,7 @@ class AdvectionSolver(FiniteVolumeSolver):
     """
 
     def define_vars(self) -> ArraySlicer:
-        return ArraySlicer({"u": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
+        return ArraySlicer({"rho": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
 
     def __init__(
         self,
@@ -163,8 +163,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
         out = np.zeros_like(yl)
-        out[_slc("u")] = v * np.where(
-            v > 0, yl[_slc("u")], np.where(v < 0, yr[_slc("u")], 0)
+        out[_slc("rho")] = v * np.where(
+            v > 0, yl[_slc("rho")], np.where(v < 0, yr[_slc("rho")], 0)
         )
         if self.has_passives:
             out[_slc("passives")] = v * np.where(

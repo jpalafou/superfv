@@ -216,7 +216,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
 
         # initialize the ODE solver and array manager
-        super().__init__(callable_ic(self.X, self.Y, self.Z), cupy=cupy)
+        super().__init__(
+            callable_ic(self.X, self.Y, self.Z), state_array_name="u", cupy=cupy
+        )
 
     def _init_bc(
         self,
@@ -439,6 +441,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.using_zdim:
             dydt += -(1 / self.hz) * (H[:, :, :, 1:] - H[:, :, :, :-1])
         return dydt
+
+    def snapshot(self):
+        """
+        Simple snapshot method that writes the solution to `self.snapshots` keyed by
+        the current time value.
+        """
+        log = {"u": self.arrays.get_numpy("u", copy=True)}
+        self.snapshots[self.t] = log
 
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, **kwargs):

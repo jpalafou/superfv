@@ -25,6 +25,7 @@ mypy = "*"
 types-tqdm = "*"
 
 [tool.poetry.group.test.dependencies]
+"pandas" = "*"
 pytest="*"
 
 [tool.mypy]

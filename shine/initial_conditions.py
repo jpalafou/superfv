@@ -52,11 +52,11 @@ def sinus(
     dims = parse_xyz(x, y, z)
 
     # Validate variables in ArraySlicer
-    if {"u", "vx", "vy", "vz"} - _slc.var_names == set():
+    if {"rho", "vx", "vy", "vz"} - _slc.var_names == set():
         # advection case
         out = np.zeros((4, *x.shape))
         r = int("x" in dims) * x + int("y" in dims) * y + int("z" in dims) * z
-        out[_slc("u")] = (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + bounds[0]
+        out[_slc("rho")] = (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + bounds[0]
         out[_slc("vx")] = vx
         out[_slc("vy")] = vy
         out[_slc("vz")] = vz
@@ -97,7 +97,7 @@ def square(
     dims = parse_xyz(x, y, z)
 
     # Validate variables in ArraySlicer
-    if {"u", "vx", "vy", "vz"} - _slc.var_names == set():
+    if {"rho", "vx", "vy", "vz"} - _slc.var_names == set():
         # advection case
         out = np.zeros((4, *x.shape))
         r = np.ones_like(x).astype(bool)
@@ -108,7 +108,7 @@ def square(
         if "z" in dims:
             r &= (z >= 0.25) & (z <= 0.75)
         r = r.astype(float)
-        out[_slc("u")] = (bounds[1] - bounds[0]) * r + bounds[0]
+        out[_slc("rho")] = (bounds[1] - bounds[0]) * r + bounds[0]
         out[_slc("vx")] = vx
         out[_slc("vy")] = vy
         out[_slc("vz")] = vz
