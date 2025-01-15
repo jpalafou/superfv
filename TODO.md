@@ -1,11 +1,10 @@
-- [x] 3D smooth error convergence test
-- [x] code symmetry test
-- [ ] snapshots and plotting
+- [x] snapshots and plotting
 - [ ] dirichlet boundary conditions for rotation of a slotted disk
 - [ ] a posteriori slope limiting
 - [ ] gauss-legendre or transverse flux quadrature options
 - [ ] a priori slope limitng
 - [ ] working euler example
 - [ ] change name to superFV (Super high-order Uniform-grid solver for hyPERbolic conservation laws using the Finite-Volume method)
+- [ ] write READNE.md
 - [ ] black formatting certification
 - [ ] coverage

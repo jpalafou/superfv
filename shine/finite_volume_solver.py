@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -13,6 +13,7 @@ from .stencil import (
 )
 from .tools.array_management import ArrayLike, ArrayManager, ArraySlicer
 from .tools.timer import method_timer
+from .visualization import plot_1d_slice, plot_2d_slice
 
 
 class FiniteVolumeSolver(ExplicitODESolver, ABC):
@@ -151,15 +152,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.p = p
         self.CFL = CFL
 
-        def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz):
+        def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz, as_mesh: bool = True):
             x_interface = np.linspace(xlim[0], xlim[1], nx + 1)
             y_interface = np.linspace(ylim[0], ylim[1], ny + 1)
             z_interface = np.linspace(zlim[0], zlim[1], nz + 1)
             x_center = 0.5 * (x_interface[1:] + x_interface[:-1])
             y_center = 0.5 * (y_interface[1:] + y_interface[:-1])
             z_center = 0.5 * (z_interface[1:] + z_interface[:-1])
-            return np.meshgrid(x_center, y_center, z_center, indexing="ij")
+            if as_mesh:
+                return np.meshgrid(x_center, y_center, z_center, indexing="ij")
+            return x_center, y_center, z_center
 
+        self.x, self.y, self.z = _get_uniform_3D_mesh(
+            xlim, ylim, zlim, nx, ny, nz, as_mesh=False
+        )
         self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
 
     def _init_ic(
@@ -344,7 +350,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate_face_nodes")
     def interpolate_face_nodes(
-        self, averages: ArrayLike, p: int, mode: str
+        self,
+        averages: ArrayLike,
+        p: int,
+        mode: Literal["face-centers"],
     ) -> List[Tuple[ArrayLike, ArrayLike]]:
         """
         Interpolate face nodes from cell averages.
@@ -394,7 +403,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @partial(method_timer, cat="FiniteVolumeSolver.compute_flux_integral")
     def compute_flux_integral(
-        self, node_values: ArrayLike, dim: str, p: int, mode: str
+        self,
+        node_values: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        p: int,
+        mode: Literal["transverse"],
     ) -> ArrayLike:
         """
         Compute the flux integral in a given direction.
@@ -472,3 +485,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 self.rk4(*args, **kwargs)
             case _:
                 raise ValueError(f"Runge-Kutta method not implemented for {q=}")
+
+    def plot_1d_slice(self, *args, **kwargs):
+        return plot_1d_slice(self, *args, **kwargs)
+
+    def plot_2d_slice(self, *args, **kwargs):
+        return plot_2d_slice(self, *args, **kwargs)

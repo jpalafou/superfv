@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -143,7 +143,7 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     @partial(method_timer, cat="AdvectionSolver.upwinding_riemann_solver")
     def upwinding_riemann_solver(
-        self, riemann_problem: Tuple[ArrayLike, ArrayLike], dim: str
+        self, riemann_problem: Tuple[ArrayLike, ArrayLike], dim: Literal["x", "y", "z"]
     ) -> ArrayLike:
         """
         Solve the advection of a scalar in up to three dimensions.

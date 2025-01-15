@@ -55,7 +55,9 @@ def test_AdvectionSolver_symmetry_2D(p: int):
         _slc = solver.array_slicer
         _slices2d = [slice(None), slice(None), slice(None)]
         _slices2d[{"xy": 2, "xz": 1, "yz": 0}[dim1 + dim2]] = 0
-        solution[dim1 + dim2] = solver.snapshots[T]["u"][_slc("rho"), *_slices2d]
+        solution[dim1 + dim2] = solver.snapshots[T]["u"][
+            _slc("rho"), _slices2d[0], _slices2d[1], _slices2d[2]
+        ]
 
     # check that the solutions are equal
     print(solution["xy"].shape, solution["yz"].shape, solution["xz"].shape)
