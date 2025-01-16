@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from shine.tools.array_management import ArraySlicer
+from superfv.tools.array_management import ArraySlicer
 
 
 def test_initialization():

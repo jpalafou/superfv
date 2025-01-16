@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from shine.tools.array_management import CUPY_AVAILABLE, ArrayManager
+from superfv.tools.array_management import CUPY_AVAILABLE, ArrayManager
 
 
 @pytest.fixture

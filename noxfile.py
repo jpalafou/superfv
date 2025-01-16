@@ -13,4 +13,4 @@ def lint(session):
 
 @nox.session
 def typecheck(session):
-    session.run("mypy", "shine", external=True)
+    session.run("mypy", "superfv", external=True)

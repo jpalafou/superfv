@@ -1,12 +1,11 @@
 [tool.poetry]
-name = "shine"
+name = "superfv"
 version = "0.1.0"
 description = "A solver library for mathematical and computational problems"
 authors = ["Jonathan Palafoutas <jpalafou@princeton.edu>"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/jpalafou/shine"
-# homepage = ...
+repository = "https://github.com/jpalafou/superfv"
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -30,11 +29,3 @@ pytest="*"
 
 [tool.mypy]
 mypy_path = "stubs"
-
-# [tool.poetry.urls]
-# documentation = "https://yourprojectdocumentation.com"
-
-# Optional: Define additional configurations for packaging, building, etc.
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"

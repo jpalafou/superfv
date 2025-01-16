@@ -4,7 +4,7 @@ from itertools import combinations
 import numpy as np
 import pytest
 
-from shine import AdvectionSolver, initial_conditions
+from superfv import AdvectionSolver, initial_conditions
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])

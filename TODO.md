@@ -1,10 +1,10 @@
-- [x] black formatting certification
+- [x] change name to superFV (Super high-order Uniform-grid solver for hyPERbolic conservation laws using the Finite-Volume method)
+- [x] write README.md
 - [ ] dirichlet boundary conditions for rotation of a slotted disk
 - [ ] a posteriori slope limiting
 - [ ] gauss-legendre or transverse flux quadrature options
 - [ ] a priori slope limitng
 - [ ] working euler example
 - [ ] multi-core support
-- [ ] change name to superFV (Super high-order Uniform-grid solver for hyPERbolic conservation laws using the Finite-Volume method)
-- [ ] write README.md
 - [ ] coverage
+- [ ] expand README.md

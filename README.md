@@ -1,3 +1,29 @@
-[![Build](https://github.com/jpalafou/shine/actions/workflows/ci.yml/badge.svg)](https://github.com/jpalafou/shine/actions/workflows/tests.yml)
+# SuperFV
+
+[![Build](https://github.com/jpalafou/superfv/actions/workflows/ci.yml/badge.svg)](https://github.com/jpalafou/superfv/actions/workflows/tests.yml)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**Super high-order Uniform-grid solver for hyPERbolic conservation laws using the Finite-Volume method**.
+
+## Overview
+
+SuperFV is a computational solver for hyperbolic conservation laws based on the finite-volume method with arbitrarily high-order accuracy in its spatial discretization. The solver operates on a uniform mesh, supporting up to three dimensions.
+
+## Features
+
+- High-order accuracy in space
+- Support for passive scalars
+
+
+1. **Install Poetry** (if you haven't already):
+   You can install it via `pip`:
+   ```bash
+   pip install poetry
+
+2. **Install SuperFV and dependencies**:
+    Once Poetry is installed, navigate to the project directory and run:
+    ```bash
+   poetry install
+   ```
+   This will install `SuperFV` and all of its dependencies listed in the `poetry.lock` file.

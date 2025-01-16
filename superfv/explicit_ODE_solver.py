@@ -176,7 +176,7 @@ class ExplicitODESolver(ABC):
     @partial(method_timer, cat="ExplicitODESolver.integrate")
     def integrate(
         self,
-        T: Optional[Union[int, float, Iterable[Union[int, float]]]] = None,
+        T: Optional[Union[float, Iterable[float]]] = None,
         n: Optional[int] = None,
         log_every_step: bool = False,
         snapshot_dir: Optional[str] = None,
@@ -186,8 +186,8 @@ class ExplicitODESolver(ABC):
         Integrate the ODE.
 
         Args:
-            T (Optional[Union[int, float, Iterable[Union[int, float]]]]): Time to
-                simulate until. If an iterable, take snapshots at those times.
+            T (Optional[Union[float, Iterable[float]]]): Time to simulate until. If an
+                iterable, take snapshots at those times.
             n (Optional[int]): Number of iterations to evolve. If defined, all other arguments are
                 ignored.
             log_every_step (bool): Take a snapshot at every step.
@@ -211,16 +211,13 @@ class ExplicitODESolver(ABC):
                 if self.read_snapshots():
                     return
 
+        # format list of target times
         if T is None:
             raise ValueError("T must be defined.")
-        elif isinstance(T, int):
-            target_times = [float(T)]
         elif isinstance(T, float):
             target_times = [T]
-        elif isinstance(T, list) or isinstance(T, tuple):
-            target_times = sorted([float(t) if isinstance(t, int) else t for t in T])
-        elif isinstance(T, np.ndarray):
-            target_times = sorted(T.astype(float).tolist())
+        elif isinstance(T, Iterable):
+            target_times = sorted([float(t) for t in T])
         else:
             raise ValueError(f"Invalid type for T: {type(T)}")
         if min(target_times) <= 0:

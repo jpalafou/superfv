@@ -7,7 +7,7 @@ import numpy as np
 from matplotlib.axes import Axes
 
 if TYPE_CHECKING:
-    from shine.finite_volume_solver import FiniteVolumeSolver
+    from superfv.finite_volume_solver import FiniteVolumeSolver
 
 warnings.simplefilter("always")
 
