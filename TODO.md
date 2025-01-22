@@ -1,6 +1,5 @@
-- [x] change name to superFV (Super high-order Uniform-grid solver for hyPERbolic conservation laws using the Finite-Volume method)
-- [x] write README.md
-- [ ] dirichlet boundary conditions for rotation of a slotted disk
+- [x] dirichlet boundary conditions for rotation of a slotted disk
+- [ ] GL and transverse flux point methods
 - [ ] a posteriori slope limiting
 - [ ] gauss-legendre or transverse flux quadrature options
 - [ ] a priori slope limitng
