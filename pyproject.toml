@@ -9,6 +9,7 @@ repository = "https://github.com/jpalafou/superfv"
 
 [tool.poetry.dependencies]
 python = "^3.10"
+ipykernel = "*"
 matplotlib = "*"
 numpy = "*"
 rationalpy = "*"

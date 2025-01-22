@@ -52,9 +52,9 @@ def sinus(
     dims = parse_xyz(x, y, z)
 
     # Validate variables in ArraySlicer
-    if {"rho", "vx", "vy", "vz"} - _slc.var_names == set():
+    if _slc.var_names == {"rho", "vx", "vy", "vz"}:
         # advection case
-        out = np.zeros((4, *x.shape))
+        out = np.empty((4, *x.shape))
         r = int("x" in dims) * x + int("y" in dims) * y + int("z" in dims) * z
         out[_slc("rho")] = (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + bounds[0]
         out[_slc("vx")] = vx
@@ -97,9 +97,9 @@ def square(
     dims = parse_xyz(x, y, z)
 
     # Validate variables in ArraySlicer
-    if {"rho", "vx", "vy", "vz"} - _slc.var_names == set():
+    if _slc.var_names == {"rho", "vx", "vy", "vz"}:
         # advection case
-        out = np.zeros((4, *x.shape))
+        out = np.empty((4, *x.shape))
         r = np.ones_like(x).astype(bool)
         if "x" in dims:
             r &= (x >= 0.25) & (x <= 0.75)
@@ -117,4 +117,45 @@ def square(
             f"Initial condition not implemented for variables: {_slc.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
+    return out
+
+
+def slotted_disk(
+    array_slicer: ArraySlicer,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    rho_min_max: Tuple[float, float] = (0.0, 1.0),
+) -> ArrayLike:
+    """
+    Returns array for the slotted disk initial condition.
+
+    Args:
+        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
+            the initial condition.
+        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
+        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
+        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        rho_min_max (Tuple[float, float]): Minimum and maximum values of the density.
+    """
+    _slc = array_slicer
+
+    if _slc.var_names == {"rho", "vx", "vy", "vz"}:
+        # advection case
+        xc, yc = x - 0.5, y - 0.5
+        rsq = np.sqrt(xc**2 + (y - 0.75) ** 2)
+        inside_disk = rsq < 0.15
+        inside_disk &= np.logical_not(np.logical_and(np.abs(xc) < 0.025, y < 0.85))
+
+        out = np.empty((4, *x.shape))
+        out[_slc("rho")] = np.where(inside_disk, rho_min_max[1], rho_min_max[0])
+        out[_slc("vx")] = -yc
+        out[_slc("vy")] = xc
+        out[_slc("vz")] = 0.0
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+        )
+
     return out

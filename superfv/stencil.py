@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import List, Tuple, Union
+from typing import List, Literal, Tuple, Union
 
 import numpy as np
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
@@ -38,7 +38,9 @@ def resize_stencil(stencil: Stencil, target_size: int):
 
 
 @lru_cache(maxsize=None)
-def conservative_interpolation_weights(p: int, x: Union[str, int, float]) -> np.ndarray:
+def conservative_interpolation_weights(
+    p: int, x: Union[Literal["l", "c", "r"], int, float]
+) -> np.ndarray:
     """
     Returns the weights of the conservative interpolation stencil for a given
     polynomial degree.

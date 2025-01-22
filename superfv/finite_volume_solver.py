@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
 from functools import partial
+from itertools import product
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
-from .boundary_conditions import BoundaryConditions
+from .boundary_conditions import BoundaryConditions, DirichletBC
 from .explicit_ODE_solver import ExplicitODESolver
 from .stencil import (
     conservative_interpolation_weights,
@@ -61,9 +62,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
-        xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        x_dirichlet: Optional[DirichletBC] = None,
+        y_dirichlet: Optional[DirichletBC] = None,
+        z_dirichlet: Optional[DirichletBC] = None,
         xlim: Tuple[float, float] = (0, 1),
         ylim: Tuple[float, float] = (0, 1),
         zlim: Tuple[float, float] = (0, 1),
@@ -95,9 +99,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
                 - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
                 The function must return an array with shape (nx, ny, nz).
-            xbc (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
-            ybc (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
-            zbc (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
+            bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
+            bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
+            bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
+            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
+                x-direction.
+            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
+                y-direction.
+            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
+                z-direction.
             xlim (Tuple[float, float]): x-limits of the domain.
             ylim (Tuple[float, float]): y-limits of the domain.
             zlim (Tuple[float, float]): z-limits of the domain.
@@ -110,7 +120,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
         self._init_ic(ic, ic_passives, cupy)
-        self._init_bc(xbc, ybc, zbc)
+        self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_manager(cupy)
 
     def _init_mesh(
@@ -163,10 +173,40 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 return np.meshgrid(x_center, y_center, z_center, indexing="ij")
             return x_center, y_center, z_center
 
+        # core mesh
         self.x, self.y, self.z = _get_uniform_3D_mesh(
             xlim, ylim, zlim, nx, ny, nz, as_mesh=False
         )
         self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
+
+        # slab meshes
+        slab_thickness = max(-(-p // 2) + 1, 2 * -(-p // 2))
+
+        def _get_slab_limits(lim, spacing, thickness, pos=None):
+            if pos is None:
+                return (lim[0] - spacing * thickness, lim[1] + spacing * thickness)
+            if pos == "l":
+                return (lim[0] - spacing * thickness, lim[0])
+            if pos == "r":
+                return (lim[1], lim[1] + spacing * thickness)
+
+        self.slab_meshes = {}
+        for dim, pos in product("xyz", "lr"):
+            slab_mesh = _get_uniform_3D_mesh(
+                xlim=_get_slab_limits(
+                    self.xlim, self.hx, slab_thickness, pos if dim == "x" else None
+                ),
+                ylim=_get_slab_limits(
+                    self.ylim, self.hy, slab_thickness, pos if dim == "y" else None
+                ),
+                zlim=_get_slab_limits(
+                    self.zlim, self.hz, slab_thickness, pos if dim == "z" else None
+                ),
+                nx=slab_thickness if dim == "x" else self.nx + 2 * slab_thickness,
+                ny=slab_thickness if dim == "y" else self.ny + 2 * slab_thickness,
+                nz=slab_thickness if dim == "z" else self.nz + 2 * slab_thickness,
+            )
+            self.slab_meshes[f"{dim}{pos}"] = slab_mesh
 
     def _init_ic(
         self,
@@ -176,63 +216,133 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ],
         cupy,
     ):
+        # active variable initial conditions
         self.array_slicer = self.define_vars()
-        self.has_passives = bool(ic_passives)
         _n_active_vars = max(self.array_slicer.idxs) + 1
-        _n_passive_vars = len(cast(dict, ic_passives)) if self.has_passives else 0
-        self.nvars = _n_active_vars + _n_passive_vars
+        _active_array_slicer = self.array_slicer.copy()
 
         # check indices are consecutive
         if self.array_slicer.idxs != set(range(_n_active_vars)):
             raise ValueError("Variable indices must be consecutive.")
 
-        # check name conflicts
-        if ic_passives is not None:
-            reserved_name = "passives"
-            existing_var_names = self.array_slicer.var_names
-            passive_var_names = set(cast(dict, ic_passives).keys())
+        # define callable
+        def _callable_active_ic(x, y, z):
+            return ic(_active_array_slicer, x, y, z)
 
-            if reserved_name in existing_var_names:
-                raise ValueError(f"Variable name '{reserved_name}' is reserved.")
-            if passive_var_names & existing_var_names:
-                taken_names = passive_var_names & existing_var_names
-                raise ValueError(f"Variable name(s) {taken_names} are already in use.")
+        # determine if passive variables are used
+        self.has_passives = bool(ic_passives)
+        _n_passive_vars = len(cast(dict, ic_passives)) if self.has_passives else 0
+        self.nvars = _n_active_vars + _n_passive_vars
 
-        # define callable to get the full ic array
-        def callable_ic(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
-            ic_arr = ic(self.array_slicer, x, y, z)
-
-            if self.has_passives:
-                ic_passives_arrs = []
-                for i, f in cast(dict, ic_passives).items():
-                    passive_ic_arr = np.expand_dims(f(x, y, z), axis=0)
-                    ic_passives_arrs.append(passive_ic_arr)
-                ic_arr = np.concatenate([ic_arr, *ic_passives_arrs], axis=0)
-
-            return ic_arr
-
-        self.callable_ic = callable_ic
-
-        # modify array slicer
         if self.has_passives:
-            for i, name in enumerate(cast(dict, ic_passives).keys()):
-                self.array_slicer.add_var(name, i + _n_active_vars)
-            self.array_slicer.create_var_group(
-                "passives", tuple(cast(dict, ic_passives).keys())
-            )
+            self._init_ic_passives(ic_passives)
+
+            # define callable to get the full ic array
+            def _callable_ic_with_passives(
+                x: ArrayLike, y: ArrayLike, z: ArrayLike
+            ) -> ArrayLike:
+                _slc = self.array_slicer
+                out = np.empty((self.nvars, *x.shape), dtype=float)
+                out[_slc("actives")] = _callable_active_ic(x, y, z)
+                for name, f in cast(dict, ic_passives).items():
+                    out[_slc(name)] = f(x, y, z)
+                return out
+
+            self.callable_ic = _callable_ic_with_passives
+
+        else:
+            self.callable_ic = _callable_active_ic
 
         # initialize the ODE solver and array manager
         super().__init__(
-            callable_ic(self.X, self.Y, self.Z), state_array_name="u", cupy=cupy
+            self.callable_ic(self.X, self.Y, self.Z), state_array_name="u", cupy=cupy
         )
+
+    def _init_ic_passives(
+        self,
+        ic_passives: Optional[
+            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
+        ],
+    ):
+        # gather indices of active variables
+        _active_vars = self.array_slicer.var_names
+        self.array_slicer.create_var_group("actives", tuple(_active_vars))
+
+        # assign indices to passive variables
+        _n_active_vars = len(_active_vars)
+        for i, name in enumerate(cast(dict, ic_passives).keys()):
+            self.array_slicer.add_var(name, i + _n_active_vars)
+        self.array_slicer.create_var_group(
+            "passives", tuple(cast(dict, ic_passives).keys())
+        )
+
+        # check the union of active and passive variables
+        _slc = self.array_slicer
+        test_arr = np.arange(self.nvars)
+        if not np.array_equal(
+            np.concatenate((test_arr[_slc("actives")], test_arr[_slc("passives")])),
+            test_arr,
+        ):
+            raise ValueError(
+                "The intersection of active and passive variables must be the set of all variables."
+            )
 
     def _init_bc(
         self,
-        xbc: Union[str, Tuple[str, str]],
-        ybc: Union[str, Tuple[str, str]],
-        zbc: Union[str, Tuple[str, str]],
+        bcx: Union[str, Tuple[str, str]],
+        bcy: Union[str, Tuple[str, str]],
+        bcz: Union[str, Tuple[str, str]],
+        x_dirichlet: Optional[DirichletBC],
+        y_dirichlet: Optional[DirichletBC],
+        z_dirichlet: Optional[DirichletBC],
     ):
-        self.bc = BoundaryConditions(self.array_slicer, xbc, ybc, zbc)
+        # configure "ic" boundary conditions as "dirichlet" boundary conditions
+        ic_configed_bc = {"x": bcx, "y": bcy, "z": bcz}
+        ic_configed_dirichlet = {"x": x_dirichlet, "y": y_dirichlet, "z": z_dirichlet}
+        for dim in "xyz":
+            bc = ic_configed_bc[dim]
+            f = ic_configed_dirichlet[dim]
+            _bc = list(bc) if isinstance(bc, tuple) else [bc, bc]
+            _f = list(f) if isinstance(f, tuple) else [f, f]
+            for i in range(2):
+                if _bc[i] == "ic":
+                    _bc[i] = "dirichlet"
+                    _f[i] = self.callable_ic
+            ic_configed_bc[dim] = (_bc[0], _bc[1])
+            ic_configed_dirichlet[dim] = (_f[0], _f[1])
+
+        # initialize boundary conditions
+        bcx = ic_configed_bc["x"]
+        bcy = ic_configed_bc["y"]
+        bcz = ic_configed_bc["z"]
+        x_dirichlet = ic_configed_dirichlet["x"]
+        y_dirichlet = ic_configed_dirichlet["y"]
+        z_dirichlet = ic_configed_dirichlet["z"]
+        _sm = self.slab_meshes
+        self.bc = BoundaryConditions(
+            self.array_slicer,
+            bcx,
+            bcy,
+            bcz,
+            x_dirichlet,
+            y_dirichlet,
+            z_dirichlet,
+            (
+                (_sm["xl"], _sm["xr"])
+                if x_dirichlet is not None and self.using_xdim
+                else None
+            ),
+            (
+                (_sm["yl"], _sm["yr"])
+                if y_dirichlet is not None and self.using_xdim
+                else None
+            ),
+            (
+                (_sm["zl"], _sm["zr"])
+                if z_dirichlet is not None and self.using_xdim
+                else None
+            ),
+        )
 
     def _init_array_manager(self, cupy: bool):
         self.interpolation_cache = ArrayManager()
@@ -271,7 +381,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         z: Union[int, float, str] = 0,
         p: int = 0,
         sweep_order: str = "xyz",
-        stencil_type: str = "conservative-interpolation",
+        stencil_type: Literal[
+            "conservative-interpolation", "uniform-quadrature"
+        ] = "conservative-interpolation",
     ) -> ArrayLike:
         """
         Interpolates a node value from the finite-volume cell averages.

@@ -63,13 +63,17 @@ def crop_to_center(array: np.ndarray, target_shape: tuple) -> np.ndarray:
     slices = []
     for dim_length, target_length in zip(array.shape, target_shape):
         crop = dim_length - target_length
-        if crop % 2 != 0:
+        if crop == 0:
+            slices.append(slice(None))
+            continue
+        elif crop % 2 == 0:
+            start = crop // 2
+            end = dim_length - crop // 2
+            slices.append(slice(start, end))
+        else:
             raise ValueError(
                 f"Cannot evenly crop dimension from {dim_length} to {target_length}."
             )
-        start = crop // 2
-        end = dim_length - crop // 2
-        slices.append(slice(start, end))
 
     return array[tuple(slices)]
 
@@ -105,20 +109,30 @@ class ArraySlicer:
     ndim: int
 
     def __post_init__(self):
-        self.var_names = set(self.var_idx_map.keys())
-        self.idxs = {v for v in self.var_idx_map.values() if isinstance(v, int)}
+        self.var_names = set()
+        self.group_names = set()
+        self.idxs = set()
 
-    def add_var(self, var: str, idx: int):
+        for name, idx in self.var_idx_map.items():
+            if isinstance(idx, int):
+                self.var_names.add(name)
+                self.idxs.add(idx)
+            else:
+                self.group_names.add(name)
+
+        self.all_names = self.var_names.union(self.group_names)
+
+    def add_var(self, name: str, idx: int):
         """
         Add a variable to the slicer.
 
         Args:
-            var (str): Variable name.
+            name (str): Variable name.
             idx (int): Variable index.
         """
-        if var in self.var_idx_map:
-            raise ValueError(f"Variable '{var}' already exists.")
-        self.var_idx_map[var] = idx
+        if name in self.all_names:
+            raise ValueError(f"Variable '{name}' already exists.")
+        self.var_idx_map[name] = idx
         self.__post_init__()
 
     def create_var_group(self, group_name: str, variables: Tuple[str, ...]):
@@ -129,14 +143,17 @@ class ArraySlicer:
             group_name (str): Name of the group.
             variables (Tuple[str, ...]): Tuple of variable names.
         """
-        if any(var not in self.var_idx_map for var in variables):
+        if any(name not in self.var_names for name in variables):
             raise ValueError(f"Variables not found: {variables}")
-        if group_name in self.var_idx_map:
-            raise ValueError(f"Variable group '{group_name}' already exists.")
-        if any(not isinstance(self.var_idx_map[var], int) for var in variables):
+        if group_name in self.all_names:
+            raise ValueError(f"Name '{group_name}' already exists.")
+        group_idxs = [self.var_idx_map[v] for v in variables]
+        if any(not isinstance(i, int) for i in group_idxs):
             raise ValueError("Variables must be indexed by integers.")
+        if len(set(group_idxs)) != len(group_idxs):
+            raise ValueError("Variables must have unique indices.")
         self.var_idx_map[group_name] = _idxs_to_slice_or_array(
-            [cast(int, self.var_idx_map[var]) for var in variables]
+            [cast(int, self.var_idx_map[v]) for v in variables]
         )
         self.__post_init__()
 
@@ -148,7 +165,7 @@ class ArraySlicer:
 
     def __call__(
         self,
-        var: Optional[Union[str, Tuple[str, ...]]] = None,
+        variable: Optional[Union[str, Tuple[str, ...]]] = None,
         x: Optional[SliceBounds] = None,
         y: Optional[SliceBounds] = None,
         z: Optional[SliceBounds] = None,
@@ -165,7 +182,7 @@ class ArraySlicer:
         Generate a slice object for a multivariable field.
 
         Args:
-            var (Optional[Union[str, Tuple[str, ...]]]): Variable name or tuple of
+            variable (Optional[Union[str, Tuple[str, ...]]]): Variable name or tuple of
                 variable names.
             x (Optional[SliceBounds]: Start and stop indices for the x-axis.
             y (Optional[SliceBounds]): Start and stop indices for the y-axis.
@@ -179,29 +196,29 @@ class ArraySlicer:
         """
         slices: List[Union[slice, int, np.ndarray]] = [slice(None)] * self.ndim
 
-        if var is not None:
-            if isinstance(var, str):
+        if variable is not None:
+            if isinstance(variable, str):
                 # retrieve single variable index
-                if var not in self.var_idx_map:
-                    raise ValueError(f"Variable '{var}' not found.")
-                var_idx = self.var_idx_map[var]
+                if variable not in self.var_idx_map:
+                    raise ValueError(f"Variable '{variable}' not found.")
+                var_idx = self.var_idx_map[variable]
                 if not isinstance(var_idx, (int, slice, np.ndarray)):
                     raise ValueError(
                         f"Variable index must be an integer, slice, or numpy.ndarray, not {type(var_idx)}."
                     )
                 slices[0] = var_idx
-            elif isinstance(var, tuple):
+            elif isinstance(variable, tuple):
                 # retrieve multiple variable indices
-                missing_vars = set(var) - set(self.var_idx_map.keys())
+                missing_vars = set(variable) - set(self.var_idx_map.keys())
                 if missing_vars:
                     raise ValueError(f"Variables not found: {missing_vars}")
-                if any(not isinstance(self.var_idx_map[v], int) for v in var):
+                if any(not isinstance(self.var_idx_map[v], int) for v in variable):
                     raise ValueError("Multiple variables must be indexed by integers.")
                 slices[0] = _idxs_to_slice_or_array(
-                    [cast(int, self.var_idx_map[v]) for v in var]
+                    [cast(int, self.var_idx_map[v]) for v in variable]
                 )
             else:
-                raise ValueError(f"Invalid type for var: {type(var)}")
+                raise ValueError(f"Invalid type for var: {type(variable)}")
 
         axes = [1, 2, 3, axis]
         axis_slices = [x, y, z, cut]
@@ -223,6 +240,12 @@ class ArraySlicer:
         if len(slices) == 1 or all(s == slice(None) for s in slices[1:]):
             return slices[0]
         return tuple(slices)
+
+    def copy(self) -> "ArraySlicer":
+        """
+        Create a copy of the slicer.
+        """
+        return ArraySlicer(self.var_idx_map.copy(), self.ndim)
 
 
 class ArrayManager:

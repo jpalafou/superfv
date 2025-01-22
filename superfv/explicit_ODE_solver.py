@@ -214,7 +214,7 @@ class ExplicitODESolver(ABC):
         # format list of target times
         if T is None:
             raise ValueError("T must be defined.")
-        elif isinstance(T, float):
+        elif isinstance(T, int) or isinstance(T, float):
             target_times = [T]
         elif isinstance(T, Iterable):
             target_times = sorted([float(t) for t in T])

@@ -3,6 +3,7 @@ from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
+from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .tools.array_management import ArrayLike, ArraySlicer, crop_to_center
 from .tools.timer import method_timer
@@ -22,9 +23,12 @@ class AdvectionSolver(FiniteVolumeSolver):
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
-        xbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        ybc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        zbc: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
+        x_dirichlet: Optional[DirichletBC] = None,
+        y_dirichlet: Optional[DirichletBC] = None,
+        z_dirichlet: Optional[DirichletBC] = None,
         xlim: Tuple[float, float] = (0, 1),
         ylim: Tuple[float, float] = (0, 1),
         zlim: Tuple[float, float] = (0, 1),
@@ -39,10 +43,32 @@ class AdvectionSolver(FiniteVolumeSolver):
         Initialize the advection solver.
 
         Args:
-            ic (InitialCondition): Initial condition object.
-            xbc (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
-            ybc (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
-            zbc (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
+            ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
+                Initial condition function. The function must accept the following
+                arguments:
+                - array_slicer (ArraySlicer): ArraySlicer object.
+                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
+                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
+                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+                The function must return an array with shape (nvars, nx, ny, nz).
+            ic_passives (Optional[Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]]):
+                Initial condition functions for passive variables. The dictionary keys
+                are the names of the passive variables, and the values are the
+                corresponding initial condition functions. Each function must accept
+                the following arguments:
+                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
+                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
+                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+                The function must return an array with shape (nx, ny, nz).
+            bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
+            bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
+            bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
+            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
+                x-direction.
+            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
+                y-direction.
+            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
+                z-direction.
             xlim (Tuple[float, float]): x-limits of the domain.
             ylim (Tuple[float, float]): y-limits of the domain.
             zlim (Tuple[float, float]): z-limits of the domain.
@@ -54,7 +80,23 @@ class AdvectionSolver(FiniteVolumeSolver):
             cupy (bool): Whether to use CuPy for array operations.
         """
         super().__init__(
-            ic, ic_passives, xbc, ybc, zbc, xlim, ylim, zlim, nx, ny, nz, p, CFL, cupy
+            ic,
+            ic_passives,
+            bcx,
+            bcy,
+            bcz,
+            x_dirichlet,
+            y_dirichlet,
+            z_dirichlet,
+            xlim,
+            ylim,
+            zlim,
+            nx,
+            ny,
+            nz,
+            p,
+            CFL,
+            cupy,
         )
 
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")

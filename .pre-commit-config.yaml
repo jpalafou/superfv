@@ -33,7 +33,7 @@ repos:
     hooks:
       - id: codespell
         name: codespell (Python spell checker)
-        args: ["--check-filenames", "--skip=*.ipynb"]
+        args: ["--check-filenames", "--skip=*.ipynb, poetry.lock"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.4
