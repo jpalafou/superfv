@@ -16,14 +16,12 @@ SuperFV is a computational solver for hyperbolic conservation laws based on the 
 - Support for passive scalars
 
 
-1. **Install Poetry** (if you haven't already):
-   You can install it via `pip`:
-   ```bash
-   pip install poetry
+## Installation
 
-2. **Install SuperFV and dependencies**:
-    Once Poetry is installed, navigate to the project directory and run:
-    ```bash
-   poetry install
-   ```
-   This will install `SuperFV` and all of its dependencies listed in the `poetry.lock` file.
+SuperFV can be installed using pip:
+
+```bash
+git clone git@github.com:jpalafou/superfv.git
+cd superfv
+pip install .
+```

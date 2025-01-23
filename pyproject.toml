@@ -1,32 +1,33 @@
-[tool.poetry]
+[build-system]
+requires = ["setuptools>=61.2", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
 name = "superfv"
 version = "0.1.0"
 description = "A solver library for mathematical and computational problems"
-authors = ["Jonathan Palafoutas <jpalafou@princeton.edu>"]
-license = "MIT"
+authors = [
+    { name = "Jonathan Palafoutas", email = "jpalafou@princeton.edu" }
+]
+    license = {text = "MIT"}
 readme = "README.md"
-repository = "https://github.com/jpalafou/superfv"
+requires-python = ">=3.10"
+dependencies = [
+    "ipykernel",
+    "matplotlib",
+    "numpy",
+    "rationalpy",
+    "tqdm",
+    "stencilpal @ git+https://github.com/jpalafou/stencilpal.git",
+]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-ipykernel = "*"
-matplotlib = "*"
-numpy = "*"
-rationalpy = "*"
-stencilpal = { git = "https://github.com/jpalafou/stencilpal" }
-tqdm = "*"
-
-[tool.poetry.group.dev.dependencies]
-nox = "*"
-pre-commit = "*"
-
-[tool.poetry.group.typecheck.dependencies]
-mypy = "*"
-types-tqdm = "*"
-
-[tool.poetry.group.test.dependencies]
-"pandas" = "*"
-pytest="*"
+[project.optional-dependencies]
+dev = ["nox", "pre-commit"]
+typecheck = ["mypy", "types-tqdm"]
+test = ["pandas", "pytest"]
 
 [tool.mypy]
 mypy_path = "stubs"
+
+[tool.setuptools]
+packages = ["superfv"]

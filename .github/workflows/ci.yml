@@ -22,19 +22,14 @@ jobs:
         with:
           python-version: "${{ matrix.python-version }}"
 
-      - name: Install Poetry
+      - name: Install dependencies
         run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "Poetry installed at $(which poetry)"
-
-      - name: Install dependencies with Poetry
-        run: |
-          poetry lock
-          poetry install --with dev --with test
+          python -m pip install --upgrade pip
+          pip install -e .[dev,test]
 
       - name: Run Nox test session
         run: |
-          poetry run nox -s test
+          nox -s test
 
   lint-typecheck:
     runs-on: ubuntu-latest
@@ -47,20 +42,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Poetry
+      - name: Install dependencies
         run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "Poetry installed at $(which poetry)"
-
-      - name: Install dependencies with Poetry
-        run: |
-          poetry lock
-          poetry install --with dev --with typecheck
+          python -m pip install --upgrade pip
+          pip install -e .[dev,typecheck]
 
       - name: Run Nox lint session
         run: |
-          poetry run nox -s lint
+          nox -s lint
 
       - name: Run Nox typecheck session
         run: |
-          poetry run nox -s typecheck
+          nox -s typecheck
