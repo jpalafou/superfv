@@ -65,7 +65,7 @@ def _parse_txyz_slices(
         ValueError: x, y, or z is not None, a float, or a tuple of length 2.
     """
     # get nearest time
-    t_array = np.sort(np.array(list(fv_solver.snapshots.keys())))
+    t_array = np.sort(np.array(fv_solver.snapshots.times()))
     n = -1 if t is None else _get_nearest_index(t_array, t)
     nearest_t = t_array[n]
 
@@ -116,7 +116,7 @@ def _extract_variable_data(
     Raises:
         ValueError: Variable not found in snapshots.
     """
-    snapshot = fv_solver.snapshots[nearest_t]
+    snapshot = fv_solver.snapshots(nearest_t)
     _slc = fv_solver.array_slicer
     if variable in snapshot:
         return snapshot[variable]

@@ -1,11 +1,10 @@
 from functools import partial
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 
-from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
-from .tools.array_management import ArrayLike, ArraySlicer, crop_to_center
+from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
 
@@ -15,94 +14,58 @@ class AdvectionSolver(FiniteVolumeSolver):
     """
 
     def define_vars(self) -> ArraySlicer:
+        """
+        Returns an ArraySlicer object with the following variables:
+            - rho: Density.
+            - vx: x-component of the velocity.
+            - vy: y-component of the velocity.
+            - vz: z-component of the velocity.
+        """
         return ArraySlicer({"rho": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
 
-    def __init__(
+    def define_riemann_solver(
         self,
-        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ] = None,
-        bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        x_dirichlet: Optional[DirichletBC] = None,
-        y_dirichlet: Optional[DirichletBC] = None,
-        z_dirichlet: Optional[DirichletBC] = None,
-        xlim: Tuple[float, float] = (0, 1),
-        ylim: Tuple[float, float] = (0, 1),
-        zlim: Tuple[float, float] = (0, 1),
-        nx: int = 1,
-        ny: int = 1,
-        nz: int = 1,
-        p: int = 0,
-        CFL: float = 0.8,
-        cupy: bool = False,
-    ):
+    ) -> Callable[[ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike]:
         """
-        Initialize the advection solver.
+        Returns an upwinding Riemann solver for the advection equation.
+        """
 
-        Args:
-            ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
-                Initial condition function. The function must accept the following
-                arguments:
-                - array_slicer (ArraySlicer): ArraySlicer object.
-                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
-                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
-                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
-                The function must return an array with shape (nvars, nx, ny, nz).
-            ic_passives (Optional[Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]]):
-                Initial condition functions for passive variables. The dictionary keys
-                are the names of the passive variables, and the values are the
-                corresponding initial condition functions. Each function must accept
-                the following arguments:
-                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
-                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
-                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
-                The function must return an array with shape (nx, ny, nz).
-            bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
-            bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
-            bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
-            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                x-direction.
-            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                y-direction.
-            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                z-direction.
-            xlim (Tuple[float, float]): x-limits of the domain.
-            ylim (Tuple[float, float]): y-limits of the domain.
-            zlim (Tuple[float, float]): z-limits of the domain.
-            nx (int): Number of cells in the x-direction.
-            ny (int): Number of cells in the y-direction.
-            nz (int): Number of cells in the z-direction.
-            p (int): Polynomial degree of the spatial discretization.
-            CFL (float): CFL number.
-            cupy (bool): Whether to use CuPy for array operations.
-        """
-        super().__init__(
-            ic,
-            ic_passives,
-            bcx,
-            bcy,
-            bcz,
-            x_dirichlet,
-            y_dirichlet,
-            z_dirichlet,
-            xlim,
-            ylim,
-            zlim,
-            nx,
-            ny,
-            nz,
-            p,
-            CFL,
-            cupy,
-        )
+        def upwinding_riemann_solver(yl, yr, dim):
+            _slc = self.array_slicer
+            vl, vr = yl[_slc("v" + dim)], yr[_slc("v" + dim)]
+            v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
+
+            out = np.zeros_like(yl)
+            out[_slc("rho")] = v * np.where(
+                v > 0, yl[_slc("rho")], np.where(v < 0, yr[_slc("rho")], 0)
+            )
+            if self.has_passives:
+                out[_slc("passives")] = v * np.where(
+                    v > 0,
+                    yl[_slc("passives")],
+                    np.where(v < 0, yr[_slc("passives")], 0),
+                )
+            return out
+
+        return upwinding_riemann_solver
 
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
         self, t: float, u: ArrayLike, p: int
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
+        """
+        Compute the time-step size and the fluxes for the advection equation.
+
+        Args:
+            t (float): Current time.
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            p (int): Polynomial degree.
+
+        Returns:
+            dt (float): Time-step size.
+            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): Fluxes in the x, y, and z
+                directions.
+        """
         # compute dt
         dt = self.get_dt(u)
 
@@ -120,48 +83,33 @@ class AdvectionSolver(FiniteVolumeSolver):
         )
 
         # interpolate face nodes
-        x_face_nodes, y_face_nodes, z_face_nodes = self.interpolate_face_nodes(
-            u_padded, p=p, mode="face-centers"
+        xl, xr, yl, yr, zl, zr = self.interpolate_face_nodes(
+            u_padded,
+            p=p,
+            mode={"transverse": "face-centers", "gauss-legendre": "gauss-legendre"}[
+                self.interpolation_scheme
+            ],
         )
 
-        # x-direction fluxes
+        # initialize empty fluxes
+        F, G, H = np.array([]), np.array([]), np.array([])
+
+        # compute numerical fluxes in each direction
         if self.using_xdim:
-            xl, xr = x_face_nodes
-            f = self.upwinding_riemann_solver(
-                (xr[:, :-1, ...], xl[:, 1:, ...]), dim="x"
+            riemann_problem_x = xr[:, :-1, ...], xl[:, 1:, ...]
+            F = self.compute_numerical_fluxes(
+                *riemann_problem_x, p=p, dim="x", mode=self.interpolation_scheme
             )
-            F = crop_to_center(
-                self.compute_flux_integral(f, dim="x", p=p, mode="transverse"),
-                self.arrays["F"].shape,
-            )
-        else:
-            F = np.array([])
-
-        # y-direction fluxes
         if self.using_ydim:
-            yl, yr = y_face_nodes
-            g = self.upwinding_riemann_solver(
-                (yr[:, :, :-1, ...], yl[:, :, 1:, ...]), dim="y"
+            riemann_problem_y = yr[:, :, :-1, ...], yl[:, :, 1:, ...]
+            G = self.compute_numerical_fluxes(
+                *riemann_problem_y, p=p, dim="y", mode=self.interpolation_scheme
             )
-            G = crop_to_center(
-                self.compute_flux_integral(g, dim="y", p=p, mode="transverse"),
-                self.arrays["G"].shape,
-            )
-        else:
-            G = np.array([])
-
-        # z-direction fluxes
         if self.using_zdim:
-            zl, zr = z_face_nodes
-            h = self.upwinding_riemann_solver(
-                (zr[:, :, :, :-1], zl[:, :, :, 1:]), dim="z"
+            riemann_problem_z = zr[:, :, :, :-1, ...], zl[:, :, :, 1:, ...]
+            H = self.compute_numerical_fluxes(
+                *riemann_problem_z, p=p, dim="z", mode=self.interpolation_scheme
             )
-            H = crop_to_center(
-                self.compute_flux_integral(h, dim="z", p=p, mode="transverse"),
-                self.arrays["H"].shape,
-            )
-        else:
-            H = np.array([])
 
         return dt, (F, G, H)
 
@@ -182,34 +130,3 @@ class AdvectionSolver(FiniteVolumeSolver):
         vy = np.max(np.abs(u[_slc("vy")]))
         vz = np.max(np.abs(u[_slc("vz")]))
         return (self.CFL * h / (vx + vy + vz)).item()
-
-    @partial(method_timer, cat="AdvectionSolver.upwinding_riemann_solver")
-    def upwinding_riemann_solver(
-        self, riemann_problem: Tuple[ArrayLike, ArrayLike], dim: Literal["x", "y", "z"]
-    ) -> ArrayLike:
-        """
-        Solve the advection of a scalar in up to three dimensions.
-
-        Args:
-            riemann_problem (Tuple[ArrayLike, ArrayLike]): Tuple of left and right
-                states. Each state has shape (nvars, nx, ny, nz).
-            dim (str): Dimension to solve in ("x", "y", or "z").
-
-        Returns:
-            out (ArrayLike): Point-wise solution to the Riemann problem. Has shape
-                (nvars, nx, ny, nz).
-        """
-        _slc = self.array_slicer
-        yl, yr = riemann_problem
-        vl, vr = yl[_slc("v" + dim)], yr[_slc("v" + dim)]
-        v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
-
-        out = np.zeros_like(yl)
-        out[_slc("rho")] = v * np.where(
-            v > 0, yl[_slc("rho")], np.where(v < 0, yr[_slc("rho")], 0)
-        )
-        if self.has_passives:
-            out[_slc("passives")] = v * np.where(
-                v > 0, yl[_slc("passives")], np.where(v < 0, yr[_slc("passives")], 0)
-            )
-        return out

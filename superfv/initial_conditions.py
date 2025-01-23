@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Literal, Tuple
 
 import numpy as np
 
@@ -126,6 +126,7 @@ def slotted_disk(
     y: ArrayLike,
     z: ArrayLike,
     rho_min_max: Tuple[float, float] = (0.0, 1.0),
+    rotation: Literal["cw", "ccw"] = "ccw",
 ) -> ArrayLike:
     """
     Returns array for the slotted disk initial condition.
@@ -137,6 +138,7 @@ def slotted_disk(
         y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
         z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
         rho_min_max (Tuple[float, float]): Minimum and maximum values of the density.
+        rotation (Literal["cw", "ccw"]): Rotation direction of the disk.
     """
     _slc = array_slicer
 
@@ -149,8 +151,8 @@ def slotted_disk(
 
         out = np.empty((4, *x.shape))
         out[_slc("rho")] = np.where(inside_disk, rho_min_max[1], rho_min_max[0])
-        out[_slc("vx")] = -yc
-        out[_slc("vy")] = xc
+        out[_slc("vx")] = -yc if rotation == "ccw" else yc
+        out[_slc("vy")] = xc if rotation == "ccw" else -xc
         out[_slc("vz")] = 0.0
     else:
         raise NotImplementedError(

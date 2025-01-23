@@ -7,6 +7,10 @@ import pytest
 from superfv import AdvectionSolver, initial_conditions
 
 
+def l1_error(u1, u2):
+    return np.mean(np.abs(u1 - u2))
+
+
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
 def test_AdvectionSolver_symmetry_1D(p: int):
     """
@@ -25,7 +29,7 @@ def test_AdvectionSolver_symmetry_1D(p: int):
         )
         solver.run(T)
         _slc = solver.array_slicer
-        solution[dim] = solver.snapshots[T]["u"][_slc("rho")].flatten()
+        solution[dim] = solver.snapshots[-1]["u"][_slc("rho")].flatten()
 
     # check that the solutions are equal
     assert np.array_equal(solution["x"], solution["y"])
@@ -33,7 +37,8 @@ def test_AdvectionSolver_symmetry_1D(p: int):
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
-def test_AdvectionSolver_symmetry_2D(p: int):
+@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+def test_AdvectionSolver_symmetry_2D(p: int, interpolation_scheme: str):
     """
     Test the symmetry of the solution in 2D.
     """
@@ -47,6 +52,7 @@ def test_AdvectionSolver_symmetry_2D(p: int):
         solver = AdvectionSolver(
             ic=partial(initial_conditions.square, **{f"v{dim1}": 1, f"v{dim2}": 1}),
             p=p,
+            interpolation_scheme=interpolation_scheme,
             **{f"n{dim1}": N, f"n{dim2}": N},
         )
         solver.run(T)
@@ -55,14 +61,53 @@ def test_AdvectionSolver_symmetry_2D(p: int):
         _slc = solver.array_slicer
         _slices2d = [slice(None), slice(None), slice(None)]
         _slices2d[{"xy": 2, "xz": 1, "yz": 0}[dim1 + dim2]] = 0
-        solution[dim1 + dim2] = solver.snapshots[T]["u"][
+        solution[dim1 + dim2] = solver.snapshots[-1]["u"][
             _slc("rho"), _slices2d[0], _slices2d[1], _slices2d[2]
         ]
 
     # check that the solutions are equal
-    print(solution["xy"].shape, solution["yz"].shape, solution["xz"].shape)
     assert np.array_equal(solution["xy"], solution["yz"])
     assert np.array_equal(solution["xy"], solution["xz"])
+
+
+@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
+    """
+    Assert that the result of a counter-clockwise rotation of a slotted disk is the
+    same as the mirror of the result of a clockwise rotation.
+    """
+    N = 64
+    p = 3
+
+    # initialize solvers
+    ccw_solver = AdvectionSolver(
+        ic=partial(initial_conditions.slotted_disk),
+        p=p,
+        nx=N,
+        ny=N,
+        interpolation_scheme=interpolation_scheme,
+    )
+    cw_solver = AdvectionSolver(
+        ic=partial(initial_conditions.slotted_disk, rotation="cw"),
+        p=p,
+        nx=N,
+        ny=N,
+        interpolation_scheme=interpolation_scheme,
+    )
+
+    # run solvers
+    ccw_solver.run(2 * np.pi)
+    cw_solver.run(2 * np.pi)
+
+    # compare solutions
+    _slc = ccw_solver.array_slicer
+    assert (
+        l1_error(
+            cw_solver.snapshots[-1]["u"][_slc("rho")],
+            np.flipud(ccw_solver.snapshots[-1]["u"][_slc("rho")]),
+        )
+        < 1e-15
+    )
 
 
 def test_AdvectionSolver_passive_scalar_invariance():
@@ -95,6 +140,6 @@ def test_AdvectionSolver_passive_scalar_invariance():
     # compare solutions
     _slc = solver.array_slicer
     assert np.array_equal(
-        solver.snapshots[T]["u"][_slc("rho")],
-        solver_with_passive_scalar.snapshots[T]["u"][_slc("rho")],
+        solver.snapshots[-1]["u"][_slc("rho")],
+        solver_with_passive_scalar.snapshots[-1]["u"][_slc("rho")],
     )

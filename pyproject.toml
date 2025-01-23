@@ -26,8 +26,8 @@ dev = ["nox", "pre-commit"]
 typecheck = ["mypy", "types-tqdm"]
 test = ["pandas", "pytest"]
 
-[tool.mypy]
-mypy_path = "stubs"
-
 [tool.setuptools]
 packages = ["superfv"]
+
+[tool.mypy]
+mypy_path = "stubs"

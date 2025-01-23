@@ -2,12 +2,13 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Dict, Iterable, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple, Union
 
 import numpy as np
 from tqdm import tqdm
 
 from .tools.array_management import ArrayLike, ArrayManager
+from .tools.snapshots import Snapshots
 from .tools.timer import Timer, method_timer
 
 
@@ -119,9 +120,6 @@ class ExplicitODESolver(ABC):
             progress_bar (bool): If True, display a progress bar.
             cupy (bool): If True, use CuPy for computations.
         """
-        # declare types
-        self.snapshots: Dict[float, Any]
-
         # initialize times
         self.t = 0.0
         self.timestamps = [0.0]
@@ -136,7 +134,7 @@ class ExplicitODESolver(ABC):
 
         # initialize timer, snapshots, progress bar, and git commit details
         self.timer = Timer(cats=["!ODE_INT"])
-        self.snapshots = {}
+        self.snapshots: Snapshots = Snapshots()
         self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
 

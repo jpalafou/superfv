@@ -9,10 +9,12 @@ from .boundary_conditions import BoundaryConditions, DirichletBC
 from .explicit_ODE_solver import ExplicitODESolver
 from .stencil import (
     conservative_interpolation_weights,
+    get_gauss_legendre_face_nodes,
+    get_gauss_legendre_face_weights,
     stencil_sweep,
     uniform_quadrature_weights,
 )
-from .tools.array_management import ArrayLike, ArrayManager, ArraySlicer
+from .tools.array_management import ArrayLike, ArrayManager, ArraySlicer, crop_to_center
 from .tools.timer import method_timer
 from .visualization import plot_1d_slice, plot_2d_slice
 
@@ -30,6 +32,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Returns:
             ArraySlicer: ArraySlicer object.
+        """
+        pass
+
+    @abstractmethod
+    def define_riemann_solver(
+        self,
+    ) -> Callable[[ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike]:
+        """
+        Define the Riemann solver.
+
+        Returns:
+            Callable[[ArrayLike, ArrayLike, str], ArrayLike]: Riemann solver function.
         """
         pass
 
@@ -75,8 +89,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ny: int = 1,
         nz: int = 1,
         p: int = 0,
+        interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         CFL: float = 0.8,
         cupy: bool = False,
+        **kwarg_attributes,
     ):
         """
         Initialize the finite volume solver.
@@ -114,14 +130,27 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             nx (int): Number of cells in the x-direction.
             ny (int): Number of cells in the y-direction.
             nz (int): Number of cells in the z-direction.
-            p (int): Polynomial degree of the spatial discretization.
+            p (int): Maximum polynomial degree of the spatial discretization.
+            interpolation_scheme (str): Interpolation scheme to use for the
+                interpolation of face nodes. Possible values:
+                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
+                    points. Compute the flux integral using Gauss-Legendre quadrature.
+                - "transverse": Interpolate nodes at the cell face centers. Compute the
+                    flux integral using a transverse quadrature.
             CFL (float): CFL number.
             cupy (bool): Whether to use CuPy for array operations.
+            kwarg_attributes: kwargs to be stored as attributes.
         """
-        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
+        self._init_kwarg_attributes(kwarg_attributes)
+        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, interpolation_scheme, CFL)
         self._init_ic(ic, ic_passives, cupy)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_manager(cupy)
+        self._init_riemann_solver()
+
+    def _init_kwarg_attributes(self, kwarg_attributes):
+        for key, value in kwarg_attributes.items():
+            setattr(self, key, value)
 
     def _init_mesh(
         self,
@@ -132,6 +161,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ny: int,
         nz: int,
         p: int,
+        interpolation_scheme: Literal["gauss-legendre", "transverse"],
         CFL: float,
     ):
         if any([xlim[1] < xlim[0], ylim[1] < ylim[0], zlim[1] < zlim[0]]):
@@ -160,6 +190,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.ndim = sum(self.using_dim)
         self.dims = "".join(dim for dim, using in zip("xyz", self.using_dim) if using)
         self.p = p
+        self.interpolation_scheme = interpolation_scheme
         self.CFL = CFL
 
         def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz, as_mesh: bool = True):
@@ -355,6 +386,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
 
+    def _init_riemann_solver(self):
+        self.riemann_solver = self.define_riemann_solver()
+
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
         """
@@ -465,8 +499,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         averages: ArrayLike,
         p: int,
-        mode: Literal["face-centers"],
-    ) -> List[Tuple[ArrayLike, ArrayLike]]:
+        mode: Literal["face-centers", "gauss-legendre"],
+    ) -> List[ArrayLike]:
         """
         Interpolate face nodes from cell averages.
 
@@ -475,74 +509,141 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p (int): Polynomial degree of the interpolation.
             mode (str): Mode of interpolation. Possible values:
                 - "face-centers": Interpolate nodes at the cell face centers.
+                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
+                    points.
 
         Returns:
-            List[Tuple[ArrayLike, ArrayLike]]: Interpolated face nodes.
-                - Each face node is a tuple of two arrays: the left and right face nodes.
-                - The left and right face nodes have shape
-                    (nvars, <= nx, <= ny, <= nz).
-                - If a face node does not exist in a given direction, the corresponding
-                    element in the list will be `None`.
+            List[ArrayLike]: List of face nodes. Each face node has shape
+                (nvars, <= nx, <= ny, <= nz, ninterpolations). If `mode` is
+                - "gauss-legendre": ninterpolations is the number of Gauss-Legendre
+                    quadrature points.
+                - "face-centers": ninterpolations is 1.
+                If a dimension is not used, the corresponding face node is an empty
+                array.
         """
         self.interpolation_cache.clear()
         sweep_orders = {"x": "yzx", "y": "zxy", "z": "xyz"}
-        face_nodes = []
-        if mode == "face-centers":
-            for dim in "xyz":
-                face_nodes.append(
-                    (
-                        self.interpolate(
-                            averages,
-                            **{dim: "l"},
-                            p=p,
-                            sweep_order=sweep_orders[dim],
-                            stencil_type="conservative-interpolation",
-                        ),
-                        self.interpolate(
-                            averages,
-                            **{dim: "r"},
-                            p=p,
-                            sweep_order=sweep_orders[dim],
-                            stencil_type="conservative-interpolation",
-                        ),
-                    )
-                    if getattr(self, f"using_{dim}dim")
-                    else (np.array([]), np.array([]))
-                )
-        else:
-            raise ValueError(f"Invalid mode: {mode}")
-        return face_nodes
 
-    @partial(method_timer, cat="FiniteVolumeSolver.compute_flux_integral")
-    def compute_flux_integral(
+        faces = []
+        for dim, pos in product("xyz", "lr"):
+            if getattr(self, f"using_{dim}dim"):
+                nodes = []
+                if mode == "gauss-legendre":
+                    all_coords = get_gauss_legendre_face_nodes(self.dims, dim, pos, p)
+                    for coords in all_coords:
+                        nodes.append(
+                            self.interpolate(
+                                averages,
+                                **coords,
+                                p=p,
+                                sweep_order=sweep_orders[dim],
+                                stencil_type="conservative-interpolation",
+                            )
+                        )
+                    faces.append(np.stack(nodes, axis=-1))
+                elif mode == "face-centers":
+                    (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
+                    node = self.interpolate(
+                        averages,
+                        **coords,
+                        p=p,
+                        sweep_order=sweep_orders[dim],
+                        stencil_type="conservative-interpolation",
+                    )
+                    faces.append(node[..., np.newaxis])
+            else:
+                faces.append(np.array([]))
+
+        return faces
+
+    def compute_transverse_flux_integral(
         self,
         node_values: ArrayLike,
         dim: Literal["x", "y", "z"],
         p: int,
-        mode: Literal["transverse"],
     ) -> ArrayLike:
         """
         Compute the flux integral in a given direction.
 
         Args:
-            node_values (ArrayLike): Node values. Has shape (nvars, nx, ny, nz).
+            node_values (ArrayLike): Node values. Has shape (nvars, nx, ny, nz, 1).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
             p (int): Polynomial degree of the interpolation.
-            mode (str): Mode of the flux. Possible values:
-                - "transverse": Compute the transverse flux integral.
 
         Returns:
             ArrayLike: Flux integral. Has shape (nvars, <= nx, <= ny, <= nz).
         """
-        if mode == "transverse":
-            flux_integrals = self.interpolate(
-                node_values,
-                p=p,
-                stencil_type="uniform-quadrature",
-                sweep_order={"x": "yz", "y": "xz", "z": "xy"}[dim],
-            )
         self.interpolation_cache.clear()
+        flux_integrals = self.interpolate(
+            node_values[..., 0],
+            p=p,
+            stencil_type="uniform-quadrature",
+            sweep_order={"x": "yz", "y": "xz", "z": "xy"}[dim],
+        )
         return flux_integrals
+
+    def compute_gauss_legendre_flux_integral(
+        self, node_values: ArrayLike, dim: Literal["x", "y", "z"], p: int
+    ) -> ArrayLike:
+        """
+        Compute the flux integral using Gauss-Legendre quadrature.
+
+        Args:
+            node_values (ArrayLike): Node values. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
+            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
+            p (int): Polynomial degree of the interpolation.
+
+        Returns:
+            ArrayLike: Flux integral. Has shape (nvars, nx, ny, nz).
+        """
+        weights = get_gauss_legendre_face_weights(self.dims, dim, p)
+        return np.sum(node_values * weights.reshape(1, 1, 1, 1, -1), axis=4)
+
+    @partial(method_timer, cat="FiniteVolumeSolver.compute_numerical_fluxes")
+    def compute_numerical_fluxes(
+        self,
+        left_nodes: ArrayLike,
+        right_nodes: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        p: int,
+        mode: Literal["transverse", "gauss-legendre"],
+        crop: bool = True,
+    ) -> ArrayLike:
+        """
+        Compute the numerical fluxes.
+
+        Args:
+            left_nodes (ArrayLike): Value of nodes to the left of the discontinuity.
+                Has shape (nvars, nx, ny, nz, ninterpolations).
+            right_nodes (ArrayLike): Value of nodes to the right of the discontinuity.
+                Has shape (nvars, nx, ny, nz, ninterpolations).
+            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
+            p (int): Polynomial degree of the interpolation.
+            mode (str): Mode of the numerical flux computation. Possible values:
+                - "transverse": Compute the flux integral using a transverse
+                    quadrature.
+                - "gauss-legendre": Compute the flux integral using Gauss-Legendre
+                    quadrature.
+            crop (bool): Whether to crop the numerical fluxes to the shape of the
+                finite-volume mesh.
+        """
+        nodal_fluxes = self.riemann_solver(left_nodes, right_nodes, dim)
+        if mode == "transverse":
+            numerical_fluxes = self.compute_transverse_flux_integral(
+                nodal_fluxes, dim, p
+            )
+        elif mode == "gauss-legendre":
+            numerical_fluxes = self.compute_gauss_legendre_flux_integral(
+                nodal_fluxes, dim, p
+            )
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+        if crop:
+            return crop_to_center(
+                numerical_fluxes, self.arrays[{"x": "F", "y": "G", "z": "H"}[dim]].shape
+            )
+        return numerical_fluxes
 
     def RHS(self, u: ArrayLike, F: ArrayLike, G: ArrayLike, H: ArrayLike) -> ArrayLike:
         """
@@ -572,8 +673,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        log = {"u": self.arrays.get_numpy("u", copy=True)}
-        self.snapshots[self.t] = log
+        data = {"u": self.arrays.get_numpy("u", copy=True)}
+        self.snapshots.log(self.t, data)
 
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, **kwargs):
