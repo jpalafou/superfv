@@ -1,5 +1,4 @@
-- [x] dirichlet boundary conditions for rotation of a slotted disk
-- [ ] GL and transverse flux point methods
+- [x] GL and transverse flux point methods
 - [ ] a posteriori slope limiting
 - [ ] gauss-legendre or transverse flux quadrature options
 - [ ] a priori slope limitng
