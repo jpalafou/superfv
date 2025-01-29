@@ -331,7 +331,7 @@ class ArrayManager:
             be stored as NumPy arrays.
         """
         for name in self.arrays:
-            self.transver_device(name, "cpu")
+            self.transfer_device(name, "cpu")
         self.using_cupy = False
 
     def add(self, name: str, array: np.ndarray):

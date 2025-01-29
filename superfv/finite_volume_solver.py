@@ -35,17 +35,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
-    @abstractmethod
-    def define_riemann_solver(
-        self,
-    ) -> Callable[[ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike]:
+    def dummy_riemann_solver(
+        self, yl: ArrayLike, yr: ArrayLike, dim: Literal["x", "y", "z"]
+    ) -> ArrayLike:
         """
-        Define the Riemann solver.
+        Dummy Riemann solver to give an example of the required signature.
+
+        Args:
+            yl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
+            yr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
+            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
 
         Returns:
-            Callable[[ArrayLike, ArrayLike, str], ArrayLike]: Riemann solver function.
+            ArrayLike: Numerical fluxes. Has shape (nvars, nx, ny, nz, ...).
         """
-        pass
+        raise NotImplementedError("Riemann solver not implemented.")
 
     @abstractmethod
     @partial(method_timer, cat="?.compute_dt_and_fluxes")
@@ -90,6 +94,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         nz: int = 1,
         p: int = 0,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
+        riemann_solver: str = "dummy_riemann_solver",
         CFL: float = 0.8,
         cupy: bool = False,
         **kwarg_attributes,
@@ -137,6 +142,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
+            riemann_solver (str): Name of the Riemann solver function. Must be
+                implemented in the derived class.
             CFL (float): CFL number.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
@@ -146,7 +153,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_ic(ic, ic_passives, cupy)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_manager(cupy)
-        self._init_riemann_solver()
+        self._init_riemann_solver(riemann_solver)
 
     def _init_kwarg_attributes(self, kwarg_attributes):
         for key, value in kwarg_attributes.items():
@@ -386,8 +393,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
 
-    def _init_riemann_solver(self):
-        self.riemann_solver = self.define_riemann_solver()
+    def _init_riemann_solver(self, riemann_solver):
+        if not hasattr(self, riemann_solver):
+            raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
+        self.riemann_solver: Callable[
+            [ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike
+        ] = getattr(self, riemann_solver)
 
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:

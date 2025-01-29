@@ -116,8 +116,12 @@ class Timer:
         report_str = f"{cat_header:<{max_cat_len}} {time_header:<{max_time_len}}\n"
         report_str += "-" * (max_cat_len + max_time_len + 1) + "\n"
 
+        # alphabetical order
+        alphabetically_sorted_cats = sorted(self.cum_time.keys())
+
         # Add each category and time, formatted to the correct precision and width
-        for cat, t in self.cum_time.items():
+        for cat in alphabetically_sorted_cats:
+            t = self.cum_time[cat]
             time_str = f"{t:.{self.precision}f}"
             report_str += f"{cat:<{max_cat_len}} {time_str:>{max_time_len}}\n"
 
