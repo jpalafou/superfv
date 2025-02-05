@@ -198,6 +198,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.dims = "".join(dim for dim, using in zip("xyz", self.using_dim) if using)
         self.p = p
         self.interpolation_scheme = interpolation_scheme
+        self.interpolate_face_nodes_mode = {
+            "transverse": "face-centers",
+            "gauss-legendre": "gauss-legendre",
+        }[interpolation_scheme]
         self.CFL = CFL
 
         def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz, as_mesh: bool = True):
@@ -509,6 +513,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_face_nodes(
         self,
         averages: ArrayLike,
+        dim: Literal["x", "y", "z"],
         p: int,
         mode: Literal["face-centers", "gauss-legendre"],
     ) -> List[ArrayLike]:
@@ -517,6 +522,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Args:
             averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
+            dim (str): Direction of the face nodes. Can be "x", "y", or "z".
             p (int): Polynomial degree of the interpolation.
             mode (str): Mode of interpolation. Possible values:
                 - "face-centers": Interpolate nodes at the cell face centers.
@@ -524,46 +530,47 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     points.
 
         Returns:
-            List[ArrayLike]: List of face nodes. Each face node has shape
-                (nvars, <= nx, <= ny, <= nz, ninterpolations). If `mode` is
-                - "gauss-legendre": ninterpolations is the number of Gauss-Legendre
-                    quadrature points.
-                - "face-centers": ninterpolations is 1.
-                If a dimension is not used, the corresponding face node is an empty
-                array.
+            Tuple[ArrayLike]: List of two node arrays. The first element is the left
+                face nodes, and the second element is the right face nodes. Each face
+                node has shape (nvars, <= nx, <= ny, <= nz, ninterpolations), unless
+                the dimension is not used, in which case the face node is an empty
+                array. ninterpolations is the number of Gauss-Legendre interpolation
+                points for a degree p reconstruction if `mode` is "gauss-legendre".
+                If `mode` is "face-centers", ninterpolations is 1.
+
         """
         self.interpolation_cache.clear()
         sweep_orders = {"x": "yzx", "y": "zxy", "z": "xyz"}
 
         faces = []
-        for dim, pos in product("xyz", "lr"):
-            if getattr(self, f"using_{dim}dim"):
-                nodes = []
-                if mode == "gauss-legendre":
-                    all_coords = get_gauss_legendre_face_nodes(self.dims, dim, pos, p)
-                    for coords in all_coords:
-                        nodes.append(
-                            self.interpolate(
-                                averages,
-                                **coords,
-                                p=p,
-                                sweep_order=sweep_orders[dim],
-                                stencil_type="conservative-interpolation",
-                            )
-                        )
-                    faces.append(np.stack(nodes, axis=-1))
-                elif mode == "face-centers":
-                    (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
-                    node = self.interpolate(
-                        averages,
-                        **coords,
-                        p=p,
-                        sweep_order=sweep_orders[dim],
-                        stencil_type="conservative-interpolation",
-                    )
-                    faces.append(node[..., np.newaxis])
-            else:
+        for pos in "lr":
+            nodes = []
+            if not getattr(self, f"using_{dim}dim"):
                 faces.append(np.array([]))
+                continue
+            if mode == "gauss-legendre":
+                all_coords = get_gauss_legendre_face_nodes(self.dims, dim, pos, p)
+                for coords in all_coords:
+                    nodes.append(
+                        self.interpolate(
+                            averages,
+                            **coords,
+                            p=p,
+                            sweep_order=sweep_orders[dim],
+                            stencil_type="conservative-interpolation",
+                        )
+                    )
+                faces.append(np.stack(nodes, axis=-1))
+            elif mode == "face-centers":
+                (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
+                node = self.interpolate(
+                    averages,
+                    **coords,
+                    p=p,
+                    sweep_order=sweep_orders[dim],
+                    stencil_type="conservative-interpolation",
+                )
+                faces.append(node[..., np.newaxis])
 
         return faces
 

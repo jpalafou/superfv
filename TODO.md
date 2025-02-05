@@ -1,4 +1,4 @@
-- [ ] for the sake of memory, FiniteVolumeSolver.interpolate_face_nodes should give the
+- [x] for the sake of memory, FiniteVolumeSolver.interpolate_face_nodes should give the
         face interpolations of only one dim at a time
 - [ ] a posteriori slope limiting
 - [ ] gauss-legendre or transverse flux quadrature options

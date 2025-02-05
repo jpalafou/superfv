@@ -162,30 +162,34 @@ class AdvectionSolver(FiniteVolumeSolver):
             ),
         )
 
-        # interpolate face nodes
-        xl, xr, yl, yr, zl, zr = self.interpolate_face_nodes(
-            u_padded,
-            p=p,
-            mode={"transverse": "face-centers", "gauss-legendre": "gauss-legendre"}[
-                self.interpolation_scheme
-            ],
-        )
-
-        # initialize empty fluxes
+        # initialize empty flux arrays
         F, G, H = np.array([]), np.array([]), np.array([])
 
-        # compute numerical fluxes in each direction
+        # x-fluxes
         if self.using_xdim:
+            xl, xr = self.interpolate_face_nodes(
+                u_padded, p=p, dim="x", mode=self.interpolate_face_nodes_mode
+            )
             riemann_problem_x = xr[:, :-1, ...], xl[:, 1:, ...]
             F = self.compute_numerical_fluxes(
                 *riemann_problem_x, p=p, dim="x", mode=self.interpolation_scheme
             )
+
+        # y-fluxes
         if self.using_ydim:
+            yl, yr = self.interpolate_face_nodes(
+                u_padded, p=p, dim="y", mode=self.interpolate_face_nodes_mode
+            )
             riemann_problem_y = yr[:, :, :-1, ...], yl[:, :, 1:, ...]
             G = self.compute_numerical_fluxes(
                 *riemann_problem_y, p=p, dim="y", mode=self.interpolation_scheme
             )
+
+        # z-fluxes
         if self.using_zdim:
+            zl, zr = self.interpolate_face_nodes(
+                u_padded, p=p, dim="z", mode=self.interpolate_face_nodes_mode
+            )
             riemann_problem_z = zr[:, :, :, :-1, ...], zl[:, :, :, 1:, ...]
             H = self.compute_numerical_fluxes(
                 *riemann_problem_z, p=p, dim="z", mode=self.interpolation_scheme
