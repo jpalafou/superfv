@@ -1,4 +1,3 @@
-- [x] GL and transverse flux point methods
 - [ ] for the sake of memory, FiniteVolumeSolver.interpolate_face_nodes should give the
         face interpolations of only one dim at a time
 - [ ] a posteriori slope limiting

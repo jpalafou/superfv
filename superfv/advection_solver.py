@@ -125,15 +125,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         self, yl: ArrayLike, yr: ArrayLike, dim: Literal["x", "y", "z"]
     ) -> ArrayLike:
         """
-        Upwinding Riemann solver for the advection equation.
-
-        Args:
-            yl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
-            yr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
-            dim (Literal["x", "y", "z"]): Dimension.
-
-        Returns:
-            ArrayLike: Flux. Has shape (nvars, nx, ny, nz, ...).
+        Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
         return advection_upwind(self.array_slicer, yl, yr, dim)
 
