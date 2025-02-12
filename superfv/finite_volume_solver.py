@@ -7,10 +7,13 @@ import numpy as np
 
 from .boundary_conditions import BoundaryConditions, DirichletBC
 from .explicit_ODE_solver import ExplicitODESolver
+from .MOOD import detect_troubles, init_MOOD, revise_fluxes
+from .slope_limiting import minmod, moncen
 from .stencil import (
     conservative_interpolation_weights,
     get_gauss_legendre_face_nodes,
     get_gauss_legendre_face_weights,
+    get_symmetric_slices,
     stencil_sweep,
     uniform_quadrature_weights,
 )
@@ -54,7 +57,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @abstractmethod
     @partial(method_timer, cat="?.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
-        self, t: float, u: ArrayLike, p: int
+        self,
+        t: float,
+        u: ArrayLike,
+        mode: Literal["transverse", "gauss-legendre"],
+        p: Optional[int] = None,
+        slope_limiting: Optional[Literal["muscl"]] = None,
+        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
         """
         Compute the time-step size and the fluxes.
@@ -62,7 +71,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             t (float): Time value.
             u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            p (int): Polynomial degree of the spatial discretization.
+            mode (str): Mode of interpolation. Possible values:
+                - "transverse": Interpolate nodes at the cell face centers. Compute the
+                    flux integral using a transverse quadrature.
+                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
+                    points. Compute the flux integral using Gauss-Legendre quadrature.
+            p (Optional[int]): Polynomial degree of the spatial discretization. If
+                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
+            slope_limiting (Optional[Literal["muscl"]]): Overwrites interpolation mode
+                to use a slope-limiting scheme. Possible values:
+                - "muscl": Use the MUSCL scheme.
+            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
+                use if `slope_limiting` is "muscl". Possible values:
+                - "minmod": Minmod limiter.
+                - "moncen": Moncen limiter.
 
         Returns:
             dt (float): Time-step size.
@@ -73,6 +95,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - H: (nvars, nx, ny, nz + 1)
         """
         pass
+
+    def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
+        """
+        Check for MOOD violations in the candidate solution.
+
+        Args:
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            ustar (ArrayLike): Candidate solution. Has shape
+                (nvars, nx, ny, nz).
+
+        Returns:
+            ArrayLike: Boolean array indicating MOOD violations. Has shape
+                (nx, ny, nz).
+        """
+        raise NotImplementedError("MOOD_violation_check not implemented.")
 
     def __init__(
         self,
@@ -93,9 +130,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ny: int = 1,
         nz: int = 1,
         p: int = 0,
+        CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         riemann_solver: str = "dummy_riemann_solver",
-        CFL: float = 0.8,
+        MOOD: bool = False,
         cupy: bool = False,
         **kwarg_attributes,
     ):
@@ -136,6 +174,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ny (int): Number of cells in the y-direction.
             nz (int): Number of cells in the z-direction.
             p (int): Maximum polynomial degree of the spatial discretization.
+            CFL (float): CFL number.
             interpolation_scheme (str): Interpolation scheme to use for the
                 interpolation of face nodes. Possible values:
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
@@ -144,16 +183,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     flux integral using a transverse quadrature.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
-            CFL (float): CFL number.
+            MOOD (bool): Whether to use MOOD for a posteriori flux revision.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
         """
         self._init_kwarg_attributes(kwarg_attributes)
-        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, interpolation_scheme, CFL)
+        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL, interpolation_scheme)
         self._init_ic(ic, ic_passives, cupy)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_manager(cupy)
         self._init_riemann_solver(riemann_solver)
+        self._init_slope_limiting(MOOD)
 
     def _init_kwarg_attributes(self, kwarg_attributes):
         for key, value in kwarg_attributes.items():
@@ -168,8 +208,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ny: int,
         nz: int,
         p: int,
-        interpolation_scheme: Literal["gauss-legendre", "transverse"],
         CFL: float,
+        interpolation_scheme: Literal["gauss-legendre", "transverse"],
     ):
         if any([xlim[1] < xlim[0], ylim[1] < ylim[0], zlim[1] < zlim[0]]):
             raise ValueError("The upper limit must be greater than the lower limit.")
@@ -197,12 +237,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.ndim = sum(self.using_dim)
         self.dims = "".join(dim for dim, using in zip("xyz", self.using_dim) if using)
         self.p = p
-        self.interpolation_scheme = interpolation_scheme
-        self.interpolate_face_nodes_mode = {
-            "transverse": "face-centers",
-            "gauss-legendre": "gauss-legendre",
-        }[interpolation_scheme]
         self.CFL = CFL
+        self.interpolation_scheme = interpolation_scheme
+
+        if self.interpolation_scheme == "gauss-legendre" and self.ndim == 1:
+            raise ValueError(
+                "Gauss-Legendre interpolation scheme is not supported in 1D."
+            )
 
         def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz, as_mesh: bool = True):
             x_interface = np.linspace(xlim[0], xlim[1], nx + 1)
@@ -388,8 +429,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_array_manager(self, cupy: bool):
         self.interpolation_cache = ArrayManager()
+        self.MOOD_cache = ArrayManager()
         if cupy:
             self.interpolation_cache.enable_cupy()
+            self.MOOD_cache.enable_cupy()
 
         # initialize flux arrays
         nvars, nx, ny, nz = self.nvars, self.nx, self.ny, self.nz
@@ -397,12 +440,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
 
-    def _init_riemann_solver(self, riemann_solver):
+    def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
         self.riemann_solver: Callable[
             [ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike
         ] = getattr(self, riemann_solver)
+
+    def _init_slope_limiting(self, MOOD: bool):
+        self.MOOD = MOOD
+        self.MOOD_cascade = ["fv" + str(self.p), "muscl"]
+        self.MOOD_iter_count = 0
+        self.MOOD_max_iter_count = 1
 
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
@@ -418,7 +467,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dudt (ArrayLike): Right-hand side of the ODE. Has shape
                 (nvars, nx, ny, nz).
         """
-        dt, fluxes = self.compute_dt_and_fluxes(t, u, p=self.p)
+        dt, fluxes = self.compute_dt_and_fluxes(
+            t=t, u=u, mode=self.interpolation_scheme, p=self.p
+        )
+        if self.MOOD:
+            init_MOOD(self, u, fluxes)
+            while detect_troubles(self, t, dt, u, fluxes):
+                fluxes = revise_fluxes(
+                    self,
+                    t,
+                    u,
+                    fluxes,
+                    mode=self.interpolation_scheme,
+                    slope_limiter="minmod",
+                )
         return dt, self.RHS(u, *fluxes)
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
@@ -514,8 +576,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         averages: ArrayLike,
         dim: Literal["x", "y", "z"],
-        p: int,
-        mode: Literal["face-centers", "gauss-legendre"],
+        mode: Literal["transverse", "gauss-legendre", "muscl"],
+        p: Optional[int] = None,
+        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
     ) -> List[ArrayLike]:
         """
         Interpolate face nodes from cell averages.
@@ -523,12 +586,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
             dim (str): Direction of the face nodes. Can be "x", "y", or "z".
-            p (int): Polynomial degree of the interpolation.
             mode (str): Mode of interpolation. Possible values:
-                - "face-centers": Interpolate nodes at the cell face centers.
+                - "transverse": Interpolate nodes at the cell face centers.
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points.
-
+                - "muscl": Interpolate nodes using the MUSCL scheme.
+            p (Optional[int]): Polynomial degree of the interpolation for "transverse" and
+                "gauss-legendre" modes. For "muscl" mode, p is ignored.
+            slope_limiter (str): Limiter to use for the MUSCL scheme. Possible values:
+                - "minmod": Minmod limiter.
+                - "moncen": Moncen limiter.
         Returns:
             Tuple[ArrayLike]: List of two node arrays. The first element is the left
                 face nodes, and the second element is the right face nodes. Each face
@@ -561,7 +628,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         )
                     )
                 faces.append(np.stack(nodes, axis=-1))
-            elif mode == "face-centers":
+            elif mode == "transverse":
                 (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
                 node = self.interpolate(
                     averages,
@@ -571,6 +638,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     stencil_type="conservative-interpolation",
                 )
                 faces.append(node[..., np.newaxis])
+            elif mode == "muscl":
+                l_slc, c_slc, r_slc = get_symmetric_slices(
+                    ndim=4, nslices=3, axis="xyz".index(dim) + 1
+                )
+                l_daverages = averages[c_slc] - averages[l_slc]
+                r_daverages = averages[r_slc] - averages[c_slc]
+                if slope_limiter == "minmod":
+                    limited_daverages = minmod(l_daverages, r_daverages)
+                elif slope_limiter == "moncen":
+                    limited_daverages = moncen(l_daverages, r_daverages)
+                else:
+                    raise ValueError(f"Unsupported slope limiter: {slope_limiter}.")
+                left_face = averages[c_slc] - 0.5 * limited_daverages
+                right_face = averages[c_slc] + 0.5 * limited_daverages
+                return [left_face[..., np.newaxis], right_face[..., np.newaxis]]
+            else:
+                raise ValueError(f"Unsupported mode: {mode}.")
 
         return faces
 
@@ -624,8 +708,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         left_nodes: ArrayLike,
         right_nodes: ArrayLike,
         dim: Literal["x", "y", "z"],
-        p: int,
         mode: Literal["transverse", "gauss-legendre"],
+        p: int,
         crop: bool = True,
     ) -> ArrayLike:
         """
@@ -637,12 +721,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             right_nodes (ArrayLike): Value of nodes to the right of the discontinuity.
                 Has shape (nvars, nx, ny, nz, ninterpolations).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
-            p (int): Polynomial degree of the interpolation.
             mode (str): Mode of the numerical flux computation. Possible values:
                 - "transverse": Compute the flux integral using a transverse
                     quadrature.
                 - "gauss-legendre": Compute the flux integral using Gauss-Legendre
                     quadrature.
+            p (int): Polynomial degree of the interpolation.
             crop (bool): Whether to crop the numerical fluxes to the shape of the
                 finite-volume mesh.
         """

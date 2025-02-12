@@ -334,15 +334,17 @@ class ArrayManager:
             self.transfer_device(name, "cpu")
         self.using_cupy = False
 
-    def add(self, name: str, array: np.ndarray):
+    def add(self, name: str, array: np.ndarray, overwrite: bool = False):
         """
         Add an array to the manager.
 
         Args:
             name (str): Name of the array.
             array (np.ndarray): Array to add.
+            overwrite (bool): If True, overwrite the array if it already exists.
         """
-        self._check_name_available(name)
+        if not overwrite:
+            self._check_name_available(name)
         self._check_numpy_array(array)
         if self.using_cupy:
             self.arrays[name] = cp.asarray(array)

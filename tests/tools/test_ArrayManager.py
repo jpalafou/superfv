@@ -53,6 +53,15 @@ def test_add_non_numpy_array_raises_error(array_manager):
         array_manager.add("invalid_array", "this is not an array")
 
 
+def test_add_array_with_overwrite(array_manager):
+    """Test adding an array with the overwrite flag."""
+    array1 = np.random.rand(5, 5)
+    array2 = np.random.rand(5, 5) + 1
+    array_manager.add("test_array", array1)
+    array_manager.add("test_array", array2, overwrite=True)
+    assert np.all(array_manager["test_array"] == array2)
+
+
 def test_rm_array(array_manager):
     """Test removing an array."""
     array = np.random.rand(5, 5)

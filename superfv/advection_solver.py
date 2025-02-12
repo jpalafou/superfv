@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -34,9 +34,10 @@ class AdvectionSolver(FiniteVolumeSolver):
         ny: int = 1,
         nz: int = 1,
         p: int = 0,
+        CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         riemann_solver: str = "advection_upwind",
-        CFL: float = 0.8,
+        MOOD: bool = False,
         cupy: bool = False,
     ):
         """
@@ -76,6 +77,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             ny (int): Number of cells in the y-direction.
             nz (int): Number of cells in the z-direction.
             p (int): Maximum polynomial degree of the spatial discretization.
+            CFL (float): CFL number.
             interpolation_scheme (str): Interpolation scheme to use for the
                 interpolation of face nodes. Possible values:
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
@@ -84,7 +86,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                     flux integral using a transverse quadrature.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
-            CFL (float): CFL number.
+            MOOD (bool): Whether to use MOOD for a posteriori flux revision.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
         """
@@ -104,9 +106,10 @@ class AdvectionSolver(FiniteVolumeSolver):
             ny=ny,
             nz=nz,
             p=p,
+            CFL=CFL,
             interpolation_scheme=interpolation_scheme,
             riemann_solver=riemann_solver,
-            CFL=CFL,
+            MOOD=MOOD,
             cupy=cupy,
         )
 
@@ -129,28 +132,88 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return advection_upwind(self.array_slicer, yl, yr, dim)
 
+    def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
+        """
+        Mood violation check implementation. See
+        FiniteVolumeSolver.MOOD_violation_check.
+        """
+        _slc = self.array_slicer
+        rho = self.bc(
+            u,
+            pad_width=(
+                1 if self.using_xdim else 0,
+                1 if self.using_ydim else 0,
+                1 if self.using_zdim else 0,
+            ),
+        )[_slc("rho")]
+        dmp_min = u[_slc("rho")].copy()
+        dmp_max = u[_slc("rho")].copy()
+        if self.using_xdim:
+            dmp_min = np.minimum(rho[:-2, ...], np.minimum(dmp_min, rho[2:, ...]))
+            dmp_max = np.maximum(rho[:-2, ...], np.maximum(dmp_max, rho[2:, ...]))
+        if self.using_ydim:
+            dmp_min = np.minimum(rho[:, :-2, ...], np.minimum(dmp_min, rho[:, 2:, ...]))
+            dmp_max = np.maximum(rho[:, :-2, ...], np.maximum(dmp_max, rho[:, 2:, ...]))
+        if self.using_zdim:
+            dmp_min = np.minimum(
+                rho[:, :, :-2, ...], np.minimum(dmp_min, rho[:, :, 2:, ...])
+            )
+            dmp_max = np.maximum(
+                rho[:, :, :-2, ...], np.maximum(dmp_max, rho[:, :, 2:, ...])
+            )
+        return (
+            np.minimum(ustar[_slc("rho")] - dmp_min, dmp_max - ustar[_slc("rho")])
+            < -1e-10
+        )
+
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
-        self, t: float, u: ArrayLike, p: int
+        self,
+        t: float,
+        u: ArrayLike,
+        mode: Literal["transverse", "gauss-legendre"],
+        p: Optional[int] = None,
+        slope_limiting: Optional[Literal["muscl"]] = None,
+        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
         """
-        Compute the time-step size and the fluxes for the advection equation.
+        Compute the time-step size and the fluxes.
 
         Args:
-            t (float): Current time.
+            t (float): Time value.
             u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            p (int): Polynomial degree.
+            mode (str): Mode of interpolation. Possible values:
+                - "transverse": Interpolate nodes at the cell face centers. Compute the
+                    flux integral using a transverse quadrature.
+                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
+                    points. Compute the flux integral using Gauss-Legendre quadrature.
+            p (Optional[int]): Polynomial degree of the spatial discretization. If
+                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
+            slope_limiting (Optional[Literal["muscl"]]): Overwrites interpolation mode
+                to use a slope-limiting scheme. Possible values:
+                - "muscl": Use the MUSCL scheme.
+            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
+                use if `slope_limiting` is "muscl". Possible values:
+                - "minmod": Minmod limiter.
+                - "moncen": Moncen limiter.
 
         Returns:
             dt (float): Time-step size.
-            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): Fluxes in the x, y, and z
-                directions.
+            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]]): Tuple of fluxes. The
+                fluxes have the following shapes:
+                - F: (nvars, nx + 1, ny, nz)
+                - G: (nvars, nx, ny + 1, nz)
+                - H: (nvars, nx, ny, nz + 1)
         """
+        # set p
+        SLOPE_LIMITING = slope_limiting in ["muscl"]
+        _p = 1 if SLOPE_LIMITING else cast(int, p)
+
         # compute dt
         dt = self.get_dt(u)
 
         # get number of required ghost cells
-        n_ghost_cells = max(-(-p // 2) + 1, 2 * -(-p // 2))
+        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
 
         # apply boundary conditions
         u_padded = self.bc(
@@ -168,31 +231,43 @@ class AdvectionSolver(FiniteVolumeSolver):
         # x-fluxes
         if self.using_xdim:
             xl, xr = self.interpolate_face_nodes(
-                u_padded, p=p, dim="x", mode=self.interpolate_face_nodes_mode
+                u_padded,
+                dim="x",
+                mode=slope_limiting if SLOPE_LIMITING else mode,
+                p=_p,
+                slope_limiter=slope_limiter,
             )
             riemann_problem_x = xr[:, :-1, ...], xl[:, 1:, ...]
             F = self.compute_numerical_fluxes(
-                *riemann_problem_x, p=p, dim="x", mode=self.interpolation_scheme
+                *riemann_problem_x, dim="x", mode=mode, p=_p
             )
 
         # y-fluxes
         if self.using_ydim:
             yl, yr = self.interpolate_face_nodes(
-                u_padded, p=p, dim="y", mode=self.interpolate_face_nodes_mode
+                u_padded,
+                dim="y",
+                mode=slope_limiting if SLOPE_LIMITING else mode,
+                p=_p,
+                slope_limiter=slope_limiter,
             )
             riemann_problem_y = yr[:, :, :-1, ...], yl[:, :, 1:, ...]
             G = self.compute_numerical_fluxes(
-                *riemann_problem_y, p=p, dim="y", mode=self.interpolation_scheme
+                *riemann_problem_y, dim="y", mode=mode, p=_p
             )
 
         # z-fluxes
         if self.using_zdim:
             zl, zr = self.interpolate_face_nodes(
-                u_padded, p=p, dim="z", mode=self.interpolate_face_nodes_mode
+                u_padded,
+                dim="z",
+                mode=slope_limiting if SLOPE_LIMITING else mode,
+                p=_p,
+                slope_limiter=slope_limiter,
             )
             riemann_problem_z = zr[:, :, :, :-1, ...], zl[:, :, :, 1:, ...]
             H = self.compute_numerical_fluxes(
-                *riemann_problem_z, p=p, dim="z", mode=self.interpolation_scheme
+                *riemann_problem_z, dim="z", mode=mode, p=_p
             )
 
         return dt, (F, G, H)
