@@ -6,6 +6,7 @@ import numpy as np
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
+from .slope_limiting import compute_dmp
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
@@ -132,37 +133,20 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return advection_upwind(self.array_slicer, yl, yr, dim)
 
+    @partial(method_timer, cat="AdvectionSolver.MOOD_violation_check")
     def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
         """
         Mood violation check implementation. See
         FiniteVolumeSolver.MOOD_violation_check.
         """
         _slc = self.array_slicer
-        rho = self.bc(
-            u,
-            pad_width=(
-                1 if self.using_xdim else 0,
-                1 if self.using_ydim else 0,
-                1 if self.using_zdim else 0,
-            ),
-        )[_slc("rho")]
-        dmp_min = u[_slc("rho")].copy()
-        dmp_max = u[_slc("rho")].copy()
-        if self.using_xdim:
-            dmp_min = np.minimum(rho[:-2, ...], np.minimum(dmp_min, rho[2:, ...]))
-            dmp_max = np.maximum(rho[:-2, ...], np.maximum(dmp_max, rho[2:, ...]))
-        if self.using_ydim:
-            dmp_min = np.minimum(rho[:, :-2, ...], np.minimum(dmp_min, rho[:, 2:, ...]))
-            dmp_max = np.maximum(rho[:, :-2, ...], np.maximum(dmp_max, rho[:, 2:, ...]))
-        if self.using_zdim:
-            dmp_min = np.minimum(
-                rho[:, :, :-2, ...], np.minimum(dmp_min, rho[:, :, 2:, ...])
-            )
-            dmp_max = np.maximum(
-                rho[:, :, :-2, ...], np.maximum(dmp_max, rho[:, :, 2:, ...])
-            )
+        dmp_min, dmp_max = compute_dmp(
+            self.apply_bc(u, 1)[_slc("rho")][np.newaxis, ...],
+            dim=self.dims,
+            include_corners=True,
+        )
         return (
-            np.minimum(ustar[_slc("rho")] - dmp_min, dmp_max - ustar[_slc("rho")])
+            np.minimum(ustar[_slc("rho")] - dmp_min[0], dmp_max[0] - ustar[_slc("rho")])
             < -1e-10
         )
 
@@ -216,14 +200,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
 
         # apply boundary conditions
-        u_padded = self.bc(
-            u,
-            pad_width=(
-                int(self.using_xdim) * n_ghost_cells,
-                int(self.using_ydim) * n_ghost_cells,
-                int(self.using_zdim) * n_ghost_cells,
-            ),
-        )
+        u_padded = self.apply_bc(u, n_ghost_cells)
 
         # initialize empty flux arrays
         F, G, H = np.array([]), np.array([]), np.array([])

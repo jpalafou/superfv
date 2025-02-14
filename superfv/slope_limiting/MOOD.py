@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Callable, Literal, Optional, Tuple
 
 import numpy as np
 
-from .tools.array_management import ArrayLike
+from superfv.tools.array_management import ArrayLike
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver

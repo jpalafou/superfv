@@ -7,8 +7,8 @@ import numpy as np
 
 from .boundary_conditions import BoundaryConditions, DirichletBC
 from .explicit_ODE_solver import ExplicitODESolver
-from .MOOD import detect_troubles, init_MOOD, revise_fluxes
 from .slope_limiting import minmod, moncen
+from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
 from .stencil import (
     conservative_interpolation_weights,
     get_gauss_legendre_face_nodes,
@@ -471,17 +471,71 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             t=t, u=u, mode=self.interpolation_scheme, p=self.p
         )
         if self.MOOD:
-            init_MOOD(self, u, fluxes)
-            while detect_troubles(self, t, dt, u, fluxes):
-                fluxes = revise_fluxes(
-                    self,
-                    t,
-                    u,
-                    fluxes,
-                    mode=self.interpolation_scheme,
-                    slope_limiter="minmod",
-                )
+            fluxes = self.MOOD_loop(t, dt, u, fluxes)
         return dt, self.RHS(u, *fluxes)
+
+    @partial(method_timer, cat="FiniteVolumeSolver.MOOD_loop")
+    def MOOD_loop(
+        self,
+        t: float,
+        dt: float,
+        u: ArrayLike,
+        fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
+    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
+        """
+        Revise fluxes using MOOD.
+
+        Args:
+            t (float): Time value.
+            dt (float): Time-step size.
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): Tuple of fluxes. The
+                fluxes have the following shapes:
+                - F: (nvars, nx + 1, ny, nz)
+                - G: (nvars, nx, ny + 1, nz)
+                - H: (nvars, nx, ny, nz + 1)
+
+        Returns:
+            Tuple[ArrayLike, ArrayLike, ArrayLike]: Revised fluxes.
+        """
+        init_MOOD(self, u, fluxes)
+        while detect_troubles(self, t, dt, u, fluxes):
+            fluxes = revise_fluxes(
+                self,
+                t,
+                u,
+                fluxes,
+                mode=self.interpolation_scheme,
+                slope_limiter="minmod",
+            )
+        return fluxes
+
+    @partial(method_timer, cat="FiniteVolumeSolver.apply_bc")
+    def apply_bc(self, arr: ArrayLike, n_ghost_cells: int) -> ArrayLike:
+        """
+        Apply boundary conditions to an array by padding it with ghost cells along the
+        active dimensions.
+
+        Args:
+            arr (ArrayLike): Field array. Has shape (nvars, nx, ny, nz).
+            n_ghost_cells (int): Number of ghost cells to apply boundary conditions to.
+
+        Returns:
+            ArrayLike: Padded array. Has shape (nvars, >= nx, >= ny, >= nz). Axes
+                corresponding to inactive dimensions are not padded and maintain length
+                n[dim]. Axes corresponding to active dimensions are padded with
+                n_ghost_cells ghost cells on each side, resulting in length
+                n[dim] + 2 * n_ghost_cells.
+
+        """
+        return self.bc(
+            arr,
+            (
+                int(self.using_xdim) * n_ghost_cells,
+                int(self.using_ydim) * n_ghost_cells,
+                int(self.using_zdim) * n_ghost_cells,
+            ),
+        )
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
     def interpolate(
