@@ -1,5 +1,6 @@
 import warnings
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -34,15 +35,71 @@ ArrayLike = Union[np.ndarray, cp.ndarray]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
-def crop_to_center(array: np.ndarray, target_shape: tuple) -> np.ndarray:
+@lru_cache(maxsize=None)
+def _cached_crop_to_center(
+    in_shape: Tuple[int, ...],
+    target_shape: Tuple[int, ...],
+    axes: Optional[Tuple[int, ...]],
+) -> Tuple[slice, ...]:
+    """
+    Cached helper function for crop_to_center.
+
+    Args:
+        in_shape (Tuple[int, ...]): The shape of the input array.
+        target_shape (Tuple[int, ...]): The desired shape of the output array.
+        axes (Optional[Tuple[int, ...]]): The axes along which to crop. If None,
+            `target_shape` must have length equal to in_shape. Otherwise `target_shape`
+            must have length equal to len(`axes`).
+
+    Returns:
+        Tuple[slice, ...]: A tuple of slices that can be used to crop the input array.
+    """
+    _axes = tuple(range(len(in_shape))) if axes is None else axes
+
+    if len(target_shape) != len(in_shape):
+        raise ValueError(
+            "Target shape must have the same number of dimensions as the input array."
+        )
+
+    slices = [slice(None)] * len(in_shape)
+    for axis in _axes:
+        if axis not in _axes:
+            continue
+        dim_length = in_shape[axis]
+        target_length = target_shape[axis]
+        crop = dim_length - target_length
+        if crop < 0:
+            raise ValueError(
+                "Target shape must be less than or equal to the input array's shape in all dimensions."
+            )
+        if crop == 0:
+            continue
+        elif crop % 2 == 0:
+            start = crop // 2
+            end = dim_length - crop // 2
+            slices[axis] = slice(start, end)
+        else:
+            raise ValueError(
+                f"Cannot evenly crop dimension from {dim_length} to {target_length}."
+            )
+
+    return tuple(slices)
+
+
+def crop_to_center(
+    array: np.ndarray,
+    target_shape: Tuple[int, ...],
+    axes: Optional[Tuple[int, ...]] = None,
+) -> np.ndarray:
     """
     Crops the input array to the target shape by removing an equal amount from both
     ends along each axis.
 
     Args:
         array (np.ndarray): The input array to be cropped.
-        target_shape (tuple): The desired shape of the output array. Must have lengths
-            less than or equal to the input array along each axis.
+        target_shape (Tuple[int, ...]): The desired shape of the output array. Must
+            have the same number of dimensions as array.
+        axes (Optional[Tuple[int, ...]]): The axes along which to crop.
 
     Returns:
         np.ndarray: A cropped version of the input array with the target shape.
@@ -51,31 +108,8 @@ def crop_to_center(array: np.ndarray, target_shape: tuple) -> np.ndarray:
         ValueError: If the target shape is invalid or cropping cannot remove an even
             amount along any axis.
     """
-    if len(target_shape) != array.ndim:
-        raise ValueError(
-            "Target shape must have the same number of dimensions as the input array."
-        )
-    if any(t > s for t, s in zip(target_shape, array.shape)):
-        raise ValueError(
-            "Target shape must be less than or equal to the input array's shape in all dimensions."
-        )
-
-    slices = []
-    for dim_length, target_length in zip(array.shape, target_shape):
-        crop = dim_length - target_length
-        if crop == 0:
-            slices.append(slice(None))
-            continue
-        elif crop % 2 == 0:
-            start = crop // 2
-            end = dim_length - crop // 2
-            slices.append(slice(start, end))
-        else:
-            raise ValueError(
-                f"Cannot evenly crop dimension from {dim_length} to {target_length}."
-            )
-
-    return array[tuple(slices)]
+    slices = _cached_crop_to_center(array.shape, target_shape, axes)
+    return array[slices]
 
 
 def _idxs_to_slice_or_array(
@@ -163,6 +197,7 @@ class ArraySlicer:
         """
         return id(self)
 
+    @lru_cache(maxsize=None)
     def __call__(
         self,
         variable: Optional[Union[str, Tuple[str, ...]]] = None,
@@ -172,6 +207,7 @@ class ArraySlicer:
         axis: Optional[int] = None,
         cut: Optional[SliceBounds] = None,
         step: Optional[int] = None,
+        keep_dims: bool = False,
     ) -> Union[
         slice,
         int,
@@ -190,6 +226,7 @@ class ArraySlicer:
             axis (Optional[int]): Axis along which to slice the field.
             cut (Optional[SliceBounds]): Start and stop indices for the axis.
             step (Optional[int]): Step size for the axis.
+            keep_dims (bool): If True, keep the dimensions of the sliced array.
 
         Returns:
             Slice object if only the first axis is sliced, or tuple of slice objects.
@@ -238,7 +275,11 @@ class ArraySlicer:
             )
 
         if len(slices) == 1 or all(s == slice(None) for s in slices[1:]):
+            if keep_dims and isinstance(slices[0], int):
+                return slice(slices[0], slices[0] + 1)
             return slices[0]
+        if keep_dims and isinstance(slices[0], int):
+            slices[0] = slice(slices[0], slices[0] + 1)
         return tuple(slices)
 
     def copy(self) -> "ArraySlicer":

@@ -1,19 +1,18 @@
 from abc import ABC, abstractmethod
 from functools import partial
 from itertools import product
-from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
 from .boundary_conditions import BoundaryConditions, DirichletBC
 from .explicit_ODE_solver import ExplicitODESolver
-from .slope_limiting import minmod, moncen
+from .slope_limiting import minmod, moncen, muscl
 from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
 from .stencil import (
     conservative_interpolation_weights,
     get_gauss_legendre_face_nodes,
     get_gauss_legendre_face_weights,
-    get_symmetric_slices,
     stencil_sweep,
     uniform_quadrature_weights,
 )
@@ -61,8 +60,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         t: float,
         u: ArrayLike,
         mode: Literal["transverse", "gauss-legendre"],
-        p: Optional[int] = None,
-        slope_limiting: Optional[Literal["muscl"]] = None,
+        p: int,
+        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
         """
@@ -76,11 +75,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     flux integral using a transverse quadrature.
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points. Compute the flux integral using Gauss-Legendre quadrature.
-            p (Optional[int]): Polynomial degree of the spatial discretization. If
+            p (int): Polynomial degree of the spatial discretization. If
                 `slope_limiting` is "muscl", p is ignored and assumed to be 1.
-            slope_limiting (Optional[Literal["muscl"]]): Overwrites interpolation mode
+            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
                 to use a slope-limiting scheme. Possible values:
                 - "muscl": Use the MUSCL scheme.
+                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
+                    limiter.
             slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
                 use if `slope_limiting` is "muscl". Possible values:
                 - "minmod": Minmod limiter.
@@ -95,6 +96,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - H: (nvars, nx, ny, nz + 1)
         """
         pass
+
+    def zhang_shu_limiter(
+        self,
+        averages: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        interpolation_scheme: Literal["transverse", "gauss-legendre"],
+        p: int,
+    ) -> Tuple[ArrayLike, ArrayLike]:
+        """
+        Returns a slope-limited interpolation using Zhang and Shu's
+        maximum-principle-satisfying slope limiter.
+
+        Args:
+            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
+            dim (Literal["x", "y", "z"]): Dimension of the interpolation.
+            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
+                interpolation.
+            p (int): Polynomial degree of the interpolation.
+
+        Returns:
+            Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has
+                shape (nvars, <nx, <ny, <nz).
+        """
+        raise NotImplementedError("Zhang and Shu limiter not implemented.")
 
     def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
         """
@@ -133,6 +158,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         riemann_solver: str = "dummy_riemann_solver",
+        MUSCL: bool = False,
+        ZS: bool = False,
         MOOD: bool = False,
         cupy: bool = False,
         **kwarg_attributes,
@@ -183,6 +210,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     flux integral using a transverse quadrature.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
+            MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
+            ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
+                priori slope limiter.
             MOOD (bool): Whether to use MOOD for a posteriori flux revision.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
@@ -193,7 +223,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_manager(cupy)
         self._init_riemann_solver(riemann_solver)
-        self._init_slope_limiting(MOOD)
+        self._init_slope_limiting(MUSCL, ZS, MOOD)
 
     def _init_kwarg_attributes(self, kwarg_attributes):
         for key, value in kwarg_attributes.items():
@@ -447,7 +477,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             [ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike
         ] = getattr(self, riemann_solver)
 
-    def _init_slope_limiting(self, MOOD: bool):
+    def _init_slope_limiting(self, MUSCL: bool, ZS: bool, MOOD: bool):
+        # a priori limiting
+        self.a_priori_slope_limiting_scheme: Optional[Literal["muscl", "zhang-shu"]]
+        self.a_priori_slope_limiter: Optional[Literal["minmod", "moncen"]]
+
+        if all([MUSCL, ZS]):
+            raise ValueError("Cannot use both Zhang-Shu and MUSCL slope limiting.")
+        elif MUSCL:
+            self.a_priori_slope_limiting_scheme = "muscl"
+            self.a_priori_slope_limiter = "minmod"
+        elif ZS:
+            self.a_priori_slope_limiting_scheme = "zhang-shu"
+            self.a_priori_slope_limiter = None
+        else:
+            self.a_priori_slope_limiting_scheme = None
+            self.a_priori_slope_limiter = None
+
+        # a posteriori limiting
         self.MOOD = MOOD
         self.MOOD_cascade = ["fv" + str(self.p), "muscl"]
         self.MOOD_iter_count = 0
@@ -468,7 +515,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
         """
         dt, fluxes = self.compute_dt_and_fluxes(
-            t=t, u=u, mode=self.interpolation_scheme, p=self.p
+            t=t,
+            u=u,
+            mode=self.interpolation_scheme,
+            p=self.p,
+            limiting_scheme=self.a_priori_slope_limiting_scheme,
+            slope_limiter=self.a_priori_slope_limiter,
         )
         if self.MOOD:
             fluxes = self.MOOD_loop(t, dt, u, fluxes)
@@ -572,8 +624,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - "uniform-quadrature": Uses uniform quadrature weights.
 
         Returns:
-            ArrayLike: Interpolated node values. Has shape
-                (nvars, <= nx, <= ny, <= nz).
+            ArrayLike: Interpolated node values. Has shape (nvars, <=nx, <=ny, <=nz).
 
         Notes:
             - This function utilizes a caching system (`self.interpolation_cache`) to
@@ -625,42 +676,99 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         return current_data
 
-    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_face_nodes")
-    def interpolate_face_nodes(
+    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_cell_centers")
+    def interpolate_cell_centers(
         self,
         averages: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        mode: Literal["transverse", "gauss-legendre", "muscl"],
+        interpolation_scheme: Literal["transverse", "gauss-legendre"],
         p: Optional[int] = None,
-        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> List[ArrayLike]:
+        sweep_order: str = "xyz",
+        clear_cache: bool = True,
+    ) -> ArrayLike:
         """
         Interpolate face nodes from cell averages.
 
         Args:
             averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
-            dim (str): Direction of the face nodes. Can be "x", "y", or "z".
-            mode (str): Mode of interpolation. Possible values:
+            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
+                interpolation. Possible values:
                 - "transverse": Interpolate nodes at the cell face centers.
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points.
                 - "muscl": Interpolate nodes using the MUSCL scheme.
             p (Optional[int]): Polynomial degree of the interpolation for "transverse" and
                 "gauss-legendre" modes. For "muscl" mode, p is ignored.
-            slope_limiter (str): Limiter to use for the MUSCL scheme. Possible values:
-                - "minmod": Minmod limiter.
-                - "moncen": Moncen limiter.
-        Returns:
-            Tuple[ArrayLike]: List of two node arrays. The first element is the left
-                face nodes, and the second element is the right face nodes. Each face
-                node has shape (nvars, <= nx, <= ny, <= nz, ninterpolations), unless
-                the dimension is not used, in which case the face node is an empty
-                array. ninterpolations is the number of Gauss-Legendre interpolation
-                points for a degree p reconstruction if `mode` is "gauss-legendre".
-                If `mode` is "face-centers", ninterpolations is 1.
+            sweep_order (str): Order of the direction of the interpolation sweeps. Any
+                combination of "x", "y", and "z".
+            clear_cache (bool): Whether to clear the interpolation cache before
+                performing the interpolation.
 
+        Returns:
+            ArrayLike: Cell centers. Has shape (nvars, <=nx, <=ny, <=nz).
         """
-        self.interpolation_cache.clear()
+        if clear_cache:
+            self.interpolation_cache.clear()
+
+        cell_centers = self.interpolate(
+            averages,
+            x=0,
+            y=0,
+            z=0,
+            p=p,
+            sweep_order=sweep_order,
+            stencil_type="conservative-interpolation",
+        )
+        return cell_centers
+
+    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_face_nodes")
+    def interpolate_face_nodes(
+        self,
+        averages: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        interpolation_scheme: Optional[Literal["transverse", "gauss-legendre"]] = None,
+        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
+        p: Optional[int] = None,
+        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
+        clear_cache: bool = True,
+    ) -> Tuple[ArrayLike, ArrayLike]:
+        """
+        Interpolate face nodes from cell averages.
+
+        Args:
+            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
+            dim (Literal["x", "y", "z"]): Direction of the face nodes. Can be "x", "y",
+                or "z".
+            interpolation_scheme (Optional[Literal["transverse", "gauss-legendre"]]):
+                Mode of interpolation. Possible values:
+                - None: Only valid when `limiting_scheme` is "muscl".
+                - "transverse": Interpolate nodes at the cell face centers.
+                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
+                    points.
+            limiting_scheme (Optional[Literal["muscl", "zhang-shu"]]): Slope limiting
+                scheme. Possible values:
+                - None: No slope limiting.
+                - "muscl": Use the MUSCL scheme.
+                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
+                    limiter.
+            p (Optional[int]): Polynomial degree of the interpolation schemes. For
+                "muscl" slope limiting, p is ignored.
+            slope_limiter (str): Additional option for slope limiting. Possible values:
+                - "minmod": Minmod limiter for the MUSCL scheme.
+                - "moncen": Moncen limiter for the MUSCL scheme.
+            clear_cache (bool): Whether to clear the interpolation cache before
+                performing the interpolation.
+        Returns:
+            Tuple[ArrayLike, ArrayLike]: Two node arrays. The first element is the left
+                face nodes, and the second element is the right face nodes. Each face
+                node has shape (nvars, <=nx, <=ny, <=nz, ninterpolations), unless the
+                dimension is not used, in which case the face node is an empty array.
+                ninterpolations is the number of Gauss-Legendre interpolation points
+                for a degree `p` reconstruction if `interpolation_scheme` is
+                "gauss-legendre". If `interpolation_scheme` is "face-centers",
+                ninterpolations is 1.
+        """
+        if clear_cache:
+            self.interpolation_cache.clear()
         sweep_orders = {"x": "yzx", "y": "zxy", "z": "xyz"}
 
         faces = []
@@ -669,54 +777,59 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             if not getattr(self, f"using_{dim}dim"):
                 faces.append(np.array([]))
                 continue
-            if mode == "gauss-legendre":
+            if interpolation_scheme == "gauss-legendre" and limiting_scheme is None:
                 all_coords = get_gauss_legendre_face_nodes(self.dims, dim, pos, p)
                 for coords in all_coords:
                     nodes.append(
                         self.interpolate(
                             averages,
                             **coords,
-                            p=p,
+                            p=cast(int, p),
                             sweep_order=sweep_orders[dim],
                             stencil_type="conservative-interpolation",
                         )
                     )
                 faces.append(np.stack(nodes, axis=-1))
-            elif mode == "transverse":
+            elif interpolation_scheme == "transverse" and limiting_scheme is None:
                 (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
                 node = self.interpolate(
                     averages,
                     **coords,
-                    p=p,
+                    p=cast(int, p),
                     sweep_order=sweep_orders[dim],
                     stencil_type="conservative-interpolation",
                 )
                 faces.append(node[..., np.newaxis])
-            elif mode == "muscl":
-                l_slc, c_slc, r_slc = get_symmetric_slices(
-                    ndim=4, nslices=3, axis="xyz".index(dim) + 1
+            elif limiting_scheme == "muscl":
+                # early escape with MUSCL scheme
+                return muscl(
+                    averages,
+                    dim=dim,
+                    slope_limiter=minmod if slope_limiter == "minmod" else moncen,
                 )
-                l_daverages = averages[c_slc] - averages[l_slc]
-                r_daverages = averages[r_slc] - averages[c_slc]
-                if slope_limiter == "minmod":
-                    limited_daverages = minmod(l_daverages, r_daverages)
-                elif slope_limiter == "moncen":
-                    limited_daverages = moncen(l_daverages, r_daverages)
-                else:
-                    raise ValueError(f"Unsupported slope limiter: {slope_limiter}.")
-                left_face = averages[c_slc] - 0.5 * limited_daverages
-                right_face = averages[c_slc] + 0.5 * limited_daverages
-                return [left_face[..., np.newaxis], right_face[..., np.newaxis]]
+            elif limiting_scheme == "zhang-shu":
+                # early escape with Zhang-Shu scheme
+                return self.zhang_shu_limiter(
+                    averages,
+                    dim=dim,
+                    interpolation_scheme=cast(
+                        Literal["transverse", "gauss-legendre"], interpolation_scheme
+                    ),
+                    p=cast(int, p),
+                )
             else:
-                raise ValueError(f"Unsupported mode: {mode}.")
+                raise ValueError(
+                    f"Unsupported interpolation and limiting schemes: {interpolation_scheme}, {limiting_scheme}."
+                )
 
-        return faces
+        return faces[0], faces[1]
 
     def compute_transverse_flux_integral(
         self,
         node_values: ArrayLike,
         dim: Literal["x", "y", "z"],
         p: int,
+        clear_cache: bool = True,
     ) -> ArrayLike:
         """
         Compute the flux integral in a given direction.
@@ -725,11 +838,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             node_values (ArrayLike): Node values. Has shape (nvars, nx, ny, nz, 1).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
             p (int): Polynomial degree of the interpolation.
-
+            clear_cache (bool): Whether to clear the interpolation cache before
+                performing the quadrature.
         Returns:
-            ArrayLike: Flux integral. Has shape (nvars, <= nx, <= ny, <= nz).
+            ArrayLike: Flux integral. Has shape (nvars, <=nx, <=ny, <=nz).
         """
-        self.interpolation_cache.clear()
+        if clear_cache:
+            self.interpolation_cache.clear()
         flux_integrals = self.interpolate(
             node_values[..., 0],
             p=p,
@@ -762,8 +877,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         left_nodes: ArrayLike,
         right_nodes: ArrayLike,
         dim: Literal["x", "y", "z"],
-        mode: Literal["transverse", "gauss-legendre"],
+        quadrature: Literal["transverse", "gauss-legendre"],
         p: int,
+        clear_cache: bool = True,
         crop: bool = True,
     ) -> ArrayLike:
         """
@@ -775,26 +891,28 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             right_nodes (ArrayLike): Value of nodes to the right of the discontinuity.
                 Has shape (nvars, nx, ny, nz, ninterpolations).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
-            mode (str): Mode of the numerical flux computation. Possible values:
+            quadrature (str): Mode of the numerical flux computation. Possible values:
                 - "transverse": Compute the flux integral using a transverse
                     quadrature.
                 - "gauss-legendre": Compute the flux integral using Gauss-Legendre
                     quadrature.
             p (int): Polynomial degree of the interpolation.
+            clear_cache (bool): Whether to clear the interpolation cache before
+                performing the quadrature.
             crop (bool): Whether to crop the numerical fluxes to the shape of the
                 finite-volume mesh.
         """
         nodal_fluxes = self.riemann_solver(left_nodes, right_nodes, dim)
-        if mode == "transverse":
+        if quadrature == "transverse":
             numerical_fluxes = self.compute_transverse_flux_integral(
-                nodal_fluxes, dim, p
+                nodal_fluxes, dim=dim, p=p, clear_cache=clear_cache
             )
-        elif mode == "gauss-legendre":
+        elif quadrature == "gauss-legendre":
             numerical_fluxes = self.compute_gauss_legendre_flux_integral(
-                nodal_fluxes, dim, p
+                nodal_fluxes, dim=dim, p=p
             )
         else:
-            raise ValueError(f"Unsupported mode: {mode}")
+            raise ValueError(f"Unsupported quadrature: {quadrature}")
         if crop:
             return crop_to_center(
                 numerical_fluxes, self.arrays[{"x": "F", "y": "G", "z": "H"}[dim]].shape

@@ -7,6 +7,7 @@ from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
 from .slope_limiting import compute_dmp
+from .slope_limiting.zhang_and_shu import zhang_shu_advection
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
@@ -38,6 +39,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         riemann_solver: str = "advection_upwind",
+        MUSCL: bool = False,
+        ZS: bool = False,
         MOOD: bool = False,
         cupy: bool = False,
     ):
@@ -87,6 +90,9 @@ class AdvectionSolver(FiniteVolumeSolver):
                     flux integral using a transverse quadrature.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
+            MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
+            ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying slope
+                limiter.
             MOOD (bool): Whether to use MOOD for a posteriori flux revision.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
@@ -110,6 +116,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             CFL=CFL,
             interpolation_scheme=interpolation_scheme,
             riemann_solver=riemann_solver,
+            MUSCL=MUSCL,
+            ZS=ZS,
             MOOD=MOOD,
             cupy=cupy,
         )
@@ -133,6 +141,30 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return advection_upwind(self.array_slicer, yl, yr, dim)
 
+    def zhang_shu_limiter(
+        self,
+        averages: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        interpolation_scheme: Literal["transverse", "gauss-legendre"],
+        p: int,
+    ) -> Tuple[ArrayLike, ArrayLike]:
+        """
+        Returns a slope-limited interpolation using Zhang and Shu's
+        maximum-principle-satisfying slope limiter.
+
+        Args:
+            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
+            dim (Literal["x", "y", "z"]): Dimension of the interpolation.
+            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
+                interpolation.
+            p (int): Polynomial degree of the interpolation.
+
+        Returns:
+            Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has
+                shape (nvars, <nx, <ny, <nz).
+        """
+        return zhang_shu_advection(self, averages, dim, interpolation_scheme, p)
+
     @partial(method_timer, cat="AdvectionSolver.MOOD_violation_check")
     def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
         """
@@ -142,7 +174,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         _slc = self.array_slicer
         dmp_min, dmp_max = compute_dmp(
             self.apply_bc(u, 1)[_slc("rho")][np.newaxis, ...],
-            dim=self.dims,
+            dims=self.dims,
             include_corners=True,
         )
         return (
@@ -156,8 +188,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         t: float,
         u: ArrayLike,
         mode: Literal["transverse", "gauss-legendre"],
-        p: Optional[int] = None,
-        slope_limiting: Optional[Literal["muscl"]] = None,
+        p: int,
+        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
     ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
         """
@@ -171,11 +203,13 @@ class AdvectionSolver(FiniteVolumeSolver):
                     flux integral using a transverse quadrature.
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points. Compute the flux integral using Gauss-Legendre quadrature.
-            p (Optional[int]): Polynomial degree of the spatial discretization. If
+            p (int): Polynomial degree of the spatial discretization. If
                 `slope_limiting` is "muscl", p is ignored and assumed to be 1.
-            slope_limiting (Optional[Literal["muscl"]]): Overwrites interpolation mode
+            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
                 to use a slope-limiting scheme. Possible values:
                 - "muscl": Use the MUSCL scheme.
+                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
+                    limiter.
             slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
                 use if `slope_limiting` is "muscl". Possible values:
                 - "minmod": Minmod limiter.
@@ -190,8 +224,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                 - H: (nvars, nx, ny, nz + 1)
         """
         # set p
-        SLOPE_LIMITING = slope_limiting in ["muscl"]
-        _p = 1 if SLOPE_LIMITING else cast(int, p)
+        _p = 1 if limiting_scheme == "muscl" else cast(int, p)
 
         # compute dt
         dt = self.get_dt(u)
@@ -210,13 +243,14 @@ class AdvectionSolver(FiniteVolumeSolver):
             xl, xr = self.interpolate_face_nodes(
                 u_padded,
                 dim="x",
-                mode=slope_limiting if SLOPE_LIMITING else mode,
+                interpolation_scheme=mode,
+                limiting_scheme=limiting_scheme,
                 p=_p,
                 slope_limiter=slope_limiter,
             )
             riemann_problem_x = xr[:, :-1, ...], xl[:, 1:, ...]
             F = self.compute_numerical_fluxes(
-                *riemann_problem_x, dim="x", mode=mode, p=_p
+                *riemann_problem_x, dim="x", quadrature=mode, p=_p
             )
 
         # y-fluxes
@@ -224,13 +258,14 @@ class AdvectionSolver(FiniteVolumeSolver):
             yl, yr = self.interpolate_face_nodes(
                 u_padded,
                 dim="y",
-                mode=slope_limiting if SLOPE_LIMITING else mode,
+                interpolation_scheme=mode,
+                limiting_scheme=limiting_scheme,
                 p=_p,
                 slope_limiter=slope_limiter,
             )
             riemann_problem_y = yr[:, :, :-1, ...], yl[:, :, 1:, ...]
             G = self.compute_numerical_fluxes(
-                *riemann_problem_y, dim="y", mode=mode, p=_p
+                *riemann_problem_y, dim="y", quadrature=mode, p=_p
             )
 
         # z-fluxes
@@ -238,13 +273,14 @@ class AdvectionSolver(FiniteVolumeSolver):
             zl, zr = self.interpolate_face_nodes(
                 u_padded,
                 dim="z",
-                mode=slope_limiting if SLOPE_LIMITING else mode,
+                interpolation_scheme=mode,
+                limiting_scheme=limiting_scheme,
                 p=_p,
                 slope_limiter=slope_limiter,
             )
             riemann_problem_z = zr[:, :, :, :-1, ...], zl[:, :, :, 1:, ...]
             H = self.compute_numerical_fluxes(
-                *riemann_problem_z, dim="z", mode=mode, p=_p
+                *riemann_problem_z, dim="z", quadrature=mode, p=_p
             )
 
         return dt, (F, G, H)

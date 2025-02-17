@@ -111,6 +111,21 @@ def test_call_mixed_cases():
         slicer(variable="pressure")
 
 
+def test_call_keep_dims():
+    arr = np.empty((3, 10, 10))
+    slicer = ArraySlicer({"density": 0, "momentum": 1, "energy": 2}, ndim=3)
+    assert arr[slicer("density")].shape == (10, 10)
+    assert arr[slicer("density", keep_dims=True)].shape == (1, 10, 10)
+
+
+def test_call_lru_cache():
+    slicer = ArraySlicer({"density": 0, "momentum": 1, "energy": 2}, ndim=3)
+    initial_hits = slicer.__call__.cache_info().hits
+    for _ in range(10):
+        slicer(variable="density", x=(0, 5), y=(10, 20))
+    assert slicer.__call__.cache_info().hits == initial_hits + 9
+
+
 def test_hash():
     slicer = ArraySlicer({}, ndim=3)
     assert hash(slicer) == id(slicer)

@@ -1,8 +1,9 @@
-- [x] a posteriori slope limiting
+- [x] gauss-legendre or transverse flux quadrature options
+- [x] a priori slope limitng
+- [ ] timeseries data logging
+- [ ] adaptive time-step for a priori slope limiting
 - [ ] cupy
 - [ ] a benchmarks/ folder. ex: benchmarks/error_convergence/
-- [ ] gauss-legendre or transverse flux quadrature options
-- [ ] a priori slope limitng
 - [ ] working euler example
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] multi-core support

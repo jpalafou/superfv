@@ -8,9 +8,12 @@ def method_timer(method, cat):
     def wrapper(self, *args, **kwargs):
         if cat not in self.timer:
             self.timer.add_cat(cat)
-        self.timer.start(cat)
+        ALREADY_RUNNING = self.timer.running[cat]
+        if not ALREADY_RUNNING:
+            self.timer.start(cat)
         result = method(self, *args, **kwargs)
-        self.timer.stop(cat)
+        if not ALREADY_RUNNING:
+            self.timer.stop(cat)
         return result
 
     return wrapper
@@ -32,6 +35,7 @@ class Timer:
         self.cats = set(cats)
         self.start_time: Dict[str, Union[None, float]] = {cat: None for cat in cats}
         self.cum_time: Dict[str, float] = {cat: 0.0 for cat in cats}
+        self.running: Dict[str, bool] = {cat: False for cat in cats}
 
         self.precision = precision
 
@@ -47,6 +51,7 @@ class Timer:
         self.cats.add(cat)
         self.start_time[cat] = None
         self.cum_time[cat] = 0.0
+        self.running[cat] = False
 
     def _check_cat_existence(self, cat: str):
         if cat not in self.cats:
@@ -60,12 +65,13 @@ class Timer:
             cat (str): Category.
         """
         self._check_cat_existence(cat)
-        if self.start_time[cat] is None:
-            self.start_time[cat] = time.time()
-        else:
+        if self.running[cat]:
             raise RuntimeError(
                 f"Cannot start '{cat}' timer since it is already in progress."
             )
+        else:
+            self.start_time[cat] = time.time()
+            self.running[cat] = True
 
     def stop(self, cat: str):
         """
@@ -75,13 +81,14 @@ class Timer:
             cat (str): Category.
         """
         self._check_cat_existence(cat)
-        if self.start_time[cat] is None:
+        if self.running[cat]:
+            self.cum_time[cat] += time.time() - cast(float, self.start_time[cat])
+            self.start_time[cat] = None
+            self.running[cat] = False
+        else:
             raise RuntimeError(
                 f"Cannot stop '{cat}' timer since it is not in progress."
             )
-        else:
-            self.cum_time[cat] += time.time() - cast(float, self.start_time[cat])
-            self.start_time[cat] = None
 
     def to_dict(self) -> dict:
         """

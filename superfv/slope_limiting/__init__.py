@@ -1,8 +1,9 @@
 from itertools import product
-from typing import Tuple
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 
+from superfv.stencil import get_symmetric_slices
 from superfv.tools.array_management import ArrayLike
 
 
@@ -41,7 +42,7 @@ def moncen(du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
 
 
 def compute_dmp(
-    arr: ArrayLike, dim: str, include_corners: bool = False
+    arr: ArrayLike, dims: str, include_corners: bool = False
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
     Computes the discrete maximum principle (DMP) for an array along the 2nd, 3rd,
@@ -50,31 +51,66 @@ def compute_dmp(
     Args:
         arr (ArrayLike): Array. First axis is assumed to be variable axis. Has shape
             (nvars, nx, ny, nz, ...).
-        dim (str): Dimension to check. Must be a subset of "xyz".
+        dims (str): Dimension to check. Must be a subset of "xyz".
         include_corners (bool): Whether to include corners.
     Returns:
         Tuple[ArrayLike, ArrayLike]: Minimum and maximum values of the array along the
             specified dimension.
     """
     dim_map = {"x": 1, "y": 2, "z": 3}
-    active_dims = [dim_map[d] for d in dim]
+    active_dims = [dim_map[d] for d in dims]
 
-    _slice = [slice(None)] * arr.ndim
+    slices = [slice(None)] * arr.ndim
     for d in active_dims:
-        _slice[d] = slice(1, -1)
-    dmp_min = arr[tuple(_slice)].copy()
-    dmp_max = arr[tuple(_slice)].copy()
+        slices[d] = slice(1, -1)
+    dmp_min = arr[tuple(slices)].copy()
+    dmp_max = arr[tuple(slices)].copy()
 
     for offsets in product([-1, 0, 1], repeat=len(active_dims)):
-        if not include_corners and all(offsets):  # skip the corners
+        if (
+            not include_corners and all(offsets) and len(active_dims) > 1
+        ):  # skip the corners
             continue
         if not any(offsets):  # skip the center
             continue
+        slices = [slice(None)] * arr.ndim
         for d, offset in zip(active_dims, offsets):
-            _slice[d] = {-1: slice(2, None), 0: slice(1, -1), 1: slice(None, -2)}[
+            slices[d] = {-1: slice(2, None), 0: slice(1, -1), 1: slice(None, -2)}[
                 offset
             ]
-        dmp_min[...] = np.minimum(dmp_min, arr[tuple(_slice)])
-        dmp_max[...] = np.maximum(dmp_max, arr[tuple(_slice)])
+        dmp_min[...] = np.minimum(dmp_min, arr[tuple(slices)])
+        dmp_max[...] = np.maximum(dmp_max, arr[tuple(slices)])
 
     return dmp_min, dmp_max
+
+
+def muscl(
+    averages: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    slope_limiter: Callable[[ArrayLike, ArrayLike], ArrayLike],
+) -> Tuple[ArrayLike, ArrayLike]:
+    """
+    Computes the MUSCL reconstruction of an array along the 2nd, 3rd, and/or 4th axes.
+
+    Args:
+        averages (ArrayLike): Array. First axis is assumed to be variable axis. Has
+            shape (nvars, nx, ny, nz).
+        dim (str): Dimension to check. Must be a subset of "xyz".
+        slope_limiter (Callable[[ArrayLike, ArrayLike], ArrayLike]): Slope
+            limiter. Must take two arguments (left and right differences) and
+            return an array of the same shape.
+
+    Returns:
+        Tuple[ArrayLike, ArrayLike]: Left and right face values. Each has shape
+            (nvars, <=nx, <=ny, <=nz, 1) where the axis corresponding to `dim` is
+            shortened by 2 (1 on each side).
+    """
+    l_slc, c_slc, r_slc = get_symmetric_slices(
+        ndim=4, nslices=3, axis="xyz".index(dim) + 1
+    )
+    l_daverages = averages[c_slc] - averages[l_slc]
+    r_daverages = averages[r_slc] - averages[c_slc]
+    limited_daverages = slope_limiter(l_daverages, r_daverages)
+    left_face = averages[c_slc] - 0.5 * limited_daverages
+    right_face = averages[c_slc] + 0.5 * limited_daverages
+    return left_face[..., np.newaxis], right_face[..., np.newaxis]

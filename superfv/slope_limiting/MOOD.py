@@ -139,16 +139,16 @@ def revise_fluxes(
     if "F_" + fallback_scheme not in fv_solver.MOOD_cache:
         if fallback_scheme[:2] == "fv":
             p = int(fallback_scheme[2:])
-            slope_limiting = None
+            limiting_scheme = None
             slope_limiter = None
         elif fallback_scheme == "muscl":
             p = None
-            slope_limiting = "muscl"
+            limiting_scheme = "muscl"
             slope_limiter = slope_limiter
         else:
             raise ValueError(f"Unknown fallback scheme {fallback_scheme}.")
         _, fallback_fluxes = fv_solver.compute_dt_and_fluxes(
-            t, u, mode, p, slope_limiting, slope_limiter
+            t, u, mode, p, limiting_scheme, slope_limiter
         )
         _cache_fluxes(fv_solver, fallback_fluxes, fallback_scheme)
 
