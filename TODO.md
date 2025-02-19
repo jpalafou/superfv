@@ -1,6 +1,5 @@
-- [x] timeseries data logging
-- [ ] fix ZS positivity error
-- [ ] a priori MPP tests
+- [x] fix ZS positivity error
+- [x] a priori MPP tests
 - [ ] adaptive time-step for a priori slope limiting
 - [ ] cupy
 - [ ] a benchmarks/ folder. ex: benchmarks/error_convergence/
