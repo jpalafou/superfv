@@ -2,7 +2,7 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Iterable, Optional, Tuple, Union
+from typing import Dict, Iterable, Optional, Tuple, Union
 
 import numpy as np
 from tqdm import tqdm
@@ -97,6 +97,17 @@ class ExplicitODESolver(ABC):
         """
         pass
 
+    @partial(method_timer, cat="?.minisnapshot")
+    def minisnapshot(self):
+        """
+        Mini snapshot function. Is executed after every step. Override to save more
+        data to `self.minisnapshots`.
+
+        Example:
+            self.minisnapshots["t"].append(self.t)
+        """
+        pass
+
     def called_at_end_of_step(self):
         """
         Helper function called at the end of each step. Override for additional
@@ -135,6 +146,7 @@ class ExplicitODESolver(ABC):
         # initialize timer, snapshots, progress bar, and git commit details
         self.timer = Timer(cats=["!ODE_INT"])
         self.snapshots: Snapshots = Snapshots()
+        self.minisnapshots: Dict[str, list] = {"t": []}
         self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
 
@@ -195,9 +207,11 @@ class ExplicitODESolver(ABC):
         # if given n, perform a simple time evolution
         if n is not None:
             self.snapshot()
+            self.minisnapshot()
             self.timer.start("!ODE_INT")
             for _ in tqdm(range(n)):
                 self.take_step()
+                self.minisnapshot()
             self.timer.stop("!ODE_INT")
             self.snapshot()
             return
@@ -232,12 +246,17 @@ class ExplicitODESolver(ABC):
 
         # initial snapshot
         self.snapshot()
+        self.minisnapshot()
 
         # simulation loop
         self.timer.start("!ODE_INT")
         while self.t < T_max:
             self.take_step(target_time=target_time)
             self.progress_bar_action(action="update")
+
+            # mini snapshot
+            self.minisnapshot()
+
             # target time actions
             if self.t == target_time or log_every_step:
                 self.snapshot()

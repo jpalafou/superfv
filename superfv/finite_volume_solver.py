@@ -221,6 +221,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL, interpolation_scheme)
         self._init_ic(ic, ic_passives, cupy)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
+        self._init_snapshots()
         self._init_array_manager(cupy)
         self._init_riemann_solver(riemann_solver)
         self._init_slope_limiting(MUSCL, ZS, MOOD)
@@ -456,6 +457,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 else None
             ),
         )
+
+    def _init_snapshots(self):
+        pass
 
     def _init_array_manager(self, cupy: bool):
         self.interpolation_cache = ArrayManager()
@@ -942,6 +946,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dydt += -(1 / self.hz) * (H[:, :, :, 1:] - H[:, :, :, :-1])
         return dydt
 
+    @partial(method_timer, cat="FiniteVolumeSolver.snapshot")
     def snapshot(self):
         """
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
@@ -949,6 +954,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         data = {"u": self.arrays.get_numpy("u", copy=True)}
         self.snapshots.log(self.t, data)
+
+    @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")
+    def minisnapshot(self):
+        self.minisnapshots["t"].append(self.t)
 
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, **kwargs):

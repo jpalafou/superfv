@@ -122,6 +122,10 @@ class AdvectionSolver(FiniteVolumeSolver):
             cupy=cupy,
         )
 
+    def _init_snapshots(self):
+        self.minisnapshots["min_rho"] = []
+        self.minisnapshots["max_rho"] = []
+
     def define_vars(self) -> ArraySlicer:
         """
         Returns an ArraySlicer object with the following variables:
@@ -302,3 +306,10 @@ class AdvectionSolver(FiniteVolumeSolver):
         vy = np.max(np.abs(u[_slc("vy")]))
         vz = np.max(np.abs(u[_slc("vz")]))
         return (self.CFL * h / (vx + vy + vz)).item()
+
+    @partial(method_timer, cat="AdvectionSolver.minisnapshot")
+    def minisnapshot(self):
+        super().minisnapshot()
+        _slc = self.array_slicer
+        self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min())
+        self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max())
