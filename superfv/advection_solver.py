@@ -6,7 +6,6 @@ import numpy as np
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
-from .slope_limiting import compute_dmp
 from .slope_limiting.zhang_and_shu import zhang_shu_advection
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
@@ -41,11 +40,18 @@ class AdvectionSolver(FiniteVolumeSolver):
         riemann_solver: str = "advection_upwind",
         MUSCL: bool = False,
         ZS: bool = False,
+        adaptive_timestepping: bool = True,
+        max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
+        max_MOOD_iters: Optional[int] = None,
+        NAD: Optional[float] = None,
+        NAD_vars: Optional[Tuple[str]] = ("rho",),
+        PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         cupy: bool = False,
+        **kwarg_attributes,
     ):
         """
-        Initialize the advection solver.
+        Initialize the finite volume solver.
 
         Args:
             ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
@@ -91,9 +97,25 @@ class AdvectionSolver(FiniteVolumeSolver):
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
-            ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying slope
-                limiter.
-            MOOD (bool): Whether to use MOOD for a posteriori flux revision.
+            ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
+                priori slope limiter.
+            adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
+                size if a maximum principle violation is detected. If True, MOOD is
+                overwritten to only modify the time-step size and not the fluxes.
+                Ignored if `ZS=False`.
+            max_adaptive_timesteps（Optional[int]）: Maximum number of adaptive time
+                steps. If `ZS=True` and `adaptive_timestepping=True`, the default value
+                is 10. Otherwise, this argument is ignored.
+            MOOD (bool): Whether to use MOOD for a posteriori flux revision. Ignored if
+            `ZS=True` and `adaptive_timestepping=True`.
+            max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. If
+                `ZS=True` and `adaptive_timestepping=True`, this argument is ignored.
+                Otherwise, the default value is 1.
+            NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
+            NAD_vars (Optional[Tuple[str]]): The variables to check for NAD. If None,
+                all "active" variables are checked.
+            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
+                (lower, upper) bounds. If None, PAD is not checked.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
         """
@@ -118,11 +140,18 @@ class AdvectionSolver(FiniteVolumeSolver):
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
             ZS=ZS,
+            adaptive_timestepping=adaptive_timestepping,
+            max_adaptive_timesteps=max_adaptive_timesteps,
             MOOD=MOOD,
+            max_MOOD_iters=max_MOOD_iters,
+            NAD=NAD,
+            NAD_vars=NAD_vars,
+            PAD=PAD,
             cupy=cupy,
         )
 
     def _init_snapshots(self):
+        super()._init_snapshots()
         self.minisnapshots["min_rho"] = []
         self.minisnapshots["max_rho"] = []
 
@@ -168,23 +197,6 @@ class AdvectionSolver(FiniteVolumeSolver):
                 shape (nvars, <nx, <ny, <nz).
         """
         return zhang_shu_advection(self, averages, dim, interpolation_scheme, p)
-
-    @partial(method_timer, cat="AdvectionSolver.MOOD_violation_check")
-    def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
-        """
-        Mood violation check implementation. See
-        FiniteVolumeSolver.MOOD_violation_check.
-        """
-        _slc = self.array_slicer
-        dmp_min, dmp_max = compute_dmp(
-            self.apply_bc(u, 1)[_slc("rho")][np.newaxis, ...],
-            dims=self.dims,
-            include_corners=True,
-        )
-        return (
-            np.minimum(ustar[_slc("rho")] - dmp_min[0], dmp_max[0] - ustar[_slc("rho")])
-            < -1e-10
-        )
 
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(

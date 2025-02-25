@@ -17,14 +17,17 @@ p_CFL_map = {
 }
 
 
+@pytest.mark.parametrize("adaptive_dt", [False, True])
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7])
-def test_1D_advection_mpp(p):
+def test_1D_advection_mpp(adaptive_dt, p):
     solver = AdvectionSolver(
         p=p,
         ic=partial(initial_conditions.square, vx=1),
         nx=64,
-        CFL=p_CFL_map[p],
+        CFL=0.8 if adaptive_dt else p_CFL_map[p],
+        adaptive_timestepping=adaptive_dt,
         ZS=p > 0,
+        PAD={"rho": (0, 1)},
     )
     solver.run(1.0)
 
@@ -35,16 +38,19 @@ def test_1D_advection_mpp(p):
     assert np.all(lower_violations >= 0)
 
 
+@pytest.mark.parametrize("adaptive_dt", [False, True])
 @pytest.mark.parametrize("p", [0, 1, 2])
-def test_2D_advection_mpp(p):
+def test_2D_advection_mpp(adaptive_dt, p):
     solver = AdvectionSolver(
         p=p,
         ic=partial(initial_conditions.square, vx=2, vy=1),
         nx=32,
         ny=32,
-        CFL=p_CFL_map[p],
+        CFL=0.8 if adaptive_dt else p_CFL_map[p],
+        adaptive_timestepping=adaptive_dt,
         interpolation_scheme="gauss-legendre",
         ZS=p > 0,
+        PAD={"rho": (0, 1)},
     )
     solver.run(1.0)
 

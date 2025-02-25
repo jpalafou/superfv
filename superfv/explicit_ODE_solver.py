@@ -67,6 +67,10 @@ class ExplicitODESolver(ABC):
         Returns:
             dt (float): Time-step size.
             dydt (ArrayLike): Right-hand side of the ODE at (t, y).
+
+        Notes:
+            - Increment `self.substep_count` if the function is called multiple times
+                per step: `self.substep_count += 1`.
         """
         pass
 
@@ -102,11 +106,9 @@ class ExplicitODESolver(ABC):
         """
         Mini snapshot function. Is executed after every step. Override to save more
         data to `self.minisnapshots`.
-
-        Example:
-            self.minisnapshots["t"].append(self.t)
         """
-        pass
+        self.minisnapshots["t"].append(self.t)
+        self.minisnapshots["n_substeps"].append(self.substep_count)
 
     def called_at_end_of_step(self):
         """
@@ -135,6 +137,7 @@ class ExplicitODESolver(ABC):
         self.t = 0.0
         self.timestamps = [0.0]
         self.step_count = 0
+        self.substep_count = 0
 
         # initialize array manager
         self.arrays = ArrayManager()
@@ -146,7 +149,7 @@ class ExplicitODESolver(ABC):
         # initialize timer, snapshots, progress bar, and git commit details
         self.timer = Timer(cats=["!ODE_INT"])
         self.snapshots: Snapshots = Snapshots()
-        self.minisnapshots: Dict[str, list] = {"t": []}
+        self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": []}
         self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
 
@@ -278,13 +281,14 @@ class ExplicitODESolver(ABC):
         Args:
             target_time (Optional[float]): Time to avoid overshooting.
         """
+        self.substep_count = 0
+        self.step_count += 1
         dt, ynext = self.stepper(
             self.t, self.arrays[self._state], target_time=target_time
         )
         self.t += dt
         self.arrays[self._state] = ynext
         self.timestamps.append(self.t)
-        self.step_count += 1
         self.called_at_end_of_step()
 
     def progress_bar_action(self, action: str, T: Optional[float] = None):

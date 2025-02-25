@@ -121,21 +121,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         raise NotImplementedError("Zhang and Shu limiter not implemented.")
 
-    def MOOD_violation_check(self, u: ArrayLike, ustar: ArrayLike) -> ArrayLike:
-        """
-        Check for MOOD violations in the candidate solution.
-
-        Args:
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            ustar (ArrayLike): Candidate solution. Has shape
-                (nvars, nx, ny, nz).
-
-        Returns:
-            ArrayLike: Boolean array indicating MOOD violations. Has shape
-                (nx, ny, nz).
-        """
-        raise NotImplementedError("MOOD_violation_check not implemented.")
-
     def __init__(
         self,
         ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
@@ -160,7 +145,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
         ZS: bool = False,
+        adaptive_timestepping: bool = True,
+        max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
+        max_MOOD_iters: Optional[int] = None,
+        NAD: Optional[float] = None,
+        NAD_vars: Optional[Tuple[str]] = None,
+        PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         cupy: bool = False,
         **kwarg_attributes,
     ):
@@ -213,7 +204,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
             ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
                 priori slope limiter.
-            MOOD (bool): Whether to use MOOD for a posteriori flux revision.
+            adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
+                size if a maximum principle violation is detected. If True, MOOD is
+                overwritten to only modify the time-step size and not the fluxes.
+                Ignored if `ZS=False`.
+            max_adaptive_timesteps Optional[int] : Maximum number of adaptive time
+                steps. If `ZS=True` and `adaptive_timestepping=True`, the default value
+                is 10. Otherwise, this argument is ignored.
+            MOOD (bool): Whether to use MOOD for a posteriori flux revision. Ignored if
+                `ZS=True` and `adaptive_timestepping=True`.
+            max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
+                if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
+                value is 1.
+            NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
+            NAD_vars (Optional[Tuple[str]]): The variables to check for NAD. If None,
+                all "active" variables are checked.
+            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
+                (lower, upper) bounds. If None, PAD is not checked.
             cupy (bool): Whether to use CuPy for array operations.
             kwarg_attributes: kwargs to be stored as attributes.
         """
@@ -224,7 +231,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_snapshots()
         self._init_array_manager(cupy)
         self._init_riemann_solver(riemann_solver)
-        self._init_slope_limiting(MUSCL, ZS, MOOD)
+        self._init_slope_limiting(
+            MUSCL,
+            ZS,
+            adaptive_timestepping,
+            max_adaptive_timesteps,
+            MOOD,
+            max_MOOD_iters,
+            NAD,
+            NAD_vars,
+            PAD,
+        )
 
     def _init_kwarg_attributes(self, kwarg_attributes):
         for key, value in kwarg_attributes.items():
@@ -368,9 +385,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.callable_ic = _callable_active_ic
 
         # initialize the ODE solver and array manager
-        super().__init__(
-            self.callable_ic(self.X, self.Y, self.Z), state_array_name="u", cupy=cupy
+        ic_arr = self.callable_ic(self.X, self.Y, self.Z)
+        self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
+            ic_arr, axis=(1, 2, 3), keepdims=True
         )
+        super().__init__(ic_arr, state_array_name="u", cupy=cupy)
 
     def _init_ic_passives(
         self,
@@ -459,7 +478,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     def _init_snapshots(self):
-        pass
+        self.minisnapshots["MOOD_iters"] = []
 
     def _init_array_manager(self, cupy: bool):
         self.interpolation_cache = ArrayManager()
@@ -481,10 +500,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             [ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike
         ] = getattr(self, riemann_solver)
 
-    def _init_slope_limiting(self, MUSCL: bool, ZS: bool, MOOD: bool):
+    def _init_slope_limiting(
+        self,
+        MUSCL: bool,
+        ZS: bool,
+        adaptive_timestepping: bool,
+        max_adaptive_timesteps: Optional[int],
+        MOOD: bool,
+        max_MOOD_iters: Optional[int],
+        NAD: Optional[float],
+        NAD_vars: Optional[Tuple[str]],
+        PAD: Optional[Dict[str, Tuple[float, float]]],
+    ):
         # a priori limiting
         self.a_priori_slope_limiting_scheme: Optional[Literal["muscl", "zhang-shu"]]
         self.a_priori_slope_limiter: Optional[Literal["minmod", "moncen"]]
+        self.ZS_adaptive_timestep = False
 
         if all([MUSCL, ZS]):
             raise ValueError("Cannot use both Zhang-Shu and MUSCL slope limiting.")
@@ -494,15 +525,33 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         elif ZS:
             self.a_priori_slope_limiting_scheme = "zhang-shu"
             self.a_priori_slope_limiter = None
+            if adaptive_timestepping:
+                self.ZS_adaptive_timestep = True
+                self.MOOD = True
+                self.MOOD_cascade = ["fv" + str(self.p), "half-dt"]
+                self.MOOD_max_iter_count = (
+                    max_adaptive_timesteps if max_adaptive_timesteps is not None else 10
+                )
         else:
             self.a_priori_slope_limiting_scheme = None
             self.a_priori_slope_limiter = None
 
         # a posteriori limiting
-        self.MOOD = MOOD
-        self.MOOD_cascade = ["fv" + str(self.p), "muscl"]
+        if not self.ZS_adaptive_timestep:
+            self.MOOD = MOOD
+            self.MOOD_cascade = ["fv" + str(self.p), "muscl"]
+            self.MOOD_max_iter_count = (
+                max_MOOD_iters if max_MOOD_iters is not None else 1
+            )
+
+        # MOOD detection config
         self.MOOD_iter_count = 0
-        self.MOOD_max_iter_count = 1
+        self.NAD = NAD
+        self.NAD_vars = NAD_vars
+        self.PAD = PAD
+
+        if self.PAD is None and self.ZS_adaptive_timestep:
+            raise ValueError("PAD must be provided if adaptive_timestepping=True.")
 
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
@@ -518,6 +567,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dudt (ArrayLike): Right-hand side of the ODE. Has shape
                 (nvars, nx, ny, nz).
         """
+        self.substep_count += 1
         dt, fluxes = self.compute_dt_and_fluxes(
             t=t,
             u=u,
@@ -526,8 +576,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiting_scheme=self.a_priori_slope_limiting_scheme,
             slope_limiter=self.a_priori_slope_limiter,
         )
-        if self.MOOD:
-            fluxes = self.MOOD_loop(t, dt, u, fluxes)
+        if self.MOOD and not (self.ZS_adaptive_timestep and self.substep_count > 1):
+            dt, fluxes = self.MOOD_loop(t, dt, u, fluxes)
         return dt, self.RHS(u, *fluxes)
 
     @partial(method_timer, cat="FiniteVolumeSolver.MOOD_loop")
@@ -537,7 +587,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         dt: float,
         u: ArrayLike,
         fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
-    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
+    ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
         """
         Revise fluxes using MOOD.
 
@@ -555,16 +605,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Tuple[ArrayLike, ArrayLike, ArrayLike]: Revised fluxes.
         """
         init_MOOD(self, u, fluxes)
-        while detect_troubles(self, t, dt, u, fluxes):
-            fluxes = revise_fluxes(
+        while detect_troubles(
+            self, t, dt, u, fluxes, NAD=self.NAD, NAD_vars=self.NAD_vars, PAD=self.PAD
+        ):
+            dt, fluxes = revise_fluxes(
                 self,
                 t,
+                dt,
                 u,
                 fluxes,
                 mode=self.interpolation_scheme,
                 slope_limiter="minmod",
             )
-        return fluxes
+        return dt, fluxes
 
     @partial(method_timer, cat="FiniteVolumeSolver.apply_bc")
     def apply_bc(self, arr: ArrayLike, n_ghost_cells: int) -> ArrayLike:
@@ -957,7 +1010,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")
     def minisnapshot(self):
-        self.minisnapshots["t"].append(self.t)
+        super().minisnapshot()
+        self.minisnapshots["MOOD_iters"].append(self.MOOD_iter_count)
 
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, **kwargs):
