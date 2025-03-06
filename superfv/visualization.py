@@ -100,7 +100,7 @@ def _parse_txyz_slices(
 
 
 def _extract_variable_data(
-    fv_solver: FiniteVolumeSolver, nearest_t: float, variable: str
+    fv_solver: FiniteVolumeSolver, nearest_t: float, variable: str, array: str = "u"
 ) -> np.ndarray:
     """
     Extract the data for a given variable at the nearest time.
@@ -109,6 +109,7 @@ def _extract_variable_data(
         fv_solver (FiniteVolumeSolver): Solver object.
         nearest_t (float): Nearest time.
         variable (str): Variable to extract.
+        array (str): Array to extract from. Defaults to "u".
 
     Returns:
         np.ndarray: Data for the variable at the nearest time.
@@ -121,7 +122,7 @@ def _extract_variable_data(
     if variable in snapshot:
         return snapshot[variable]
     if variable in _slc.var_names:
-        return snapshot["u"][_slc(variable)]
+        return snapshot[array][_slc(variable)]
     raise ValueError(f"Variable {variable} not found in snapshots.")
 
 
@@ -129,6 +130,7 @@ def plot_1d_slice(
     fv_solver: FiniteVolumeSolver,
     ax: Axes,
     variable: str,
+    array: str = "u",
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
@@ -141,7 +143,8 @@ def plot_1d_slice(
     Args:
         fv_solver (FiniteVolumeSolver): Solver object.
         ax (Axes): Matplotlib axes object.
-        variable (str): Variable to plot.
+        variable (str): Variable to plot.]
+        array (str): Array to extract from. Defaults to "u".
         t (Optional[float]): Time to get the nearest snapshot. Defaults to None, which
             uses the last snapshot time.
         x (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
@@ -167,7 +170,7 @@ def plot_1d_slice(
 
     # gather data
     _x = getattr(fv_solver, dim)[slices[0], slices[1], slices[2]]
-    _y = _extract_variable_data(fv_solver, nearest_t, variable)[
+    _y = _extract_variable_data(fv_solver, nearest_t, variable, array)[
         slices[0], slices[1], slices[2]
     ]
 
@@ -180,6 +183,7 @@ def plot_2d_slice(
     fv_solver: FiniteVolumeSolver,
     ax: Axes,
     variable: str,
+    array: str = "u",
     t: Optional[float] = None,
     x: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
     y: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
@@ -194,6 +198,7 @@ def plot_2d_slice(
         fv_solver (FiniteVolumeSolver): Solver object.
         ax (Axes): Matplotlib axes object.
         variable (str): Variable to plot.
+        array (str): Array to extract from. Defaults to "u".
         t (Optional[float]): Time to get the nearest snapshot. Defaults to None, which
             uses the last snapshot time.
         x (Union[float, Tuple[Optional[float], Optional[float]]]):
@@ -226,7 +231,7 @@ def plot_2d_slice(
     else:
         _x = getattr(fv_solver, dim1.lower())[slices["XYZ".index(dim1)]]
         _y = getattr(fv_solver, dim2.lower())[slices["XYZ".index(dim2)]]
-    _z = _extract_variable_data(fv_solver, nearest_t, variable)[
+    _z = _extract_variable_data(fv_solver, nearest_t, variable, array)[
         slices[0], slices[1], slices[2]
     ]
 

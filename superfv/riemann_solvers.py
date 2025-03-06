@@ -1,6 +1,7 @@
-from typing import Literal
+from typing import Literal, Optional, cast
 
 import numpy as np
+import wtflux.hydro as hydro
 
 from .tools.array_management import ArrayLike, ArraySlicer
 
@@ -48,3 +49,75 @@ def advection_upwind(
     if "passives" in _slc.group_names:
         out[_slc("passives")] = _upwind(yl[_slc("passives")], yr[_slc("passives")], v)
     return out
+
+
+def llf(
+    array_slicer,
+    wl: ArrayLike,
+    wr: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    gamma: float,
+    ul: Optional[ArrayLike] = None,
+    ur: Optional[ArrayLike] = None,
+):
+    """
+    Compute the Lax-Friedrichs Riemann flux for the Euler equations.
+
+    Args:
+        array_slicer (ArraySlicer): Slicer object that defines the mapping between
+            variable names and indices in the arrays.
+        wl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
+        wr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
+        dim (Literal["x", "y", "z"]): Dimension.
+        gamma (float): Adiabatic index.
+        ul (Optional[ArrayLike]): Left conserved variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        ur (Optional[ArrayLike]): Right conserved variables. Has shape
+            (nvars, nx, ny, nz, ...).
+
+    Returns:
+        F (ArrayLike): Flux. Has shape (nvars, nx, ny, nz, ...).
+    """
+    _slc = array_slicer
+    HAS_PASSIVES = "passives" in array_slicer.group_names
+    dim1, (dim2, dim3) = dim, {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
+    F = np.empty_like(wl)
+    (
+        F[_slc("rho")],
+        F[_slc("m" + dim1)],
+        F[_slc("m" + dim2)],
+        F[_slc("m" + dim3)],
+        F[_slc("E")],
+        F_passives,
+    ) = hydro.llf(
+        rho_L=wl[_slc("rho")],
+        v1_L=wl[_slc("v" + dim1)],
+        v2_L=wl[_slc("v" + dim2)],
+        v3_L=wl[_slc("v" + dim3)],
+        P_L=wl[_slc("P")],
+        rho_R=wr[_slc("rho")],
+        v1_R=wr[_slc("v" + dim1)],
+        v2_R=wr[_slc("v" + dim2)],
+        v3_R=wr[_slc("v" + dim3)],
+        P_R=wr[_slc("P")],
+        gamma=gamma,
+        m1_L=cast(ArrayLike, ul)[_slc("m" + dim1)],
+        m2_L=cast(ArrayLike, ul)[_slc("m" + dim2)],
+        m3_L=cast(ArrayLike, ul)[_slc("m" + dim3)],
+        E_L=cast(ArrayLike, ul)[_slc("E")],
+        m1_R=cast(ArrayLike, ur)[_slc("m" + dim1)],
+        m2_R=cast(ArrayLike, ur)[_slc("m" + dim2)],
+        m3_R=cast(ArrayLike, ur)[_slc("m" + dim3)],
+        E_R=cast(ArrayLike, ur)[_slc("E")],
+        passives_L=cast(ArrayLike, wl)[_slc("passives")] if HAS_PASSIVES else None,
+        passives_R=cast(ArrayLike, wr)[_slc("passives")] if HAS_PASSIVES else None,
+        conserved_passives_L=(
+            cast(ArrayLike, ul)[_slc("passives")] if HAS_PASSIVES else None
+        ),
+        conserved_passives_R=(
+            cast(ArrayLike, ur)[_slc("passives")] if HAS_PASSIVES else None
+        ),
+    )
+    if HAS_PASSIVES:
+        F[_slc("passives")] = F_passives
+    return F

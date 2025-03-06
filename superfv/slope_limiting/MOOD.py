@@ -103,7 +103,12 @@ def detect_troubles(
     if PAD is None and NAD is None:
         return False
     if NAD is not None:
-        _NAD_var_slc = _slc("actives") if NAD_vars is None else _slc(NAD_vars)
+        if NAD_vars is None and fv_solver.has_passives:
+            _NAD_var_slc = _slc("actives")
+        elif NAD_vars is None:
+            _NAD_var_slc = slice(None)
+        else:
+            _NAD_var_slc = _slc(NAD_vars)
         dmp_min, dmp_max = compute_dmp(
             fv_solver.apply_bc(u, 1)[_NAD_var_slc],
             dims=fv_solver.dims,

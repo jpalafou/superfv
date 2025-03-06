@@ -121,7 +121,7 @@ def _idxs_to_slice_or_array(
     Args:
         idxs (List[int]): List of indices.
     """
-    _idxs = sorted(idxs)
+    _idxs = sorted(list(set(idxs)))
     if _idxs == list(range(_idxs[0], _idxs[-1] + 1)):
         return slice(_idxs[0], _idxs[-1] + 1)
     return np.array(_idxs)
@@ -184,8 +184,6 @@ class ArraySlicer:
         group_idxs = [self.var_idx_map[v] for v in variables]
         if any(not isinstance(i, int) for i in group_idxs):
             raise ValueError("Variables must be indexed by integers.")
-        if len(set(group_idxs)) != len(group_idxs):
-            raise ValueError("Variables must have unique indices.")
         self.var_idx_map[group_name] = _idxs_to_slice_or_array(
             [cast(int, self.var_idx_map[v]) for v in variables]
         )

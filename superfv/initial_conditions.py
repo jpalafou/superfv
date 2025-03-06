@@ -161,3 +161,53 @@ def slotted_disk(
         )
 
     return out
+
+
+def sod_shock_tube_1d(
+    array_slicer: ArraySlicer,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    pos1: float = 0.5,
+    rhol: float = 1.0,
+    rhor: float = 0.125,
+    vl: float = 0,
+    vr: float = 0,
+    pl: float = 1.0,
+    pr: float = 0.1,
+) -> ArrayLike:
+    """
+    Returns array for the Sod shock tube initial condition.
+
+    Args:
+        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
+            the initial condition.
+        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
+        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
+        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        pos1 (float): Position of the discontinuity.
+        rhol (float): Density on the left side of the discontinuity.
+        rhor (float): Density on the right side of the discontinuity.
+        vl (float): Velocity on the left side of the discontinuity.
+        vr (float): Velocity on the right side of the discontinuity.
+        pl (float): Pressure on the left side of the discontinuity.
+        pr (float): Pressure on the right side of the discontin
+    """
+    _slc = array_slicer
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 1:
+        raise ValueError("Sod shock tube initial condition only works in 1D.")
+
+    # Validate variables in ArraySlicer
+    if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
+        out = np.zeros((5, *x.shape))
+        r = {"x": x, "y": y, "z": z}[dims]
+        out[_slc("rho")] = np.where(r < pos1, rhol, rhor)
+        out[_slc("v" + dims)] = np.where(r < pos1, vl, vr)
+        out[_slc("P")] = np.where(r < pos1, pl, pr)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+        )
+    return out

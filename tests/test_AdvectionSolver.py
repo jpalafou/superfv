@@ -29,7 +29,7 @@ def test_AdvectionSolver_symmetry_1D(p: int):
         )
         solver.run(T)
         _slc = solver.array_slicer
-        solution[dim] = solver.snapshots[-1]["u"][_slc("rho")].flatten()
+        solution[dim] = solver.snapshots[-1]["u"][_slc("rho")].flatten().copy()
 
     # check that the solutions are equal
     assert np.array_equal(solution["x"], solution["y"])

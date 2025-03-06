@@ -2,18 +2,21 @@ from functools import partial
 from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
+import wtflux.hydro as hydro
 
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
-from .riemann_solvers import advection_upwind
+from .fv import fv_average
+from .hydro import conservatives_from_primitives, primitives_from_conservatives
+from .riemann_solvers import llf
 from .slope_limiting.zhang_and_shu import zhang_shu_advection
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
 
-class AdvectionSolver(FiniteVolumeSolver):
+class EulerSolver(FiniteVolumeSolver):
     """
-    Solve the advection of a scalar `u` in up to three dimensions.
+    Solve the euler system of equations using a finite volume method.
     """
 
     def __init__(
@@ -22,6 +25,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
+        gamma: float = 5 / 3,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -37,7 +41,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         p: int = 0,
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
-        riemann_solver: str = "advection_upwind",
+        riemann_solver: str = "llf",
         MUSCL: bool = False,
         ZS: bool = False,
         adaptive_timestepping: bool = True,
@@ -45,7 +49,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
         NAD: Optional[float] = None,
-        NAD_vars: Optional[Tuple[str]] = ("rho",),
+        NAD_vars: Optional[Tuple[str]] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         cupy: bool = False,
         **kwarg_attributes,
@@ -71,6 +75,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                 - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
                 - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
                 The function must return an array with shape (nx, ny, nz).
+            gamma (float): Ratio of specific heats.
             bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
             bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
             bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
@@ -122,6 +127,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
+            gamma=gamma,
             bcx=bcx,
             bcy=bcy,
             bcz=bcz,
@@ -150,10 +156,47 @@ class AdvectionSolver(FiniteVolumeSolver):
             cupy=cupy,
         )
 
+    def _ic_transform(
+        self, f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
+    ) -> Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]:
+        """
+        Modify IC callable to convert to conservative variables and compute the cell
+        average.
+        """
+        _slc = self.array_slicer
+
+        def conservative_wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
+            return conservatives_from_primitives(_slc, f(x, y, z), self.gamma)
+
+        def cell_average_wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
+            return fv_average(
+                conservative_wrapper,
+                x,
+                y,
+                z,
+                h=self.h,
+                p=(
+                    self.p if self.using_xdim else 0,
+                    self.p if self.using_ydim else 0,
+                    self.p if self.using_zdim else 0,
+                ),
+            )
+
+        return cell_average_wrapper
+
+    def _init_array_manager(self, cupy: bool):
+        super()._init_array_manager(cupy)
+        self.arrays["w"] = np.empty_like(self.arrays["u"])
+
     def _init_snapshots(self):
         super()._init_snapshots()
         self.minisnapshots["min_rho"] = []
         self.minisnapshots["max_rho"] = []
+        self.minisnapshots["min_E"] = []
+        self.minisnapshots["max_E"] = []
+
+    def _init_hydro(self, gamma: float):
+        self.gamma = gamma
 
     def define_vars(self) -> ArraySlicer:
         """
@@ -163,10 +206,26 @@ class AdvectionSolver(FiniteVolumeSolver):
             - vy: y-component of the velocity.
             - vz: z-component of the velocity.
         """
-        return ArraySlicer({"rho": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
+        array_slicer = ArraySlicer(
+            {
+                "rho": 0,
+                "vx": 1,
+                "vy": 2,
+                "vz": 3,
+                "P": 4,
+                "mx": 1,
+                "my": 2,
+                "mz": 3,
+                "E": 4,
+            },
+            ndim=4,
+        )
+        array_slicer.create_var_group("v", ("vx", "vy", "vz"))
+        array_slicer.create_var_group("m", ("mx", "my", "mz"))
+        return array_slicer
 
-    @partial(method_timer, cat="AdvectionSolver.advection_upwind")
-    def advection_upwind(
+    @partial(method_timer, cat="EulerSolver.llf")
+    def llf(
         self,
         wl: ArrayLike,
         wr: ArrayLike,
@@ -177,7 +236,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
-        return advection_upwind(self.array_slicer, wl, wr, dim)
+        return llf(self.array_slicer, wl, wr, dim, self.gamma, ul, ur)
 
     def zhang_shu_limiter(
         self,
@@ -203,7 +262,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return zhang_shu_advection(self, averages, dim, interpolation_scheme, p)
 
-    @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
+    @partial(method_timer, cat="EulerSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
         self,
         t: float,
@@ -244,6 +303,8 @@ class AdvectionSolver(FiniteVolumeSolver):
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
         """
+        _slc = self.array_slicer
+
         # set p
         _p = 1 if limiting_scheme == "muscl" else cast(int, p)
 
@@ -261,7 +322,7 @@ class AdvectionSolver(FiniteVolumeSolver):
 
         # x-fluxes
         if self.using_xdim:
-            xl, xr = self.interpolate_face_nodes(
+            u_xl, u_xr = self.interpolate_face_nodes(
                 u_padded,
                 dim="x",
                 interpolation_scheme=mode,
@@ -269,14 +330,21 @@ class AdvectionSolver(FiniteVolumeSolver):
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            riemann_problem_x = xr[:, :-1, ...], xl[:, 1:, ...]
+            w_xl = primitives_from_conservatives(_slc, u_xl, self.gamma)
+            w_xr = primitives_from_conservatives(_slc, u_xr, self.gamma)
             F = self.compute_numerical_fluxes(
-                *riemann_problem_x, dim="x", quadrature=mode, p=_p
+                left_nodes=w_xr[:, :-1, ...],
+                right_nodes=w_xl[:, 1:, ...],
+                dim="x",
+                quadrature=mode,
+                p=_p,
+                left_transformed_nodes=u_xr[:, :-1, ...],
+                right_transformed_nodes=u_xl[:, 1:, ...],
             )
 
         # y-fluxes
         if self.using_ydim:
-            yl, yr = self.interpolate_face_nodes(
+            u_yl, u_yr = self.interpolate_face_nodes(
                 u_padded,
                 dim="y",
                 interpolation_scheme=mode,
@@ -284,14 +352,21 @@ class AdvectionSolver(FiniteVolumeSolver):
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            riemann_problem_y = yr[:, :, :-1, ...], yl[:, :, 1:, ...]
+            w_yl = primitives_from_conservatives(_slc, u_yl, self.gamma)
+            w_yr = primitives_from_conservatives(_slc, u_yr, self.gamma)
             G = self.compute_numerical_fluxes(
-                *riemann_problem_y, dim="y", quadrature=mode, p=_p
+                left_nodes=w_yr[:, :, :-1, ...],
+                right_nodes=w_yl[:, :, 1:, ...],
+                dim="y",
+                quadrature=mode,
+                p=_p,
+                left_transformed_nodes=u_yr[:, :, :-1, ...],
+                right_transformed_nodes=u_yl[:, :, 1:, ...],
             )
 
         # z-fluxes
         if self.using_zdim:
-            zl, zr = self.interpolate_face_nodes(
+            u_zl, u_zr = self.interpolate_face_nodes(
                 u_padded,
                 dim="z",
                 interpolation_scheme=mode,
@@ -299,34 +374,59 @@ class AdvectionSolver(FiniteVolumeSolver):
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            riemann_problem_z = zr[:, :, :, :-1, ...], zl[:, :, :, 1:, ...]
+            w_zl = primitives_from_conservatives(_slc, u_zl, self.gamma)
+            w_zr = primitives_from_conservatives(_slc, u_zr, self.gamma)
             H = self.compute_numerical_fluxes(
-                *riemann_problem_z, dim="z", quadrature=mode, p=_p
+                left_nodes=w_zr[:, :, :, :-1, ...],
+                right_nodes=w_zl[:, :, :, 1:, ...],
+                dim="z",
+                quadrature=mode,
+                p=_p,
+                left_transformed_nodes=u_zr[:, :, :, :-1, ...],
+                right_transformed_nodes=u_zl[:, :, :, 1:, ...],
             )
 
         return dt, (F, G, H)
 
-    @partial(method_timer, cat="AdvectionSolver.get_dt")
-    def get_dt(self, u: ArrayLike) -> float:
+    @partial(method_timer, cat="EulerSolver.get_dt")
+    def get_dt(self, w: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
 
         Args:
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            w (ArrayLike): Primitive solution values. Has shape (nvars, nx, ny, nz).
 
         Returns:
             dt (float): Time-step size.
         """
         _slc = self.array_slicer
         h = min(self.h)
-        vx = np.max(np.abs(u[_slc("vx")]))
-        vy = np.max(np.abs(u[_slc("vy")]))
-        vz = np.max(np.abs(u[_slc("vz")]))
-        return (self.CFL * h / (vx + vy + vz)).item()
+        c = hydro.sound_speed(rho=w[_slc("rho")], P=w[_slc("P")], gamma=self.gamma)
+        out = (
+            self.CFL * h / np.max(np.sum(np.abs(w[_slc("v")]), axis=0) + self.ndim * c)
+        )
+        return out.item()
 
-    @partial(method_timer, cat="AdvectionSolver.minisnapshot")
+    @partial(method_timer, cat="EulerSolver.minisnapshot")
     def minisnapshot(self):
         super().minisnapshot()
         _slc = self.array_slicer
         self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min())
         self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max())
+        self.minisnapshots["min_E"].append(self.arrays["u"][_slc("E")].min())
+        self.minisnapshots["max_E"].append(self.arrays["u"][_slc("E")].max())
+
+    @partial(method_timer, cat="EulerSolver.snapshot")
+    def snapshot(self):
+        """
+        Simple snapshot method that writes the solution to `self.snapshots` keyed by
+        the current time value.
+        """
+        self.arrays["w"] = primitives_from_conservatives(
+            self.array_slicer, self.arrays["u"], self.gamma
+        )
+        data = {
+            "u": self.arrays.get_numpy("u", copy=True),
+            "w": self.arrays.get_numpy("w", copy=True),
+        }
+        self.snapshots.log(self.t, data)

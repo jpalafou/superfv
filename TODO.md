@@ -1,9 +1,7 @@
-- [x] why does adaptive time-step ZS take 2-3 iterations? Because the DMP criterion is stricter than the GMP criterion.
-- [x] DMP vs gloval MP for ZS
+- [x] working euler example: SOD shock tube
 - [ ] vx, vy, vz are passive variables in AdvectionSolver?
 - [ ] cupy
 - [ ] a benchmarks/ folder. ex: benchmarks/error_convergence/
-- [ ] working euler example
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] multi-core support
 - [ ] coverage

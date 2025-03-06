@@ -185,6 +185,8 @@ class BoundaryConditions:
                     self._apply_periodic_bc(out, slab_thickness, dim, pos)
                 case "dirichlet":
                     self._apply_dirichlet_bc(out, slab_thickness, dim, pos)
+                case "free":
+                    self._apply_free_bc(out, slab_thickness, dim, pos)
                 case _:
                     raise ValueError(f"Boundary condition {bc_type} not implemented.")
 
@@ -212,6 +214,9 @@ class BoundaryConditions:
                 conditions ("x", "y", or "z").
             pos (Literal["x", "y", "z"]): Position of the boundary condition slab
                 ("l" or "r").
+
+        Returns:
+            None
         """
         _slc = self.array_slicer
         _st = slab_thickness
@@ -242,6 +247,9 @@ class BoundaryConditions:
                 conditions ("x", "y", or "z").
             pos (Literal["x", "y", "z"]): Position of the boundary condition slab
                 ("l" for left or "r" for right).
+
+        Returns:
+            None
         """
         _slc = self.array_slicer
         _axis = "xyz".index(dim) + 1
@@ -268,6 +276,39 @@ class BoundaryConditions:
         else:
             arr[_slc(axis=_axis, cut=cut)] = f(*slab_coords)
 
+    def _apply_free_bc(
+        self,
+        arr: ArrayLike,
+        slab_thickness: int,
+        dim: Literal["x", "y", "z"],
+        pos: Literal["l", "r"],
+    ):
+        """
+        Apply free boundary conditions to arr, modifying it in place.
+
+        Args:
+            arr (ArrayLike): Array to which to apply boundary conditions.
+            slab_thickness (int): Thickness of the boundary condition slab along the
+                axis.
+            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
+                conditions ("x", "y", or "z").
+            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
+                ("l" for left or "r" for right).
+
+        Returns:
+            None
+        """
+        _slc = self.array_slicer
+        _st = slab_thickness
+        _axis = "xyz".index(dim) + 1
+        if pos == "l":
+            outer_slc = _slc(axis=_axis, cut=(0, _st))
+            inner_slc = _slc(axis=_axis, cut=(_st, (_st + 1)))
+        else:
+            outer_slc = _slc(axis=_axis, cut=(-_st, 0))
+            inner_slc = _slc(axis=_axis, cut=(-(_st + 1), -_st))
+        arr[outer_slc] = arr[inner_slc]
+
     def _get_slab_coords(
         self,
         shape: Tuple[int, int, int],
@@ -283,6 +324,7 @@ class BoundaryConditions:
             dim (Literal["x", "y", "z"]): Dimension of the slab
                 ("x", "y", or "z").
             pos (Literal["l", "r"]): Position of the slab ("l" or "r").
+
         Returns:
             Tuple[ArrayLike, ArrayLike, ArrayLike]: Coordinates of the slab.
         """

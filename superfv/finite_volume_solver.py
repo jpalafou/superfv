@@ -38,15 +38,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pass
 
     def dummy_riemann_solver(
-        self, yl: ArrayLike, yr: ArrayLike, dim: Literal["x", "y", "z"]
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        ur: Optional[ArrayLike] = None,
+        ul: Optional[ArrayLike] = None,
     ) -> ArrayLike:
         """
         Dummy Riemann solver to give an example of the required signature.
 
         Args:
-            yl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
-            yr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
-            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
+            wl (ArrayLike): Left state primitive variables. Has shape
+                (nvars, nx, ny, nz, ...).
+            wr (ArrayLike): Right state primitive variables. Has shape
+                (nvars, nx, ny, nz, ...).
+            dim (str): Direction of the flux integral. Can be "x", "y", or "z".\
+            ul (Optional[ArrayLike]): Left state conserved variables. Has shape
+                (nvars, nx, ny, nz, ...).
+            ur (Optional[ArrayLike]): Right state conserved variables. Has shape
+                (nvars, nx, ny, nz, ...).
 
         Returns:
             ArrayLike: Numerical fluxes. Has shape (nvars, nx, ny, nz, ...).
@@ -208,7 +219,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 size if a maximum principle violation is detected. If True, MOOD is
                 overwritten to only modify the time-step size and not the fluxes.
                 Ignored if `ZS=False`.
-            max_adaptive_timesteps Optional[int] : Maximum number of adaptive time
+            max_adaptive_timesteps (Optional[int]): Maximum number of adaptive time
                 steps. If `ZS=True` and `adaptive_timestepping=True`, the default value
                 is 10. Otherwise, this argument is ignored.
             MOOD (bool): Whether to use MOOD for a posteriori flux revision. Ignored if
@@ -349,11 +360,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         # active variable initial conditions
         self.array_slicer = self.define_vars()
-        _n_active_vars = max(self.array_slicer.idxs) + 1
+        self.n_active_vars = max(self.array_slicer.idxs) + 1
         _active_array_slicer = self.array_slicer.copy()
 
         # check indices are consecutive
-        if self.array_slicer.idxs != set(range(_n_active_vars)):
+        if self.array_slicer.idxs != set(range(self.n_active_vars)):
             raise ValueError("Variable indices must be consecutive.")
 
         # define callable
@@ -363,7 +374,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # determine if passive variables are used
         self.has_passives = bool(ic_passives)
         _n_passive_vars = len(cast(dict, ic_passives)) if self.has_passives else 0
-        self.nvars = _n_active_vars + _n_passive_vars
+        self.nvars = self.n_active_vars + _n_passive_vars
 
         if self.has_passives:
             self._init_ic_passives(ic_passives)
@@ -379,10 +390,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     out[_slc(name)] = f(x, y, z)
                 return out
 
-            self.callable_ic = _callable_ic_with_passives
+            callable_ic = _callable_ic_with_passives
 
         else:
-            self.callable_ic = _callable_active_ic
+            callable_ic = _callable_active_ic
+
+        # apply transformation
+        self.callable_ic = self._ic_transform(callable_ic)
 
         # initialize the ODE solver and array manager
         ic_arr = self.callable_ic(self.X, self.Y, self.Z)
@@ -402,9 +416,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.array_slicer.create_var_group("actives", tuple(_active_vars))
 
         # assign indices to passive variables
-        _n_active_vars = len(_active_vars)
         for i, name in enumerate(cast(dict, ic_passives).keys()):
-            self.array_slicer.add_var(name, i + _n_active_vars)
+            self.array_slicer.add_var(name, i + self.n_active_vars)
         self.array_slicer.create_var_group(
             "passives", tuple(cast(dict, ic_passives).keys())
         )
@@ -419,6 +432,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(
                 "The intersection of active and passive variables must be the set of all variables."
             )
+
+    def _ic_transform(
+        self, f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
+    ) -> Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]:
+        """
+        Transform the initial condition function.
+        """
+        return f
 
     def _init_bc(
         self,
@@ -496,9 +517,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
-        self.riemann_solver: Callable[
-            [ArrayLike, ArrayLike, Literal["x", "y", "z"]], ArrayLike
-        ] = getattr(self, riemann_solver)
+        self.riemann_solver: Callable[..., ArrayLike] = getattr(self, riemann_solver)
 
     def _init_slope_limiting(
         self,
@@ -938,6 +957,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         clear_cache: bool = True,
         crop: bool = True,
+        left_transformed_nodes: Optional[ArrayLike] = None,
+        right_transformed_nodes: Optional[ArrayLike] = None,
     ) -> ArrayLike:
         """
         Compute the numerical fluxes.
@@ -958,8 +979,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 performing the quadrature.
             crop (bool): Whether to crop the numerical fluxes to the shape of the
                 finite-volume mesh.
+            left_transformed_nodes (Optional[ArrayLike]): Transformed value of nodes to
+                the left of the discontinuity. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
+            right_transformed_nodes (Optional[ArrayLike]): Transformed value of nodes to
+                the right of the discontinuity. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
         """
-        nodal_fluxes = self.riemann_solver(left_nodes, right_nodes, dim)
+        nodal_fluxes = self.riemann_solver(
+            wl=left_nodes,
+            wr=right_nodes,
+            dim=dim,
+            ul=left_transformed_nodes,
+            ur=right_transformed_nodes,
+        )
+
         if quadrature == "transverse":
             numerical_fluxes = self.compute_transverse_flux_integral(
                 nodal_fluxes, dim=dim, p=p, clear_cache=clear_cache
