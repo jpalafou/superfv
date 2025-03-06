@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -48,7 +48,6 @@ class AdvectionSolver(FiniteVolumeSolver):
         NAD_vars: Optional[Tuple[str]] = ("rho",),
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         cupy: bool = False,
-        **kwarg_attributes,
     ):
         """
         Initialize the finite volume solver.
@@ -117,7 +116,6 @@ class AdvectionSolver(FiniteVolumeSolver):
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
                 (lower, upper) bounds. If None, PAD is not checked.
             cupy (bool): Whether to use CuPy for array operations.
-            kwarg_attributes: kwargs to be stored as attributes.
         """
         super().__init__(
             ic=ic,
@@ -212,7 +210,9 @@ class AdvectionSolver(FiniteVolumeSolver):
         p: int,
         limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
+    ) -> Tuple[
+        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+    ]:
         """
         Compute the time-step size and the fluxes.
 
@@ -238,73 +238,49 @@ class AdvectionSolver(FiniteVolumeSolver):
 
         Returns:
             dt (float): Time-step size.
-            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]]): Tuple of fluxes. The
-                fluxes have the following shapes:
+            fluxes (
+                Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+            ):
+                Tuple of fluxes. The fluxes have the following shapes:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
         """
-        # set p
+        _slc = self.array_slicer
         _p = 1 if limiting_scheme == "muscl" else cast(int, p)
 
         # compute dt
         dt = self.get_dt(u)
 
-        # get number of required ghost cells
-        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
-
         # apply boundary conditions
+        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
         u_padded = self.apply_bc(u, n_ghost_cells)
 
-        # initialize empty flux arrays
-        F, G, H = np.array([]), np.array([]), np.array([])
-
-        # x-fluxes
-        if self.using_xdim:
+        # compute fluxes
+        fluxes: List[Optional[ArrayLike]] = []
+        for dim in ["x", "y", "z"]:
+            if not self.using[dim]:
+                fluxes.append(None)
+                continue
             xl, xr = self.interpolate_face_nodes(
                 u_padded,
-                dim="x",
+                dim=dim,
                 interpolation_scheme=mode,
                 limiting_scheme=limiting_scheme,
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            riemann_problem_x = xr[:, :-1, ...], xl[:, 1:, ...]
             F = self.compute_numerical_fluxes(
-                *riemann_problem_x, dim="x", quadrature=mode, p=_p
-            )
-
-        # y-fluxes
-        if self.using_ydim:
-            yl, yr = self.interpolate_face_nodes(
-                u_padded,
-                dim="y",
-                interpolation_scheme=mode,
-                limiting_scheme=limiting_scheme,
+                xr[_slc(**{dim: (None, -1)})],
+                xl[_slc(**{dim: (1, None)})],
+                dim=dim,
+                quadrature=mode,
                 p=_p,
-                slope_limiter=slope_limiter,
             )
-            riemann_problem_y = yr[:, :, :-1, ...], yl[:, :, 1:, ...]
-            G = self.compute_numerical_fluxes(
-                *riemann_problem_y, dim="y", quadrature=mode, p=_p
-            )
+            fluxes.append(F)
 
-        # z-fluxes
-        if self.using_zdim:
-            zl, zr = self.interpolate_face_nodes(
-                u_padded,
-                dim="z",
-                interpolation_scheme=mode,
-                limiting_scheme=limiting_scheme,
-                p=_p,
-                slope_limiter=slope_limiter,
-            )
-            riemann_problem_z = zr[:, :, :, :-1, ...], zl[:, :, :, 1:, ...]
-            H = self.compute_numerical_fluxes(
-                *riemann_problem_z, dim="z", quadrature=mode, p=_p
-            )
-
-        return dt, (F, G, H)
+        # return dt and fluxes
+        return dt, (fluxes[0], fluxes[1], fluxes[2])
 
     @partial(method_timer, cat="AdvectionSolver.get_dt")
     def get_dt(self, u: ArrayLike) -> float:
@@ -318,7 +294,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             dt (float): Time-step size.
         """
         _slc = self.array_slicer
-        h = min(self.h)
+        h = min(self.h.values())
         vx = np.max(np.abs(u[_slc("vx")]))
         vy = np.max(np.abs(u[_slc("vy")]))
         vz = np.max(np.abs(u[_slc("vz")]))

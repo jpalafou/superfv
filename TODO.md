@@ -1,4 +1,4 @@
-- [x] working euler example: SOD shock tube
+- [ ] a priori limiting for Euler
 - [ ] vx, vy, vz are passive variables in AdvectionSolver?
 - [ ] cupy
 - [ ] a benchmarks/ folder. ex: benchmarks/error_convergence/

@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 import wtflux.hydro as hydro
@@ -16,7 +16,7 @@ from .tools.timer import method_timer
 
 class EulerSolver(FiniteVolumeSolver):
     """
-    Solve the euler system of equations using a finite volume method.
+    Solve the system of equations in up to three dimensions.
     """
 
     def __init__(
@@ -25,7 +25,6 @@ class EulerSolver(FiniteVolumeSolver):
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
-        gamma: float = 5 / 3,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -52,7 +51,7 @@ class EulerSolver(FiniteVolumeSolver):
         NAD_vars: Optional[Tuple[str]] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         cupy: bool = False,
-        **kwarg_attributes,
+        gamma: float = 5 / 3,
     ):
         """
         Initialize the finite volume solver.
@@ -75,7 +74,6 @@ class EulerSolver(FiniteVolumeSolver):
                 - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
                 - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
                 The function must return an array with shape (nx, ny, nz).
-            gamma (float): Ratio of specific heats.
             bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
             bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
             bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
@@ -122,12 +120,12 @@ class EulerSolver(FiniteVolumeSolver):
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
                 (lower, upper) bounds. If None, PAD is not checked.
             cupy (bool): Whether to use CuPy for array operations.
-            kwarg_attributes: kwargs to be stored as attributes.
+            gamma (float): Ratio of specific heats.
         """
+        self.gamma = gamma  # init hydro
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
-            gamma=gamma,
             bcx=bcx,
             bcy=bcy,
             bcz=bcz,
@@ -174,7 +172,7 @@ class EulerSolver(FiniteVolumeSolver):
                 x,
                 y,
                 z,
-                h=self.h,
+                h=(self.h["x"], self.h["y"], self.h["z"]),
                 p=(
                     self.p if self.using_xdim else 0,
                     self.p if self.using_ydim else 0,
@@ -194,9 +192,6 @@ class EulerSolver(FiniteVolumeSolver):
         self.minisnapshots["max_rho"] = []
         self.minisnapshots["min_E"] = []
         self.minisnapshots["max_E"] = []
-
-    def _init_hydro(self, gamma: float):
-        self.gamma = gamma
 
     def define_vars(self) -> ArraySlicer:
         """
@@ -271,7 +266,9 @@ class EulerSolver(FiniteVolumeSolver):
         p: int,
         limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
+    ) -> Tuple[
+        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+    ]:
         """
         Compute the time-step size and the fluxes.
 
@@ -297,34 +294,33 @@ class EulerSolver(FiniteVolumeSolver):
 
         Returns:
             dt (float): Time-step size.
-            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]]): Tuple of fluxes. The
-                fluxes have the following shapes:
+            fluxes (
+                Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+            ):
+                Tuple of fluxes. The fluxes have the following shapes:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
         """
         _slc = self.array_slicer
-
-        # set p
         _p = 1 if limiting_scheme == "muscl" else cast(int, p)
 
         # compute dt
         dt = self.get_dt(u)
 
-        # get number of required ghost cells
-        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
-
         # apply boundary conditions
+        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
         u_padded = self.apply_bc(u, n_ghost_cells)
 
-        # initialize empty flux arrays
-        F, G, H = np.array([]), np.array([]), np.array([])
-
-        # x-fluxes
-        if self.using_xdim:
+        # compute fluxes
+        fluxes: List[Optional[ArrayLike]] = []
+        for dim in ["x", "y", "z"]:
+            if not self.using[dim]:
+                fluxes.append(None)
+                continue
             u_xl, u_xr = self.interpolate_face_nodes(
                 u_padded,
-                dim="x",
+                dim=dim,
                 interpolation_scheme=mode,
                 limiting_scheme=limiting_scheme,
                 p=_p,
@@ -333,60 +329,18 @@ class EulerSolver(FiniteVolumeSolver):
             w_xl = primitives_from_conservatives(_slc, u_xl, self.gamma)
             w_xr = primitives_from_conservatives(_slc, u_xr, self.gamma)
             F = self.compute_numerical_fluxes(
-                left_nodes=w_xr[:, :-1, ...],
-                right_nodes=w_xl[:, 1:, ...],
-                dim="x",
+                w_xr[_slc(**{dim: (None, -1)})],
+                w_xl[_slc(**{dim: (1, None)})],
+                dim=dim,
                 quadrature=mode,
                 p=_p,
-                left_transformed_nodes=u_xr[:, :-1, ...],
-                right_transformed_nodes=u_xl[:, 1:, ...],
+                left_transformed_nodes=u_xr[_slc(**{dim: (None, -1)})],
+                right_transformed_nodes=u_xl[_slc(**{dim: (1, None)})],
             )
+            fluxes.append(F)
 
-        # y-fluxes
-        if self.using_ydim:
-            u_yl, u_yr = self.interpolate_face_nodes(
-                u_padded,
-                dim="y",
-                interpolation_scheme=mode,
-                limiting_scheme=limiting_scheme,
-                p=_p,
-                slope_limiter=slope_limiter,
-            )
-            w_yl = primitives_from_conservatives(_slc, u_yl, self.gamma)
-            w_yr = primitives_from_conservatives(_slc, u_yr, self.gamma)
-            G = self.compute_numerical_fluxes(
-                left_nodes=w_yr[:, :, :-1, ...],
-                right_nodes=w_yl[:, :, 1:, ...],
-                dim="y",
-                quadrature=mode,
-                p=_p,
-                left_transformed_nodes=u_yr[:, :, :-1, ...],
-                right_transformed_nodes=u_yl[:, :, 1:, ...],
-            )
-
-        # z-fluxes
-        if self.using_zdim:
-            u_zl, u_zr = self.interpolate_face_nodes(
-                u_padded,
-                dim="z",
-                interpolation_scheme=mode,
-                limiting_scheme=limiting_scheme,
-                p=_p,
-                slope_limiter=slope_limiter,
-            )
-            w_zl = primitives_from_conservatives(_slc, u_zl, self.gamma)
-            w_zr = primitives_from_conservatives(_slc, u_zr, self.gamma)
-            H = self.compute_numerical_fluxes(
-                left_nodes=w_zr[:, :, :, :-1, ...],
-                right_nodes=w_zl[:, :, :, 1:, ...],
-                dim="z",
-                quadrature=mode,
-                p=_p,
-                left_transformed_nodes=u_zr[:, :, :, :-1, ...],
-                right_transformed_nodes=u_zl[:, :, :, 1:, ...],
-            )
-
-        return dt, (F, G, H)
+        # return dt and fluxes
+        return dt, (fluxes[0], fluxes[1], fluxes[2])
 
     @partial(method_timer, cat="EulerSolver.get_dt")
     def get_dt(self, w: ArrayLike) -> float:
@@ -400,7 +354,7 @@ class EulerSolver(FiniteVolumeSolver):
             dt (float): Time-step size.
         """
         _slc = self.array_slicer
-        h = min(self.h)
+        h = min(self.h.values())
         c = hydro.sound_speed(rho=w[_slc("rho")], P=w[_slc("P")], gamma=self.gamma)
         out = (
             self.CFL * h / np.max(np.sum(np.abs(w[_slc("v")]), axis=0) + self.ndim * c)

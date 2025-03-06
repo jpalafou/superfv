@@ -24,9 +24,12 @@ def _cache_fluxes(
         fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): The fluxes.
         scheme (str): The scheme name.
     """
-    fv_solver.MOOD_cache.add("F_" + scheme, fluxes[0])
-    fv_solver.MOOD_cache.add("G_" + scheme, fluxes[1])
-    fv_solver.MOOD_cache.add("H_" + scheme, fluxes[2])
+    if fv_solver.using_xdim:
+        fv_solver.MOOD_cache.add("F_" + scheme, fluxes[0])
+    if fv_solver.using_ydim:
+        fv_solver.MOOD_cache.add("G_" + scheme, fluxes[1])
+    if fv_solver.using_zdim:
+        fv_solver.MOOD_cache.add("H_" + scheme, fluxes[2])
 
 
 def init_MOOD(

@@ -74,7 +74,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
+    ) -> Tuple[
+        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+    ]:
         """
         Compute the time-step size and the fluxes.
 
@@ -100,8 +102,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Returns:
             dt (float): Time-step size.
-            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]]): Tuple of fluxes. The
-                fluxes have the following shapes:
+            fluxes (
+                Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+            ):
+                Tuple of fluxes. The fluxes have the following shapes:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
@@ -164,7 +168,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         NAD_vars: Optional[Tuple[str]] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         cupy: bool = False,
-        **kwarg_attributes,
     ):
         """
         Initialize the finite volume solver.
@@ -233,9 +236,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
                 (lower, upper) bounds. If None, PAD is not checked.
             cupy (bool): Whether to use CuPy for array operations.
-            kwarg_attributes: kwargs to be stored as attributes.
         """
-        self._init_kwarg_attributes(kwarg_attributes)
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL, interpolation_scheme)
         self._init_ic(ic, ic_passives, cupy)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
@@ -284,17 +285,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.nx = nx
         self.ny = ny
         self.nz = nz
+        self.n = {"x": nx, "y": ny, "z": nz}
         self.hx = (xlim[1] - xlim[0]) / nx
         self.hy = (ylim[1] - ylim[0]) / ny
         self.hz = (zlim[1] - zlim[0]) / nz
+        self.h = {"x": self.hx, "y": self.hy, "z": self.hz}
         self.using_xdim = nx > 1
         self.using_ydim = ny > 1
         self.using_zdim = nz > 1
-        self.n = (nx, ny, nz)
-        self.h = (self.hx, self.hy, self.hz)
-        self.using_dim = (nx > 1, ny > 1, nz > 1)
-        self.ndim = sum(self.using_dim)
-        self.dims = "".join(dim for dim, using in zip("xyz", self.using_dim) if using)
+        self.using = {"x": self.using_xdim, "y": self.using_ydim, "z": self.using_zdim}
+        self.dims = "".join(dim for dim, using in self.using.items() if using)
+        self.ndim = len(self.dims)
         self.p = p
         self.CFL = CFL
         self.interpolation_scheme = interpolation_scheme
@@ -517,7 +518,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
-        self.riemann_solver: Callable[..., ArrayLike] = getattr(self, riemann_solver)
+        self.riemann_solver: Callable[
+            ...,
+            ArrayLike,
+        ] = getattr(self, riemann_solver)
 
     def _init_slope_limiting(
         self,
@@ -738,7 +742,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             # if the interpolated data is not in the cache, compute it
             if key not in self.interpolation_cache:
-                if getattr(self, f"using_{direction}dim"):
+                if self.using[direction]:
                     self.interpolation_cache[key] = stencil_sweep(
                         current_data,
                         stencil_weights=weight_function(p, coordinates[direction]),
@@ -850,9 +854,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         faces = []
         for pos in "lr":
             nodes = []
-            if not getattr(self, f"using_{dim}dim"):
-                faces.append(np.array([]))
-                continue
+            if not self.using[dim]:
+                raise ValueError(f"Dimension {dim} is not used in the mesh.")
             if interpolation_scheme == "gauss-legendre" and limiting_scheme is None:
                 all_coords = get_gauss_legendre_face_nodes(self.dims, dim, pos, p)
                 for coords in all_coords:
@@ -1010,27 +1013,37 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         return numerical_fluxes
 
-    def RHS(self, u: ArrayLike, F: ArrayLike, G: ArrayLike, H: ArrayLike) -> ArrayLike:
+    def RHS(
+        self,
+        u: ArrayLike,
+        F: Optional[ArrayLike],
+        G: Optional[ArrayLike],
+        H: Optional[ArrayLike],
+    ) -> ArrayLike:
         """
         Compute the right-hand side of the conservation law.
 
         Args:
             u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            F (ArrayLike): Flux in the x-direction. Has shape (nvars, nx + 1, ny, nz).
-            G (ArrayLike): Flux in the y-direction. Has shape (nvars, nx, ny + 1, nz).
-            H (ArrayLike): Flux in the z-direction. Has shape (nvars, nx, ny, nz + 1).
+            F (Optional[ArrayLike]): Flux in the x-direction. Has shape
+                (nvars, nx + 1, ny, nz).
+            G (Optional[ArrayLike]): Flux in the y-direction. Has shape
+                (nvars, nx, ny + 1, nz).
+            H (Optional[ArrayLike]): Flux in the z-direction. Has shape
+                (nvars, nx, ny, nz + 1).
 
         Returns:
             dydt (ArrayLike): Right-hand side of the conservation law. Has shape
                 (nvars, nx, ny, nz).
         """
+        _slc = self.array_slicer
         dydt = np.zeros_like(u)
-        if self.using_xdim:
-            dydt += -(1 / self.hx) * (F[:, 1:, :, :] - F[:, :-1, :, :])
-        if self.using_ydim:
-            dydt += -(1 / self.hy) * (G[:, :, 1:, :] - G[:, :, :-1, :])
-        if self.using_zdim:
-            dydt += -(1 / self.hz) * (H[:, :, :, 1:] - H[:, :, :, :-1])
+        for dim, _F in zip(["x", "y", "z"], [F, G, H]):
+            if self.using[dim]:
+                dydt += -(1 / self.h[dim]) * (
+                    cast(ArrayLike, _F)[_slc(**{dim: (1, None)})]
+                    - cast(ArrayLike, _F)[_slc(**{dim: (None, -1)})]
+                )
         return dydt
 
     @partial(method_timer, cat="FiniteVolumeSolver.snapshot")
