@@ -56,7 +56,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
         ZS=p > 0,
         PAD={"rho": (0, 1)},
     )
-    solver.run(0.05, qmax=2)
+    solver.run(0.05, q_max=2)
 
     upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
     lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
