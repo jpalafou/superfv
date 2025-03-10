@@ -46,19 +46,22 @@ def get_all_high_order_face_nodes(
         List[List[Optional[ArrayLike]]]: List of face nodes ([[left, right], ...]).
             Each face node array has shape (nvars, <nx, <ny, <nz, ninterpolations).
     """
-    faces = []
+    faces: List[List[Optional[ArrayLike]]] = []
     for dim in ["x", "y", "z"]:
         if not fv_solver.using[dim]:
             faces.append([None, None])
             continue
-        l_arr, r_arr = fv_solver.interpolate_face_nodes(
-            averages,
-            dim=dim,
-            interpolation_scheme=interpolation_scheme,
-            p=p,
-            slope_limiter=None,
+        faces.append(
+            [
+                *fv_solver.interpolate_face_nodes(
+                    averages,
+                    dim=dim,
+                    interpolation_scheme=interpolation_scheme,
+                    p=p,
+                    slope_limiter=None,
+                )
+            ]
         )
-        faces.append([cast(ArrayLike, l_arr), cast(ArrayLike, r_arr)])
     return faces
 
 
