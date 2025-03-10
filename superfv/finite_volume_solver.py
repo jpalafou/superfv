@@ -505,9 +505,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_array_manager(self, cupy: bool):
         self.interpolation_cache = ArrayManager()
         self.MOOD_cache = ArrayManager()
+        self.ZS_cache = ArrayManager()
         if cupy:
             self.interpolation_cache.enable_cupy()
             self.MOOD_cache.enable_cupy()
+            self.ZS_cache.enable_cupy()
 
         # initialize flux arrays
         nvars, nx, ny, nz = self.nvars, self.nx, self.ny, self.nz
@@ -537,6 +539,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         # a priori limiting
         self.a_priori_slope_limiting_scheme: Optional[Literal["muscl", "zhang-shu"]]
+        self.zhang_shu_limiting = ZS
         self.a_priori_slope_limiter: Optional[Literal["minmod", "moncen"]]
         self.ZS_adaptive_timestep = False
 
@@ -601,6 +604,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
         if self.MOOD and not (self.ZS_adaptive_timestep and self.substep_count > 1):
             dt, fluxes = self.MOOD_loop(t, dt, u, fluxes)
+        if self.zhang_shu_limiting:
+            self.ZS_cache.clear()
         return dt, self.RHS(u, *fluxes)
 
     @partial(method_timer, cat="FiniteVolumeSolver.MOOD_loop")
@@ -841,7 +846,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Tuple[ArrayLike, ArrayLike]: Two node arrays. The first element is the left
                 face nodes, and the second element is the right face nodes. Each face
                 node has shape (nvars, <=nx, <=ny, <=nz, ninterpolations), unless the
-                dimension is not used, in which case the face node is an empty array.
+                dimension is not used, in which case the face node is None.
                 ninterpolations is the number of Gauss-Legendre interpolation points
                 for a degree `p` reconstruction if `interpolation_scheme` is
                 "gauss-legendre". If `interpolation_scheme` is "face-centers",
@@ -1061,16 +1066,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.minisnapshots["MOOD_iters"].append(self.MOOD_iter_count)
 
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
-    def run(self, *args, **kwargs):
+    def run(self, *args, q_max=3, **kwargs):
         """
         Solve the conservation law using a Runge-Kutta method whose order matches the
         chosen polynomial degree for the spatial discretization, up to RK4.
 
         Args:
             *args: Arguments to pass to the Runge-Kutta method.
+            q_max (int): Maximum degree of the Runge-Kutta method to use.
             **kwargs: Keyword arguments to pass to the Runge-Kutta method.
         """
-        q = min(self.p, 3)
+        q = min(self.p, q_max)
         match q:
             case 0:
                 self.euler(*args, **kwargs)

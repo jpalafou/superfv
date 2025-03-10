@@ -18,18 +18,21 @@ p_CFL_map = {
 
 
 @pytest.mark.parametrize("adaptive_dt", [False, True])
-@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7])
-def test_1D_advection_mpp(adaptive_dt, p):
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7, 15])
+@pytest.mark.parametrize("dim", ["x", "y", "z"])
+def test_1D_advection_mpp(adaptive_dt, p, dim):
+    if p > 7 and not adaptive_dt:
+        pytest.skip("High order schemes require adaptive timestepping.")
     solver = AdvectionSolver(
         p=p,
-        ic=partial(initial_conditions.square, vx=1),
-        nx=64,
+        ic=partial(initial_conditions.square, **{"v" + dim: 1.0}),
+        **{"n" + dim: 64},
         CFL=0.8 if adaptive_dt else p_CFL_map[p],
-        adaptive_timestepping=adaptive_dt,
+        adaptive_timestepping=adaptive_dt and p > 0,
         ZS=p > 0,
         PAD={"rho": (0, 1)},
     )
-    solver.run(1.0)
+    solver.run(0.05)
 
     upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
     lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
@@ -38,21 +41,43 @@ def test_1D_advection_mpp(adaptive_dt, p):
     assert np.all(lower_violations >= 0)
 
 
-@pytest.mark.parametrize("adaptive_dt", [False, True])
-@pytest.mark.parametrize("p", [0, 1, 2])
-def test_2D_advection_mpp(adaptive_dt, p):
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
+@pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])
+def test_2D_advection_mpp(p, dim1_dim2):
+    dim1, dim2 = dim1_dim2
     solver = AdvectionSolver(
         p=p,
-        ic=partial(initial_conditions.square, vx=2, vy=1),
-        nx=32,
-        ny=32,
-        CFL=0.8 if adaptive_dt else p_CFL_map[p],
-        adaptive_timestepping=adaptive_dt,
+        ic=partial(
+            initial_conditions.square,
+            **{"v" + dim1: 2.0, "v" + dim2: 1.0},
+        ),
+        **{"n" + dim1: 64, "n" + dim2: 64},
         interpolation_scheme="gauss-legendre",
         ZS=p > 0,
         PAD={"rho": (0, 1)},
     )
-    solver.run(1.0)
+    solver.run(0.05, q_max=2)
+
+    upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
+    lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
+
+    assert np.all(upper_violations >= 0)
+    assert np.all(lower_violations >= 0)
+
+
+@pytest.mark.parametrize("p", [0, 1, 2])
+def test_3D_advection_mpp(p):
+    solver = AdvectionSolver(
+        p=p,
+        ic=partial(initial_conditions.square, vx=1.0, vy=1.0, vz=1.0),
+        nx=32,
+        ny=32,
+        nz=32,
+        interpolation_scheme="gauss-legendre",
+        ZS=p > 0,
+        PAD={"rho": (0, 1)},
+    )
+    solver.run(0.05)
 
     upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
     lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
