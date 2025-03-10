@@ -1,4 +1,9 @@
+- [x] ZS limiter should compute all interpolation points in a cell and cache them before returning the limited results along a specified `dim`
+- [ ] fix 2DZS + RK4
+- [ ] timer shows ncalls
 - [ ] a priori limiting for Euler
+- [ ] Euler advection
+- [ ] smooth extrema detection
 - [ ] vx, vy, vz are passive variables in AdvectionSolver?
 - [ ] cupy
 - [ ] a benchmarks/ folder. ex: benchmarks/error_convergence/

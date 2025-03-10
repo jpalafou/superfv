@@ -112,6 +112,19 @@ def crop_to_center(
     return array[slices]
 
 
+def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
+    """
+    Compute the intersection of the shapes of multiple arrays.
+
+    Args:
+        *args (Tuple[Tuple[int, ...], ...]): Tuple of shapes.
+
+    Returns:
+        Tuple[int, ...]: Intersection shape.
+    """
+    return tuple(min(s) for s in zip(*args))
+
+
 def _idxs_to_slice_or_array(
     idxs: List[int],
 ) -> Union[slice, np.ndarray[Any, np.dtype[np.int_]]]:
@@ -272,12 +285,12 @@ class ArraySlicer:
                 step if i == axis else None,
             )
 
+        if keep_dims:
+            for i in range(len(slices)):
+                if isinstance(slices[i], int):
+                    slices[i] = slice(slices[i], cast(int, slices[i]) + 1)
         if len(slices) == 1 or all(s == slice(None) for s in slices[1:]):
-            if keep_dims and isinstance(slices[0], int):
-                return slice(slices[0], slices[0] + 1)
             return slices[0]
-        if keep_dims and isinstance(slices[0], int):
-            slices[0] = slice(slices[0], slices[0] + 1)
         return tuple(slices)
 
     def copy(self) -> "ArraySlicer":
