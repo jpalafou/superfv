@@ -1,37 +1,30 @@
 import warnings
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
 # determine if CuPy is available
-if TYPE_CHECKING:
-    import numpy as cp
-
-    CUPY_AVAILABLE = False
-else:
+xp = np
+cp_array = np.ndarray
+cp_array_to_numpy_array = np.asarray
+np_array_to_cp_array = np.asarray
+CUPY_AVAILABLE = False
+if not TYPE_CHECKING:
     try:
         import cupy as cp
 
+        xp = cp
+        cp_array = cp.ndarray
+        cp_array_to_numpy_array = cp.asnumpy
+        np_array_to_cp_array = cp.asarray
         CUPY_AVAILABLE = True
     except Exception:
-        import numpy as cp
-
-        CUPY_AVAILABLE = False
+        pass
 
 # define custom types
-ArrayLike = Union[np.ndarray, cp.ndarray]
+ArrayLike = Union[np.ndarray, xp.ndarray]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
@@ -302,25 +295,39 @@ class ArraySlicer:
 
 class ArrayManager:
     """
-    Class for managing arrays in a dictionary and their transfer between NumPy and
-    CuPy.
+    Class for managing arrays which can be transferred between CPU and GPU.
     """
 
-    def __init__(self, arrays: Optional[Dict[str, ArrayLike]] = None):
+    def _transfer_array(self, name: str, device: Literal["cpu", "gpu"]):
+        """Transfers a specific array between CPU and GPU."""
+        self._check_name_exists(name)
+        is_cupy = isinstance(self.arrays[name], cp_array)
+        if device == "cpu" and is_cupy:
+            self.arrays[name] = cp_array_to_numpy_array(self.arrays[name])
+        elif device == "gpu" and not is_cupy:
+            self.arrays[name] = np_array_to_cp_array(self.arrays[name])
+
+    def _dummy_transfer_array(self, name: str, device: Literal["cpu", "gpu"]):
+        pass
+
+    def __init__(self, arrays: Optional[Dict[str, np.ndarray]] = None):
         """
         Initializes the array manager.
 
         Args:
-            arrays (Optional[Dict[str, ArrayLike]]): Dictionary of arrays.
+            arrays (Optional[Dict[str, np.ndarray]]): Dictionary of NumPy arrays.
         """
-        self.arrays = arrays if arrays else {}
-        self.using_cupy = False
+        self.arrays: Dict[str, ArrayLike] = arrays if arrays else {}
+        self.device: Literal["cpu", "gpu"] = "cpu"
+        self.transfer_array = (
+            self._transfer_array if CUPY_AVAILABLE else self._dummy_transfer_array
+        )
 
     def __repr__(self) -> str:
         return f"ArrayManager({self.arrays.keys()})"
 
     def __str__(self) -> str:
-        return f"ArrayManager({self.arrays.keys()})"
+        return f"ArrayManager with arrays: {list(self.arrays.keys())}"
 
     def _check_name_exists(self, name: str):
         if name not in self.arrays:
@@ -330,80 +337,35 @@ class ArrayManager:
         if name in self.arrays:
             raise KeyError(f"Array with name '{name}' already exists.")
 
-    def _check_numpy_array(self, array: np.ndarray):
-        if not isinstance(array, np.ndarray):
-            raise TypeError(f"Array must be of type numpy.ndarray, not {type(array)}.")
-
-    def enable_cupy(self):
+    def transfer_to_device(self, device: Literal["cpu", "gpu"]):
         """
-        Enable the use of CuPy.
-
-        Note:
-            If CuPy is available, this method transfers all existing arrays to the
-            GPU as CuPy arrays and sets the `using_cupy` attribute to `True`. Any
-            new arrays added will also be stored as CuPy arrays.
-
-            If CuPy is not available, a warning is printed, and the arrays remain
-            as NumPy arrays on the CPU.
-        """
-        if CUPY_AVAILABLE:
-            self.using_cupy = True
-            for name in self.arrays:
-                self.transfer_device(name, "gpu")
-        else:
-            warnings.warn("CuPy is not available. Falling back to NumPy.")
-
-    def transfer_device(self, name: str, to_device: str):
-        """
-        Transfer an array to a different device.
+        Transfer all arrays to a specific device.
 
         Args:
-            name (str): Name of the array.
-            to_device (str): Device to transfer the array to. Options are "cpu" and "gpu".
+            device (Literal["cpu", "gpu"]): Device to transfer arrays to.
         """
-        self._check_name_exists(name)
-        if self.using_cupy:
-            if to_device == "cpu" and isinstance(self.arrays[name], cp.ndarray):
-                if TYPE_CHECKING:
-                    raise ValueError("Cannot import CuPy in type-checking mode.")
-                else:
-                    self.arrays[name] = cp.asnumpy(self.arrays[name])
-            elif to_device == "gpu" and isinstance(self.arrays[name], np.ndarray):
-                self.arrays[name] = cp.asarray(self.arrays[name])
-            else:
-                raise ValueError(f"Invalid device: {to_device}")
-
-    def disable_cupy(self):
-        """
-        Disable the use of CuPy.
-
-        Note:
-            This method transfers all existing arrays to the CPU as NumPy arrays and
-            sets the `using_cupy` attribute to `False`. Any new arrays added will also
-            be stored as NumPy arrays.
-        """
+        if self.device == device:
+            raise ValueError(f"ArrayManager is already using {device}.")
+        if not CUPY_AVAILABLE:
+            warnings.warn("CuPy is not available. Falling back to NumPy.")
+            return
         for name in self.arrays:
-            self.transfer_device(name, "cpu")
-        self.using_cupy = False
+            self.transfer_array(name, device)
+        self.device = device
 
-    def add(self, name: str, array: np.ndarray, overwrite: bool = False):
+    def add(self, name: str, array: ArrayLike):
         """
         Add an array to the manager.
 
         Args:
             name (str): Name of the array.
-            array (np.ndarray): Array to add.
-            overwrite (bool): If True, overwrite the array if it already exists.
+            array (ArrayLike): NumPy or CuPy array.
         """
-        if not overwrite:
-            self._check_name_available(name)
-        self._check_numpy_array(array)
-        if self.using_cupy:
-            self.arrays[name] = cp.asarray(array)
-        else:
-            self.arrays[name] = array
+        self._check_name_available(name)
+        self.arrays[name] = array
+        self.transfer_array(name, self.device)
 
-    def rm(self, name: str):
+    def remove(self, name: str):
         """
         Remove an array from the manager.
 
@@ -413,81 +375,89 @@ class ArrayManager:
         self._check_name_exists(name)
         del self.arrays[name]
 
-    def clear(self, all_but: Optional[Iterable[str]] = None):
-        """
-        Clear all arrays from the manager.
-
-        Args:
-            all_but (Optional[Iterable[str]]): List of array names to keep.
-        """
-        if all_but:
-            self.arrays = {
-                name: array for name, array in self.arrays.items() if name in all_but
-            }
-        else:
-            self.arrays = {}
-
-    def rename(self, old_name: str, new_name: str):
+    def rename(self, name: str, new_name: str):
         """
         Rename an array.
 
         Args:
-            old_name (str): Old name of the array.
+            name (str): Current name of the array.
             new_name (str): New name of the array.
         """
-        self._check_name_exists(old_name)
+        self._check_name_exists(name)
         self._check_name_available(new_name)
-        self.arrays[new_name] = self.arrays.pop(old_name)
+        self.add(new_name, self.arrays[name])
+        self.remove(name)
+
+    def clear(self):
+        """
+        Remove all arrays from the manager
+        """
+        self.arrays.clear()
 
     def __getitem__(
-        self, name: str, asnumpy: bool = False, copy: bool = False
+        self, name: str, copy: bool = False, asnumpy: bool = False
     ) -> ArrayLike:
         """
         Get an array from the manager.
 
         Args:
             name (str): Name of the array.
-            asnumpy (bool): If True, return the array as a NumPy array.
             copy (bool): If True, return a copy of the array.
+            asnumpy (bool): If True, return a NumPy array.
 
         Returns:
-            ArrayLike
+            ArrayLike: NumPy or CuPy array.
         """
         self._check_name_exists(name)
-        if self.using_cupy and asnumpy:
-            if TYPE_CHECKING:
-                raise ValueError("Cannot import CuPy in type-checking mode.")
-            else:
-                return cp.asnumpy(self.arrays[name])
-        return self.arrays[name].copy() if copy else self.arrays[name]
+        array = self.arrays[name]
+        if copy:
+            array = array.copy()
+        if asnumpy and self.device == "gpu":
+            array = cp_array_to_numpy_array(array)
+        return array
 
-    def get_numpy(self, name: str, copy: bool = False) -> np.ndarray:
+    def get_numpy_copy(self, name: str) -> np.ndarray:
         """
-        Get an array as a NumPy array.
+        Get a NumPy copy of an array.
 
         Args:
             name (str): Name of the array.
-            copy (bool): If True, return a copy of the array.
-
-        Returns:
-            np.ndarray
         """
-        if TYPE_CHECKING:
-            raise ValueError("Cannot import CuPy in type-checking mode.")
-        return self.__getitem__(name, asnumpy=True, copy=copy)
+        return self.__getitem__(name, True, True)
 
     def __setitem__(self, name: str, array: ArrayLike):
         """
-        Set an array in the manager.
+        Modify an existing array in place.
+
+        This prevents users from replacing arrays entirely, ensuring that
+        preallocated memory is used efficiently.
 
         Args:
             name (str): Name of the array.
-            array (ArrayLike): Array to set.
+            array (ArrayLike): New values to assign in-place.
         """
-        self.arrays[name] = array
+        self._check_name_exists(name)
+        if self.arrays[name].shape != array.shape:
+            raise ValueError(
+                f"Cannot assign array with shape {array.shape} to array with shape {self.arrays[name].shape}."
+            )
+        if self.arrays[name].dtype != array.dtype:
+            raise ValueError(
+                f"Cannot assign array with dtype {array.dtype} to array with dtype {self.arrays[name].dtype}."
+            )
+        self.arrays[name][...] = array
 
     def __contains__(self, name: str) -> bool:
+        """
+        Check if an array exists in the manager.
+
+        Args:
+            name (str): Name of the array.
+        """
         return name in self.arrays
 
-    def to_dict(self) -> dict:
-        return dict(names=list(self.arrays.keys()), using_cupy=self.using_cupy)
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Return a dictionary representation of the manager.
+        """
+        return dict(names=list(self.arrays.keys()), device=self.device)

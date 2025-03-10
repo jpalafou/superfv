@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import wtflux.hydro as hydro
 
 from superfv.hydro import conservatives_from_primitives, primitives_from_conservatives
 from superfv.tools.array_management import ArraySlicer
@@ -52,8 +53,8 @@ def test_primitive_to_conservative_invertability(trial, gamma, euler_slicer):
     W[_slc("P")] += 1.0
 
     # convert to conservative and back to primitive
-    U = conservatives_from_primitives(euler_slicer, W, gamma=1.4)
-    W2 = primitives_from_conservatives(euler_slicer, U, gamma=1.4)
+    U = conservatives_from_primitives(hydro, euler_slicer, W, gamma=1.4)
+    W2 = primitives_from_conservatives(hydro, euler_slicer, U, gamma=1.4)
 
     # check that the primitive values are the same
     assert l1_norm(W, W2) < 1e-15
@@ -75,8 +76,8 @@ def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
     U[_slc("E")] += 1.0
 
     # convert to conservative and back to primitive
-    W = primitives_from_conservatives(euler_slicer, U, gamma=1.4)
-    U2 = conservatives_from_primitives(euler_slicer, W, gamma=1.4)
+    W = primitives_from_conservatives(hydro, euler_slicer, U, gamma=1.4)
+    U2 = conservatives_from_primitives(hydro, euler_slicer, W, gamma=1.4)
 
     # check that the primitive values are the same
     assert l1_norm(U, U2) < 1e-15

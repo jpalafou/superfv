@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Dict, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Optional, Tuple, cast
 
 import numpy as np
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 def _cache_fluxes(
     fv_solver: FiniteVolumeSolver,
-    fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
+    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
     scheme: str,
 ):
     """
@@ -21,21 +21,25 @@ def _cache_fluxes(
 
     Args:
         fv_solver (FiniteVolumeSolver): The finite volume solver object.
-        fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): The fluxes.
+        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
+            corresponding dimension is unused. Otherwise, is an array with shape:
+            - F: (nvars, nx+1, ny, nz, ...)
+            - G: (nvars, nx, ny+1, nz, ...)
+            - H: (nvars, nx, ny, nz+1, ...)
         scheme (str): The scheme name.
     """
     if fv_solver.using_xdim:
-        fv_solver.MOOD_cache.add("F_" + scheme, fluxes[0])
+        fv_solver.MOOD_cache.add("F_" + scheme, cast(ArrayLike, fluxes[0]))
     if fv_solver.using_ydim:
-        fv_solver.MOOD_cache.add("G_" + scheme, fluxes[1])
+        fv_solver.MOOD_cache.add("G_" + scheme, cast(ArrayLike, fluxes[1]))
     if fv_solver.using_zdim:
-        fv_solver.MOOD_cache.add("H_" + scheme, fluxes[2])
+        fv_solver.MOOD_cache.add("H_" + scheme, cast(ArrayLike, fluxes[2]))
 
 
 def init_MOOD(
     fv_solver: FiniteVolumeSolver,
     u: ArrayLike,
-    fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
+    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
 ):
     """
     Initialize the MOOD algorithm.
@@ -43,21 +47,22 @@ def init_MOOD(
     Args:
         fv_solver (FiniteVolumeSolver): The finite volume solver object.
         u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
-        fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): The fluxes (F, G, H). Has
-            shapes:
+        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
+            corresponding dimension is unused. Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
     """
+    xp = fv_solver.xp
     fv_solver.MOOD_cache.clear()
-    fv_solver.MOOD_cache.add("violations", np.empty_like(u[0]))
+    fv_solver.MOOD_cache.add("violations", xp.empty_like(u[0], dtype=bool))
     initial_scheme = "fv" + str(fv_solver.p)
     if initial_scheme != fv_solver.MOOD_cascade[0]:
         raise ValueError(
             f"Starting scheme {initial_scheme} is not the first scheme in the cascade {fv_solver.MOOD_cascade}."
         )
     _cache_fluxes(fv_solver, fluxes, initial_scheme)
-    fv_solver.MOOD_cache.add("cascade_idx_array", np.full_like(u[0], 0, dtype=int))
+    fv_solver.MOOD_cache.add("cascade_idx_array", xp.full_like(u[0], 0, dtype=int))
     fv_solver.MOOD_iter_count = 0
 
 
@@ -66,7 +71,7 @@ def detect_troubles(
     t: float,
     dt: float,
     u: ArrayLike,
-    fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
+    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
     NAD: Optional[float] = None,
     NAD_vars: Optional[Tuple[str]] = None,
     PAD: Optional[Dict[str, Tuple[float, float]]] = None,
@@ -79,8 +84,8 @@ def detect_troubles(
         t (float): The current time.
         dt (float): The time step.
         u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
-        fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): The fluxes (F, G, H). Has
-            shapes:
+        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
+            corresponding dimension is unused. Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
@@ -94,6 +99,7 @@ def detect_troubles(
         bool: Whether troubles were detected.
     """
     _slc = fv_solver.array_slicer
+    xp = fv_solver.xp
 
     if fv_solver.MOOD_iter_count >= fv_solver.MOOD_max_iter_count:
         return False
@@ -102,7 +108,7 @@ def detect_troubles(
     ustar = u + dt * fv_solver.RHS(u, *fluxes)
 
     # compute NAD and/or PAD violations
-    violations = np.zeros_like(u[0], dtype=bool)
+    violations = xp.zeros_like(u[0], dtype=bool)
     if PAD is None and NAD is None:
         return False
     if NAD is not None:
@@ -113,24 +119,25 @@ def detect_troubles(
         else:
             _NAD_var_slc = _slc(NAD_vars)
         dmp_min, dmp_max = compute_dmp(
+            xp,
             fv_solver.apply_bc(u, 1)[_NAD_var_slc],
             dims=fv_solver.dims,
             include_corners=True,
         )
         NAD_violations = compute_dmp_violations(
-            ustar[_NAD_var_slc], dmp_min, dmp_max, tol=NAD
+            xp, ustar[_NAD_var_slc], dmp_min, dmp_max, tol=NAD
         )
-        violations[...] = np.any(NAD_violations < 0, axis=0)
+        violations[...] = xp.any(NAD_violations < 0, axis=0)
     if PAD is not None:
         _PAD_var_slc = _slc(tuple(PAD.keys()))
-        lower = np.full_like(u[:, :1, :1, :1], -np.inf)
-        upper = np.full_like(u[:, :1, :1, :1], np.inf)
+        lower = xp.full_like(u[:, :1, :1, :1], -np.inf)
+        upper = xp.full_like(u[:, :1, :1, :1], np.inf)
         for v, (m, M) in PAD.items():
             lower[_slc(v)] = m
             upper[_slc(v)] = M
-        violations[...] = np.logical_or(
-            np.any(
-                np.logical_or(
+        violations[...] = xp.logical_or(
+            xp.any(
+                xp.logical_or(
                     ustar[_PAD_var_slc] < lower[_PAD_var_slc],
                     ustar[_PAD_var_slc] > upper[_PAD_var_slc],
                 ),
@@ -140,11 +147,11 @@ def detect_troubles(
         )
 
     # return bool
-    if np.any(violations):
+    if xp.any(violations):
         fv_solver.MOOD_cache["violations"] = violations
-        fv_solver.MOOD_cache["cascade_idx_array"][...] = np.where(
+        fv_solver.MOOD_cache["cascade_idx_array"] = xp.where(
             violations,
-            np.minimum(
+            xp.minimum(
                 fv_solver.MOOD_cache["cascade_idx_array"] + 1,
                 len(fv_solver.MOOD_cascade) - 1,
             ),
@@ -156,13 +163,14 @@ def detect_troubles(
 
 
 def compute_dmp_violations(
-    arr: ArrayLike, dmp_min: ArrayLike, dmp_max: ArrayLike, tol: float
+    xp: Any, arr: ArrayLike, dmp_min: ArrayLike, dmp_max: ArrayLike, tol: float
 ) -> ArrayLike:
     """
     Compute a boolean array indicating whether the given array violates the discrete
     maximum principle.
 
     Args:
+        xp (Any): `np` namespace or equivalent.
         arr (ArrayLike): The array to check. Has shape (nvars, nx, ny, nz).
         dmp_min (ArrayLike): The minimum values of the array. Has shape
             (nvars, nx, ny, nz).
@@ -174,10 +182,10 @@ def compute_dmp_violations(
         ArrayLike: The DMP violations as negative values. Has shape
             (nvars, nx, ny, nz).
     """
-    dmp_range = np.max(dmp_max, axis=(1, 2, 3), keepdims=True) - np.min(
+    dmp_range = xp.max(dmp_max, axis=(1, 2, 3), keepdims=True) - xp.min(
         dmp_min, axis=(1, 2, 3), keepdims=True
     )
-    violations = np.minimum(arr - dmp_min, dmp_max - arr) + tol * dmp_range
+    violations = xp.minimum(arr - dmp_min, dmp_max - arr) + tol * dmp_range
     return violations
 
 
@@ -186,10 +194,10 @@ def revise_fluxes(
     t: float,
     dt: float,
     u: ArrayLike,
-    fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
+    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
     mode: Literal["transverse", "gauss-legendre"],
     slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
+) -> Tuple[float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]]:
     """
     Revise the fluxes using the MOOD algorithm.
 
@@ -198,8 +206,8 @@ def revise_fluxes(
         t (float): The current time.
         dt (float): The time step.
         u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
-        fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): The fluxes (F, G, H). Has
-            shapes:
+        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
+            corresponding dimension is unused. Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
@@ -209,14 +217,16 @@ def revise_fluxes(
             if `scheme` is "muscl".
 
     Returns:
-        Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]: Tuple composed of:
+        Tuple[float, Tuple[Optional[ArrayLike]], ...]: Tuple composed of:
             - The revised time step.
-            - The revised fluxes (F, G, H). Has shapes:
+            - The revised fluxes (F, G, H). None if the corresponding dimension is
+            unused. Otherwise, is an array with shape:
                 - F: (nvars, nx+1, ny, nz, ...)
                 - G: (nvars, nx, ny+1, nz, ...)
                 - H: (nvars, nx, ny, nz+1, ...)
     """
     fv_solver.MOOD_iter_count += 1
+    xp = fv_solver.xp
     fallback_scheme = fv_solver.MOOD_cascade[
         min(fv_solver.MOOD_iter_count, len(fv_solver.MOOD_cascade) - 1)
     ]
@@ -242,29 +252,29 @@ def revise_fluxes(
         _cache_fluxes(fv_solver, fallback_fluxes, fallback_scheme)
 
     cascade_idx_array = fv_solver.MOOD_cache["cascade_idx_array"]
-    revised_F, revised_G, revised_H = np.array([]), np.array([]), np.array([])
+    revised_F, revised_G, revised_H = None, None, None
     if fv_solver.using_xdim:
         F_cascade_idx_array = map_cell_values_to_face_values(
             fv_solver,
-            np.maximum,
+            xp.maximum,
             cascade_idx_array,
             "x",
             periodic=fv_solver.bc.bcx == ("periodic", "periodic"),
         )
-        revised_F = np.zeros_like(fluxes[0])
+        revised_F = xp.zeros_like(fluxes[0])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
-            revised_F += fv_solver.MOOD_cache["F_" + scheme] * np.where(
+            revised_F += fv_solver.MOOD_cache["F_" + scheme] * xp.where(
                 F_cascade_idx_array == i, 1, 0
             )
     if fv_solver.using_ydim:
         G_cascade_idx_array = map_cell_values_to_face_values(
             fv_solver,
-            np.maximum,
+            xp.maximum,
             cascade_idx_array,
             "y",
             periodic=fv_solver.bc.bcy == ("periodic", "periodic"),
         )
-        revised_G = np.zeros_like(fluxes[1])
+        revised_G = xp.zeros_like(fluxes[1])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
             revised_G += fv_solver.MOOD_cache["G_" + scheme] * np.where(
                 G_cascade_idx_array == i, 1, 0
@@ -272,12 +282,12 @@ def revise_fluxes(
     if fv_solver.using_zdim:
         H_cascade_idx_array = map_cell_values_to_face_values(
             fv_solver,
-            np.maximum,
+            xp.maximum,
             cascade_idx_array,
             "z",
             periodic=fv_solver.bc.bcz == ("periodic", "periodic"),
         )
-        revised_H = np.zeros_like(fluxes[2])
+        revised_H = xp.zeros_like(fluxes[2])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
             revised_H += fv_solver.MOOD_cache["H_" + scheme] * np.where(
                 H_cascade_idx_array == i, 1, 0
@@ -309,7 +319,8 @@ def map_cell_values_to_face_values(
             - (nx, ny+1, nz, ...) if dim == "y"
             - (nx, ny, nz+1, ...) if dim == "z"
     """
-    padded_cell_values = np.pad(
+    xp = fv_solver.xp
+    padded_cell_values = xp.pad(
         cell_values,
         pad_width=[
             (1, 1) if dim == "x" else (0, 0),

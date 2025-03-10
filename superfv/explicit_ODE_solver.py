@@ -122,7 +122,6 @@ class ExplicitODESolver(ABC):
         y0: np.ndarray,
         state_array_name: str = "y",
         progress_bar: bool = True,
-        cupy: bool = False,
     ):
         """
         Initializes the ODE solver.
@@ -131,7 +130,6 @@ class ExplicitODESolver(ABC):
             y0 (np.ndarray): Initial solution value.
             state_array_name (str): Name of the state array.
             progress_bar (bool): If True, display a progress bar.
-            cupy (bool): If True, use CuPy for computations.
         """
         # initialize times
         self.t = 0.0
@@ -141,10 +139,8 @@ class ExplicitODESolver(ABC):
 
         # initialize array manager
         self.arrays = ArrayManager()
-        if cupy:
-            self.arrays.enable_cupy()
         self.arrays.add(state_array_name, y0)
-        self._state = state_array_name
+        self.state = state_array_name
 
         # initialize timer, snapshots, progress bar, and git commit details
         self.timer = Timer(cats=["!ODE_INT"])
@@ -284,10 +280,10 @@ class ExplicitODESolver(ABC):
         self.substep_count = 0
         self.step_count += 1
         dt, ynext = self.stepper(
-            self.t, self.arrays[self._state], target_time=target_time
+            self.t, self.arrays[self.state], target_time=target_time
         )
         self.t += dt
-        self.arrays[self._state] = ynext
+        self.arrays[self.state] = ynext
         self.timestamps.append(self.t)
         self.called_at_end_of_step()
 

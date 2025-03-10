@@ -1,7 +1,10 @@
 bin/
+out/
 
 **/__pycache__
 *.egg-info
+*.ipynb_checkpoints
+*.out
 .mypy_cache
 .nox
 .pytest_cache

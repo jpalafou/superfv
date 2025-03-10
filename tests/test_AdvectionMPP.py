@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from superfv import AdvectionSolver, initial_conditions
+from superfv.tools.array_management import CUPY_AVAILABLE
 
 p_CFL_map = {
     0: 1 / 2,
@@ -55,6 +56,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
         interpolation_scheme="gauss-legendre",
         ZS=p > 0,
         PAD={"rho": (0, 1)},
+        cupy=CUPY_AVAILABLE,
     )
     solver.run(0.05, q_max=2)
 
@@ -76,6 +78,7 @@ def test_3D_advection_mpp(p):
         interpolation_scheme="gauss-legendre",
         ZS=p > 0,
         PAD={"rho": (0, 1)},
+        cupy=CUPY_AVAILABLE,
     )
     solver.run(0.05)
 

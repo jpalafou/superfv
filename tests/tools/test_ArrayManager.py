@@ -1,156 +1,97 @@
 import numpy as np
 import pytest
 
-from superfv.tools.array_management import CUPY_AVAILABLE, ArrayManager
+from superfv.tools.array_management import CUPY_AVAILABLE, ArrayManager, xp
 
 
-@pytest.fixture
-def array_manager():
-    """Fixture to create an ArrayManager instance."""
-    return ArrayManager()
+def test_initialization():
+    manager = ArrayManager()
+    assert manager.device == "cpu"
+    assert len(manager.arrays) == 0
 
 
-def test_initial_state(array_manager):
-    """Test that the initial state is correct."""
-    assert array_manager.arrays == {}
-    assert not array_manager.using_cupy
+def test_add_array():
+    manager = ArrayManager()
+    array = np.ones((3, 3))
+    manager.add("test_array", array)
+    assert "test_array" in manager.arrays
+    assert np.array_equal(manager["test_array"], array)
 
 
-def test_enable_cupy(array_manager):
-    """Test enabling CuPy."""
-    array_manager.enable_cupy()
+def test_remove_array():
+    manager = ArrayManager()
+    array = np.zeros((2, 2))
+    manager.add("zeros", array)
+    manager.remove("zeros")
+    assert "zeros" not in manager.arrays
+
+
+def test_rename_array():
+    manager = ArrayManager()
+    array = np.random.rand(4, 4)
+    manager.add("old_name", array)
+    manager.rename("old_name", "new_name")
+    assert "old_name" not in manager.arrays
+    assert "new_name" in manager.arrays
+    assert np.array_equal(manager["new_name"], array)
+
+
+def test_clear_arrays():
+    manager = ArrayManager({"a": np.array([1, 2, 3])})
+    manager.clear()
+    assert len(manager.arrays) == 0
+
+
+def test_transfer_to_device():
+    if not CUPY_AVAILABLE:
+        pytest.skip("CuPy is not available")
+
+    manager = ArrayManager()
+    manager.add("cpu_array", np.ones((5, 5)))
+    manager.transfer_to_device("gpu")
+    assert isinstance(manager.arrays["cpu_array"], xp.ndarray)
+    manager.transfer_to_device("cpu")
+    assert isinstance(manager.arrays["cpu_array"], np.ndarray)
+
+
+def test_get_numpy_copy():
+    manager = ArrayManager()
+    array = np.array([1, 2, 3])
+    manager.add("data", array)
+    copy = manager.get_numpy_copy("data")
+    assert np.array_equal(copy, array)
+    assert copy is not array  # Ensure it's a copy
+
+
+def test_setitem_inplace():
+    manager = ArrayManager()
+    array = np.array([[1, 2], [3, 4]])
+    manager.add("matrix", array)
+    new_values = np.array([[5, 6], [7, 8]])
+    manager["matrix"] = new_values
+    assert np.array_equal(manager["matrix"], new_values)
+
+
+def test_setitem_invalid_shape():
+    manager = ArrayManager()
+    manager.add("array", np.zeros((2, 2)))
+    with pytest.raises(ValueError, match="Cannot assign array with shape"):
+        manager["array"] = np.zeros((3, 3))
+
+
+def test_setitem_invalid_dtype():
+    manager = ArrayManager()
+    manager.add("array", np.zeros((2, 2), dtype=np.float32))
+    with pytest.raises(ValueError, match="Cannot assign array with dtype"):
+        manager["array"] = np.zeros((2, 2), dtype=np.int32)
+
+
+def test_transfer_without_cupy():
     if CUPY_AVAILABLE:
-        assert array_manager.using_cupy
-    else:
-        assert not array_manager.using_cupy
+        pytest.skip("CuPy is available, skipping fallback test")
 
-
-def test_disable_cupy(array_manager):
-    """Test disabling CuPy."""
-    array_manager.enable_cupy()
-    array_manager.disable_cupy()
-    assert not array_manager.using_cupy
-
-
-def test_add_array(array_manager):
-    """Test adding a new NumPy array."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    assert "test_array" in array_manager.arrays
-
-
-def test_add_existing_array_raises_error(array_manager):
-    """Test adding an array with an existing name raises a KeyError."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    with pytest.raises(KeyError):
-        array_manager.add("test_array", array)
-
-
-def test_add_non_numpy_array_raises_error(array_manager):
-    """Test adding a non-NumPy array raises a TypeError."""
-    with pytest.raises(TypeError):
-        array_manager.add("invalid_array", "this is not an array")
-
-
-def test_add_array_with_overwrite(array_manager):
-    """Test adding an array with the overwrite flag."""
-    array1 = np.random.rand(5, 5)
-    array2 = np.random.rand(5, 5) + 1
-    array_manager.add("test_array", array1)
-    array_manager.add("test_array", array2, overwrite=True)
-    assert np.all(array_manager["test_array"] == array2)
-
-
-def test_rm_array(array_manager):
-    """Test removing an array."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    array_manager.rm("test_array")
-    assert "test_array" not in array_manager.arrays
-
-
-def test_rm_non_existing_array_raises_error(array_manager):
-    """Test removing a non-existing array raises a KeyError."""
-    with pytest.raises(KeyError):
-        array_manager.rm("non_existent_array")
-
-
-def test_clear_all_arrays(array_manager):
-    """
-    Test clearing all arrays.
-    """
-    for i in range(20):
-        array = np.random.rand(5, 5)
-        array_manager.add(f"test_array_{i}", array)
-    array_manager.clear()
-    assert len(array_manager.arrays) == 0
-
-
-def test_clear_all_arrays_except_some(array_manager):
-    """
-    Test clearing all arrays except some.
-    """
-    for i in range(20):
-        array = np.random.rand(5, 5)
-        array_manager.add(f"test_array_{i}", array)
-    array_manager.clear(all_but=["test_array_5", "test_array_10"])
-    assert array_manager.arrays.keys() == {"test_array_5", "test_array_10"}
-
-
-def test_rename(array_manager):
-    """Test renaming an array."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    array_manager.rename("test_array", "new_name")
-    assert "test_array" not in array_manager.arrays
-    assert "new_name" in array_manager.arrays
-
-
-def test_get_numpy(array_manager):
-    """Test retrieving an array as a NumPy array."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    np_array = array_manager.get_numpy("test_array")
-    assert isinstance(np_array, np.ndarray)
-
-
-def test_get_cupy_as_numpy(array_manager):
-    """Test converting a CuPy array to NumPy when using CuPy."""
-    if CUPY_AVAILABLE:
-        array_manager.enable_cupy()
-        array = np.random.rand(5, 5)
-        array_manager.add("test_array", array)
-        np_array = array_manager.get_numpy("test_array")
-        assert isinstance(np_array, np.ndarray)
-
-
-def test_getitem(array_manager):
-    """Test the __call__ method."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    assert np.all(array_manager["test_array"] == array)
-
-
-def test_setitem(array_manager):
-    """Test the __setitem__ method."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", np.zeros((5, 5)))
-    array_manager["test_array"] = array
-    assert np.all(array_manager["test_array"] == array)
-
-
-def test_contains(array_manager):
-    """Test the __contains__ method."""
-    array = np.random.rand(5, 5)
-    array_manager.add("test_array", array)
-    assert "test_array" in array_manager
-    assert "non_existent_array" not in array_manager
-
-
-def test_to_dict(array_manager):
-    """Test the to_dict method."""
-    array_manager.add("test_array", np.random.rand(5, 5))
-    info = array_manager.to_dict()
-    assert info["names"] == ["test_array"]
-    assert info["using_cupy"] == array_manager.using_cupy
+    manager = ArrayManager()
+    manager.add("data", np.array([1, 2, 3]))
+    with pytest.warns(UserWarning, match="CuPy is not available"):
+        manager.transfer_to_device("gpu")  # Should warn and do nothing
+    assert isinstance(manager["data"], np.ndarray)  # Still a NumPy array

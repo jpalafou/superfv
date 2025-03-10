@@ -15,7 +15,9 @@ def test_compute_dmp(dims, include_corners):
         10 if "z" in dims else 1,
     )
     arr = np.random.rand(*shape)
-    min_vals, max_vals = compute_dmp(arr, dims=dims, include_corners=include_corners)
+    min_vals, max_vals = compute_dmp(
+        np, arr, dims=dims, include_corners=include_corners
+    )
     assert min_vals.shape == (
         shape[0],
         shape[1] - 2 * int("x" in dims),

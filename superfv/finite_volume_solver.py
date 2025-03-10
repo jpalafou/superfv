@@ -1,3 +1,4 @@
+import warnings
 from abc import ABC, abstractmethod
 from functools import partial
 from itertools import product
@@ -16,7 +17,14 @@ from .stencil import (
     stencil_sweep,
     uniform_quadrature_weights,
 )
-from .tools.array_management import ArrayLike, ArrayManager, ArraySlicer, crop_to_center
+from .tools.array_management import (
+    CUPY_AVAILABLE,
+    ArrayLike,
+    ArrayManager,
+    ArraySlicer,
+    crop_to_center,
+    xp,
+)
 from .tools.timer import method_timer
 from .visualization import plot_1d_slice, plot_2d_slice
 
@@ -102,10 +110,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Returns:
             dt (float): Time-step size.
-            fluxes (
-                Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
-            ):
-                Tuple of fluxes. The fluxes have the following shapes:
+            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
+                the corresponding dimension is unused. The fluxes have the following
+                shapes if not None:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
@@ -238,7 +245,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cupy (bool): Whether to use CuPy for array operations.
         """
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL, interpolation_scheme)
-        self._init_ic(ic, ic_passives, cupy)
+        self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_snapshots()
         self._init_array_manager(cupy)
@@ -357,7 +364,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ],
-        cupy,
     ):
         # active variable initial conditions
         self.array_slicer = self.define_vars()
@@ -404,7 +410,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
-        super().__init__(ic_arr, state_array_name="u", cupy=cupy)
+        super().__init__(ic_arr, state_array_name="u")
 
     def _init_ic_passives(
         self,
@@ -503,19 +509,27 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.minisnapshots["MOOD_iters"] = []
 
     def _init_array_manager(self, cupy: bool):
+        self.cupy = False
         self.interpolation_cache = ArrayManager()
         self.MOOD_cache = ArrayManager()
         self.ZS_cache = ArrayManager()
-        if cupy:
-            self.interpolation_cache.enable_cupy()
-            self.MOOD_cache.enable_cupy()
-            self.ZS_cache.enable_cupy()
+        if cupy and CUPY_AVAILABLE:
+            self.cupy = True
+            self.arrays.transfer_to_device("gpu")
+            self.interpolation_cache.transfer_to_device("gpu")
+            self.MOOD_cache.transfer_to_device("gpu")
+            self.ZS_cache.transfer_to_device("gpu")
+        elif cupy:
+            warnings.warn("CuPy is not available. Using NumPy instead.")
 
         # initialize flux arrays
         nvars, nx, ny, nz = self.nvars, self.nx, self.ny, self.nz
         self.arrays.add("F", np.zeros((nvars, nx + 1, ny, nz)))
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
+
+        # initialize numpy namespace
+        self.xp = xp if self.cupy else np
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -614,8 +628,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         t: float,
         dt: float,
         u: ArrayLike,
-        fluxes: Tuple[ArrayLike, ArrayLike, ArrayLike],
-    ) -> Tuple[float, Tuple[ArrayLike, ArrayLike, ArrayLike]]:
+        fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
+    ) -> Tuple[
+        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+    ]:
         """
         Revise fluxes using MOOD.
 
@@ -623,14 +639,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             t (float): Time value.
             dt (float): Time-step size.
             u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            fluxes (Tuple[ArrayLike, ArrayLike, ArrayLike]): Tuple of fluxes. The
-                fluxes have the following shapes:
+            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
+                the corresponding dimension is unused. The fluxes have the following
+                shapes if not None:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
 
         Returns:
-            Tuple[ArrayLike, ArrayLike, ArrayLike]: Revised fluxes.
+            Tuple[float, Tuple[Optional[ArrayLike]], ...]: Tuple composed of:
+                - The revised time step.
+                - The revised fluxes (F, G, H). None if the corresponding dimension is
+                unused. Otherwise, is an array with shape:
+                    - F: (nvars, nx+1, ny, nz, ...)
+                    - G: (nvars, nx, ny+1, nz, ...)
+                    - H: (nvars, nx, ny, nz+1, ...)
         """
         init_MOOD(self, u, fluxes)
         while detect_troubles(
@@ -748,13 +771,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # if the interpolated data is not in the cache, compute it
             if key not in self.interpolation_cache:
                 if self.using[direction]:
-                    self.interpolation_cache[key] = stencil_sweep(
-                        current_data,
-                        stencil_weights=weight_function(p, coordinates[direction]),
-                        axis=axes[direction],
+                    # prepare stencil
+                    stencil_name = f"{stencil_type}, p={p}, x={coordinates[direction]}"
+                    if stencil_name not in self.arrays:
+                        self.arrays.add(
+                            stencil_name, weight_function(p, coordinates[direction])
+                        )
+
+                    # interpolate
+                    self.interpolation_cache.add(
+                        key,
+                        stencil_sweep(
+                            self.xp,
+                            current_data,
+                            stencil_weights=self.arrays[stencil_name],
+                            axis=axes[direction],
+                        ),
                     )
                 else:
-                    self.interpolation_cache[key] = current_data
+                    self.interpolation_cache.add(key, current_data)
 
             # update the current data
             current_data = self.interpolation_cache[key]
@@ -873,7 +908,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                             stencil_type="conservative-interpolation",
                         )
                     )
-                faces.append(np.stack(nodes, axis=-1))
+                faces.append(self.xp.stack(nodes, axis=-1))
             elif interpolation_scheme == "transverse" and limiting_scheme is None:
                 (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
                 node = self.interpolate(
@@ -887,6 +922,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             elif limiting_scheme == "muscl":
                 # early escape with MUSCL scheme
                 return muscl(
+                    self.xp,
                     averages,
                     dim=dim,
                     slope_limiter=minmod if slope_limiter == "minmod" else moncen,
@@ -952,8 +988,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             ArrayLike: Flux integral. Has shape (nvars, nx, ny, nz).
         """
-        weights = get_gauss_legendre_face_weights(self.dims, dim, p)
-        return np.sum(node_values * weights.reshape(1, 1, 1, 1, -1), axis=4)
+        weights_name = f"gauss-legendre-weights-{dim}-{p}"
+        if weights_name not in self.arrays:
+            self.arrays.add(
+                weights_name, get_gauss_legendre_face_weights(self.dims, dim, p)
+            )
+        weights = self.arrays[weights_name]
+        return self.xp.sum(node_values * weights.reshape(1, 1, 1, 1, -1), axis=4)
 
     @partial(method_timer, cat="FiniteVolumeSolver.compute_numerical_fluxes")
     def compute_numerical_fluxes(
@@ -1042,7 +1083,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
         """
         _slc = self.array_slicer
-        dydt = np.zeros_like(u)
+        dydt = self.xp.zeros_like(u)
         for dim, _F in zip(["x", "y", "z"], [F, G, H]):
             if self.using[dim]:
                 dydt += -(1 / self.h[dim]) * (
@@ -1057,7 +1098,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        data = {"u": self.arrays.get_numpy("u", copy=True)}
+        data = {"u": self.arrays.get_numpy_copy("u")}
         self.snapshots.log(self.t, data)
 
     @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")

@@ -1,6 +1,6 @@
 from functools import lru_cache
 from itertools import product
-from typing import Dict, List, Literal, Tuple, Union, cast
+from typing import Any, Dict, List, Literal, Tuple, Union, cast
 
 import numpy as np
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
@@ -127,11 +127,14 @@ def get_symmetric_slices(
     return [slicer(axis=axis, cut=(i, -(nslices - 1) + i)) for i in range(nslices)]
 
 
-def stencil_sweep(y: ArrayLike, stencil_weights: np.ndarray, axis: int) -> ArrayLike:
+def stencil_sweep(
+    xp: Any, y: ArrayLike, stencil_weights: np.ndarray, axis: int
+) -> ArrayLike:
     """
     Perform a stencil sweep on a field.
 
     Args:
+        xp (Any): `np` namespace.
         y (ArrayLike): The field to sweep. Must have shape (nvars, nx, ny, nz, ...).
         stencil_weights (np.ndarray): The weights of the stencil to apply. Has shape
             (nweights,).
@@ -148,11 +151,11 @@ def stencil_sweep(y: ArrayLike, stencil_weights: np.ndarray, axis: int) -> Array
     slices = get_symmetric_slices(y.ndim, len(stencil_weights), axis)
 
     # initialize output array
-    out = np.zeros_like(y[slices[0]])
+    out = xp.zeros_like(y[slices[0]])
 
     # sweep
     for w, s in zip(weights, slices):
-        out += w * y[s]
+        xp.add(out, xp.multiply(y[s], w), out)
 
     return out
 

@@ -1,7 +1,6 @@
-from typing import Literal, Optional, cast
+from typing import Any, Literal, Optional, cast
 
 import numpy as np
-import wtflux.hydro as hydro
 
 from .tools.array_management import ArrayLike, ArraySlicer
 
@@ -22,13 +21,16 @@ def _upwind(yl: ArrayLike, yr: ArrayLike, v: ArrayLike) -> ArrayLike:
 
 
 def advection_upwind(
-    array_slicer: ArraySlicer, yl: ArrayLike, yr: ArrayLike, dim: Literal["x", "y", "z"]
+    array_slicer: ArraySlicer,
+    yl: ArrayLike,
+    yr: ArrayLike,
+    dim: Literal["x", "y", "z"],
 ) -> ArrayLike:
     """
     Upwinding Riemann solver for the advection equation.
 
     Args:
-        array_slicer (ArraySlicer): ArraySlicer object.
+        array_slicer (ArraySlicer): Array slicer object.
         yl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
         yr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
         dim (Literal["x", "y", "z"]): Dimension.
@@ -52,7 +54,8 @@ def advection_upwind(
 
 
 def llf(
-    array_slicer,
+    hydro: Any,
+    array_slicer: ArraySlicer,
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
@@ -64,8 +67,8 @@ def llf(
     Compute the Lax-Friedrichs Riemann flux for the Euler equations.
 
     Args:
-        array_slicer (ArraySlicer): Slicer object that defines the mapping between
-            variable names and indices in the arrays.
+        hydro (Any): Hydro namespace.
+        array_slicer (ArraySlicer): Array slicer object.
         wl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
         wr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
         dim (Literal["x", "y", "z"]): Dimension.
@@ -79,7 +82,7 @@ def llf(
         F (ArrayLike): Flux. Has shape (nvars, nx, ny, nz, ...).
     """
     _slc = array_slicer
-    HAS_PASSIVES = "passives" in array_slicer.group_names
+    HAS_PASSIVES = "passives" in _slc.group_names
     dim1, (dim2, dim3) = dim, {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
     F = np.empty_like(wl)
     (

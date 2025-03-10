@@ -46,19 +46,22 @@ def get_all_high_order_face_nodes(
         List[List[Optional[ArrayLike]]]: List of face nodes ([[left, right], ...]).
             Each face node array has shape (nvars, <nx, <ny, <nz, ninterpolations).
     """
-    faces = []
+    faces: List[List[Optional[ArrayLike]]] = []
     for dim in ["x", "y", "z"]:
         if not fv_solver.using[dim]:
             faces.append([None, None])
             continue
-        l_arr, r_arr = fv_solver.interpolate_face_nodes(
-            averages,
-            dim=dim,
-            interpolation_scheme=interpolation_scheme,
-            p=p,
-            slope_limiter=None,
+        faces.append(
+            [
+                *fv_solver.interpolate_face_nodes(
+                    averages,
+                    dim=dim,
+                    interpolation_scheme=interpolation_scheme,
+                    p=p,
+                    slope_limiter=None,
+                )
+            ]
         )
-        faces.append([cast(ArrayLike, l_arr), cast(ArrayLike, r_arr)])
     return faces
 
 
@@ -86,6 +89,7 @@ def zhang_shu_advection(
         Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has shape
             (nvars, <nx, <ny, <nz).
     """
+    xp = fv_solver.xp
 
     def zs_str(p, dim, pos):
         return f"zs_p{p}{dim}{pos}_face_nodes"
@@ -113,11 +117,13 @@ def zhang_shu_advection(
     foc = averages
 
     # get dmp
-    m, M = compute_dmp(averages, dims=fv_solver.dims, include_corners=False)
+    m, M = compute_dmp(xp, averages, dims=fv_solver.dims, include_corners=False)
 
     # get common shape
     shapes = [
-        arr.shape[:4] + (1,) for arr in [hoxl, hoyl, hozl, hoc, m] if arr is not None
+        cast(ArrayLike, arr).shape[:4] + (1,)
+        for arr in [hoxl, hoyl, hozl, hoc, m]
+        if arr is not None
     ]
     target_shape = intersection_shape(*shapes)
 

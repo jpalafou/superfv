@@ -1,18 +1,19 @@
+from typing import Any
+
 import numpy as np
-import wtflux.hydro as hydro
 
 from superfv.tools.array_management import ArrayLike, ArraySlicer
 
 
 def conservatives_from_primitives(
-    array_slicer: ArraySlicer, w: ArrayLike, gamma: float
+    hydro: Any, array_slicer: ArraySlicer, w: ArrayLike, gamma: float
 ):
     """
     Compute the conservative variables from the primitive variables.
 
     Args:
-        array_slicer (ArraySlicer): Slicer object that defines the mapping between
-            variable names and indices in the arrays.
+        hydro (Any): Hydro namespace.
+        array_slicer (ArraySlicer): Array slicer object.
         w (ArrayLike): Array of primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
         gamma (float): Adiabatic index.
@@ -23,7 +24,7 @@ def conservatives_from_primitives(
     """
     _slc = array_slicer
     u = np.empty_like(w)
-    HAS_PASSIVES = "passives" in array_slicer.group_names
+    HAS_PASSIVES = "passives" in _slc.group_names
     (
         u[_slc("rho")],
         u[_slc("mx")],
@@ -46,14 +47,14 @@ def conservatives_from_primitives(
 
 
 def primitives_from_conservatives(
-    array_slicer: ArraySlicer, u: ArrayLike, gamma: float
+    hydro: Any, array_slicer: ArraySlicer, u: ArrayLike, gamma: float
 ):
     """
     Compute the primitive variables from the conservative variables.
 
     Args:
-        array_slicer (ArraySlicer): Slicer object that defines the mapping between
-            variable names and indices in the arrays.
+        hydro (Any): Hydro namespace.
+        array_slicer (ArraySlicer): Array slicer object.
         u (ArrayLike): Array of conservative variables. Has shape
             (nvars, nx, ny, nz, ...).
         gamma (float): Adiabatic index.
@@ -64,7 +65,7 @@ def primitives_from_conservatives(
     """
     _slc = array_slicer
     w = np.empty_like(u)
-    HAS_PASSIVES = "passives" in array_slicer.group_names
+    HAS_PASSIVES = "passives" in _slc.group_names
     (
         w[_slc("rho")],
         w[_slc("mx")],

@@ -238,10 +238,9 @@ class AdvectionSolver(FiniteVolumeSolver):
 
         Returns:
             dt (float): Time-step size.
-            fluxes (
-                Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
-            ):
-                Tuple of fluxes. The fluxes have the following shapes:
+            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
+                the corresponding dimension is unused. The fluxes have the following
+                shapes if not None:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
@@ -304,5 +303,5 @@ class AdvectionSolver(FiniteVolumeSolver):
     def minisnapshot(self):
         super().minisnapshot()
         _slc = self.array_slicer
-        self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min())
-        self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max())
+        self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min().item())
+        self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max().item())

@@ -1,5 +1,5 @@
 from itertools import product
-from typing import Callable, Literal, Tuple
+from typing import Any, Callable, Literal, Tuple
 
 import numpy as np
 
@@ -7,9 +7,12 @@ from superfv.stencil import get_symmetric_slices
 from superfv.tools.array_management import ArrayLike
 
 
-def minmod(du_left: ArrayLike, du_right: ArrayLike, tol: float = 1e-16) -> ArrayLike:
+def minmod(
+    xp: Any, du_left: ArrayLike, du_right: ArrayLike, tol: float = 1e-16
+) -> ArrayLike:
     """
     Args:
+        xp (Any): `np` namespace.
         du_left (ArrayLike): Left differences. Has shape (nvars, nx, ny, nz, ...).
         du_right (ArrayLike): Right difference. Has shape (nvars, nx, ny, nz, ...).
         tol (float): Tolerance.
@@ -19,16 +22,17 @@ def minmod(du_left: ArrayLike, du_right: ArrayLike, tol: float = 1e-16) -> Array
     """
     ratio = du_right / np.where(
         du_left > 0,
-        np.where(du_left > tol, du_left, tol),
-        np.where(du_left < -tol, du_left, -tol),
+        xp.where(du_left > tol, du_left, tol),
+        xp.where(du_left < -tol, du_left, -tol),
     )
-    ratio = np.where(ratio < 1, ratio, 1)
-    return np.where(ratio > 0, ratio, 0) * du_left
+    ratio = xp.where(ratio < 1, ratio, 1)
+    return xp.where(ratio > 0, ratio, 0) * du_left
 
 
-def moncen(du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
+def moncen(xp: Any, du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
     """
     Args:
+        xp (Any): `np` namespace.
         du_left (ArrayLike): Left differences. Has shape (nvars, nx, ny, nz, ...).
         du_right (ArrayLike): Right difference. Has shape (nvars, nx, ny, nz, ...).
     Returns:
@@ -36,19 +40,20 @@ def moncen(du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
             (nvars, nx, ny, nz, ...).
     """
     du_central = 0.5 * (du_left + du_right)
-    slope = np.minimum(np.abs(2 * du_left), np.abs(2 * du_right))
-    slope = np.sign(du_central) * np.minimum(slope, np.abs(du_central))
-    return np.where(du_left * du_right >= 0, slope, 0)
+    slope = xp.minimum(xp.abs(2 * du_left), xp.abs(2 * du_right))
+    slope = xp.sign(du_central) * xp.minimum(slope, xp.abs(du_central))
+    return xp.where(du_left * du_right >= 0, slope, 0)
 
 
 def compute_dmp(
-    arr: ArrayLike, dims: str, include_corners: bool = False
+    xp: Any, arr: ArrayLike, dims: str, include_corners: bool = False
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
     Computes the discrete maximum principle (DMP) for an array along the 2nd, 3rd,
     and/or 4th axes.
 
     Args:
+        xp (Any): `np` namespace.
         arr (ArrayLike): Array. First axis is assumed to be variable axis. Has shape
             (nvars, nx, ny, nz, ...).
         dims (str): Dimension to check. Must be a subset of "xyz".
@@ -78,21 +83,23 @@ def compute_dmp(
             slices[d] = {-1: slice(2, None), 0: slice(1, -1), 1: slice(None, -2)}[
                 offset
             ]
-        dmp_min[...] = np.minimum(dmp_min, arr[tuple(slices)])
-        dmp_max[...] = np.maximum(dmp_max, arr[tuple(slices)])
+        dmp_min[...] = xp.minimum(dmp_min, arr[tuple(slices)])
+        dmp_max[...] = xp.maximum(dmp_max, arr[tuple(slices)])
 
     return dmp_min, dmp_max
 
 
 def muscl(
+    xp: Any,
     averages: ArrayLike,
     dim: Literal["x", "y", "z"],
-    slope_limiter: Callable[[ArrayLike, ArrayLike], ArrayLike],
+    slope_limiter: Callable[[Any, ArrayLike, ArrayLike], ArrayLike],
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
     Computes the MUSCL reconstruction of an array along the 2nd, 3rd, and/or 4th axes.
 
     Args:
+        xp (Any): `np` namespace.
         averages (ArrayLike): Array. First axis is assumed to be variable axis. Has
             shape (nvars, nx, ny, nz).
         dim (str): Dimension to check. Must be a subset of "xyz".
@@ -110,7 +117,7 @@ def muscl(
     )
     l_daverages = averages[c_slc] - averages[l_slc]
     r_daverages = averages[r_slc] - averages[c_slc]
-    limited_daverages = slope_limiter(l_daverages, r_daverages)
+    limited_daverages = slope_limiter(xp, l_daverages, r_daverages)
     left_face = averages[c_slc] - 0.5 * limited_daverages
     right_face = averages[c_slc] + 0.5 * limited_daverages
     return left_face[..., np.newaxis], right_face[..., np.newaxis]

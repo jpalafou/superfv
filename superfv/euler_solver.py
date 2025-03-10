@@ -2,7 +2,7 @@ from functools import partial
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
-import wtflux.hydro as hydro
+import wtflux
 
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
@@ -122,7 +122,11 @@ class EulerSolver(FiniteVolumeSolver):
             cupy (bool): Whether to use CuPy for array operations.
             gamma (float): Ratio of specific heats.
         """
-        self.gamma = gamma  # init hydro
+        # init hydro
+        self.gamma = gamma
+        if cupy:
+            wtflux.backend.set_backend("cupy")
+        self.hydro = wtflux.hydro
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -161,10 +165,11 @@ class EulerSolver(FiniteVolumeSolver):
         Modify IC callable to convert to conservative variables and compute the cell
         average.
         """
-        _slc = self.array_slicer
 
         def conservative_wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
-            return conservatives_from_primitives(_slc, f(x, y, z), self.gamma)
+            return conservatives_from_primitives(
+                self.hydro, self.array_slicer, f(x, y, z), self.gamma
+            )
 
         def cell_average_wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
             return fv_average(
@@ -184,7 +189,7 @@ class EulerSolver(FiniteVolumeSolver):
 
     def _init_array_manager(self, cupy: bool):
         super()._init_array_manager(cupy)
-        self.arrays["w"] = np.empty_like(self.arrays["u"])
+        self.arrays.add("w", np.empty_like(self.arrays["u"]))
 
     def _init_snapshots(self):
         super()._init_snapshots()
@@ -231,7 +236,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
-        return llf(self.array_slicer, wl, wr, dim, self.gamma, ul, ur)
+        return llf(self.hydro, self.array_slicer, wl, wr, dim, self.gamma, ul, ur)
 
     def zhang_shu_limiter(
         self,
@@ -294,10 +299,9 @@ class EulerSolver(FiniteVolumeSolver):
 
         Returns:
             dt (float): Time-step size.
-            fluxes (
-                Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
-            ):
-                Tuple of fluxes. The fluxes have the following shapes:
+            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
+                the corresponding dimension is unused. The fluxes have the following
+                shapes if not None:
                 - F: (nvars, nx + 1, ny, nz)
                 - G: (nvars, nx, ny + 1, nz)
                 - H: (nvars, nx, ny, nz + 1)
@@ -326,8 +330,8 @@ class EulerSolver(FiniteVolumeSolver):
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            w_xl = primitives_from_conservatives(_slc, u_xl, self.gamma)
-            w_xr = primitives_from_conservatives(_slc, u_xr, self.gamma)
+            w_xl = primitives_from_conservatives(self.hydro, _slc, u_xl, self.gamma)
+            w_xr = primitives_from_conservatives(self.hydro, _slc, u_xr, self.gamma)
             F = self.compute_numerical_fluxes(
                 w_xr[_slc(**{dim: (None, -1)})],
                 w_xl[_slc(**{dim: (1, None)})],
@@ -355,7 +359,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         _slc = self.array_slicer
         h = min(self.h.values())
-        c = hydro.sound_speed(rho=w[_slc("rho")], P=w[_slc("P")], gamma=self.gamma)
+        c = self.hydro.sound_speed(rho=w[_slc("rho")], P=w[_slc("P")], gamma=self.gamma)
         out = (
             self.CFL * h / np.max(np.sum(np.abs(w[_slc("v")]), axis=0) + self.ndim * c)
         )
@@ -365,10 +369,10 @@ class EulerSolver(FiniteVolumeSolver):
     def minisnapshot(self):
         super().minisnapshot()
         _slc = self.array_slicer
-        self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min())
-        self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max())
-        self.minisnapshots["min_E"].append(self.arrays["u"][_slc("E")].min())
-        self.minisnapshots["max_E"].append(self.arrays["u"][_slc("E")].max())
+        self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min().item())
+        self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max().item())
+        self.minisnapshots["min_E"].append(self.arrays["u"][_slc("E")].min().item())
+        self.minisnapshots["max_E"].append(self.arrays["u"][_slc("E")].max().item())
 
     @partial(method_timer, cat="EulerSolver.snapshot")
     def snapshot(self):
@@ -377,10 +381,10 @@ class EulerSolver(FiniteVolumeSolver):
         the current time value.
         """
         self.arrays["w"] = primitives_from_conservatives(
-            self.array_slicer, self.arrays["u"], self.gamma
+            self.hydro, self.array_slicer, self.arrays["u"], self.gamma
         )
         data = {
-            "u": self.arrays.get_numpy("u", copy=True),
-            "w": self.arrays.get_numpy("w", copy=True),
+            "u": self.arrays.get_numpy_copy("u"),
+            "w": self.arrays.get_numpy_copy("w"),
         }
         self.snapshots.log(self.t, data)
