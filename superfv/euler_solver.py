@@ -47,9 +47,10 @@ class EulerSolver(FiniteVolumeSolver):
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
+        limiting_vars: Optional[Tuple[str]] = None,
         NAD: Optional[float] = None,
-        NAD_vars: Optional[Tuple[str]] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
+        SED: bool = False,
         cupy: bool = False,
         gamma: float = 5 / 3,
     ):
@@ -114,13 +115,15 @@ class EulerSolver(FiniteVolumeSolver):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
+            limiting_vars (Optional[Tuple[str]]): Variables to apply slope limiting to.
+                If None, slope limiting is applied to all active variables.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
-            NAD_vars (Optional[Tuple[str]]): The variables to check for NAD. If None,
-                all "active" variables are checked.
-            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
-                (lower, upper) bounds. If None, PAD is not checked.
+            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
+                their corresponding PAD tolerances. If a limiting variable is not in
+                the dict, it is given a PAD tolerance of (-np.inf, np.inf).
+            SED (bool): Whether to use smooth extrema detection for slope limiting.
             cupy (bool): Whether to use CuPy for array operations.
-            gamma (float): Ratio of specific heats.
+            gamma (float): Adiabatic index.
         """
         # init hydro
         self.gamma = gamma
@@ -152,9 +155,10 @@ class EulerSolver(FiniteVolumeSolver):
             max_adaptive_timesteps=max_adaptive_timesteps,
             MOOD=MOOD,
             max_MOOD_iters=max_MOOD_iters,
+            limiting_vars=limiting_vars,
             NAD=NAD,
-            NAD_vars=NAD_vars,
             PAD=PAD,
+            SED=SED,
             cupy=cupy,
         )
 

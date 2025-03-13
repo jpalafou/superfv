@@ -171,9 +171,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
+        limiting_vars: Optional[Tuple[str]] = None,
         NAD: Optional[float] = None,
-        NAD_vars: Optional[Tuple[str]] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
+        SED: bool = False,
         cupy: bool = False,
     ):
         """
@@ -237,11 +238,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
+            limiting_vars (Optional[Tuple[str]]): Variables to apply slope limiting to.
+                If None, slope limiting is applied to all active variables.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
-            NAD_vars (Optional[Tuple[str]]): The variables to check for NAD. If None,
-                all "active" variables are checked.
-            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
-                (lower, upper) bounds. If None, PAD is not checked.
+            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
+                their corresponding PAD tolerances. If a limiting variable is not in
+                the dict, it is given a PAD tolerance of (-np.inf, np.inf).
+            SED (bool): Whether to use smooth extrema detection for slope limiting.
             cupy (bool): Whether to use CuPy for array operations.
         """
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL, interpolation_scheme)
@@ -257,9 +260,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_adaptive_timesteps,
             MOOD,
             max_MOOD_iters,
+            limiting_vars,
             NAD,
-            NAD_vars,
             PAD,
+            SED,
         )
 
     def _init_kwarg_attributes(self, kwarg_attributes):
@@ -302,6 +306,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.using_zdim = nz > 1
         self.using = {"x": self.using_xdim, "y": self.using_ydim, "z": self.using_zdim}
         self.dims = "".join(dim for dim, using in self.using.items() if using)
+        self.axes = tuple("xyz".index(dim) + 1 for dim in self.dims)
         self.ndim = len(self.dims)
         self.p = p
         self.CFL = CFL
@@ -367,7 +372,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         # active variable initial conditions
         self.array_slicer = self.define_vars()
-        self.n_active_vars = max(self.array_slicer.idxs) + 1
+        self.n_active_vars = self.array_slicer.max_idx + 1
         _active_array_slicer = self.array_slicer.copy()
 
         # check indices are consecutive
@@ -419,8 +424,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ],
     ):
         # gather indices of active variables
-        _active_vars = self.array_slicer.var_names
-        self.array_slicer.create_var_group("actives", tuple(_active_vars))
+        self.active_vars = self.array_slicer.var_names.copy()
+        self.array_slicer.create_var_group("actives", tuple(self.active_vars))
 
         # assign indices to passive variables
         for i, name in enumerate(cast(dict, ic_passives).keys()):
@@ -547,9 +552,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_adaptive_timesteps: Optional[int],
         MOOD: bool,
         max_MOOD_iters: Optional[int],
+        limiting_vars: Optional[Tuple[str]],
         NAD: Optional[float],
-        NAD_vars: Optional[Tuple[str]],
         PAD: Optional[Dict[str, Tuple[float, float]]],
+        SED: bool,
     ):
         # a priori limiting
         self.a_priori_slope_limiting_scheme: Optional[Literal["muscl", "zhang-shu"]]
@@ -584,14 +590,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 max_MOOD_iters if max_MOOD_iters is not None else 1
             )
 
-        # MOOD detection config
+        # init MOOD variables
         self.MOOD_iter_count = 0
-        self.NAD = NAD
-        self.NAD_vars = NAD_vars
-        self.PAD = PAD
 
-        if self.PAD is None and self.ZS_adaptive_timestep:
-            raise ValueError("PAD must be provided if adaptive_timestepping=True.")
+        if not self.MOOD:
+            return
+
+        # limiting variable slicer
+        limiting_vars = limiting_vars if limiting_vars is not None else self.active_vars
+        self.array_slicer.create_var_group("limiting_vars", limiting_vars)
+
+        # NAD, PAD, and SED
+        self.NAD = NAD
+        if PAD is None:
+            if self.ZS_adaptive_timestep:
+                raise ValueError("PAD must be provided if adaptive_timestepping=True.")
+            self.has_PAD_arr = False
+        else:
+            _PAD_arr = np.array([[-np.inf, np.inf]] * self.nvars)
+            for v, (lb, ub) in PAD.items():
+                _PAD_arr[self.array_slicer(v)] = [lb, ub]
+            _PAD_arr = _PAD_arr.reshape(self.nvars, 1, 1, 1, 2)
+            self.arrays.add("PAD", _PAD_arr)  # register PAD array
+            self.has_PAD_arr = True
+        self.SED = SED
 
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
@@ -657,7 +679,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         init_MOOD(self, u, fluxes)
         while detect_troubles(
-            self, t, dt, u, fluxes, NAD=self.NAD, NAD_vars=self.NAD_vars, PAD=self.PAD
+            self,
+            t=t,
+            dt=dt,
+            u=u,
+            fluxes=fluxes,
+            NAD=self.NAD,
+            PAD=self.arrays["PAD"] if self.has_PAD_arr else None,
+            SED=self.SED,
         ):
             dt, fluxes = revise_fluxes(
                 self,

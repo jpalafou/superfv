@@ -12,6 +12,7 @@ def test_initialization():
     assert slicer.var_names == {"density", "momentum"}
     assert slicer.group_names == set()
     assert slicer.all_names == {"density", "momentum"}
+    assert slicer.max_idx == 1
 
 
 def test_add_var():
