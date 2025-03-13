@@ -1,11 +1,11 @@
-- [x] cupy
+- [x] smooth extrema detection
+- [x] a benchmarks/ folder. ex: benchmarks/AdvectionSolver_error_convergence/
+- [x] Euler advection
+- [ ] clean up _init_slope_limiting
 - [ ] fix 2DZS + RK4
-- [ ] timer shows ncalls
 - [ ] a priori limiting for Euler
-- [ ] Euler advection
-- [ ] smooth extrema detection
+- [ ] timer shows ncalls
 - [ ] vx, vy, vz are passive variables in AdvectionSolver?
-- [ ] a benchmarks/ folder. ex: benchmarks/error_convergence/
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] multi-core support
 - [ ] coverage

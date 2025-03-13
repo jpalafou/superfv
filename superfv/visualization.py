@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
 
 import numpy as np
 from matplotlib.axes import Axes
@@ -258,3 +258,38 @@ def plot_2d_slice(
 
     ax.set_xlabel(rf"${dim1}$")
     ax.set_ylabel(rf"${dim2}$")
+
+
+def power_law(
+    x0: float, f0: float, x1: float, f1: float
+) -> Callable[np.ndarray, np.ndarray]:
+    """
+    Return a power law function `f(x) = f0 * (x  / x0) ** r` from two points (x0, f0)
+    and (x1, f1) where `r = log(f1 / f0) / log(x1 / x0)`.
+
+    Args:
+        x0 (float): First x-coordinate.
+        f0 (float): First y-coordinate.
+        x1 (float): Second x-coordinate.
+        f1 (float): Second y-coordinate.
+
+    Returns:
+        Callable[[np.ndarray], np.ndarray]: Power law function.
+    """
+    r = np.log(f1 / f0) / np.log(x1 / x0)
+    return lambda x: f0 * (x / x0) ** r
+
+
+def plot_power_law_fit(ax: Axes, x: np.ndarray, f: np.ndarray, **kwargs):
+    """
+    Plot a power law function on a given axes from the two points (x[0], f[0]) and
+    (x[-1], f[-1]).
+
+    Args:
+        ax (Axes): Matplotlib axes object.
+        x (np.ndarray): x-coordinates.
+        f (np.ndarray): y-coordinates.
+        **kwargs: Keyword arguments for the plot.
+    """
+    p_law = power_law(x[0], f[0], x[-1], f[-1])
+    ax.plot(x, p_law(x), **kwargs)

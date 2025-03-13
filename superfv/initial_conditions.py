@@ -28,10 +28,11 @@ def sinus(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
+    bounds: Tuple[float, float] = (0, 1),
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
-    bounds: Tuple[float, float] = (0, 1),
+    P: float = 1,
 ) -> ArrayLike:
     """
     Returns array for sinusoidal initial condition that is periodic on the interval
@@ -43,18 +44,18 @@ def sinus(
         x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
         y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
         z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        bounds (Tuple[float, float]): Bounds of the density sinusoidal function.
         vx (float): x-component of the velocity.
         vy (float): y-component of the velocity.
         vz (float): z-component of the velocity.
-        bounds (Tuple[float, float]): Bounds of the sinusoidal function.
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
+    out = np.empty((_slc.max_idx + 1, *x.shape))
 
     # Validate variables in ArraySlicer
-    if _slc.var_names == {"rho", "vx", "vy", "vz"}:
+    if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
         # advection case
-        out = np.empty((4, *x.shape))
         r = int("x" in dims) * x + int("y" in dims) * y + int("z" in dims) * z
         out[_slc("rho")] = (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + bounds[0]
         out[_slc("vx")] = vx
@@ -65,6 +66,9 @@ def sinus(
             f"Initial condition not implemented for variables: {_slc.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
+    if "P" in _slc.var_names:
+        out[_slc("P")] = P
+
     return out
 
 
@@ -73,10 +77,10 @@ def square(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
+    bounds: Tuple[float, float] = (0, 1),
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
-    bounds: Tuple[float, float] = (0, 1),
 ) -> ArrayLike:
     """
     Returns array for the square wave initial condition that is periodic on the
@@ -88,10 +92,10 @@ def square(
         x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
         y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
         z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        bounds (Tuple[float, float]): Bounds of the density square function.
         vx (float): x-component of the velocity.
         vy (float): y-component of the velocity.
         vz (float): z-component of the velocity.
-        bounds (Tuple[float, float]): Bounds of the square function.
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)

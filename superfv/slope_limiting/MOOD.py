@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, cast
 
 import numpy as np
 
@@ -9,6 +9,9 @@ from superfv.tools.array_management import ArrayLike
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
+
+
+from .smooth_extrema_detection import compute_smooth_extrema_detector
 
 
 def _cache_fluxes(
@@ -73,14 +76,16 @@ def detect_troubles(
     u: ArrayLike,
     fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
     NAD: Optional[float] = None,
-    NAD_vars: Optional[Tuple[str]] = None,
-    PAD: Optional[Dict[str, Tuple[float, float]]] = None,
+    PAD: Optional[ArrayLike] = None,
+    SED: bool = False,
 ) -> bool:
     """
     Detect troubles in the solution.
 
     Args:
-        fv_solver (FiniteVolumeSolver): The finite volume solver object.
+        fv_solver (FiniteVolumeSolver): The finite volume solver object. Is expected to
+            have variable group "limiting_vars" defined in
+            `fv_solver.array_slicer.group_names`.
         t (float): The current time.
         dt (float): The time step.
         u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
@@ -89,18 +94,20 @@ def detect_troubles(
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
-        NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
-        NAD_vars (Optional[Tuple[str]]): The variables to check for NAD. If None, all
-            "active" variables are checked.
-        PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of variable names to
-            (lower, upper) bounds. If None, PAD is not checked.
-
+        NAD (Optional[float]): Numerical admissibility detection tolerance. Numerical
+            admissibility is not checked if None.
+        PAD (Optional[ArrayLike]): Physical admissibility detection bounds. Is an array
+            of shape (nvars, 2) if not None, where the first column is the lower bound
+            and the second column is the upper bound. Physical admissibility is not
+            checked if None.
+        SED whether to apply smooth extrema detection.
     Returns:
         bool: Whether troubles were detected.
     """
     _slc = fv_solver.array_slicer
     xp = fv_solver.xp
 
+    # early escape if max iter count reached
     if fv_solver.MOOD_iter_count >= fv_solver.MOOD_max_iter_count:
         return False
 
@@ -108,43 +115,36 @@ def detect_troubles(
     ustar = u + dt * fv_solver.RHS(u, *fluxes)
 
     # compute NAD and/or PAD violations
-    violations = xp.zeros_like(u[0], dtype=bool)
+    __limiting_slc__ = _slc("limiting_vars", keep_dims=True)
+    possible_violations = xp.zeros_like(u[__limiting_slc__], dtype=bool)
     if PAD is None and NAD is None:
         return False
     if NAD is not None:
-        if NAD_vars is None and fv_solver.has_passives:
-            _NAD_var_slc = _slc("actives")
-        elif NAD_vars is None:
-            _NAD_var_slc = slice(None)
-        else:
-            _NAD_var_slc = _slc(NAD_vars)
         dmp_min, dmp_max = compute_dmp(
             xp,
-            fv_solver.apply_bc(u, 1)[_NAD_var_slc],
+            fv_solver.apply_bc(u, 1),
             dims=fv_solver.dims,
             include_corners=True,
         )
-        NAD_violations = compute_dmp_violations(
-            xp, ustar[_NAD_var_slc], dmp_min, dmp_max, tol=NAD
+        NAD_violations = compute_dmp_violations(xp, ustar, dmp_min, dmp_max, tol=NAD)
+        possible_violations[...] = NAD_violations[__limiting_slc__] < 0
+    if SED:
+        alpha = compute_smooth_extrema_detector(
+            xp,
+            _slc,
+            fv_solver.apply_bc(ustar, 3)[__limiting_slc__],
+            fv_solver.axes,
         )
-        violations[...] = xp.any(NAD_violations < 0, axis=0)
+        possible_violations[...] = xp.logical_and(alpha < 1, possible_violations)
     if PAD is not None:
-        _PAD_var_slc = _slc(tuple(PAD.keys()))
-        lower = xp.full_like(u[:, :1, :1, :1], -np.inf)
-        upper = xp.full_like(u[:, :1, :1, :1], np.inf)
-        for v, (m, M) in PAD.items():
-            lower[_slc(v)] = m
-            upper[_slc(v)] = M
-        violations[...] = xp.logical_or(
-            xp.any(
-                xp.logical_or(
-                    ustar[_PAD_var_slc] < lower[_PAD_var_slc],
-                    ustar[_PAD_var_slc] > upper[_PAD_var_slc],
-                ),
-                axis=0,
-            ),
-            violations,
+        possible_violations[...] = xp.logical_or.reduce(
+            [
+                possible_violations,
+                ustar[__limiting_slc__] < PAD[__limiting_slc__][..., 0],
+                ustar[__limiting_slc__] > PAD[__limiting_slc__][..., 1],
+            ]
         )
+    violations = xp.any(possible_violations, axis=0)
 
     # return bool
     if xp.any(violations):

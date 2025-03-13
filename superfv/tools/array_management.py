@@ -28,6 +28,45 @@ ArrayLike = Union[np.ndarray, xp.ndarray]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
+def l1_norm(array: ArrayLike) -> float:
+    """
+    Compute the L1 norm of an array.
+
+    Args:
+        array (ArrayLike): Array of any shape.
+
+    Returns:
+        float: L1 norm of the array.
+    """
+    return np.sum(np.abs(array))
+
+
+def l2_norm(array: ArrayLike) -> float:
+    """
+    Compute the L2 norm of an array.
+
+    Args:
+        array (ArrayLike): Array of any shape.
+
+    Returns:
+        float: L2 norm of the array.
+    """
+    return np.sqrt(np.sum(np.square(array)))
+
+
+def linf_norm(array: ArrayLike) -> float:
+    """
+    Compute the L-infinity norm of an array.
+
+    Args:
+        array (ArrayLike): Array of any shape.
+
+    Returns:
+        float: L-infinity norm of the array.
+    """
+    return np.max(np.abs(array))
+
+
 @lru_cache(maxsize=None)
 def _cached_crop_to_center(
     in_shape: Tuple[int, ...],
@@ -153,14 +192,17 @@ class ArraySlicer:
         self.group_names = set()
         self.idxs = set()
 
+        _max_idx = 0
         for name, idx in self.var_idx_map.items():
             if isinstance(idx, int):
                 self.var_names.add(name)
                 self.idxs.add(idx)
+                _max_idx = max(_max_idx, idx)
             else:
                 self.group_names.add(name)
 
         self.all_names = self.var_names.union(self.group_names)
+        self.max_idx = _max_idx
 
     def add_var(self, name: str, idx: int):
         """
