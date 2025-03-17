@@ -12,7 +12,7 @@ SuperFV is a computational solver for hyperbolic conservation laws based on the 
 
 ## Features
 
-- High-order accuracy in space
+- High-order accuracy in space in 1D, 2D, or 3D
 - Support for passive scalars
 
 

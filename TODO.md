@@ -1,8 +1,8 @@
 - [x] timer shows ncalls
-- [ ] fix 2DZS + RK4
 - [ ] a priori limiting for Euler
-- [ ] vx, vy, vz are passive variables in AdvectionSolver?
+- [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
-- [ ] multi-core support
-- [ ] coverage
 - [ ] expand README.md
+- [ ] coverage
+- [ ] vx, vy, vz are passive variables in AdvectionSolver?
+- [ ] multi-core support
