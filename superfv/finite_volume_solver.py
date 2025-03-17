@@ -557,67 +557,64 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD: Optional[Dict[str, Tuple[float, float]]],
         SED: bool,
     ):
-        # a priori limiting
-        self.a_priori_slope_limiting_scheme: Optional[Literal["muscl", "zhang-shu"]]
-        self.zhang_shu_limiting = ZS
-        self.a_priori_slope_limiter: Optional[Literal["minmod", "moncen"]]
+        # Initial setup for a priori slope limiting
+        self.a_priori_slope_limiting_scheme = None
+        self.a_priori_slope_limiter = None
         self.ZS_adaptive_timestep = False
 
-        if all([MUSCL, ZS]):
+        # Validate and assign limiting schemes
+        if MUSCL and ZS:
             raise ValueError("Cannot use both Zhang-Shu and MUSCL slope limiting.")
-        elif MUSCL:
+
+        # Set a priori slope limiting schemes
+        if MUSCL:
             self.a_priori_slope_limiting_scheme = "muscl"
             self.a_priori_slope_limiter = "minmod"
         elif ZS:
             self.a_priori_slope_limiting_scheme = "zhang-shu"
-            self.a_priori_slope_limiter = None
-            if adaptive_timestepping:
-                self.ZS_adaptive_timestep = True
-                self.MOOD = True
-                self.MOOD_cascade = ["fv" + str(self.p), "half-dt"]
-                self.MOOD_max_iter_count = (
-                    max_adaptive_timesteps if max_adaptive_timesteps is not None else 10
-                )
-        else:
-            self.a_priori_slope_limiting_scheme = None
-            self.a_priori_slope_limiter = None
+            self.ZS_adaptive_timestep = adaptive_timestepping
 
-        # a posteriori limiting
-        if not self.ZS_adaptive_timestep:
-            self.MOOD = MOOD
-            self.MOOD_cascade = ["fv" + str(self.p), "muscl"]
-            self.MOOD_max_iter_count = (
-                max_MOOD_iters if max_MOOD_iters is not None else 1
+        # Determine if MOOD is enabled
+        self.MOOD = MOOD or self.ZS_adaptive_timestep
+        self.MOOD_iter_count = 0  # Initialize MOOD iteration count
+
+        if self.MOOD:
+            self.MOOD_cascade = (
+                ["fv" + str(self.p), "half-dt"]
+                if self.ZS_adaptive_timestep
+                else ["fv" + str(self.p), "muscl"]
             )
+            self.MOOD_max_iter_count = (
+                max_adaptive_timesteps if self.ZS_adaptive_timestep else max_MOOD_iters
+            ) or (10 if self.ZS_adaptive_timestep else 1)
 
-        # init MOOD variables
-        self.MOOD_iter_count = 0
-
+        # If no MOOD, early return
         if not self.MOOD:
             return
 
-        # limiting variable slicer
+        # Prepare limiting variables
         limiting_vars = (
             cast(Tuple[str, ...], limiting_vars)
-            if limiting_vars is not None
+            if limiting_vars
             else tuple(self.active_vars)
         )
         self.array_slicer.create_var_group("limiting_vars", limiting_vars)
 
-        # NAD, PAD, and SED
+        # Set NAD and SED
         self.NAD = NAD
+        self.SED = SED
+
+        # Handle PAD
         if PAD is None:
             if self.ZS_adaptive_timestep:
                 raise ValueError("PAD must be provided if adaptive_timestepping=True.")
-            self.has_PAD_arr = False
         else:
+            # Create and register PAD array
             _PAD_arr = np.array([[-np.inf, np.inf]] * self.nvars)
             for v, (lb, ub) in PAD.items():
                 _PAD_arr[self.array_slicer(v)] = [lb, ub]
             _PAD_arr = _PAD_arr.reshape(self.nvars, 1, 1, 1, 2)
-            self.arrays.add("PAD", _PAD_arr)  # register PAD array
-            self.has_PAD_arr = True
-        self.SED = SED
+            self.arrays.add("PAD", _PAD_arr)  # Register PAD array
 
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
@@ -644,9 +641,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
         if self.MOOD and not (self.ZS_adaptive_timestep and self.substep_count > 1):
             dt, fluxes = self.MOOD_loop(t, dt, u, fluxes)
-        if self.zhang_shu_limiting:
-            self.ZS_cache.clear()
+        self.f_cleanup()
         return dt, self.RHS(u, *fluxes)
+
+    def f_cleanup(self):
+        if self.a_priori_slope_limiting_scheme == "zhang-shu":
+            self.ZS_cache.clear()
 
     @partial(method_timer, cat="FiniteVolumeSolver.MOOD_loop")
     def MOOD_loop(
@@ -689,7 +689,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             u=u,
             fluxes=fluxes,
             NAD=self.NAD,
-            PAD=self.arrays["PAD"] if self.has_PAD_arr else None,
+            PAD=self.arrays["PAD"] if "PAD" in self.arrays else None,
             SED=self.SED,
         ):
             dt, fluxes = revise_fluxes(

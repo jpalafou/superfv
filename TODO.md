@@ -1,7 +1,4 @@
-- [x] smooth extrema detection
-- [x] a benchmarks/ folder. ex: benchmarks/AdvectionSolver_error_convergence/
-- [x] Euler advection
-- [ ] clean up _init_slope_limiting
+- [x] clean up _init_slope_limiting
 - [ ] fix 2DZS + RK4
 - [ ] a priori limiting for Euler
 - [ ] timer shows ncalls
