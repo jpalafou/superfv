@@ -67,6 +67,26 @@ def linf_norm(array: ArrayLike) -> float:
     return np.max(np.abs(array))
 
 
+def chop(
+    cut: Tuple[Optional[int], Optional[int]],
+    axis: int,
+    step: Optional[int] = None,
+) -> Tuple[slice, ...]:
+    """
+    Create a slice object for a given axis.
+
+    Args:
+        cut (Tuple[Optional[int], Optional[int]]): Start and stop indices for the
+            slice.
+        axis (int): Axis along which to slice.
+        step (Optional[int]): Step size for the slice.
+
+    Returns:
+        Tuple[slice, ...]: A tuple of slices for the given axis.
+    """
+    return (slice(None),) * axis + (slice(cut[0] or None, cut[1] or None, step),)
+
+
 @lru_cache(maxsize=None)
 def _cached_crop_to_center(
     in_shape: Tuple[int, ...],

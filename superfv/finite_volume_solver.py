@@ -171,7 +171,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
-        limiting_vars: Optional[Tuple[str]] = None,
+        limiting_vars: Optional[Tuple[str, ...]] = None,
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         SED: bool = False,
@@ -238,7 +238,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
-            limiting_vars (Optional[Tuple[str]]): Variables to apply slope limiting to.
+            limiting_vars (Optional[Tuple[str, ...]]): Variables to apply slope limiting to.
                 If None, slope limiting is applied to all active variables.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
@@ -374,6 +374,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.array_slicer = self.define_vars()
         self.n_active_vars = self.array_slicer.max_idx + 1
         _active_array_slicer = self.array_slicer.copy()
+        self.active_vars = _active_array_slicer.var_names
 
         # check indices are consecutive
         if self.array_slicer.idxs != set(range(self.n_active_vars)):
@@ -424,7 +425,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ],
     ):
         # gather indices of active variables
-        self.active_vars = self.array_slicer.var_names.copy()
         self.array_slicer.create_var_group("actives", tuple(self.active_vars))
 
         # assign indices to passive variables
@@ -552,7 +552,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_adaptive_timesteps: Optional[int],
         MOOD: bool,
         max_MOOD_iters: Optional[int],
-        limiting_vars: Optional[Tuple[str]],
+        limiting_vars: Optional[Tuple[str, ...]],
         NAD: Optional[float],
         PAD: Optional[Dict[str, Tuple[float, float]]],
         SED: bool,
@@ -597,7 +597,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return
 
         # limiting variable slicer
-        limiting_vars = limiting_vars if limiting_vars is not None else self.active_vars
+        limiting_vars = (
+            cast(Tuple[str, ...], limiting_vars)
+            if limiting_vars is not None
+            else tuple(self.active_vars)
+        )
         self.array_slicer.create_var_group("limiting_vars", limiting_vars)
 
         # NAD, PAD, and SED

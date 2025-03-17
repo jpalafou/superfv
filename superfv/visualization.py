@@ -262,7 +262,7 @@ def plot_2d_slice(
 
 def power_law(
     x0: float, f0: float, x1: float, f1: float
-) -> Callable[np.ndarray, np.ndarray]:
+) -> Callable[[np.ndarray], np.ndarray]:
     """
     Return a power law function `f(x) = f0 * (x  / x0) ** r` from two points (x0, f0)
     and (x1, f1) where `r = log(f1 / f0) / log(x1 / x0)`.

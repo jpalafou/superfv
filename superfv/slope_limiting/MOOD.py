@@ -131,7 +131,6 @@ def detect_troubles(
     if SED:
         alpha = compute_smooth_extrema_detector(
             xp,
-            _slc,
             fv_solver.apply_bc(ustar, 3)[__limiting_slc__],
             fv_solver.axes,
         )
