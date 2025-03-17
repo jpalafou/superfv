@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Iterable, Union, cast
+from typing import Dict, Iterable, Optional, cast
 
 import numpy as np
 
@@ -8,7 +8,7 @@ def method_timer(method, cat):
     def wrapper(self, *args, **kwargs):
         if cat not in self.timer:
             self.timer.add_cat(cat)
-        ALREADY_RUNNING = self.timer.running[cat]
+        ALREADY_RUNNING = self.timer._running[cat]
         if not ALREADY_RUNNING:
             self.timer.start(cat)
         result = method(self, *args, **kwargs)
@@ -24,7 +24,10 @@ class Timer:
     Timer class for timing code execution.
     """
 
-    def __init__(self, cats: Iterable[str] = ("main",), precision: int = 2):
+    def __init__(
+        self,
+        cats: Iterable[str] = ("main",),
+    ):
         """
         Initializes the timer.
 
@@ -33,11 +36,12 @@ class Timer:
             precision (int): Precision of the time values.
         """
         self.cats = set(cats)
-        self.start_time: Dict[str, Union[None, float]] = {cat: None for cat in cats}
-        self.cum_time: Dict[str, float] = {cat: 0.0 for cat in cats}
-        self.running: Dict[str, bool] = {cat: False for cat in cats}
+        self._running: Dict[str, bool] = {cat: False for cat in cats}
+        self._start_time: Dict[str, Optional[float]] = {cat: None for cat in cats}
 
-        self.precision = precision
+        # Outputs
+        self.cum_time: Dict[str, float] = {cat: 0.0 for cat in cats}
+        self.n_calls: Dict[str, int] = {cat: 0 for cat in cats}
 
     def add_cat(self, cat: str):
         """
@@ -49,9 +53,12 @@ class Timer:
         if cat in self.cats:
             raise ValueError(f"Category '{cat}' already exists.")
         self.cats.add(cat)
-        self.start_time[cat] = None
+        self._running[cat] = False
+        self._start_time[cat] = None
+
+        # Outputs
         self.cum_time[cat] = 0.0
-        self.running[cat] = False
+        self.n_calls[cat] = 0
 
     def _check_cat_existence(self, cat: str):
         if cat not in self.cats:
@@ -65,13 +72,14 @@ class Timer:
             cat (str): Category.
         """
         self._check_cat_existence(cat)
-        if self.running[cat]:
+        if self._running[cat]:
             raise RuntimeError(
                 f"Cannot start '{cat}' timer since it is already in progress."
             )
         else:
-            self.start_time[cat] = time.time()
-            self.running[cat] = True
+            self._running[cat] = True
+            self._start_time[cat] = time.time()
+            self.n_calls[cat] += 1
 
     def stop(self, cat: str):
         """
@@ -81,56 +89,56 @@ class Timer:
             cat (str): Category.
         """
         self._check_cat_existence(cat)
-        if self.running[cat]:
-            self.cum_time[cat] += time.time() - cast(float, self.start_time[cat])
-            self.start_time[cat] = None
-            self.running[cat] = False
+        if self._running[cat]:
+            self.cum_time[cat] += time.time() - cast(float, self._start_time[cat])
+            self._running[cat] = False
+            self._start_time[cat] = None
         else:
             raise RuntimeError(
                 f"Cannot stop '{cat}' timer since it is not in progress."
             )
 
-    def to_dict(self) -> dict:
+    def to_dict(self, decimals: int = 2) -> dict:
         """
         Return the cumulative times for all categories as a dictionary.
+
+        Args:
+            decimals (int): Number of decimal places to round to.
         """
-        out = {cat: np.round(t, self.precision) for cat, t in self.cum_time.items()}
+        out = {cat: np.round(t, decimals) for cat, t in self.cum_time.items()}
         return out
 
-    def report(self) -> str:
+    def report(self, precision: int = 2) -> str:
         """
-        Return a formatted string report of the cumulative times for all categories
-        with dynamic column width based on both category name length and time values.
+        Generates a report of the timer categories with ncalls and cumtime.
+
+        Args:
+            precision (int): Precision of the time values.
+
+        Returns:
+            str: A string containing the report formatted as a table.
         """
-        # name headers
-        cat_header = "Category"
-        time_header = "Time (s)"
+        # Sort the categories alphabetically
+        sorted_cats = sorted(self.cats)
 
-        # Determine the max length of the category names and the time values
-        max_cat_len = (
-            max(len(cat) for cat in self.cats) if self.cats else len(cat_header)
+        # Fixed width for category column
+        cat_width = (
+            max(len(cat) for cat in sorted_cats) + 5
+        )  # Slightly more for padding
+
+        # Start building the report string
+        report_str = (
+            f"{'Category':<{cat_width}} {'Calls':>10} {'Cumulative Time':>20}\n"
         )
-        max_time_len = max(
-            (
-                max(len(f"{t:.{self.precision}f}") for t in self.cum_time.values())
-                if self.cum_time
-                else len(time_header)
-            ),
-            len(time_header),
-        )
+        report_str += "-" * (cat_width + 34) + "\n"
 
-        # Build the report as a string with dynamically sized columns
-        report_str = f"{cat_header:<{max_cat_len}} {time_header:<{max_time_len}}\n"
-        report_str += "-" * (max_cat_len + max_time_len + 1) + "\n"
-
-        # alphabetical order
-        alphabetically_sorted_cats = sorted(self.cum_time.keys())
-
-        # Add each category and time, formatted to the correct precision and width
-        for cat in alphabetically_sorted_cats:
-            t = self.cum_time[cat]
-            time_str = f"{t:.{self.precision}f}"
-            report_str += f"{cat:<{max_cat_len}} {time_str:>{max_time_len}}\n"
+        # Add the data for each category
+        for cat in sorted_cats:
+            ncalls = self.n_calls[cat]
+            cumtime = self.cum_time[cat]
+            report_str += (
+                f"{cat:<{cat_width}} {ncalls:>10} {cumtime:>20.{precision}f}\n"
+            )
 
         return report_str
 

@@ -55,7 +55,7 @@ class ExplicitODESolver(ABC):
     """
 
     @abstractmethod
-    @partial(method_timer, cat="?.f")
+    @partial(method_timer, cat="ExplicitODESolver.f")
     def f(self, t: float, y: ArrayLike) -> Tuple[float, ArrayLike]:
         """
         Right-hand side of the ODE.
@@ -74,7 +74,7 @@ class ExplicitODESolver(ABC):
         """
         pass
 
-    @partial(method_timer, cat="?.read_snapshots")
+    @partial(method_timer, cat="ExplicitODESolver.read_snapshots")
     def read_snapshots(self) -> bool:
         """
         Read snapshots from the snapshot directory. Override to load more data.
@@ -84,7 +84,7 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("read_snapshots method not implemented.")
 
-    @partial(method_timer, cat="?.write_snapshots")
+    @partial(method_timer, cat="ExplicitODESolver.write_snapshots")
     def write_snapshots(self, overwrite: bool = False):
         """
         Write snapshots to the snapshot directory. Override to save more data.
@@ -94,14 +94,14 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("write_snapshots method not implemented.")
 
-    @partial(method_timer, cat="?.snapshot")
+    @partial(method_timer, cat="ExplicitODESolver.snapshot")
     def snapshot(self):
         """
         Snapshot function. Override to save more data to `self.snapshots`.
         """
         pass
 
-    @partial(method_timer, cat="?.minisnapshot")
+    @partial(method_timer, cat="ExplicitODESolver.minisnapshot")
     def minisnapshot(self):
         """
         Mini snapshot function. Is executed after every step. Override to save more
@@ -143,7 +143,7 @@ class ExplicitODESolver(ABC):
         self.state = state_array_name
 
         # initialize timer, snapshots, progress bar, and git commit details
-        self.timer = Timer(cats=["!ODE_INT"])
+        self.timer = Timer(cats=["ExplicitODESolver.integrate.body"])
         self.snapshots: Snapshots = Snapshots()
         self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": []}
         self.print_progress_bar = True if progress_bar else False
@@ -207,11 +207,11 @@ class ExplicitODESolver(ABC):
         if n is not None:
             self.snapshot()
             self.minisnapshot()
-            self.timer.start("!ODE_INT")
+            self.timer.start("ExplicitODESolver.integrate.body")
             for _ in tqdm(range(n)):
                 self.take_step()
                 self.minisnapshot()
-            self.timer.stop("!ODE_INT")
+            self.timer.stop("ExplicitODESolver.integrate.body")
             self.snapshot()
             return
 
@@ -248,7 +248,7 @@ class ExplicitODESolver(ABC):
         self.minisnapshot()
 
         # simulation loop
-        self.timer.start("!ODE_INT")
+        self.timer.start("ExplicitODESolver.integrate.body")
         while self.t < T_max:
             self.take_step(target_time=target_time)
             self.progress_bar_action(action="update")
@@ -261,7 +261,7 @@ class ExplicitODESolver(ABC):
                 self.snapshot()
                 if self.t == target_time and self.t < T_max:
                     target_time = target_times.pop(0)
-        self.timer.stop("!ODE_INT")
+        self.timer.stop("ExplicitODESolver.integrate.body")
 
         # clean up progress bar
         self.progress_bar_action(action="cleanup")
