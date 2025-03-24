@@ -8,8 +8,10 @@ import numpy as np
 
 from .boundary_conditions import BoundaryConditions, DirichletBC
 from .explicit_ODE_solver import ExplicitODESolver
+from .fv import fv_average
 from .slope_limiting import minmod, moncen, muscl
 from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
+from .slope_limiting.zhang_and_shu import zhang_shu_limiter
 from .stencil import (
     conservative_interpolation_weights,
     get_gauss_legendre_face_nodes,
@@ -44,6 +46,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ArraySlicer: ArraySlicer object.
         """
         pass
+
+    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
+        """
+        Convert primitive variables to conservative variables.
+
+        Args:
+            w (ArrayLike): Primitive variables.
+
+        Returns:
+            ArrayLike: Conservative variables.
+        """
+        raise NotImplementedError("Conservative variables not implemented.")
+
+    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
+        """
+        Convert conservative variables to primitive variables.
+
+        Args:
+            u (ArrayLike): Conservative variables.
+
+        Returns:
+            ArrayLike: Primitive variables.
+        """
+        raise NotImplementedError("Primitive variables not implemented.")
 
     def dummy_riemann_solver(
         self,
@@ -119,30 +145,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
-    def zhang_shu_limiter(
-        self,
-        averages: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        interpolation_scheme: Literal["transverse", "gauss-legendre"],
-        p: int,
-    ) -> Tuple[ArrayLike, ArrayLike]:
-        """
-        Returns a slope-limited interpolation using Zhang and Shu's
-        maximum-principle-satisfying slope limiter.
-
-        Args:
-            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
-            dim (Literal["x", "y", "z"]): Dimension of the interpolation.
-            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
-                interpolation.
-            p (int): Polynomial degree of the interpolation.
-
-        Returns:
-            Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has
-                shape (nvars, <nx, <ny, <nz).
-        """
-        raise NotImplementedError("Zhang and Shu limiter not implemented.")
-
     def __init__(
         self,
         ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
@@ -167,11 +169,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
         ZS: bool = False,
+        broadcast_theta: Optional[Literal["min"]] = None,
         adaptive_timestepping: bool = True,
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
-        limiting_vars: Optional[Tuple[str, ...]] = None,
+        limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]] = None,
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         SED: bool = False,
@@ -226,6 +229,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
             ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
                 priori slope limiter.
+            broadcast_theta (Optional[Literal["min"]]): If "min", the minimum value of
+                theta over all variables is used to limit each variable. If None, the
+                limiting value is computed for each variable separately. Warning: this
+                may cause the limited values to be inconsistent across variables.
             adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
                 size if a maximum principle violation is detected. If True, MOOD is
                 overwritten to only modify the time-step size and not the fluxes.
@@ -238,8 +245,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
-            limiting_vars (Optional[Tuple[str, ...]]): Variables to apply slope limiting to.
-                If None, slope limiting is applied to all active variables.
+            limiting_vars (Optional[Union[Tuple[str, ...], Literal["all"]]]): Variables
+                to apply slope limiting to. If None, slope limiting is applied to all
+                active variables. If "all", slope limiting is applied to all variables.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
                 their corresponding PAD tolerances. If a limiting variable is not in
@@ -256,6 +264,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_slope_limiting(
             MUSCL,
             ZS,
+            broadcast_theta,
             adaptive_timestepping,
             max_adaptive_timesteps,
             MOOD,
@@ -374,7 +383,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.array_slicer = self.define_vars()
         self.n_active_vars = self.array_slicer.max_idx + 1
         _active_array_slicer = self.array_slicer.copy()
-        self.active_vars = _active_array_slicer.var_names
+        self.active_vars = tuple(_active_array_slicer.var_names)
 
         # check indices are consecutive
         if self.array_slicer.idxs != set(range(self.n_active_vars)):
@@ -430,9 +439,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # assign indices to passive variables
         for i, name in enumerate(cast(dict, ic_passives).keys()):
             self.array_slicer.add_var(name, i + self.n_active_vars)
-        self.array_slicer.create_var_group(
-            "passives", tuple(cast(dict, ic_passives).keys())
-        )
+        self.passive_vars = tuple(cast(dict, ic_passives).keys())
+        self.array_slicer.create_var_group("passives", self.passive_vars)
 
         # check the union of active and passive variables
         _slc = self.array_slicer
@@ -449,9 +457,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self, f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
     ) -> Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]:
         """
-        Transform the initial condition function.
+        Transform the initial condition function into conservative variables and apply
+        the finite volume average operator.
         """
-        return f
+
+        def wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
+            return fv_average(
+                lambda x, y, z: self.conservatives_from_primitives(f(x, y, z)),
+                x,
+                y,
+                z,
+                h=(self.h["x"], self.h["y"], self.h["z"]),
+                p=(
+                    self.p if self.using_xdim else 0,
+                    self.p if self.using_ydim else 0,
+                    self.p if self.using_zdim else 0,
+                ),
+            )
+
+        return wrapper
 
     def _init_bc(
         self,
@@ -533,6 +557,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
 
+        # initialize primitive arrays
+        self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
+
         # initialize numpy namespace
         self.xp = xp if self.cupy else np
 
@@ -548,6 +575,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         MUSCL: bool,
         ZS: bool,
+        broadcast_theta: Optional[Literal["min"]],
         adaptive_timestepping: bool,
         max_adaptive_timesteps: Optional[int],
         MOOD: bool,
@@ -572,6 +600,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.a_priori_slope_limiter = "minmod"
         elif ZS:
             self.a_priori_slope_limiting_scheme = "zhang-shu"
+            self.broadcast_theta = broadcast_theta
             self.ZS_adaptive_timestep = adaptive_timestepping
 
         # Determine if MOOD is enabled
@@ -588,17 +617,28 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 max_adaptive_timesteps if self.ZS_adaptive_timestep else max_MOOD_iters
             ) or (10 if self.ZS_adaptive_timestep else 1)
 
+        # Prepare limiting variables
+        if limiting_vars is None:
+            limiting_vars = self.active_vars
+        elif limiting_vars == "all":
+            limiting_vars = self.array_slicer.var_names
+        elif not isinstance(limiting_vars, tuple):
+            raise ValueError(
+                "limiting_vars must be a tuple of variable names, None, or 'all'."
+            )
+        limiting_vars = tuple(
+            set(limiting_vars)
+            - {"v" + dim for dim in "xyz" if not self.using[dim]}
+            - {"m" + dim for dim in "xyz" if not self.using[dim]}
+        )  # ignore unused dimensions velocity components
+        warnings.warn(
+            "Using hacky solution to ignoring unused dimensions in slope limiting."
+        )
+        self.array_slicer.create_var_group("limiting_vars", limiting_vars)
+
         # If no MOOD, early return
         if not self.MOOD:
             return
-
-        # Prepare limiting variables
-        limiting_vars = (
-            cast(Tuple[str, ...], limiting_vars)
-            if limiting_vars
-            else tuple(self.active_vars)
-        )
-        self.array_slicer.create_var_group("limiting_vars", limiting_vars)
 
         # Set NAD and SED
         self.NAD = NAD
@@ -962,13 +1002,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
             elif limiting_scheme == "zhang-shu":
                 # early escape with Zhang-Shu scheme
-                return self.zhang_shu_limiter(
+                return zhang_shu_limiter(
+                    self,
                     averages,
                     dim=dim,
                     interpolation_scheme=cast(
                         Literal["transverse", "gauss-legendre"], interpolation_scheme
                     ),
                     p=cast(int, p),
+                    broadcast_theta=self.broadcast_theta,
                 )
             else:
                 raise ValueError(
@@ -1032,24 +1074,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @partial(method_timer, cat="FiniteVolumeSolver.compute_numerical_fluxes")
     def compute_numerical_fluxes(
         self,
-        left_nodes: ArrayLike,
-        right_nodes: ArrayLike,
+        left_primitive_nodes: ArrayLike,
+        right_primitive_nodes: ArrayLike,
         dim: Literal["x", "y", "z"],
         quadrature: Literal["transverse", "gauss-legendre"],
         p: int,
         clear_cache: bool = True,
         crop: bool = True,
-        left_transformed_nodes: Optional[ArrayLike] = None,
-        right_transformed_nodes: Optional[ArrayLike] = None,
+        left_conservative_nodes: Optional[ArrayLike] = None,
+        right_conservative_nodes: Optional[ArrayLike] = None,
     ) -> ArrayLike:
         """
         Compute the numerical fluxes.
 
         Args:
-            left_nodes (ArrayLike): Value of nodes to the left of the discontinuity.
-                Has shape (nvars, nx, ny, nz, ninterpolations).
-            right_nodes (ArrayLike): Value of nodes to the right of the discontinuity.
-                Has shape (nvars, nx, ny, nz, ninterpolations).
+            left_primitive_nodes (ArrayLike): Value of primitive variable nodes to the
+                left of the discontinuity. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
+            right_primitive_nodes (ArrayLike): Value of primitive variable nodes to the
+                right of the discontinuity. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
             quadrature (str): Mode of the numerical flux computation. Possible values:
                 - "transverse": Compute the flux integral using a transverse
@@ -1061,19 +1105,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 performing the quadrature.
             crop (bool): Whether to crop the numerical fluxes to the shape of the
                 finite-volume mesh.
-            left_transformed_nodes (Optional[ArrayLike]): Transformed value of nodes to
-                the left of the discontinuity. Has shape
-                (nvars, nx, ny, nz, ninterpolations).
-            right_transformed_nodes (Optional[ArrayLike]): Transformed value of nodes to
-                the right of the discontinuity. Has shape
-                (nvars, nx, ny, nz, ninterpolations).
+            left_conservative_nodes (Optional[ArrayLike]): Optionally pre-computed
+                values of conservative variable nodes to the left of the discontinuity.
+                Has shape (nvars, nx, ny, nz, ninterpolations) if not None.
+            right_conservative_nodes (Optional[ArrayLike]): Optionally pre-computed
+                values of conservative variable nodes to the right of the discontinuity.
+                Has shape (nvars, nx, ny, nz, ninterpolations) if not None.
         """
         nodal_fluxes = self.riemann_solver(
-            wl=left_nodes,
-            wr=right_nodes,
+            wl=left_primitive_nodes,
+            wr=right_primitive_nodes,
             dim=dim,
-            ul=left_transformed_nodes,
-            ur=right_transformed_nodes,
+            ul=left_conservative_nodes,
+            ur=right_conservative_nodes,
         )
 
         if quadrature == "transverse":
@@ -1131,7 +1175,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        data = {"u": self.arrays.get_numpy_copy("u")}
+        # compute the average of the primitive variables
+        u_padded = self.apply_bc(self.arrays["u"], n_ghost_cells=2 * -(-self.p // 2))
+        u_centers = self.interpolate_cell_centers(
+            u_padded, self.interpolation_scheme, self.p
+        )
+        w = self.primitives_from_conservatives(u_centers)
+        w_averages = self.interpolate(w, p=self.p, stencil_type="uniform-quadrature")
+        self.arrays["w"] = w_averages
+
+        # store the snapshot
+        data = {
+            "u": self.arrays.get_numpy_copy("u"),
+            "w": self.arrays.get_numpy_copy("w"),
+        }
         self.snapshots.log(self.t, data)
 
     @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")

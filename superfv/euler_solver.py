@@ -6,10 +6,8 @@ import wtflux
 
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
-from .fv import fv_average
 from .hydro import conservatives_from_primitives, primitives_from_conservatives
 from .riemann_solvers import llf
-from .slope_limiting.zhang_and_shu import zhang_shu_advection
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
@@ -43,11 +41,12 @@ class EulerSolver(FiniteVolumeSolver):
         riemann_solver: str = "llf",
         MUSCL: bool = False,
         ZS: bool = False,
+        broadcast_theta: Optional[Literal["min"]] = "min",
         adaptive_timestepping: bool = True,
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
-        limiting_vars: Optional[Tuple[str]] = None,
+        limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]] = None,
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         SED: bool = False,
@@ -103,6 +102,10 @@ class EulerSolver(FiniteVolumeSolver):
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
             ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
                 priori slope limiter.
+            broadcast_theta (Optional[Literal["min"]]): If "min", the minimum value of
+                theta over all variables is used to limit each variable. If None, the
+                limiting value is computed for each variable separately. Warning: this
+                may cause the limited values to be inconsistent across variables.
             adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
                 size if a maximum principle violation is detected. If True, MOOD is
                 overwritten to only modify the time-step size and not the fluxes.
@@ -115,8 +118,9 @@ class EulerSolver(FiniteVolumeSolver):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
-            limiting_vars (Optional[Tuple[str]]): Variables to apply slope limiting to.
-                If None, slope limiting is applied to all active variables.
+            limiting_vars (Optional[Union[Tuple[str, ...], Literal["all"]]]): Variables
+                to apply slope limiting to. If None, slope limiting is applied to all
+                active variables. If "all", slope limiting is applied to all variables.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
                 their corresponding PAD tolerances. If a limiting variable is not in
@@ -151,6 +155,7 @@ class EulerSolver(FiniteVolumeSolver):
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
             ZS=ZS,
+            broadcast_theta=broadcast_theta,
             adaptive_timestepping=adaptive_timestepping,
             max_adaptive_timesteps=max_adaptive_timesteps,
             MOOD=MOOD,
@@ -161,39 +166,6 @@ class EulerSolver(FiniteVolumeSolver):
             SED=SED,
             cupy=cupy,
         )
-
-    def _ic_transform(
-        self, f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
-    ) -> Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]:
-        """
-        Modify IC callable to convert to conservative variables and compute the cell
-        average.
-        """
-
-        def conservative_wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
-            return conservatives_from_primitives(
-                self.hydro, self.array_slicer, f(x, y, z), self.gamma
-            )
-
-        def cell_average_wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
-            return fv_average(
-                conservative_wrapper,
-                x,
-                y,
-                z,
-                h=(self.h["x"], self.h["y"], self.h["z"]),
-                p=(
-                    self.p if self.using_xdim else 0,
-                    self.p if self.using_ydim else 0,
-                    self.p if self.using_zdim else 0,
-                ),
-            )
-
-        return cell_average_wrapper
-
-    def _init_array_manager(self, cupy: bool):
-        super()._init_array_manager(cupy)
-        self.arrays.add("w", np.empty_like(self.arrays["u"]))
 
     def _init_snapshots(self):
         super()._init_snapshots()
@@ -228,6 +200,34 @@ class EulerSolver(FiniteVolumeSolver):
         array_slicer.create_var_group("m", ("mx", "my", "mz"))
         return array_slicer
 
+    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
+        """
+        Convert primitive variables to conservative variables.
+
+        Args:
+            w (ArrayLike): Primitive variables.
+
+        Returns:
+            ArrayLike: Conservative variables.
+        """
+        return conservatives_from_primitives(
+            self.hydro, self.array_slicer, w, self.gamma
+        )
+
+    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
+        """
+        Convert conservative variables to primitive variables.
+
+        Args:
+            u (ArrayLike): Conservative variables.
+
+        Returns:
+            ArrayLike: Primitive variables.
+        """
+        return primitives_from_conservatives(
+            self.hydro, self.array_slicer, u, self.gamma
+        )
+
     @partial(method_timer, cat="EulerSolver.llf")
     def llf(
         self,
@@ -241,30 +241,6 @@ class EulerSolver(FiniteVolumeSolver):
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
         return llf(self.hydro, self.array_slicer, wl, wr, dim, self.gamma, ul, ur)
-
-    def zhang_shu_limiter(
-        self,
-        averages: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        interpolation_scheme: Literal["transverse", "gauss-legendre"],
-        p: int,
-    ) -> Tuple[ArrayLike, ArrayLike]:
-        """
-        Returns a slope-limited interpolation using Zhang and Shu's
-        maximum-principle-satisfying slope limiter.
-
-        Args:
-            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
-            dim (Literal["x", "y", "z"]): Dimension of the interpolation.
-            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
-                interpolation.
-            p (int): Polynomial degree of the interpolation.
-
-        Returns:
-            Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has
-                shape (nvars, <nx, <ny, <nz).
-        """
-        return zhang_shu_advection(self, averages, dim, interpolation_scheme, p)
 
     @partial(method_timer, cat="EulerSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
@@ -334,16 +310,16 @@ class EulerSolver(FiniteVolumeSolver):
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            w_xl = primitives_from_conservatives(self.hydro, _slc, u_xl, self.gamma)
-            w_xr = primitives_from_conservatives(self.hydro, _slc, u_xr, self.gamma)
+            w_xl = self.primitives_from_conservatives(u_xl)
+            w_xr = self.primitives_from_conservatives(u_xr)
             F = self.compute_numerical_fluxes(
                 w_xr[_slc(**{dim: (None, -1)})],
                 w_xl[_slc(**{dim: (1, None)})],
                 dim=dim,
                 quadrature=mode,
                 p=_p,
-                left_transformed_nodes=u_xr[_slc(**{dim: (None, -1)})],
-                right_transformed_nodes=u_xl[_slc(**{dim: (1, None)})],
+                left_conservative_nodes=u_xr[_slc(**{dim: (None, -1)})],
+                right_conservative_nodes=u_xl[_slc(**{dim: (1, None)})],
             )
             fluxes.append(F)
 
@@ -377,18 +353,3 @@ class EulerSolver(FiniteVolumeSolver):
         self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max().item())
         self.minisnapshots["min_E"].append(self.arrays["u"][_slc("E")].min().item())
         self.minisnapshots["max_E"].append(self.arrays["u"][_slc("E")].max().item())
-
-    @partial(method_timer, cat="EulerSolver.snapshot")
-    def snapshot(self):
-        """
-        Simple snapshot method that writes the solution to `self.snapshots` keyed by
-        the current time value.
-        """
-        self.arrays["w"] = primitives_from_conservatives(
-            self.hydro, self.array_slicer, self.arrays["u"], self.gamma
-        )
-        data = {
-            "u": self.arrays.get_numpy_copy("u"),
-            "w": self.arrays.get_numpy_copy("w"),
-        }
-        self.snapshots.log(self.t, data)

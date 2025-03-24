@@ -6,7 +6,6 @@ import numpy as np
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
-from .slope_limiting.zhang_and_shu import zhang_shu_advection
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
@@ -40,11 +39,12 @@ class AdvectionSolver(FiniteVolumeSolver):
         riemann_solver: str = "advection_upwind",
         MUSCL: bool = False,
         ZS: bool = False,
+        broadcast_theta: Optional[Literal["min"]] = None,
         adaptive_timestepping: bool = True,
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
-        limiting_vars: Optional[Tuple[str]] = ("rho",),
+        limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]] = ("rho",),
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         SED: bool = False,
@@ -99,6 +99,10 @@ class AdvectionSolver(FiniteVolumeSolver):
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
             ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
                 priori slope limiter.
+            broadcast_theta (Optional[Literal["min"]]): If "min", the minimum value of
+                theta over all variables is used to limit each variable. If None, the
+                limiting value is computed for each variable separately. Warning: this
+                may cause the limited values to be inconsistent across variables.
             adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
                 size if a maximum principle violation is detected. If True, MOOD is
                 overwritten to only modify the time-step size and not the fluxes.
@@ -111,8 +115,9 @@ class AdvectionSolver(FiniteVolumeSolver):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
-            limiting_vars (Optional[Tuple[str]]): Variables to apply slope limiting to.
-                If None, slope limiting is applied to all active variables.
+            limiting_vars (Optional[Union[Tuple[str, ...], Literal["all"]]]): Variables
+                to apply slope limiting to. If None, slope limiting is applied to all
+                active variables. If "all", slope limiting is applied to all variables.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
                 their corresponding PAD tolerances. If a limiting variable is not in
@@ -141,6 +146,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
             ZS=ZS,
+            broadcast_theta=broadcast_theta,
             adaptive_timestepping=adaptive_timestepping,
             max_adaptive_timesteps=max_adaptive_timesteps,
             MOOD=MOOD,
@@ -167,6 +173,30 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return ArraySlicer({"rho": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
 
+    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
+        """
+        Convert primitive variables to conservative variables.
+
+        Args:
+            w (ArrayLike): Primitive variables.
+
+        Returns:
+            ArrayLike: Conservative variables.
+        """
+        return w
+
+    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
+        """
+        Convert conservative variables to primitive variables.
+
+        Args:
+            u (ArrayLike): Conservative variables.
+
+        Returns:
+            ArrayLike: Primitive variables.
+        """
+        return u
+
     @partial(method_timer, cat="AdvectionSolver.advection_upwind")
     def advection_upwind(
         self,
@@ -180,30 +210,6 @@ class AdvectionSolver(FiniteVolumeSolver):
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
         return advection_upwind(self.array_slicer, wl, wr, dim)
-
-    def zhang_shu_limiter(
-        self,
-        averages: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        interpolation_scheme: Literal["transverse", "gauss-legendre"],
-        p: int,
-    ) -> Tuple[ArrayLike, ArrayLike]:
-        """
-        Returns a slope-limited interpolation using Zhang and Shu's
-        maximum-principle-satisfying slope limiter.
-
-        Args:
-            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
-            dim (Literal["x", "y", "z"]): Dimension of the interpolation.
-            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
-                interpolation.
-            p (int): Polynomial degree of the interpolation.
-
-        Returns:
-            Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has
-                shape (nvars, <nx, <ny, <nz).
-        """
-        return zhang_shu_advection(self, averages, dim, interpolation_scheme, p)
 
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(

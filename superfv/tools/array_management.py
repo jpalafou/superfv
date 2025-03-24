@@ -273,7 +273,7 @@ class ArraySlicer:
         axis: Optional[int] = None,
         cut: Optional[SliceBounds] = None,
         step: Optional[int] = None,
-        keep_dims: bool = False,
+        keepdims: bool = False,
     ) -> Union[
         slice,
         int,
@@ -292,7 +292,7 @@ class ArraySlicer:
             axis (Optional[int]): Axis along which to slice the field.
             cut (Optional[SliceBounds]): Start and stop indices for the axis.
             step (Optional[int]): Step size for the axis.
-            keep_dims (bool): If True, keep the dimensions of the sliced array.
+            keepdims (bool): If True, keep the dimensions of the sliced array.
 
         Returns:
             Slice object if only the first axis is sliced, or tuple of slice objects.
@@ -340,7 +340,7 @@ class ArraySlicer:
                 step if i == axis else None,
             )
 
-        if keep_dims:
+        if keepdims:
             for i in range(len(slices)):
                 if isinstance(slices[i], int):
                     slices[i] = slice(slices[i], cast(int, slices[i]) + 1)

@@ -1,5 +1,9 @@
 - [x] timer shows ncalls
-- [ ] a priori limiting for Euler
+- [x] a priori limiting for Euler
+- [x] make primitives_from_conservatives, conservatives_from_primitives standard FiniteVolumeSolver methods
+- [x] make snapshot of primitive variables a standard FiniteVolume method
+- [x] why is "min_rho" for euler_solver no longer MPP
+- [ ] remove `v{dim}`, `m{dim}` references in FiniteVolumeSolver. vx, vy, vz probably need to be implemented as passive scalars
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
