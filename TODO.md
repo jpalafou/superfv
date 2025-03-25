@@ -1,4 +1,3 @@
-- [x] timer shows ncalls
 - [x] a priori limiting for Euler
 - [x] make primitives_from_conservatives, conservatives_from_primitives standard FiniteVolumeSolver methods
 - [x] make snapshot of primitive variables a standard FiniteVolume method
