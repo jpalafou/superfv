@@ -580,7 +580,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_adaptive_timesteps: Optional[int],
         MOOD: bool,
         max_MOOD_iters: Optional[int],
-        limiting_vars: Optional[Tuple[str, ...]],
+        limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]],
         NAD: Optional[float],
         PAD: Optional[Dict[str, Tuple[float, float]]],
         SED: bool,
@@ -620,20 +620,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Prepare limiting variables
         if limiting_vars is None:
             limiting_vars = self.active_vars
-        elif limiting_vars == "all":
-            limiting_vars = self.array_slicer.var_names
+        elif isinstance(limiting_vars, str) and limiting_vars == "all":
+            limiting_vars = tuple(self.array_slicer.var_names)
         elif not isinstance(limiting_vars, tuple):
             raise ValueError(
                 "limiting_vars must be a tuple of variable names, None, or 'all'."
             )
-        limiting_vars = tuple(
-            set(limiting_vars)
-            - {"v" + dim for dim in "xyz" if not self.using[dim]}
-            - {"m" + dim for dim in "xyz" if not self.using[dim]}
-        )  # ignore unused dimensions velocity components
+
+        # Remove velocity and momentum components for unused dimensions
+        unused_components = {
+            f"{p}{dim}" for dim in "xyz" if not self.using[dim] for p in "vm"
+        }
+        limiting_vars = tuple(set(limiting_vars) - unused_components)
         warnings.warn(
-            "Using hacky solution to ignoring unused dimensions in slope limiting."
+            "Excluding unused velocity/momentum components in slope limiting."
         )
+
+        # Assign limiting variables
         self.array_slicer.create_var_group("limiting_vars", limiting_vars)
 
         # If no MOOD, early return
