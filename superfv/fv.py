@@ -33,8 +33,15 @@ def fv_average(
     hx, hy, hz = h
 
     # quadrature points and weights
+    unscaled_points_and_weights = [
+        np.polynomial.legendre.leggauss(-(-(_p + 1) // 2)) for _p in p
+    ]
+
+    # rescale to have sum of exactly 1
+    error_factors = [1 / np.sum(weights) for _, weights in unscaled_points_and_weights]
     points_and_weights = [
-        [q / 2 for q in np.polynomial.legendre.leggauss(-(-(_p + 1) // 2))] for _p in p
+        [points * factor, weights * factor]
+        for (points, weights), factor in zip(unscaled_points_and_weights, error_factors)
     ]
 
     # find cell averages
