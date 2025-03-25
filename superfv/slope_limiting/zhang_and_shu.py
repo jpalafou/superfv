@@ -172,7 +172,7 @@ def zhang_shu_limiter(
     target_shape = intersection_shape(*shapes)
 
     # helper function to crop arrays
-    def crop(arr, add_axis=False):
+    def crop(arr: ArrayLike, add_axis: bool = False) -> ArrayLike:
         return crop_to_center(
             arr[..., np.newaxis] if add_axis else arr,
             target_shape,
