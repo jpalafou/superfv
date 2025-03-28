@@ -48,8 +48,10 @@ def advection_upwind(
     out[_slc("rho")] = _upwind(yl[_slc("rho")], yr[_slc("rho")], v)
 
     # handle passives
-    if "passives" in _slc.group_names:
-        out[_slc("passives")] = _upwind(yl[_slc("passives")], yr[_slc("passives")], v)
+    if "user_defined_passives" in _slc.group_names:
+        out[_slc("user_defined_passives")] = _upwind(
+            yl[_slc("user_defined_passives")], yr[_slc("user_defined_passives")], v
+        )
     return out
 
 
@@ -82,7 +84,7 @@ def llf(
         F (ArrayLike): Flux. Has shape (nvars, nx, ny, nz, ...).
     """
     _slc = array_slicer
-    HAS_PASSIVES = "passives" in _slc.group_names
+    HAS_PASSIVES = "user_defined_passives" in _slc.group_names
     dim1, (dim2, dim3) = dim, {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
     F = np.empty_like(wl)
     (
@@ -112,15 +114,19 @@ def llf(
         m2_R=cast(ArrayLike, ur)[_slc("m" + dim2)],
         m3_R=cast(ArrayLike, ur)[_slc("m" + dim3)],
         E_R=cast(ArrayLike, ur)[_slc("E")],
-        passives_L=cast(ArrayLike, wl)[_slc("passives")] if HAS_PASSIVES else None,
-        passives_R=cast(ArrayLike, wr)[_slc("passives")] if HAS_PASSIVES else None,
+        passives_L=(
+            cast(ArrayLike, wl)[_slc("user_defined_passives")] if HAS_PASSIVES else None
+        ),
+        passives_R=(
+            cast(ArrayLike, wr)[_slc("user_defined_passives")] if HAS_PASSIVES else None
+        ),
         conserved_passives_L=(
-            cast(ArrayLike, ul)[_slc("passives")] if HAS_PASSIVES else None
+            cast(ArrayLike, ul)[_slc("user_defined_passives")] if HAS_PASSIVES else None
         ),
         conserved_passives_R=(
-            cast(ArrayLike, ur)[_slc("passives")] if HAS_PASSIVES else None
+            cast(ArrayLike, ur)[_slc("user_defined_passives")] if HAS_PASSIVES else None
         ),
     )
     if HAS_PASSIVES:
-        F[_slc("passives")] = F_passives
+        F[_slc("user_defined_passives")] = F_passives
     return F

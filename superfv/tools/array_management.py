@@ -1,7 +1,18 @@
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
 import numpy as np
 
@@ -178,7 +189,7 @@ def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
 
 
 def _idxs_to_slice_or_array(
-    idxs: List[int],
+    idxs: Iterable[int],
 ) -> Union[slice, np.ndarray[Any, np.dtype[np.int_]]]:
     """
     Convert a list of indices to a slice or numpy array.
@@ -198,31 +209,42 @@ class ArraySlicer:
     Class for slicing multivariable fields.
 
     Args:
-        var_idx_map (
-            Dict[str, Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]]
-            ): Dictionary mapping variable names to slices along the first axis.
-        ndim (int): Number of dimensions in the field.
+        variables (Dict[str, int]): Dictionary of variable names and indices.
+        ndim (int): Number of dimensions.
+        groups (Dict[str, Tuple[str, ...]]): Dictionary of group names and the variable
+            names they contain.
     """
 
-    var_idx_map: Dict[str, Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]]
+    variables: Dict[str, int]
     ndim: int
+    groups: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self):
-        self.var_names = set()
-        self.group_names = set()
-        self.idxs = set()
+        # Initialize variable index map
+        self.var_idx_map = cast(
+            Dict[str, Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]],
+            self.variables.copy(),
+        )
 
-        _max_idx = 0
-        for name, idx in self.var_idx_map.items():
-            if isinstance(idx, int):
-                self.var_names.add(name)
-                self.idxs.add(idx)
-                _max_idx = max(_max_idx, idx)
-            else:
-                self.group_names.add(name)
+        # Store variable and index sets
+        self.var_names = set(self.variables.keys())
+        self.idxs = set(self.variables.values())
 
-        self.all_names = self.var_names.union(self.group_names)
-        self.max_idx = _max_idx
+        # Validate provided groups
+        validated_groups = {}
+        if self.groups:
+            for group_name, var_names in self.groups.items():
+                if any(v not in self.variables for v in var_names):
+                    raise ValueError(f"Variables not found: {var_names}")
+                if group_name in self.variables:
+                    raise ValueError(f"Name '{group_name}' already exists.")
+                group_idxs = [self.variables[v] for v in var_names]
+
+                validated_groups[group_name] = var_names
+                self.var_idx_map[group_name] = _idxs_to_slice_or_array(group_idxs)
+        self.groups = validated_groups
+        self.group_names = set(self.groups.keys())
+        self.all_names = self.var_names | self.group_names
 
     def add_var(self, name: str, idx: int):
         """
@@ -234,27 +256,35 @@ class ArraySlicer:
         """
         if name in self.all_names:
             raise ValueError(f"Variable '{name}' already exists.")
-        self.var_idx_map[name] = idx
+        self.variables[name] = idx
         self.__post_init__()
 
-    def create_var_group(self, group_name: str, variables: Tuple[str, ...]):
+    def create_var_group(
+        self, group_name: str, variables: Tuple[str, ...], overwrite=False
+    ):
         """
-        Create a group of variables.
+        Create a group of variables (private method).
 
         Args:
             group_name (str): Name of the group.
             variables (Tuple[str, ...]): Tuple of variable names.
         """
-        if any(name not in self.var_names for name in variables):
-            raise ValueError(f"Variables not found: {variables}")
         if group_name in self.all_names:
             raise ValueError(f"Name '{group_name}' already exists.")
-        group_idxs = [self.var_idx_map[v] for v in variables]
-        if any(not isinstance(i, int) for i in group_idxs):
-            raise ValueError("Variables must be indexed by integers.")
-        self.var_idx_map[group_name] = _idxs_to_slice_or_array(
-            [cast(int, self.var_idx_map[v]) for v in variables]
-        )
+        self.groups[group_name] = variables
+        self.__post_init__()
+
+    def add_to_var_group(self, group_name: str, variables: Tuple[str, ...]):
+        """
+        Add variables to an existing group.
+
+        Args:
+            group_name (str): Name of the group.
+            variables (Tuple[str, ...]): Tuple of variable names.
+        """
+        if group_name not in self.group_names:
+            raise ValueError(f"Group '{group_name}' not found.")
+        self.groups[group_name] += variables
         self.__post_init__()
 
     def __hash__(self):
@@ -286,9 +316,9 @@ class ArraySlicer:
         Args:
             variable (Optional[Union[str, Tuple[str, ...]]]): Variable name or tuple of
                 variable names.
-            x (Optional[SliceBounds]: Start and stop indices for the x-axis.
-            y (Optional[SliceBounds]): Start and stop indices for the y-axis.
-            z (Optional[SliceBounds]): Start and stop indices for the z-axis.
+            x (Optional[SliceBounds]: Start and stop indices for the x-axis (axis 1)
+            y (Optional[SliceBounds]): Start and stop indices for the y-axis (axis 2).
+            z (Optional[SliceBounds]): Start and stop indices for the z-axis (axis 3).
             axis (Optional[int]): Axis along which to slice the field.
             cut (Optional[SliceBounds]): Start and stop indices for the axis.
             step (Optional[int]): Step size for the axis.
@@ -352,7 +382,11 @@ class ArraySlicer:
         """
         Create a copy of the slicer.
         """
-        return ArraySlicer(self.var_idx_map.copy(), self.ndim)
+        return ArraySlicer(
+            variables=self.variables.copy(),
+            ndim=self.ndim,
+            groups=self.groups.copy() if self.groups is not None else None,
+        )
 
 
 class ArrayManager:

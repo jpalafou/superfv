@@ -32,7 +32,8 @@ def euler_slicer():
     _euler_slicer.create_var_group("v", ("vx", "vy", "vz"))
     _euler_slicer.create_var_group("m", ("mx", "my", "mz"))
     _euler_slicer.create_var_group(
-        "passives", ("passive_scalar1", "passive_scalar2", "passive_scalar3")
+        "user_defined_passives",
+        ("passive_scalar1", "passive_scalar2", "passive_scalar3"),
     )
     return _euler_slicer
 

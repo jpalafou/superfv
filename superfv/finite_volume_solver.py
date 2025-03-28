@@ -2,7 +2,7 @@ import warnings
 from abc import ABC, abstractmethod
 from functools import partial
 from itertools import product
-from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 
 import numpy as np
 
@@ -379,81 +379,124 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ],
     ):
-        # active variable initial conditions
+        # Define the following attributes:
+        self.active_vars: Set[str]
+        self.array_slicer: ArraySlicer
+        self.callable_ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
+        self.n_active_vars: int
+        self.n_passive_vars: int
+        self.nvars: int
+        self.passive_vars: Set[str]
+        self.user_defined_passive_vars: Set[str]
+        self.vars: Set[str]
+
+        # Define active and passive variables
         self.array_slicer = self.define_vars()
-        self.n_active_vars = self.array_slicer.max_idx + 1
-        _active_array_slicer = self.array_slicer.copy()
-        self.active_vars = tuple(_active_array_slicer.var_names)
-
-        # check indices are consecutive
-        if self.array_slicer.idxs != set(range(self.n_active_vars)):
-            raise ValueError("Variable indices must be consecutive.")
-
-        # define callable
-        def _callable_active_ic(x, y, z):
-            return ic(_active_array_slicer, x, y, z)
-
-        # determine if passive variables are used
-        self.has_passives = bool(ic_passives)
-        _n_passive_vars = len(cast(dict, ic_passives)) if self.has_passives else 0
-        self.nvars = self.n_active_vars + _n_passive_vars
-
-        if self.has_passives:
-            self._init_ic_passives(ic_passives)
-
-            # define callable to get the full ic array
-            def _callable_ic_with_passives(
-                x: ArrayLike, y: ArrayLike, z: ArrayLike
-            ) -> ArrayLike:
-                _slc = self.array_slicer
-                out = np.empty((self.nvars, *x.shape), dtype=float)
-                out[_slc("actives")] = _callable_active_ic(x, y, z)
-                for name, f in cast(dict, ic_passives).items():
-                    out[_slc(name)] = f(x, y, z)
-                return out
-
-            callable_ic = _callable_ic_with_passives
-
+        if "passives" in self.array_slicer.group_names:
+            self.passive_vars = set(self.array_slicer.groups["passives"])
+            self.active_vars = self.array_slicer.var_names - self.passive_vars
         else:
-            callable_ic = _callable_active_ic
+            self.active_vars = self.array_slicer.var_names
+            self.passive_vars = set()
+        self.array_slicer.create_var_group("actives", tuple(self.active_vars))
 
-        # apply transformation
-        self.callable_ic = self._ic_transform(callable_ic)
+        # Count active and passive variables
+        self.n_active_vars = len(
+            {self.array_slicer.variables[v] for v in self.active_vars}
+        )
+        self.n_passive_vars = len(
+            {self.array_slicer.variables[v] for v in self.passive_vars}
+        )
 
-        # initialize the ODE solver and array manager
+        # Include user-defined passive variables
+        self.user_defined_passive_vars = set()
+        if ic_passives is not None:
+            starting_passive_idx = len(self.array_slicer.idxs)
+            for i, v in enumerate(ic_passives.keys()):
+                if v in self.active_vars | self.passive_vars:
+                    raise ValueError("Variable already defined.")
+                self.array_slicer.add_var(v, starting_passive_idx + i)
+            if "passives" in self.array_slicer.group_names:
+                self.array_slicer.add_to_var_group(
+                    "passives", tuple(ic_passives.keys())
+                )
+            else:
+                self.array_slicer.create_var_group(
+                    "passives", tuple(ic_passives.keys())
+                )
+            self.n_passive_vars += len(ic_passives)
+            self.passive_vars |= set(ic_passives.keys())
+
+            self.user_defined_passive_vars = set(ic_passives.keys())
+            self.array_slicer.create_var_group(
+                "user_defined_passives", tuple(self.user_defined_passive_vars)
+            )
+
+        # Define all variables
+        self.nvars = self.n_active_vars + self.n_passive_vars
+        self.vars = self.active_vars | self.passive_vars
+
+        # Define callable initial condition function
+        def callable_ic(x, y, z):
+            return ic(self.array_slicer, x, y, z)
+
+        if ic_passives is not None:
+
+            def passive_wrapper(f):
+                def wrapped_ic_func(x, y, z):
+                    out = f(x, y, z)
+                    for pv, pf in ic_passives.items():
+                        out[self.array_slicer(pv)] = pf(x, y, z)
+                    return out
+
+                return wrapped_ic_func
+
+        # Apply wrappers
+        self.callable_ic = self._ic_transform_wrapper(
+            callable_ic if ic_passives is None else passive_wrapper(callable_ic)
+        )
+
+        # Test array slicing
+        test_arr = np.arange(self.nvars)
+        selected_actives = set(
+            cast(
+                List[str],
+                test_arr[self.array_slicer("actives", keepdims=True)].tolist(),
+            )
+        )
+        selected_passives = (
+            set(
+                cast(
+                    List[str],
+                    test_arr[self.array_slicer("passives", keepdims=True)].tolist(),
+                )
+            )
+            if "passives" in self.array_slicer.group_names
+            else None
+        )
+        all_selected_vars = set(test_arr.tolist())
+        if (
+            self.n_passive_vars > 0
+            and not selected_actives | cast(Set[str], selected_passives)
+            == all_selected_vars
+        ):
+            raise ValueError(
+                "The intersection of active and passive variables must be the set of all variables."
+            )
+        elif (
+            self.n_passive_vars == 0
+            and not selected_actives == selected_actives == all_selected_vars
+        ):
+            raise ValueError("Active variables must be the set of all variables.")
+
+        # Initialize the ODE solver with the initial condition array
         ic_arr = self.callable_ic(self.X, self.Y, self.Z)
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
         super().__init__(ic_arr, state_array_name="u")
 
-    def _init_ic_passives(
-        self,
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ],
-    ):
-        # gather indices of active variables
-        self.array_slicer.create_var_group("actives", tuple(self.active_vars))
-
-        # assign indices to passive variables
-        for i, name in enumerate(cast(dict, ic_passives).keys()):
-            self.array_slicer.add_var(name, i + self.n_active_vars)
-        self.passive_vars = tuple(cast(dict, ic_passives).keys())
-        self.array_slicer.create_var_group("passives", self.passive_vars)
-
-        # check the union of active and passive variables
-        _slc = self.array_slicer
-        test_arr = np.arange(self.nvars)
-        if not np.array_equal(
-            np.concatenate((test_arr[_slc("actives")], test_arr[_slc("passives")])),
-            test_arr,
-        ):
-            raise ValueError(
-                "The intersection of active and passive variables must be the set of all variables."
-            )
-
-    def _ic_transform(
+    def _ic_transform_wrapper(
         self, f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
     ) -> Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]:
         """
@@ -619,25 +662,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # Prepare limiting variables
         if limiting_vars is None:
-            limiting_vars = self.active_vars
+            self.limiting_vars = self.active_vars
         elif isinstance(limiting_vars, str) and limiting_vars == "all":
-            limiting_vars = tuple(self.array_slicer.var_names)
-        elif not isinstance(limiting_vars, tuple):
+            self.limiting_vars = self.array_slicer.var_names
+        elif isinstance(limiting_vars, tuple):
+            self.limiting_vars = set(limiting_vars)
+        else:
             raise ValueError(
                 "limiting_vars must be a tuple of variable names, None, or 'all'."
             )
 
-        # Remove velocity and momentum components for unused dimensions
-        unused_components = {
-            f"{p}{dim}" for dim in "xyz" if not self.using[dim] for p in "vm"
-        }
-        limiting_vars = tuple(set(limiting_vars) - unused_components)
-        warnings.warn(
-            "Excluding unused velocity/momentum components in slope limiting."
-        )
-
         # Assign limiting variables
-        self.array_slicer.create_var_group("limiting_vars", limiting_vars)
+        self.array_slicer.create_var_group("limiting_vars", tuple(self.limiting_vars))
 
         # If no MOOD, early return
         if not self.MOOD:

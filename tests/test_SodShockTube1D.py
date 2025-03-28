@@ -10,19 +10,25 @@ def linf_error(u1, u2):
 
 
 @pytest.mark.parametrize("p", [0, 3, 7])
-def test_sod_shock_tube_1d_symmetry(p):
+@pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
+def test_sod_shock_tube_1d_symmetry(p, limiting):
     """
     Test that the Sod shock tube solution is symmetric in all dimensions.
     """
     solutions = {}
     for dim in "xyz":
-        xyz_config = {"bc" + dim: "free", "n" + dim: 64}
         solver = EulerSolver(
             ic=ic.sod_shock_tube_1d,
             p=p,
-            MOOD=True,
-            NAD=1e-5,
-            **xyz_config,
+            **(
+                {
+                    "a priori": {"ZS": True, "PAD": {"rho": (0, np.inf)}},
+                    "a posteriori": {"MOOD": True, "NAD": 1e-5},
+                }[limiting]
+                if p > 0
+                else {}
+            ),
+            **{"bc" + dim: "free", "n" + dim: 64},
         )
         solver.run(0.245)
         _slc = solver.array_slicer
@@ -34,7 +40,8 @@ def test_sod_shock_tube_1d_symmetry(p):
 
 @pytest.mark.parametrize("dim", "xyz")
 @pytest.mark.parametrize("p", [0, 3, 7])
-def test_sod_shock_tube_passive_scalars(dim, p):
+@pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
+def test_sod_shock_tube_passive_scalars(dim, p, limiting):
     """
     Test that passive scalars don't affect the Sod shock tube solution.
     """
@@ -42,9 +49,15 @@ def test_sod_shock_tube_passive_scalars(dim, p):
         "ic": ic.sod_shock_tube_1d,
         "bc" + dim: "free",
         "n" + dim: 64,
-        "p": 3,
-        "MOOD": True,
-        "NAD": 1e-5,
+        "p": p,
+        **(
+            {
+                "a priori": {"ZS": True, "PAD": {"rho": (0, np.inf)}},
+                "a posteriori": {"MOOD": True, "NAD": 1e-5},
+            }[limiting]
+            if p > 0
+            else {}
+        ),
     }
 
     # run solver with no passive scalars
@@ -63,6 +76,6 @@ def test_sod_shock_tube_passive_scalars(dim, p):
     # compare the solutions
     _slc = solver_with_passives.array_slicer
     assert np.all(
-        solver.snapshots[-1]["u"]
+        solver.snapshots[-1]["u"][_slc("actives")]
         == solver_with_passives.snapshots[-1]["u"][_slc("actives")]
     )

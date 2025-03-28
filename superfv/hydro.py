@@ -24,7 +24,7 @@ def conservatives_from_primitives(
     """
     _slc = array_slicer
     u = np.empty_like(w)
-    HAS_PASSIVES = "passives" in _slc.group_names
+    HAS_PASSIVES = "user_defined_passives" in _slc.group_names
     (
         u[_slc("rho")],
         u[_slc("mx")],
@@ -39,10 +39,10 @@ def conservatives_from_primitives(
         v3=w[_slc("vz")],
         P=w[_slc("P")],
         gamma=gamma,
-        passives=w[_slc("passives")] if HAS_PASSIVES else None,
+        passives=w[_slc("user_defined_passives")] if HAS_PASSIVES else None,
     )
     if HAS_PASSIVES:
-        u[_slc("passives")] = passives
+        u[_slc("user_defined_passives")] = passives
     return u
 
 
@@ -65,7 +65,7 @@ def primitives_from_conservatives(
     """
     _slc = array_slicer
     w = np.empty_like(u)
-    HAS_PASSIVES = "passives" in _slc.group_names
+    HAS_PASSIVES = "user_defined_passives" in _slc.group_names
     (
         w[_slc("rho")],
         w[_slc("mx")],
@@ -80,8 +80,8 @@ def primitives_from_conservatives(
         m3=u[_slc("vz")],
         E=u[_slc("P")],
         gamma=gamma,
-        conserved_passives=u[_slc("passives")] if HAS_PASSIVES else None,
+        conserved_passives=u[_slc("user_defined_passives")] if HAS_PASSIVES else None,
     )
     if HAS_PASSIVES:
-        w[_slc("passives")] = passives
+        w[_slc("user_defined_passives")] = passives
     return w

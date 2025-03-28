@@ -12,7 +12,6 @@ def test_initialization():
     assert slicer.var_names == {"density", "momentum"}
     assert slicer.group_names == set()
     assert slicer.all_names == {"density", "momentum"}
-    assert slicer.max_idx == 1
 
 
 def test_add_var():
@@ -58,6 +57,27 @@ def test_create_var_group():
         slicer.create_var_group("fluid", ("density", "momentum"))
 
 
+def test_add_to_var_group():
+    slicer = ArraySlicer({"rho": 0, "mx": 1, "my": 2, "mz": 3, "E": 4}, ndim=4)
+    slicer.create_var_group("m", ("mx",))
+
+    # Add variables
+    slicer.add_to_var_group("m", ("my", "mz"))
+    assert slicer.var_idx_map["m"] == slice(1, 4)
+    assert slicer.var_names == {"rho", "mx", "my", "mz", "E"}
+    assert slicer.group_names == {"m"}
+    assert slicer.all_names == {"rho", "mx", "my", "mz", "E", "m"}
+    assert slicer.idxs == {0, 1, 2, 3, 4}
+
+    # Ensure error is raised if a variable is not found
+    with pytest.raises(ValueError, match="Variables not found: .*"):
+        slicer.add_to_var_group("m", ("P",))
+
+    # Ensure error is raised if the group name does not exist
+    with pytest.raises(ValueError, match="Group 'invalid_group' not found."):
+        slicer.add_to_var_group("invalid_group", ("E",))
+
+
 def test_call_single_variable():
     slicer = ArraySlicer({"density": 0, "momentum": 1}, ndim=3)
     result = slicer(variable="density")
@@ -70,7 +90,9 @@ def test_call_single_variable():
 
 def test_call_multiple_variables():
     slicer = ArraySlicer(
-        {"density": 0, "momentum": 1, "energy": 2, "fluid": np.array([0, 1])}, ndim=3
+        {"density": 0, "momentum": 1, "energy": 2},
+        groups={"fluid": ("density", "momentum")},
+        ndim=3,
     )
 
     # Case 1: Contiguous indices

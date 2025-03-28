@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, cast
 
-import numpy as np
-
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.array_management import ArrayLike
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
-
 
 from .smooth_extrema_detection import compute_smooth_extrema_detector
 
@@ -275,7 +272,7 @@ def revise_fluxes(
         )
         revised_G = xp.zeros_like(fluxes[1])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
-            revised_G += fv_solver.MOOD_cache["G_" + scheme] * np.where(
+            revised_G += fv_solver.MOOD_cache["G_" + scheme] * xp.where(
                 G_cascade_idx_array == i, 1, 0
             )
     if fv_solver.using_zdim:
@@ -288,7 +285,7 @@ def revise_fluxes(
         )
         revised_H = xp.zeros_like(fluxes[2])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
-            revised_H += fv_solver.MOOD_cache["H_" + scheme] * np.where(
+            revised_H += fv_solver.MOOD_cache["H_" + scheme] * xp.where(
                 H_cascade_idx_array == i, 1, 0
             )
 

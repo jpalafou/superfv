@@ -171,7 +171,15 @@ class AdvectionSolver(FiniteVolumeSolver):
             - vy: y-component of the velocity.
             - vz: z-component of the velocity.
         """
-        return ArraySlicer({"rho": 0, "vx": 1, "vy": 2, "vz": 3}, ndim=4)
+        return ArraySlicer(
+            {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
+            groups=(
+                {"passives": tuple("v" + dim for dim in "xyz" if not self.using[dim])}
+                if any(not self.using[dim] for dim in "xyz")
+                else {}
+            ),
+            ndim=4,
+        )
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
@@ -209,7 +217,14 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
-        return advection_upwind(self.array_slicer, wl, wr, dim)
+        _slc = self.array_slicer
+        out = advection_upwind(self.array_slicer, wl, wr, dim)
+
+        # overwrite the velocity fluxes so that the velocity is not advected
+        out[_slc("vx")] = 0.0
+        out[_slc("vy")] = 0.0
+        out[_slc("vz")] = 0.0
+        return out
 
     @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(

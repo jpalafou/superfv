@@ -182,23 +182,34 @@ class EulerSolver(FiniteVolumeSolver):
             - vy: y-component of the velocity.
             - vz: z-component of the velocity.
         """
-        array_slicer = ArraySlicer(
+        var_map = {
+            "rho": 0,
+            "vx": 1,
+            "vy": 2,
+            "vz": 3,
+            "P": 4,
+            "E": 4,
+            "mx": 1,
+            "my": 2,
+            "mz": 3,
+        }
+
+        active_dims = [dim for dim in "xyz" if self.using[dim]]
+        passive_dims = [dim for dim in "xyz" if not self.using[dim]]
+
+        groups = {
+            "v": tuple(f"v{dim}" for dim in active_dims),
+            "m": tuple(f"m{dim}" for dim in active_dims),
+        } | (
             {
-                "rho": 0,
-                "vx": 1,
-                "vy": 2,
-                "vz": 3,
-                "P": 4,
-                "mx": 1,
-                "my": 2,
-                "mz": 3,
-                "E": 4,
-            },
-            ndim=4,
+                "passives": tuple(f"v{dim}" for dim in passive_dims)
+                + tuple(f"m{dim}" for dim in passive_dims)
+            }
+            if passive_dims
+            else {}
         )
-        array_slicer.create_var_group("v", ("vx", "vy", "vz"))
-        array_slicer.create_var_group("m", ("mx", "my", "mz"))
-        return array_slicer
+
+        return ArraySlicer(var_map, groups=groups, ndim=4)
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
