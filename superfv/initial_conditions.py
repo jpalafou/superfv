@@ -51,9 +51,9 @@ def sinus(
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
-    out = np.empty((_slc.max_idx + 1, *x.shape))
+    out = np.empty((len(_slc.idxs), *x.shape))
 
-    # Validate variables in ArraySlicer
+    # Validate variables in ArraySlicers
     if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
         # advection case
         r = int("x" in dims) * x + int("y" in dims) * y + int("z" in dims) * z
@@ -99,11 +99,11 @@ def square(
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
+    out = np.empty((len(_slc.idxs), *x.shape))
 
     # Validate variables in ArraySlicer
-    if _slc.var_names == {"rho", "vx", "vy", "vz"}:
+    if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
         # advection case
-        out = np.empty((4, *x.shape))
         r = np.ones_like(x).astype(bool)
         if "x" in dims:
             r &= (x >= 0.25) & (x <= 0.75)
@@ -199,15 +199,19 @@ def sod_shock_tube_1d(
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
+    out = np.empty((len(_slc.idxs), *x.shape))
+
     if len(dims) != 1:
         raise ValueError("Sod shock tube initial condition only works in 1D.")
 
     # Validate variables in ArraySlicer
     if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
-        out = np.zeros((5, *x.shape))
         r = {"x": x, "y": y, "z": z}[dims]
+        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dims]
         out[_slc("rho")] = np.where(r < pos1, rhol, rhor)
         out[_slc("v" + dims)] = np.where(r < pos1, vl, vr)
+        out[_slc("v" + orth_dim1)] = 0
+        out[_slc("v" + orth_dim2)] = 0
         out[_slc("P")] = np.where(r < pos1, pl, pr)
     else:
         raise NotImplementedError(
