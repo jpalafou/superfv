@@ -79,13 +79,11 @@ def test_add_to_var_group():
 
 
 def test_call_single_variable():
-    slicer = ArraySlicer({"density": 0, "momentum": 1}, ndim=3)
-    result = slicer(variable="density")
-    assert result == 0
-
-    slicer = ArraySlicer({"fluid": slice(0, 2)}, ndim=3)
-    result = slicer(variable="fluid")
-    assert result == slice(0, 2)
+    slicer = ArraySlicer(
+        {"density": 0, "momentum": 1}, groups={"fluid": ("density", "momentum")}, ndim=3
+    )
+    assert slicer(variable="density") == 0
+    assert slicer(variable="momentum") == 0
 
 
 def test_call_multiple_variables():

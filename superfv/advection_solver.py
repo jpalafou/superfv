@@ -47,6 +47,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]] = ("rho",),
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
+        PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
     ):
@@ -122,6 +123,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
                 their corresponding PAD tolerances. If a limiting variable is not in
                 the dict, it is given a PAD tolerance of (-np.inf, np.inf).
+            PAD_tol (float): Tolerance for the PAD check as an absolute value from the
+                minimum and maximum values of the variable.
             SED (bool): Whether to use smooth extrema detection for slope limiting.
             cupy (bool): Whether to use CuPy for array operations.
         """
@@ -154,6 +157,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             limiting_vars=limiting_vars,
             NAD=NAD,
             PAD=PAD,
+            PAD_tol=PAD_tol,
             SED=SED,
             cupy=cupy,
         )

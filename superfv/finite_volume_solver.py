@@ -177,6 +177,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]] = None,
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
+        PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
     ):
@@ -252,6 +253,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
                 their corresponding PAD tolerances. If a limiting variable is not in
                 the dict, it is given a PAD tolerance of (-np.inf, np.inf).
+            PAD_tol (float): Tolerance for the PAD check as an absolute value from the
+                minimum and maximum values of the variable.
             SED (bool): Whether to use smooth extrema detection for slope limiting.
             cupy (bool): Whether to use CuPy for array operations.
         """
@@ -272,6 +275,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiting_vars,
             NAD,
             PAD,
+            PAD_tol,
             SED,
         )
 
@@ -626,6 +630,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]],
         NAD: Optional[float],
         PAD: Optional[Dict[str, Tuple[float, float]]],
+        PAD_tol: float,
         SED: bool,
     ):
         # Initial setup for a priori slope limiting
@@ -684,6 +689,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.SED = SED
 
         # Handle PAD
+        self.PAD_tol = PAD_tol
         if PAD is None:
             if self.ZS_adaptive_timestep:
                 raise ValueError("PAD must be provided if adaptive_timestepping=True.")
@@ -769,6 +775,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             fluxes=fluxes,
             NAD=self.NAD,
             PAD=self.arrays["PAD"] if "PAD" in self.arrays else None,
+            PAD_tol=self.PAD_tol,
             SED=self.SED,
         ):
             dt, fluxes = revise_fluxes(

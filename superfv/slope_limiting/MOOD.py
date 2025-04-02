@@ -74,6 +74,7 @@ def detect_troubles(
     fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
     NAD: Optional[float] = None,
     PAD: Optional[ArrayLike] = None,
+    PAD_tol: float = 0.0,
     SED: bool = False,
 ) -> bool:
     """
@@ -97,6 +98,8 @@ def detect_troubles(
             of shape (nvars, 2) if not None, where the first column is the lower bound
             and the second column is the upper bound. Physical admissibility is not
             checked if None.
+        PAD_tol (float): Tolerance for the physical admissibility detection. Default is
+            0.0.
         SED whether to apply smooth extrema detection.
     Returns:
         bool: Whether troubles were detected.
@@ -136,8 +139,8 @@ def detect_troubles(
         possible_violations[...] = xp.logical_or.reduce(
             [
                 possible_violations,
-                ustar[__limiting_slc__] < PAD[__limiting_slc__][..., 0],
-                ustar[__limiting_slc__] > PAD[__limiting_slc__][..., 1],
+                ustar[__limiting_slc__] < PAD[__limiting_slc__][..., 0] - PAD_tol,
+                ustar[__limiting_slc__] > PAD[__limiting_slc__][..., 1] + PAD_tol,
             ]
         )
     violations = xp.any(possible_violations, axis=0)

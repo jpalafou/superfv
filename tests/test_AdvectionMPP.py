@@ -35,11 +35,11 @@ def test_1D_advection_mpp(adaptive_dt, p, dim):
     )
     solver.run(0.05)
 
-    upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
-    lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
-
-    assert np.all(upper_violations >= 0)
-    assert np.all(lower_violations >= 0)
+    violations = np.minimum(
+        1 - np.array(solver.minisnapshots["max_rho"]),
+        np.array(solver.minisnapshots["min_rho"]),
+    )
+    assert np.all(violations >= -1e-15)
 
 
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
@@ -60,11 +60,11 @@ def test_2D_advection_mpp(p, dim1_dim2):
     )
     solver.run(0.05, q_max=2)
 
-    upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
-    lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
-
-    assert np.all(upper_violations >= 0)
-    assert np.all(lower_violations >= 0)
+    violations = np.minimum(
+        1 - np.array(solver.minisnapshots["max_rho"]),
+        np.array(solver.minisnapshots["min_rho"]),
+    )
+    assert np.all(violations >= -1e-15)
 
 
 @pytest.mark.parametrize("p", [0, 1, 2])
@@ -82,8 +82,8 @@ def test_3D_advection_mpp(p):
     )
     solver.run(0.05)
 
-    upper_violations = 1 - np.array(solver.minisnapshots["max_rho"])
-    lower_violations = np.array(solver.minisnapshots["min_rho"]) - 0
-
-    assert np.all(upper_violations >= 0)
-    assert np.all(lower_violations >= 0)
+    violations = np.minimum(
+        1 - np.array(solver.minisnapshots["max_rho"]),
+        np.array(solver.minisnapshots["min_rho"]),
+    )
+    assert np.all(violations >= -1e-15)
