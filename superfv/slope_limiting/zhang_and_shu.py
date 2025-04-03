@@ -112,12 +112,11 @@ def zhang_shu_limiter(
     dim: Literal["x", "y", "z"],
     interpolation_scheme: Literal["transverse", "gauss-legendre"],
     p: int,
-    broadcast_theta: Optional[Literal["min"]] = None,
     tol: float = 1e-16,
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
     Caches the limited face values for the advection equation using a variable-wise
-    Zhang-Shu limiter.
+    Zhang-Shu limiter for all variables.
 
     Args:
         fv_solver (FiniteVolumeSolver): Finite volume solver object.
@@ -126,10 +125,6 @@ def zhang_shu_limiter(
         interpolation_scheme (Literal["transverse", "gauss-legendre"]): Interpolation
             mode.
         p (int): Polynomial order. Must be >= 1.
-        broadcast_theta (Optional[Literal["min"]]): If "min", the minimum value of
-            theta over all variables is used to limit each variable. If None, the
-            limiting value is computed for each variable separately. Warning: this
-            may cause the limited values to be inconsistent across variables.
         tol (float): Tolerance for dividing by zero.
 
     Returns:
@@ -138,7 +133,7 @@ def zhang_shu_limiter(
     """
     xp = fv_solver.xp
     _slc = fv_solver.array_slicer
-    __limiting_slc__ = _slc("limiting_vars", keepdims=True)
+    __limiting_slc__ = slice(None)  # All variables for now
 
     def zs_str(p, dim, pos):
         return f"zs_p{p}{dim}{pos}_face_nodes"
@@ -212,14 +207,6 @@ def zhang_shu_limiter(
         ),
         1,
     )
-
-    if broadcast_theta == "min":
-        theta = np.min(theta, axis=0, keepdims=True)
-    elif theta.shape[0] > 1:
-        if theta.shape[0] != averages.shape[0]:
-            raise ValueError(
-                "theta must have the same number of dimensions as the averages."
-            )
 
     # limit and escape
     if fv_solver.using_xdim:

@@ -169,12 +169,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
         ZS: bool = False,
-        broadcast_theta: Optional[Literal["min"]] = None,
         adaptive_timestepping: bool = True,
         max_adaptive_timesteps: Optional[int] = None,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
-        limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]] = None,
+        limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[float, float]]] = None,
         PAD_tol: float = 1e-15,
@@ -230,10 +229,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
             ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
                 priori slope limiter.
-            broadcast_theta (Optional[Literal["min"]]): If "min", the minimum value of
-                theta over all variables is used to limit each variable. If None, the
-                limiting value is computed for each variable separately. Warning: this
-                may cause the limited values to be inconsistent across variables.
             adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
                 size if a maximum principle violation is detected. If True, MOOD is
                 overwritten to only modify the time-step size and not the fluxes.
@@ -246,9 +241,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
                 if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
                 value is 1.
-            limiting_vars (Optional[Union[Tuple[str, ...], Literal["all"]]]): Variables
-                to apply slope limiting to. If None, slope limiting is applied to all
-                active variables. If "all", slope limiting is applied to all variables.
+            limiting_vars (Union[Literal["all", "actives"], Tuple[str, ...]]):
+                Specifies which variables are subject to slope limiting.
+                - "all": All variables are subject to slope limiting.
+                - "actives": Only active variables are subject to slope limiting.
+                - Tuple[str, ...]: A tuple of variable names that are subject to slope
+                    limiting. Must be defined in `self.define_vars()`.
+                For the Zhang-Shu limiter, all variables are always limited, but
+                `limiting_vars` determines which variables are checked for PAD when
+                using adaptive timestepping.
             NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
             PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
                 their corresponding PAD tolerances. If a limiting variable is not in
@@ -267,7 +268,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_slope_limiting(
             MUSCL,
             ZS,
-            broadcast_theta,
             adaptive_timestepping,
             max_adaptive_timesteps,
             MOOD,
@@ -622,12 +622,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         MUSCL: bool,
         ZS: bool,
-        broadcast_theta: Optional[Literal["min"]],
         adaptive_timestepping: bool,
         max_adaptive_timesteps: Optional[int],
         MOOD: bool,
         max_MOOD_iters: Optional[int],
-        limiting_vars: Optional[Union[Tuple[str, ...], Literal["all"]]],
+        limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: Optional[float],
         PAD: Optional[Dict[str, Tuple[float, float]]],
         PAD_tol: float,
@@ -648,7 +647,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.a_priori_slope_limiter = "minmod"
         elif ZS:
             self.a_priori_slope_limiting_scheme = "zhang-shu"
-            self.broadcast_theta = broadcast_theta
             self.ZS_adaptive_timestep = adaptive_timestepping
 
         # Determine if MOOD is enabled
@@ -665,16 +663,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 max_adaptive_timesteps if self.ZS_adaptive_timestep else max_MOOD_iters
             ) or (10 if self.ZS_adaptive_timestep else 1)
 
-        # Prepare limiting variables
-        if limiting_vars is None:
+        # Prespare limiting variables
+        if limiting_vars == "actives":
             self.limiting_vars = self.active_vars
-        elif isinstance(limiting_vars, str) and limiting_vars == "all":
+        elif limiting_vars == "all":
             self.limiting_vars = self.array_slicer.var_names
         elif isinstance(limiting_vars, tuple):
             self.limiting_vars = set(limiting_vars)
         else:
             raise ValueError(
-                "limiting_vars must be a tuple of variable names, None, or 'all'."
+                "limiting_vars must be a tuple of variable names, 'actives', or 'all'."
             )
 
         # Assign limiting variables
@@ -1056,7 +1054,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         Literal["transverse", "gauss-legendre"], interpolation_scheme
                     ),
                     p=cast(int, p),
-                    broadcast_theta=self.broadcast_theta,
                 )
             else:
                 raise ValueError(

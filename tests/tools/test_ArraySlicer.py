@@ -83,7 +83,7 @@ def test_call_single_variable():
         {"density": 0, "momentum": 1}, groups={"fluid": ("density", "momentum")}, ndim=3
     )
     assert slicer(variable="density") == 0
-    assert slicer(variable="momentum") == 0
+    assert slicer(variable="momentum") == 1
 
 
 def test_call_multiple_variables():

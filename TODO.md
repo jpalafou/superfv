@@ -1,5 +1,6 @@
 - [x] remove `v{dim}`, `m{dim}` references in FiniteVolumeSolver. vx, vy, vz probably need to be implemented as passive scalars
-- [ ] a priori limiting by default should limit each variable independently (no min)
+- [x] a priori limiting by default should limit each variable independently (no min)
+- [ ] local vs global MPP
 - [ ] conservative or primitive options for a priori slope limiting
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
