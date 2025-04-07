@@ -48,6 +48,7 @@ def sinus(
         vx (float): x-component of the velocity.
         vy (float): y-component of the velocity.
         vz (float): z-component of the velocity.
+        P (float): Pressure.
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
@@ -68,7 +69,6 @@ def sinus(
         )
     if "P" in _slc.var_names:
         out[_slc("P")] = P
-
     return out
 
 
@@ -81,6 +81,7 @@ def square(
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
+    P: float = 1,
 ) -> ArrayLike:
     """
     Returns array for the square wave initial condition that is periodic on the
@@ -96,6 +97,7 @@ def square(
         vx (float): x-component of the velocity.
         vy (float): y-component of the velocity.
         vz (float): z-component of the velocity.
+        P (float): Pressure.
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
@@ -121,6 +123,8 @@ def square(
             f"Initial condition not implemented for variables: {_slc.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
+    if "P" in _slc.var_names:
+        out[_slc("P")] = P
     return out
 
 
@@ -145,6 +149,7 @@ def slotted_disk(
         rotation (Literal["cw", "ccw"]): Rotation direction of the disk.
     """
     _slc = array_slicer
+    out = np.empty((len(_slc.idxs), *x.shape))
 
     if _slc.var_names == {"rho", "vx", "vy", "vz"}:
         # advection case

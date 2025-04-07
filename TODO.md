@@ -1,7 +1,13 @@
 - [x] remove `v{dim}`, `m{dim}` references in FiniteVolumeSolver. vx, vy, vz probably need to be implemented as passive scalars
 - [x] a priori limiting by default should limit each variable independently (no min)
-- [ ] local vs global MPP
-- [ ] conservative or primitive options for a priori slope limiting
+- [ ] strange SED behavior in notebooks/1D_Advection.ipynb
+- [ ] conservative or primitive options for a priori slope limiting. maybe limiting primitive variables will prevent the strange P profile in notebooks/1D_Advection.ipynb
+- [ ] smooth convergence with Euler (P=1) like Miniramses namelist/
+- [ ] make labels optional in plot functions
+- [ ] Riemann solvers should take only primitive variables
+- [ ] HLLC
+- [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
+- [ ] option to transform conservative cell averages directly to primitive cell averages
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
