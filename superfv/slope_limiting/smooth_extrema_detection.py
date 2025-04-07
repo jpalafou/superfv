@@ -52,7 +52,9 @@ def compute_1d_smooth_extrema_detector(
     """
     du = central_difference(u, axis)
     dv = 0.5 * central_difference(du, axis)
-    dv_safe = xp.where(xp.abs(dv) < eps, xp.sign(dv) * eps, dv)
+    dv_safe = np.where(
+        np.logical_and(dv > -eps, dv < eps), np.where(dv < 0, -eps, eps), dv
+    )
 
     # left detector
     v_l = du[chop((0, -2), axis)] - du[chop((1, -1), axis)]

@@ -1,8 +1,6 @@
-- [x] remove `v{dim}`, `m{dim}` references in FiniteVolumeSolver. vx, vy, vz probably need to be implemented as passive scalars
-- [x] a priori limiting by default should limit each variable independently (no min)
-- [ ] strange SED behavior in notebooks/1D_Advection.ipynb
+- [x] strange SED behavior in notebooks/1D_Advection.ipynb
+- [x] smooth convergence with Euler (P=1) like Miniramses namelist/
 - [ ] conservative or primitive options for a priori slope limiting. maybe limiting primitive variables will prevent the strange P profile in notebooks/1D_Advection.ipynb
-- [ ] smooth convergence with Euler (P=1) like Miniramses namelist/
 - [ ] make labels optional in plot functions
 - [ ] Riemann solvers should take only primitive variables
 - [ ] HLLC

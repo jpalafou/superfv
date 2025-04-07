@@ -58,7 +58,9 @@ def sinus(
     if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
         # advection case
         r = int("x" in dims) * x + int("y" in dims) * y + int("z" in dims) * z
-        out[_slc("rho")] = (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + bounds[0]
+        out[_slc("rho")] = (
+            0.5 * (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + 0.5 + bounds[0]
+        )
         out[_slc("vx")] = vx
         out[_slc("vy")] = vy
         out[_slc("vz")] = vz

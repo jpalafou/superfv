@@ -7,6 +7,8 @@ import numpy as np
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.array_management import ArrayLike, crop_to_center, intersection_shape
 
+from .smooth_extrema_detection import compute_smooth_extrema_detector
+
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
@@ -113,6 +115,7 @@ def zhang_shu_limiter(
     interpolation_scheme: Literal["transverse", "gauss-legendre"],
     p: int,
     tol: float = 1e-16,
+    SED: bool = False,
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
     Caches the limited face values for the advection equation using a variable-wise
@@ -126,6 +129,7 @@ def zhang_shu_limiter(
             mode.
         p (int): Polynomial order. Must be >= 1.
         tol (float): Tolerance for dividing by zero.
+        SED (bool): Whether to use the SED method.
 
     Returns:
         Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has shape
@@ -207,6 +211,14 @@ def zhang_shu_limiter(
         ),
         1,
     )
+
+    # compute smooth extrema detector
+    if SED:
+        alpha = compute_smooth_extrema_detector(
+            xp, fv_solver.apply_bc(averages, 3)[__limiting_slc__], axes=fv_solver.axes
+        )
+        alpha = crop(alpha, add_axis=True)
+        theta = np.where(alpha == 1, 1, theta)
 
     # limit and escape
     if fv_solver.using_xdim:

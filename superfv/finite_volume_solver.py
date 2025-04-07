@@ -678,13 +678,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Assign limiting variables
         self.array_slicer.create_var_group("limiting_vars", tuple(self.limiting_vars))
 
+        # Set SED
+        self.SED = SED
+
         # If no MOOD, early return
         if not self.MOOD:
             return
 
-        # Set NAD and SED
+        # Set NAD
         self.NAD = NAD
-        self.SED = SED
 
         # Handle PAD
         self.PAD_tol = PAD_tol
@@ -1054,6 +1056,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         Literal["transverse", "gauss-legendre"], interpolation_scheme
                     ),
                     p=cast(int, p),
+                    SED=self.SED,
                 )
             else:
                 raise ValueError(
