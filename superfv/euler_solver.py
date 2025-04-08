@@ -7,7 +7,7 @@ import wtflux
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .hydro import conservatives_from_primitives, primitives_from_conservatives
-from .riemann_solvers import llf
+from .riemann_solvers import call_riemann_solver
 from .tools.array_management import ArrayLike, ArraySlicer
 from .tools.timer import method_timer
 
@@ -38,7 +38,8 @@ class EulerSolver(FiniteVolumeSolver):
         p: int = 0,
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
-        riemann_solver: str = "llf",
+        nodes_from_primitive_fv_averages: bool = False,
+        riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
         ZS: bool = False,
         adaptive_timestepping: bool = True,
@@ -97,6 +98,10 @@ class EulerSolver(FiniteVolumeSolver):
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
+            nodes_from_primitive_fv_averages (bool): Whether to compute the primitive
+                averages and reconstruct nodal primitives instead of nodal
+                conservatives before computing the fluxes. In this case, the a priori
+                slope limiter is applied to the reconstructed nodal primitives.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
@@ -138,6 +143,7 @@ class EulerSolver(FiniteVolumeSolver):
         if cupy:
             wtflux.backend.set_backend("cupy")
         self.hydro = wtflux.hydro
+        self.nodes_from_primitive_fv_averages = nodes_from_primitive_fv_averages
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -249,13 +255,25 @@ class EulerSolver(FiniteVolumeSolver):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        ul: Optional[ArrayLike] = None,
-        ur: Optional[ArrayLike] = None,
+        primitives: bool = True,
     ) -> ArrayLike:
         """
-        Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
+        LLF implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
-        return llf(self.hydro, self.array_slicer, wl, wr, dim, self.gamma, ul, ur)
+        return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "llf")
+
+    @partial(method_timer, cat="EulerSolver.hllc")
+    def hllc(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        primitives: bool = True,
+    ) -> ArrayLike:
+        """
+        HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
+        """
+        return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
 
     @partial(method_timer, cat="EulerSolver.compute_dt_and_fluxes")
     def compute_dt_and_fluxes(
@@ -308,8 +326,19 @@ class EulerSolver(FiniteVolumeSolver):
         dt = self.get_dt(u)
 
         # apply boundary conditions
-        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
+        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2)) + (
+            2 * -(-_p // 2) if self.nodes_from_primitive_fv_averages else 0
+        )
         u_padded = self.apply_bc(u, n_ghost_cells)
+
+        if self.nodes_from_primitive_fv_averages:
+            u_centers = self.interpolate_cell_centers(
+                u_padded, interpolation_scheme=mode, p=_p
+            )
+            w_centers = self.primitives_from_conservatives(u_centers)
+            u_padded = self.interpolate(
+                w_centers, p=_p, stencil_type="uniform-quadrature"
+            )
 
         # compute fluxes
         fluxes: List[Optional[ArrayLike]] = []
@@ -325,16 +354,13 @@ class EulerSolver(FiniteVolumeSolver):
                 p=_p,
                 slope_limiter=slope_limiter,
             )
-            w_xl = self.primitives_from_conservatives(u_xl)
-            w_xr = self.primitives_from_conservatives(u_xr)
             F = self.compute_numerical_fluxes(
-                w_xr[_slc(**{dim: (None, -1)})],
-                w_xl[_slc(**{dim: (1, None)})],
+                u_xr[_slc(**{dim: (None, -1)})],
+                u_xl[_slc(**{dim: (1, None)})],
                 dim=dim,
                 quadrature=mode,
                 p=_p,
-                left_conservative_nodes=u_xr[_slc(**{dim: (None, -1)})],
-                right_conservative_nodes=u_xl[_slc(**{dim: (1, None)})],
+                primitive=self.nodes_from_primitive_fv_averages,
             )
             fluxes.append(F)
 

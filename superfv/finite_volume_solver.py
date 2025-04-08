@@ -76,8 +76,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        ur: Optional[ArrayLike] = None,
-        ul: Optional[ArrayLike] = None,
+        primitives: bool = True,
     ) -> ArrayLike:
         """
         Dummy Riemann solver to give an example of the required signature.
@@ -87,11 +86,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz, ...).
             wr (ArrayLike): Right state primitive variables. Has shape
                 (nvars, nx, ny, nz, ...).
-            dim (str): Direction of the flux integral. Can be "x", "y", or "z".\
-            ul (Optional[ArrayLike]): Left state conserved variables. Has shape
-                (nvars, nx, ny, nz, ...).
-            ur (Optional[ArrayLike]): Right state conserved variables. Has shape
-                (nvars, nx, ny, nz, ...).
+            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
+            primitives (bool): Whether the input variables are primitive. If False, the
+                input variables are conservative.
 
         Returns:
             ArrayLike: Numerical fluxes. Has shape (nvars, nx, ny, nz, ...).
@@ -1120,24 +1117,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @partial(method_timer, cat="FiniteVolumeSolver.compute_numerical_fluxes")
     def compute_numerical_fluxes(
         self,
-        left_primitive_nodes: ArrayLike,
-        right_primitive_nodes: ArrayLike,
+        left_nodes: ArrayLike,
+        right_nodes: ArrayLike,
         dim: Literal["x", "y", "z"],
         quadrature: Literal["transverse", "gauss-legendre"],
         p: int,
         clear_cache: bool = True,
         crop: bool = True,
-        left_conservative_nodes: Optional[ArrayLike] = None,
-        right_conservative_nodes: Optional[ArrayLike] = None,
+        primitive: bool = True,
     ) -> ArrayLike:
         """
         Compute the numerical fluxes.
 
         Args:
-            left_primitive_nodes (ArrayLike): Value of primitive variable nodes to the
+            left_nodes (ArrayLike): Value of primitive variable nodes to the
                 left of the discontinuity. Has shape
                 (nvars, nx, ny, nz, ninterpolations).
-            right_primitive_nodes (ArrayLike): Value of primitive variable nodes to the
+            right_nodes (ArrayLike): Value of primitive variable nodes to the
                 right of the discontinuity. Has shape
                 (nvars, nx, ny, nz, ninterpolations).
             dim (str): Direction of the flux integral. Can be "x", "y", or "z".
@@ -1151,20 +1147,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 performing the quadrature.
             crop (bool): Whether to crop the numerical fluxes to the shape of the
                 finite-volume mesh.
-            left_conservative_nodes (Optional[ArrayLike]): Optionally pre-computed
-                values of conservative variable nodes to the left of the discontinuity.
-                Has shape (nvars, nx, ny, nz, ninterpolations) if not None.
-            right_conservative_nodes (Optional[ArrayLike]): Optionally pre-computed
-                values of conservative variable nodes to the right of the discontinuity.
-                Has shape (nvars, nx, ny, nz, ninterpolations) if not None.
+            primitive (bool): Whether the input nodes are primitive variables. If
+                False, the input nodes are assumed to be conservative variables.
         """
-        nodal_fluxes = self.riemann_solver(
-            wl=left_primitive_nodes,
-            wr=right_primitive_nodes,
-            dim=dim,
-            ul=left_conservative_nodes,
-            ur=right_conservative_nodes,
-        )
+        nodal_fluxes = self.riemann_solver(left_nodes, right_nodes, dim, primitive)
 
         if quadrature == "transverse":
             numerical_fluxes = self.compute_transverse_flux_integral(

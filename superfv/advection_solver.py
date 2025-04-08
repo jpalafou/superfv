@@ -36,7 +36,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         p: int = 0,
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
-        riemann_solver: str = "advection_upwind",
+        riemann_solver: Literal["advection_upwind"] = "advection_upwind",
         MUSCL: bool = False,
         ZS: bool = False,
         adaptive_timestepping: bool = True,
@@ -215,8 +215,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        ul: Optional[ArrayLike] = None,
-        ur: Optional[ArrayLike] = None,
+        primitives: bool = True,
     ) -> ArrayLike:
         """
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.

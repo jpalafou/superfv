@@ -1,9 +1,7 @@
-- [x] strange SED behavior in notebooks/1D_Advection.ipynb
-- [x] smooth convergence with Euler (P=1) like Miniramses namelist/
-- [ ] conservative or primitive options for a priori slope limiting. maybe limiting primitive variables will prevent the strange P profile in notebooks/1D_Advection.ipynb
+- [x] Riemann solvers should take only primitive variables
+- [x] HLLC
+- [x] conservative or primitive options for a priori slope limiting. maybe limiting primitive variables will prevent the strange P profile in notebooks/1D_Advection.ipynb
 - [ ] make labels optional in plot functions
-- [ ] Riemann solvers should take only primitive variables
-- [ ] HLLC
 - [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
 - [ ] option to transform conservative cell averages directly to primitive cell averages
 - [ ] fix 2DZS + RK4
