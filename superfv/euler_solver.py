@@ -39,6 +39,7 @@ class EulerSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         nodes_from_primitive_fv_averages: bool = False,
+        conservative_averages_to_primitive_averages: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
         ZS: bool = False,
@@ -102,6 +103,9 @@ class EulerSolver(FiniteVolumeSolver):
                 averages and reconstruct nodal primitives instead of nodal
                 conservatives before computing the fluxes. In this case, the a priori
                 slope limiter is applied to the reconstructed nodal primitives.
+            conservative_averages_to_primitive_averages (bool): If True, the
+                interpolation of cell centers is skipped and conservative averages are
+                directly transformed to primitive averages.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
@@ -144,6 +148,9 @@ class EulerSolver(FiniteVolumeSolver):
             wtflux.backend.set_backend("cupy")
         self.hydro = wtflux.hydro
         self.nodes_from_primitive_fv_averages = nodes_from_primitive_fv_averages
+        self.conservative_averages_to_primitive_averages = (
+            conservative_averages_to_primitive_averages
+        )
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -322,23 +329,28 @@ class EulerSolver(FiniteVolumeSolver):
         _slc = self.array_slicer
         _p = 1 if limiting_scheme == "muscl" else cast(int, p)
 
-        # compute dt
-        dt = self.get_dt(u)
-
         # apply boundary conditions
         n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2)) + (
-            2 * -(-_p // 2) if self.nodes_from_primitive_fv_averages else 0
+            2 * -(-_p // 2)
+            if not self.conservative_averages_to_primitive_averages
+            else 0
         )
         u_padded = self.apply_bc(u, n_ghost_cells)
 
-        if self.nodes_from_primitive_fv_averages:
-            u_centers = self.interpolate_cell_centers(
+        # assign primitive averages to 'w'
+        if self.conservative_averages_to_primitive_averages:
+            w_padded = self.primitives_from_conservatives(u_padded)
+        else:
+            w_padded = self.interpolate_cell_centers(
                 u_padded, interpolation_scheme=mode, p=_p
             )
-            w_centers = self.primitives_from_conservatives(u_centers)
-            u_padded = self.interpolate(
-                w_centers, p=_p, stencil_type="uniform-quadrature"
+            w_padded = self.primitives_from_conservatives(w_padded)
+            w_padded = self.interpolate(
+                w_padded, p=_p, stencil_type="uniform-quadrature"
             )
+
+        # compute dt
+        dt = self.get_dt(w_padded)
 
         # compute fluxes
         fluxes: List[Optional[ArrayLike]] = []
@@ -347,7 +359,7 @@ class EulerSolver(FiniteVolumeSolver):
                 fluxes.append(None)
                 continue
             u_xl, u_xr = self.interpolate_face_nodes(
-                u_padded,
+                w_padded if self.nodes_from_primitive_fv_averages else u_padded,
                 dim=dim,
                 interpolation_scheme=mode,
                 limiting_scheme=limiting_scheme,

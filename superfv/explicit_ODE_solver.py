@@ -108,6 +108,7 @@ class ExplicitODESolver(ABC):
         data to `self.minisnapshots`.
         """
         self.minisnapshots["t"].append(self.t)
+        self.minisnapshots["dt"].append(self.dt)
         self.minisnapshots["n_substeps"].append(self.substep_count)
 
     def called_at_end_of_step(self):
@@ -133,6 +134,7 @@ class ExplicitODESolver(ABC):
         """
         # initialize times
         self.t = 0.0
+        self.dt = np.nan
         self.timestamps = [0.0]
         self.step_count = 0
         self.substep_count = 0
@@ -145,7 +147,7 @@ class ExplicitODESolver(ABC):
         # initialize timer, snapshots, progress bar, and git commit details
         self.timer = Timer(cats=["ExplicitODESolver.integrate.body"])
         self.snapshots: Snapshots = Snapshots()
-        self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": []}
+        self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": [], "dt": []}
         self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
 
@@ -283,6 +285,7 @@ class ExplicitODESolver(ABC):
             self.t, self.arrays[self.state], target_time=target_time
         )
         self.t += dt
+        self.dt = dt
         self.arrays[self.state] = ynext
         self.timestamps.append(self.t)
         self.called_at_end_of_step()

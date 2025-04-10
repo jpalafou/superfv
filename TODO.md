@@ -1,9 +1,7 @@
-- [x] Riemann solvers should take only primitive variables
-- [x] HLLC
-- [x] conservative or primitive options for a priori slope limiting. maybe limiting primitive variables will prevent the strange P profile in notebooks/1D_Advection.ipynb
+- [x] option to transform conservative cell averages directly to primitive cell averages
+- [ ] does the lazy primitive transformation degrade the accuracy of the solver?
 - [ ] make labels optional in plot functions
 - [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
-- [ ] option to transform conservative cell averages directly to primitive cell averages
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
