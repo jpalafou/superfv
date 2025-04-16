@@ -383,7 +383,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Define the following attributes:
         self.active_vars: Set[str]
         self.array_slicer: ArraySlicer
-        self.callable_ic: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
+        self.callable_ic: Callable[
+            [ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike
+        ]
         self.n_active_vars: int
         self.n_passive_vars: int
         self.nvars: int
@@ -425,7 +427,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 self.array_slicer.create_var_group(
                     "passives", tuple(ic_passives.keys())
                 )
-            self.n_passive_vars += len(ic_passives)
+            self.n_user_defined_passive_vars = len(ic_passives)
+            self.n_passive_vars += self.n_user_defined_passive_vars
             self.passive_vars |= set(ic_passives.keys())
 
             self.user_defined_passive_vars = set(ic_passives.keys())
@@ -438,22 +441,49 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.vars = self.active_vars | self.passive_vars
 
         # Define callable initial condition function
-        def callable_ic(x, y, z):
-            return ic(self.array_slicer, x, y, z)
+        def callable_ic(array_slicer, x, y, z):
+            return ic(array_slicer, x, y, z)
 
         if ic_passives is not None:
 
             def passive_wrapper(f):
-                def wrapped_ic_func(x, y, z):
-                    out = f(x, y, z)
+                def wrapped_ic_func(array_slicer, x, y, z):
+                    actives = f(array_slicer, x, y, z)
+                    out = np.concatenate(
+                        [
+                            actives,
+                            np.empty(
+                                (self.n_user_defined_passive_vars, *actives[0].shape)
+                            ),
+                        ]
+                    )
                     for pv, pf in ic_passives.items():
-                        out[self.array_slicer(pv)] = pf(x, y, z)
+                        out[array_slicer(pv)] = pf(x, y, z)
                     return out
 
                 return wrapped_ic_func
 
+        def conservative_average_transformation_wrapper(f):
+            def wrapped_ic_func(array_slicer, x, y, z):
+                return fv_average(
+                    lambda x, y, z: self.conservatives_from_primitives(
+                        f(array_slicer, x, y, z)
+                    ),
+                    x,
+                    y,
+                    z,
+                    h=(self.h["x"], self.h["y"], self.h["z"]),
+                    p=(
+                        self.p if self.using_xdim else 0,
+                        self.p if self.using_ydim else 0,
+                        self.p if self.using_zdim else 0,
+                    ),
+                )
+
+            return wrapped_ic_func
+
         # Apply wrappers
-        self.callable_ic = self._ic_transform_wrapper(
+        self.callable_ic = conservative_average_transformation_wrapper(
             callable_ic if ic_passives is None else passive_wrapper(callable_ic)
         )
 
@@ -491,35 +521,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Active variables must be the set of all variables.")
 
         # Initialize the ODE solver with the initial condition array
-        ic_arr = self.callable_ic(self.X, self.Y, self.Z)
+        ic_arr = self.callable_ic(self.array_slicer, self.X, self.Y, self.Z)
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
         super().__init__(ic_arr, state_array_name="u")
-
-    def _ic_transform_wrapper(
-        self, f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]
-    ) -> Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]:
-        """
-        Transform the initial condition function into conservative variables and apply
-        the finite volume average operator.
-        """
-
-        def wrapper(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> ArrayLike:
-            return fv_average(
-                lambda x, y, z: self.conservatives_from_primitives(f(x, y, z)),
-                x,
-                y,
-                z,
-                h=(self.h["x"], self.h["y"], self.h["z"]),
-                p=(
-                    self.p if self.using_xdim else 0,
-                    self.p if self.using_ydim else 0,
-                    self.p if self.using_zdim else 0,
-                ),
-            )
-
-        return wrapper
 
     def _init_bc(
         self,
@@ -541,7 +547,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for i in range(2):
                 if _bc[i] == "ic":
                     _bc[i] = "dirichlet"
-                    _f[i] = self.callable_ic
+                    _f[i] = lambda array_slicer, x, y, z, t: self.callable_ic(
+                        array_slicer, x, y, z
+                    )
             ic_configed_bc[dim] = (_bc[0], _bc[1])
             ic_configed_dirichlet[dim] = (_f[0], _f[1])
 
@@ -787,7 +795,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         return dt, fluxes
 
     @partial(method_timer, cat="FiniteVolumeSolver.apply_bc")
-    def apply_bc(self, arr: ArrayLike, n_ghost_cells: int) -> ArrayLike:
+    def apply_bc(
+        self, arr: ArrayLike, n_ghost_cells: int, t: Optional[float] = None
+    ) -> ArrayLike:
         """
         Apply boundary conditions to an array by padding it with ghost cells along the
         active dimensions.
@@ -795,6 +805,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             arr (ArrayLike): Field array. Has shape (nvars, nx, ny, nz).
             n_ghost_cells (int): Number of ghost cells to apply boundary conditions to.
+            t (Optional[float]): Time at which boundary conditions are applied.
 
         Returns:
             ArrayLike: Padded array. Has shape (nvars, >= nx, >= ny, >= nz). Axes
@@ -811,6 +822,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 int(self.using_ydim) * n_ghost_cells,
                 int(self.using_zdim) * n_ghost_cells,
             ),
+            t=t,
         )
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
@@ -1216,7 +1228,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         the current time value.
         """
         # compute the average of the primitive variables
-        u_padded = self.apply_bc(self.arrays["u"], n_ghost_cells=2 * -(-self.p // 2))
+        u_padded = self.apply_bc(
+            self.arrays["u"], n_ghost_cells=2 * -(-self.p // 2), t=self.t
+        )
         u_centers = self.interpolate_cell_centers(
             u_padded, self.interpolation_scheme, self.p
         )

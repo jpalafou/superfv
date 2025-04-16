@@ -281,7 +281,7 @@ class AdvectionSolver(FiniteVolumeSolver):
 
         # apply boundary conditions
         n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
-        u_padded = self.apply_bc(u, n_ghost_cells)
+        u_padded = self.apply_bc(u, n_ghost_cells, t)
 
         # compute fluxes
         fluxes: List[Optional[ArrayLike]] = []

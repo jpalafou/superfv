@@ -9,18 +9,26 @@ from .tools.array_management import ArrayLike, ArraySlicer, crop_to_center
 # define custom type annotation for Dirichlet boundary conditions
 DirichletBC = Union[
     ArrayLike,
-    Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+    Callable[
+        [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]], ArrayLike
+    ],
     Tuple[
         Optional[
             Union[
                 ArrayLike,
-                Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+                Callable[
+                    [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+                    ArrayLike,
+                ],
             ]
         ],
         Optional[
             Union[
                 ArrayLike,
-                Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+                Callable[
+                    [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+                    ArrayLike,
+                ],
             ]
         ],
     ],
@@ -144,6 +152,7 @@ class BoundaryConditions:
         self,
         arr: ArrayLike,
         pad_width: Tuple[int, int, int],
+        t: Optional[float] = None,
         check_for_NaNs: bool = False,
     ) -> ArrayLike:
         """
@@ -153,6 +162,7 @@ class BoundaryConditions:
             arr (ArrayLike): Array to which to apply boundary conditions.
             pad_width (Tuple[int, int, int]): Tuple of integers indicating the padding
                 width for each dimension (x, y, z).
+            t (Optional[float]): Time at which boundary conditions are applied.
             check_for_NaNs (bool): Whether to check for NaN values in the array after
                 applying boundary conditions.
         Returns:
@@ -184,7 +194,7 @@ class BoundaryConditions:
                 case "periodic":
                     self._apply_periodic_bc(out, slab_thickness, dim, pos)
                 case "dirichlet":
-                    self._apply_dirichlet_bc(out, slab_thickness, dim, pos)
+                    self._apply_dirichlet_bc(out, slab_thickness, dim, pos, t)
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
                 case _:
@@ -235,6 +245,7 @@ class BoundaryConditions:
         slab_thickness: int,
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
+        t: Optional[float] = None,
     ):
         """
         Apply Dirichlet boundary conditions to arr, modifying it in place.
@@ -247,6 +258,7 @@ class BoundaryConditions:
                 conditions ("x", "y", or "z").
             pos (Literal["x", "y", "z"]): Position of the boundary condition slab
                 ("l" for left or "r" for right).
+            t (Optional[float]): Time at which Dirichlet boundary conditions are applied.
 
         Returns:
             None
@@ -259,22 +271,7 @@ class BoundaryConditions:
         cut = (None, slab_thickness) if pos == "l" else (-slab_thickness, None)
         shape = arr[_slc(axis=_axis, cut=cut)].shape
         slab_coords = self._get_slab_coords((shape[1], shape[2], shape[3]), dim, pos)
-        if "passives" in _slc.group_names:
-            bc_arr = f(*slab_coords)
-            if bc_arr.shape[0] == len(_slc.idxs):
-                # f includes all variables
-                arr[_slc(axis=_axis, cut=cut)] = bc_arr
-            elif bc_arr.shape[0] == arr[_slc("actives")].shape[0]:
-                # f includes only active variables
-                arr[_slc("actives", axis=_axis, cut=cut)] = bc_arr
-                arr[_slc("passives", axis=_axis, cut=cut)] = bc_arr[_slc("rho")]
-            else:
-                raise ValueError(
-                    "Dirichlet boundary condition function must return an array with "
-                    "the same number of variables as the input array."
-                )
-        else:
-            arr[_slc(axis=_axis, cut=cut)] = f(*slab_coords)
+        arr[_slc(axis=_axis, cut=cut)] = f(_slc, *slab_coords, t)
 
     def _apply_free_bc(
         self,

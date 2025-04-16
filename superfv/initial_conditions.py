@@ -153,7 +153,7 @@ def slotted_disk(
     _slc = array_slicer
     out = np.empty((len(_slc.idxs), *x.shape))
 
-    if _slc.var_names == {"rho", "vx", "vy", "vz"}:
+    if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
         # advection case
         xc, yc = x - 0.5, y - 0.5
         rsq = np.sqrt(xc**2 + (y - 0.75) ** 2)
@@ -202,7 +202,7 @@ def sod_shock_tube_1d(
         vl (float): Velocity on the left side of the discontinuity.
         vr (float): Velocity on the right side of the discontinuity.
         pl (float): Pressure on the left side of the discontinuity.
-        pr (float): Pressure on the right side of the discontin
+        pr (float): Pressure on the right side of the discontinuity.
     """
     _slc = array_slicer
     dims = parse_xyz(x, y, z)
@@ -220,6 +220,53 @@ def sod_shock_tube_1d(
         out[_slc("v" + orth_dim1)] = 0
         out[_slc("v" + orth_dim2)] = 0
         out[_slc("P")] = np.where(r < pos1, pl, pr)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+        )
+    return out
+
+
+def velocity_ramp(
+    array_slicer: ArraySlicer,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    rho0: float = 1,
+    P0: float = 1,
+    H0: float = 1,
+) -> ArrayLike:
+    """
+    Returns array for the velocity ramp initial condition with a uniform density and
+    pressure.
+
+    Args:
+        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
+            the initial condition.
+        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
+        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
+        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        rho0 (float): Initial uniform density.
+        P0 (float): Initial uniform pressure.
+        H0 (float): Initial uniform velocity gradient.
+    """
+    _slc = array_slicer
+    dims = parse_xyz(x, y, z)
+    out = np.empty((len(_slc.idxs), *x.shape))
+
+    if len(dims) != 1:
+        raise ValueError("Sod shock tube initial condition only works in 1D.")
+
+    # Validate variables in ArraySlicer
+    if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
+        r = {"x": x, "y": y, "z": z}[dims]
+        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dims]
+        out[_slc("rho")] = rho0
+        out[_slc("v" + dims)] = H0 * (r - 0.5)
+        out[_slc("v" + orth_dim1)] = 0
+        out[_slc("v" + orth_dim2)] = 0
+        out[_slc("P")] = P0
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {_slc.var_names}. "
