@@ -1,7 +1,9 @@
-- [x] option to transform conservative cell averages directly to primitive cell averages
-- [ ] does the lazy primitive transformation degrade the accuracy of the solver?
-- [ ] make labels optional in plot functions
+- [x] does the lazy primitive transformation degrade the accuracy of the solver? yes. shown analytically.
 - [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
+- [ ] same for sedov1d, P = (gamma - 1) * 1 / h
+- [ ] Romain v=ax problem
+- [ ] a priori limiting on primitive variables with lazy primitive cell averages as fallback
+- [ ] make labels optional in plot functions
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
