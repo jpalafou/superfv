@@ -116,6 +116,8 @@ def zhang_shu_limiter(
     p: int,
     tol: float = 1e-16,
     SED: bool = False,
+    convert_to_primitives: bool = False,
+    primitive_fallback: Optional[ArrayLike] = None,
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
     Caches the limited face values for the advection equation using a variable-wise
@@ -123,13 +125,19 @@ def zhang_shu_limiter(
 
     Args:
         fv_solver (FiniteVolumeSolver): Finite volume solver object.
-        averages (ArrayLike): Array of cell averages. Has shape (nvars, nx, ny, nz).
+        averages (ArrayLike): Array of conservative cell averages. Has shape
+            (nvars, nx, ny, nz).
         dim (Literal["x", "y", "z"]): Dimension of the face to limit.
         interpolation_scheme (Literal["transverse", "gauss-legendre"]): Interpolation
             mode.
         p (int): Polynomial order. Must be >= 1.
         tol (float): Tolerance for dividing by zero.
         SED (bool): Whether to use the SED method.
+        convert_to_primitives (bool): Whether to convert the high-order nodes to
+            primitive variables before limiting. If True, `primitive_fallback` must be
+            provided.
+        primitive_fallback (Optional[ArrayLike]): Fallback values used by the limiter
+            if `convert_to_primitives` is True.
 
     Returns:
         Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has shape
@@ -155,7 +163,18 @@ def zhang_shu_limiter(
     hoxl, hoxr, hoyl, hoyr, hozl, hozr, hocc = gather_nodes(
         fv_solver, averages, interpolation_scheme, p
     )
-    foc = averages
+    if convert_to_primitives:
+        hoxl, hoxr, hoyl, hoyr, hozl, hozr, hocc = map(
+            lambda arr: fv_solver.primitives_from_conservatives(cast(ArrayLike, arr)),
+            [hoxl, hoxr, hoyl, hoyr, hozl, hozr, hocc],
+        )
+        if primitive_fallback is None:
+            raise ValueError(
+                "Fallback must be provided if convert_to_primitives is True."
+            )
+        foc = primitive_fallback
+    else:
+        foc = averages
 
     # get dmp
     m, M = compute_dmp(

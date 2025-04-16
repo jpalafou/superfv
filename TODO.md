@@ -4,6 +4,8 @@
 - [ ] Romain v=ax problem
 - [ ] a priori limiting on primitive variables with lazy primitive cell averages as fallback
 - [ ] make labels optional in plot functions
+- [ ] clean up riemann solver FiniteVolumeSolver.gamma dependency
+- [ ] move compute_dt_and_fluxes to FiniteVolumeSolver
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md

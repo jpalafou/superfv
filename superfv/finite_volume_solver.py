@@ -965,6 +965,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
         p: Optional[int] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
+        convert_to_primitives: bool = False,
+        primitive_fallback: Optional[ArrayLike] = None,
         clear_cache: bool = True,
     ) -> Tuple[ArrayLike, ArrayLike]:
         """
@@ -991,6 +993,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             slope_limiter (str): Additional option for slope limiting. Possible values:
                 - "minmod": Minmod limiter for the MUSCL scheme.
                 - "moncen": Moncen limiter for the MUSCL scheme.
+            convert_to_primitives (bool): Argument of the Zhang-Shu limiter. It
+                determines whether to convert the high-order nodes to primitive
+                variables before limiting. If True, `primitive_fallback` must be
+                provided.
+            primitive_fallback (Optional[ArrayLike]): Argument of the Zhang-Shu
+                limiter. It gives the fallback values used by the limiter if
             clear_cache (bool): Whether to clear the interpolation cache before
                 performing the interpolation.
         Returns:

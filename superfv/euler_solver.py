@@ -38,7 +38,7 @@ class EulerSolver(FiniteVolumeSolver):
         p: int = 0,
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
-        primitive_nodes: bool = False,
+        flux_nodes: Literal["cfca", "pfpa", "pfcn"] = "cfca",
         lazy_primitives: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
@@ -99,9 +99,11 @@ class EulerSolver(FiniteVolumeSolver):
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
-            primitive_nodes (bool): Whether to compute the fluxes at each cell face
-                with nodal primitive values. If True, a priori limiting is performed on
-                the primitive variables.
+            flux_nodes (str): Type of flux nodes to use. Possible values:
+                - "cfca": Conservative from conservative averages.
+                - "pfpa": Primitive from primitive averages.
+                - "pfcn": Primitive from conservative nodes. The conservative nodes are
+                interpolated from conservative averages.
             lazy_primitives (bool): If True, the interpolation of cell centers is
                 skipped and conservative averages are directly transformed to primitive
                 averages.
@@ -146,7 +148,11 @@ class EulerSolver(FiniteVolumeSolver):
         if cupy:
             wtflux.backend.set_backend("cupy")
         self.hydro = wtflux.hydro
-        self.primitive_nodes = primitive_nodes
+        if flux_nodes not in ["cfca", "pfpa", "pfcn"]:
+            raise ValueError(
+                f"flux_nodes must be one of ['cfca', 'pfpa', 'pfcn'], not {flux_nodes}."
+            )
+        self.flux_nodes = flux_nodes
         self.lazy_primitives = lazy_primitives
         super().__init__(
             ic=ic,
@@ -354,20 +360,25 @@ class EulerSolver(FiniteVolumeSolver):
                 fluxes.append(None)
                 continue
             u_xl, u_xr = self.interpolate_face_nodes(
-                w_padded if self.primitive_nodes else u_padded,
+                w_padded if self.flux_nodes == "pfpa" else u_padded,
                 dim=dim,
                 interpolation_scheme=mode,
                 limiting_scheme=limiting_scheme,
                 p=_p,
                 slope_limiter=slope_limiter,
+                convert_to_primitives=self.flux_nodes == "pfcn",
+                primitive_fallback=w_padded if self.flux_nodes == "pfcn" else None,
             )
+            if self.flux_nodes == "pfcn" and slope_limiter != "zhang-shu":
+                u_xl = self.primitives_from_conservatives(u_xl)
+                u_xr = self.primitives_from_conservatives(u_xr)
             F = self.compute_numerical_fluxes(
                 u_xr[_slc(**{dim: (None, -1)})],
                 u_xl[_slc(**{dim: (1, None)})],
                 dim=dim,
                 quadrature=mode,
                 p=_p,
-                primitive=self.primitive_nodes,
+                primitive=self.flux_nodes in ["pfpa", "pfcn"],
             )
             fluxes.append(F)
 

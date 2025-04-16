@@ -7,7 +7,7 @@ import numpy as np
 from .tools.array_management import ArrayLike, ArraySlicer
 
 if TYPE_CHECKING:
-    from superfv.finite_volume_solver import FiniteVolumeSolver
+    from superfv.euler_solver import EulerSolver
 
 
 def _upwind(yl: ArrayLike, yr: ArrayLike, v: ArrayLike) -> ArrayLike:
@@ -61,7 +61,7 @@ def advection_upwind(
 
 
 def call_riemann_solver(
-    fv_solver: FiniteVolumeSolver,
+    euler_solver: EulerSolver,
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
@@ -73,7 +73,7 @@ def call_riemann_solver(
     Call the Riemann solver for the given dimension.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Finite volume solver object.
+        euler_solver (FiniteVolumeSolver): Euler solver object.
         wl (ArrayLike): Left state. Has shape (nvars, nx, ny, nz, ...).
         wr (ArrayLike): Right state. Has shape (nvars, nx, ny, nz, ...).
         dim (Literal["x", "y", "z"]): Dimension.
@@ -86,9 +86,8 @@ def call_riemann_solver(
         ArrayLike: Flux. Has shape (nvars, nx, ny, nz, ...).
     """
     # Get relevant variables
-    _slc = fv_solver.array_slicer
-    gamma = fv_solver.gamma
-    hydro = fv_solver.hydro
+    _slc = euler_solver.array_slicer
+    hydro = euler_solver.hydro
     HAS_PASSIVES = "user_defined_passives" in _slc.group_names
 
     # Get the principal dimension and the other two transverse dimensions
