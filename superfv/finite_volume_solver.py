@@ -345,7 +345,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
 
         # slab meshes
-        slab_thickness = max(-(-p // 2) + 1, 2 * -(-p // 2))
+        slab_thickness = 2 * max(-(-p // 2) + 1, 2 * -(-p // 2))
 
         def _get_slab_limits(lim, spacing, thickness, pos=None):
             if pos is None:
@@ -357,19 +357,44 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.slab_meshes = {}
         for dim, pos in product("xyz", "lr"):
-            slab_mesh = _get_uniform_3D_mesh(
-                xlim=_get_slab_limits(
-                    self.xlim, self.hx, slab_thickness, pos if dim == "x" else None
-                ),
-                ylim=_get_slab_limits(
-                    self.ylim, self.hy, slab_thickness, pos if dim == "y" else None
-                ),
-                zlim=_get_slab_limits(
-                    self.zlim, self.hz, slab_thickness, pos if dim == "z" else None
-                ),
-                nx=slab_thickness if dim == "x" else self.nx + 2 * slab_thickness,
-                ny=slab_thickness if dim == "y" else self.ny + 2 * slab_thickness,
-                nz=slab_thickness if dim == "z" else self.nz + 2 * slab_thickness,
+            slab_mesh = (
+                _get_uniform_3D_mesh(
+                    xlim=_get_slab_limits(
+                        self.xlim,
+                        self.hx,
+                        slab_thickness if self.using_xdim else 0,
+                        pos if dim == "x" else None,
+                    ),
+                    ylim=_get_slab_limits(
+                        self.ylim,
+                        self.hy,
+                        slab_thickness if self.using_ydim else 0,
+                        pos if dim == "y" else None,
+                    ),
+                    zlim=_get_slab_limits(
+                        self.zlim,
+                        self.hz,
+                        slab_thickness if self.using_zdim else 0,
+                        pos if dim == "z" else None,
+                    ),
+                    nx=(
+                        {"x": slab_thickness}.get(dim, self.nx + 2 * slab_thickness)
+                        if self.using_xdim
+                        else 1
+                    ),
+                    ny=(
+                        {"y": slab_thickness}.get(dim, self.ny + 2 * slab_thickness)
+                        if self.using_ydim
+                        else 1
+                    ),
+                    nz=(
+                        {"z": slab_thickness}.get(dim, self.nz + 2 * slab_thickness)
+                        if self.using_zdim
+                        else 1
+                    ),
+                )
+                if self.using[dim]
+                else None
             )
             self.slab_meshes[f"{dim}{pos}"] = slab_mesh
 
