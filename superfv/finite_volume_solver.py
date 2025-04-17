@@ -1,7 +1,6 @@
 import warnings
 from abc import ABC, abstractmethod
 from functools import partial
-from itertools import product
 from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 
 import numpy as np
@@ -356,47 +355,37 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 return (lim[1], lim[1] + spacing * thickness)
 
         self.slab_meshes = {}
-        for dim, pos in product("xyz", "lr"):
-            slab_mesh = (
-                _get_uniform_3D_mesh(
-                    xlim=_get_slab_limits(
-                        self.xlim,
-                        self.hx,
-                        slab_thickness if self.using_xdim else 0,
-                        pos if dim == "x" else None,
-                    ),
-                    ylim=_get_slab_limits(
-                        self.ylim,
-                        self.hy,
-                        slab_thickness if self.using_ydim else 0,
-                        pos if dim == "y" else None,
-                    ),
-                    zlim=_get_slab_limits(
-                        self.zlim,
-                        self.hz,
-                        slab_thickness if self.using_zdim else 0,
-                        pos if dim == "z" else None,
-                    ),
-                    nx=(
-                        {"x": slab_thickness}.get(dim, self.nx + 2 * slab_thickness)
-                        if self.using_xdim
-                        else 1
-                    ),
-                    ny=(
-                        {"y": slab_thickness}.get(dim, self.ny + 2 * slab_thickness)
-                        if self.using_ydim
-                        else 1
-                    ),
-                    nz=(
-                        {"z": slab_thickness}.get(dim, self.nz + 2 * slab_thickness)
-                        if self.using_zdim
-                        else 1
-                    ),
+        for dim in "xyz":
+            self.slab_meshes[dim] = (
+                tuple(
+                    (
+                        _get_uniform_3D_mesh(
+                            *(
+                                _get_slab_limits(
+                                    getattr(self, _dim + "lim"),
+                                    self.h[_dim],
+                                    slab_thickness if self.using[_dim] else 0,
+                                    pos if dim == _dim else None,
+                                )
+                                for _dim in "xyz"
+                            ),
+                            *(
+                                (
+                                    {_dim: slab_thickness}.get(
+                                        dim, self.n[_dim] + 2 * slab_thickness
+                                    )
+                                    if self.using[_dim]
+                                    else 1
+                                )
+                                for _dim in "xyz"
+                            ),
+                        )
+                        for pos in "lr"
+                    )
                 )
                 if self.using[dim]
                 else None
             )
-            self.slab_meshes[f"{dim}{pos}"] = slab_mesh
 
     def _init_ic(
         self,
@@ -585,7 +574,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         x_dirichlet = ic_configed_dirichlet["x"]
         y_dirichlet = ic_configed_dirichlet["y"]
         z_dirichlet = ic_configed_dirichlet["z"]
-        _sm = self.slab_meshes
         self.bc = BoundaryConditions(
             self.array_slicer,
             bcx,
@@ -594,21 +582,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             x_dirichlet,
             y_dirichlet,
             z_dirichlet,
-            (
-                (_sm["xl"], _sm["xr"])
-                if x_dirichlet is not None and self.using_xdim
-                else None
-            ),
-            (
-                (_sm["yl"], _sm["yr"])
-                if y_dirichlet is not None and self.using_xdim
-                else None
-            ),
-            (
-                (_sm["zl"], _sm["zr"])
-                if z_dirichlet is not None and self.using_xdim
-                else None
-            ),
+            self.slab_meshes["x"],
+            self.slab_meshes["y"],
+            self.slab_meshes["z"],
         )
 
     def _init_snapshots(self):
