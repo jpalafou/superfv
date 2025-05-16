@@ -181,8 +181,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Args:
             ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
-                Initial condition function. The function must accept the following
-                arguments:
+                Initial condition function of pointwise, primitive variables. The
+                function must accept the following arguments:
                 - array_slicer (ArraySlicer): ArraySlicer object.
                 - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
                 - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).

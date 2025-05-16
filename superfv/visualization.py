@@ -135,6 +135,7 @@ def plot_1d_slice(
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
     z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
+    xlabel: bool = True,
     **kwargs,
 ):
     """
@@ -153,6 +154,7 @@ def plot_1d_slice(
             y-coordinate or range. Defaults to 0.5.
         z (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
             z-coordinate or range. Defaults to 0.5.
+        xlabel (bool): Whether to show the x-axis label. Defaults to True.
         **kwargs: Keyword arguments for the plot.
 
     Raises:
@@ -176,7 +178,8 @@ def plot_1d_slice(
 
     # plot
     ax.plot(_x, _y, **kwargs)
-    ax.set_xlabel(rf"${dim.lower()}$")
+    if xlabel:
+        ax.set_xlabel(rf"${dim.lower()}$")
 
 
 def plot_2d_slice(

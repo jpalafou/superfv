@@ -6,37 +6,12 @@ import numpy as np
 
 from .tools.array_management import ArrayLike, ArraySlicer, crop_to_center
 
-# define custom type annotation for Dirichlet boundary conditions
-DirichletBC = Union[
-    ArrayLike,
-    Callable[
-        [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]], ArrayLike
-    ],
-    Tuple[
-        Optional[
-            Union[
-                ArrayLike,
-                Callable[
-                    [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-                    ArrayLike,
-                ],
-            ]
-        ],
-        Optional[
-            Union[
-                ArrayLike,
-                Callable[
-                    [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-                    ArrayLike,
-                ],
-            ]
-        ],
-    ],
-]
+# define custom type annotations
 Field = Callable[
     [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
     ArrayLike,
 ]
+DirichletBC = Union[Field, Tuple[Optional[Field], Optional[Field]]]
 FieldWrapper = Callable[[Field], Field]
 
 
@@ -98,12 +73,15 @@ class BoundaryConditions:
                 the type of boundary condition to use in the z-direction. Can use one
                 string for both boundaries or a tuple of two strings for the left and
                 right boundaries, respectively.
-            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                x-direction.
-            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                y-direction.
-            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                z-direction.
+            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions for the
+                x-face slabs. If x-direciton "dirichlet" boundaries are used, at least
+                one pointwise, primitive variable Field must be provided.
+            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions for the
+                y-face slabs. If y-direciton "dirichlet" boundaries are used, at least
+                one pointwise, primitive variable Field must be provided.
+            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions for the
+                z-face slabs. If z-direciton "dirichlet" boundaries are used, at least
+                one pointwise, primitive variable Field must be provided.
             x_slab (Optional[Tuple[Tuple[ArrayLike, ArrayLike, ArrayLike],
                 Tuple[ArrayLike, ArrayLike, ArrayLike]]]): Slab boundary coordinates
                 for the x-direction slabs. The tuple should contain two tuples of three
@@ -160,16 +138,16 @@ class BoundaryConditions:
                     )
             setattr(self, f"{dim}_dirichlet", tuple(configured_dirichlet))
 
-        self.conservatives_wrapper = conservatives_wrapper
-        self.fv_average_wrapper = fv_average_wrapper
+        self.conservatives_wrapper = cast(FieldWrapper, conservatives_wrapper)
+        self.fv_average_wrapper = cast(FieldWrapper, fv_average_wrapper)
 
     def __call__(
         self,
         arr: ArrayLike,
         pad_width: Tuple[int, int, int],
         t: Optional[float] = None,
-        convert_to_conservatives: bool = True,
-        convert_to_averages: bool = True,
+        conservatives: bool = True,
+        averages: bool = True,
         check_for_NaNs: bool = False,
     ) -> ArrayLike:
         """
@@ -180,10 +158,10 @@ class BoundaryConditions:
             pad_width (Tuple[int, int, int]): Tuple of integers indicating the padding
                 width for each dimension (x, y, z).
             t (Optional[float]): Time at which boundary conditions are applied.
-            convert_to_conservatives (bool): Whether to convert the Dirichlet function
-                output to conservative variables.
-            convert_to_averages (bool): Whether to convert the Dirichlet function
-                output to finite-volume average values.
+            conservatives (bool): Whether to convert the Dirichlet function output to
+                conservative variables.
+            averages (bool): Whether to convert the Dirichlet function output to
+                finite-volume average values.
             check_for_NaNs (bool): Whether to check for NaN values in the array after
                 applying boundary conditions.
         Returns:
@@ -221,8 +199,8 @@ class BoundaryConditions:
                         dim,
                         pos,
                         t,
-                        convert_to_conservatives,
-                        convert_to_averages,
+                        conservatives,
+                        averages,
                     )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
@@ -275,8 +253,8 @@ class BoundaryConditions:
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
         t: Optional[float] = None,
-        convert_to_conservatives: bool = True,
-        convert_to_averages: bool = True,
+        conservatives: bool = True,
+        averages: bool = True,
     ):
         """
         Apply Dirichlet boundary conditions to arr, modifying it in place.
@@ -290,9 +268,9 @@ class BoundaryConditions:
             pos (Literal["x", "y", "z"]): Position of the boundary condition slab
                 ("l" for left or "r" for right).
             t (Optional[float]): Time at which Dirichlet boundary conditions are applied.
-            convert_to_conservatives (bool): Whether to convert the Dirichlet function
+            conservatives (bool): Whether to convert the Dirichlet function
                 output to conservative variables.
-            convert_to_averages (bool): Whether to convert the Dirichlet function
+            averages (bool): Whether to convert the Dirichlet function
                 output to finite-volume average values.
 
         Returns:
@@ -306,18 +284,18 @@ class BoundaryConditions:
         cut = (None, slab_thickness) if pos == "l" else (-slab_thickness, None)
         shape = arr[_slc(axis=_axis, cut=cut)].shape
         slab_coords = self._get_slab_coords((shape[1], shape[2], shape[3]), dim, pos)
-        if convert_to_conservatives and convert_to_averages:
-            arr[_slc(axis=_axis, cut=cut)] = cast(
-                FieldWrapper, self.fv_average_wrapper
-            )(cast(FieldWrapper, self.conservatives_wrapper)(f))(_slc, *slab_coords, t)
-        elif convert_to_conservatives:
-            arr[_slc(axis=_axis, cut=cut)] = cast(
-                FieldWrapper, self.conservatives_wrapper
-            )(f)(_slc, *slab_coords, t)
-        elif convert_to_averages:
-            arr[_slc(axis=_axis, cut=cut)] = cast(
-                FieldWrapper, self.fv_average_wrapper
-            )(f)(_slc, *slab_coords, t)
+        if conservatives and averages:
+            arr[_slc(axis=_axis, cut=cut)] = self.fv_average_wrapper(
+                self.conservatives_wrapper(f)
+            )(_slc, *slab_coords, t)
+        elif conservatives:
+            arr[_slc(axis=_axis, cut=cut)] = self.conservatives_wrapper(f)(
+                _slc, *slab_coords, t
+            )
+        elif averages:
+            arr[_slc(axis=_axis, cut=cut)] = self.fv_average_wrapper(f)(
+                _slc, *slab_coords, t
+            )
         else:
             arr[_slc(axis=_axis, cut=cut)] = f(_slc, *slab_coords, t)
 
