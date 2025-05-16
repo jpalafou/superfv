@@ -33,6 +33,11 @@ DirichletBC = Union[
         ],
     ],
 ]
+Field = Callable[
+    [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+    ArrayLike,
+]
+FieldWrapper = Callable[[Field], Field]
 
 
 def _is_two_tuple(x):
@@ -72,6 +77,8 @@ class BoundaryConditions:
                 Tuple[ArrayLike, ArrayLike, ArrayLike],
             ]
         ] = None,
+        conservatives_wrapper: Optional[FieldWrapper] = None,
+        fv_average_wrapper: Optional[FieldWrapper] = None,
     ):
         """
         Initialize boundary conditions.
@@ -109,6 +116,11 @@ class BoundaryConditions:
                 Tuple[ArrayLike, ArrayLike, ArrayLike]]]): Slab boundary coordinates
                 for the z-direction slabs. The tuple should contain two tuples of three
                 arrays each, representing the left and right slabs, respectively.
+            conservatives_wrapper (Optional[FieldWrapper]): Wrapper to convert output of
+                a function from primitive variables to conservative variables.
+            fv_average_wrapper (Optional[FieldWrapper]): Wrapper to convert output of a
+                function from pointwise to cell-averaged.
+
         Note:
             See `IMPLEMENTED_BCS` for the implemented boundary condition codes.
         """
@@ -148,11 +160,16 @@ class BoundaryConditions:
                     )
             setattr(self, f"{dim}_dirichlet", tuple(configured_dirichlet))
 
+        self.conservatives_wrapper = conservatives_wrapper
+        self.fv_average_wrapper = fv_average_wrapper
+
     def __call__(
         self,
         arr: ArrayLike,
         pad_width: Tuple[int, int, int],
         t: Optional[float] = None,
+        convert_to_conservatives: bool = True,
+        convert_to_averages: bool = True,
         check_for_NaNs: bool = False,
     ) -> ArrayLike:
         """
@@ -163,6 +180,10 @@ class BoundaryConditions:
             pad_width (Tuple[int, int, int]): Tuple of integers indicating the padding
                 width for each dimension (x, y, z).
             t (Optional[float]): Time at which boundary conditions are applied.
+            convert_to_conservatives (bool): Whether to convert the Dirichlet function
+                output to conservative variables.
+            convert_to_averages (bool): Whether to convert the Dirichlet function
+                output to finite-volume average values.
             check_for_NaNs (bool): Whether to check for NaN values in the array after
                 applying boundary conditions.
         Returns:
@@ -194,7 +215,15 @@ class BoundaryConditions:
                 case "periodic":
                     self._apply_periodic_bc(out, slab_thickness, dim, pos)
                 case "dirichlet":
-                    self._apply_dirichlet_bc(out, slab_thickness, dim, pos, t)
+                    self._apply_dirichlet_bc(
+                        out,
+                        slab_thickness,
+                        dim,
+                        pos,
+                        t,
+                        convert_to_conservatives,
+                        convert_to_averages,
+                    )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
                 case _:
@@ -246,6 +275,8 @@ class BoundaryConditions:
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
         t: Optional[float] = None,
+        convert_to_conservatives: bool = True,
+        convert_to_averages: bool = True,
     ):
         """
         Apply Dirichlet boundary conditions to arr, modifying it in place.
@@ -259,6 +290,10 @@ class BoundaryConditions:
             pos (Literal["x", "y", "z"]): Position of the boundary condition slab
                 ("l" for left or "r" for right).
             t (Optional[float]): Time at which Dirichlet boundary conditions are applied.
+            convert_to_conservatives (bool): Whether to convert the Dirichlet function
+                output to conservative variables.
+            convert_to_averages (bool): Whether to convert the Dirichlet function
+                output to finite-volume average values.
 
         Returns:
             None
@@ -271,7 +306,20 @@ class BoundaryConditions:
         cut = (None, slab_thickness) if pos == "l" else (-slab_thickness, None)
         shape = arr[_slc(axis=_axis, cut=cut)].shape
         slab_coords = self._get_slab_coords((shape[1], shape[2], shape[3]), dim, pos)
-        arr[_slc(axis=_axis, cut=cut)] = f(_slc, *slab_coords, t)
+        if convert_to_conservatives and convert_to_averages:
+            arr[_slc(axis=_axis, cut=cut)] = cast(
+                FieldWrapper, self.fv_average_wrapper
+            )(cast(FieldWrapper, self.conservatives_wrapper)(f))(_slc, *slab_coords, t)
+        elif convert_to_conservatives:
+            arr[_slc(axis=_axis, cut=cut)] = cast(
+                FieldWrapper, self.conservatives_wrapper
+            )(f)(_slc, *slab_coords, t)
+        elif convert_to_averages:
+            arr[_slc(axis=_axis, cut=cut)] = cast(
+                FieldWrapper, self.fv_average_wrapper
+            )(f)(_slc, *slab_coords, t)
+        else:
+            arr[_slc(axis=_axis, cut=cut)] = f(_slc, *slab_coords, t)
 
     def _apply_free_bc(
         self,
@@ -326,15 +374,15 @@ class BoundaryConditions:
             Tuple[ArrayLike, ArrayLike, ArrayLike]: Coordinates of the slab.
         """
         _slc = self.slab_slicer
-        _axis = "xyz".index(dim)
-        _slab_thickness = shape[_axis]
+        axis = "xyz".index(dim)
+        slab_thickness = shape[axis]
         arrs = getattr(self, f"{dim}_slab")["lr".index(pos)]
         if arrs is None:
             raise ValueError(f"No {dim}{pos}-slab defined.")
-        cut = (None, _slab_thickness) if pos == "l" else (-_slab_thickness, None)
+        cut = (-slab_thickness, None) if pos == "l" else (None, slab_thickness)
         out = (
-            crop_to_center(arrs[0][_slc(axis=_axis, cut=cut)], shape),
-            crop_to_center(arrs[1][_slc(axis=_axis, cut=cut)], shape),
-            crop_to_center(arrs[2][_slc(axis=_axis, cut=cut)], shape),
+            crop_to_center(arrs[0][_slc(axis=axis, cut=cut)], shape),
+            crop_to_center(arrs[1][_slc(axis=axis, cut=cut)], shape),
+            crop_to_center(arrs[2][_slc(axis=axis, cut=cut)], shape),
         )
         return out

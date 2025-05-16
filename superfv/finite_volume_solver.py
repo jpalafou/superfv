@@ -5,7 +5,7 @@ from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, Union, c
 
 import numpy as np
 
-from .boundary_conditions import BoundaryConditions, DirichletBC
+from .boundary_conditions import BoundaryConditions, DirichletBC, Field
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import fv_average
 from .slope_limiting import minmod, moncen, muscl
@@ -344,7 +344,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
 
         # slab meshes
-        slab_thickness = 2 * max(-(-p // 2) + 1, 2 * -(-p // 2))
+        slab_thickness = -2 * (-p // 2) + 1
 
         def _get_slab_limits(lim, spacing, thickness, pos=None):
             if pos is None:
@@ -398,7 +398,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.active_vars: Set[str]
         self.array_slicer: ArraySlicer
         self.callable_ic: Callable[
-            [ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike
+            [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]], ArrayLike
         ]
         self.n_active_vars: int
         self.n_passive_vars: int
@@ -455,7 +455,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.vars = self.active_vars | self.passive_vars
 
         # Define callable initial condition function
-        def callable_ic(array_slicer, x, y, z):
+        def callable_ic(array_slicer, x, y, z, t=None):
             return ic(array_slicer, x, y, z)
 
         if ic_passives is not None:
@@ -477,29 +477,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
                 return wrapped_ic_func
 
-        def conservative_average_transformation_wrapper(f):
-            def wrapped_ic_func(array_slicer, x, y, z):
-                return fv_average(
-                    lambda x, y, z: self.conservatives_from_primitives(
-                        f(array_slicer, x, y, z)
-                    ),
-                    x,
-                    y,
-                    z,
-                    h=(self.h["x"], self.h["y"], self.h["z"]),
-                    p=(
-                        self.p if self.using_xdim else 0,
-                        self.p if self.using_ydim else 0,
-                        self.p if self.using_zdim else 0,
-                    ),
-                )
-
-            return wrapped_ic_func
-
         # Apply wrappers
-        self.callable_ic = conservative_average_transformation_wrapper(
-            callable_ic if ic_passives is None else passive_wrapper(callable_ic)
-        )
+        if ic_passives is None:
+            self.callable_ic = self.fv_average_wrapper(
+                self.conservatives_wrapper(callable_ic)
+            )
+        else:
+            self.callable_ic = self.fv_average_wrapper(
+                self.conservatives_wrapper(passive_wrapper(callable_ic))
+            )
 
         # Test array slicing
         test_arr = np.arange(self.nvars)
@@ -535,11 +521,61 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Active variables must be the set of all variables.")
 
         # Initialize the ODE solver with the initial condition array
-        ic_arr = self.callable_ic(self.array_slicer, self.X, self.Y, self.Z)
+        ic_arr = self.callable_ic(self.array_slicer, self.X, self.Y, self.Z, 0.0)
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
         super().__init__(ic_arr, state_array_name="u")
+
+    def conservatives_wrapper(
+        self,
+        f: Field,
+    ) -> Field:
+        """
+        Wrapper to convert output of a function from primitive variables to
+        conservative variables.
+        """
+
+        def wrapped_func(
+            array_slicer: ArraySlicer,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+        ) -> ArrayLike:
+            return self.conservatives_from_primitives(f(array_slicer, x, y, z, t))
+
+        return wrapped_func
+
+    def fv_average_wrapper(
+        self,
+        f: Field,
+    ) -> Field:
+        """
+        Wrapper to convert output of a function from pointwise to cell-averaged.
+        """
+
+        def wrapped_func(
+            array_slicer: ArraySlicer,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+        ) -> ArrayLike:
+            return fv_average(
+                lambda x, y, z: f(array_slicer, x, y, z, t),
+                x,
+                y,
+                z,
+                h=(self.hx, self.hy, self.hz),
+                p=(
+                    self.p if self.using_xdim else 0,
+                    self.p if self.using_ydim else 0,
+                    self.p if self.using_zdim else 0,
+                ),
+            )
+
+        return wrapped_func
 
     def _init_bc(
         self,
@@ -562,7 +598,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 if _bc[i] == "ic":
                     _bc[i] = "dirichlet"
                     _f[i] = lambda array_slicer, x, y, z, t: self.callable_ic(
-                        array_slicer, x, y, z
+                        array_slicer, x, y, z, 0.0
                     )
             ic_configed_bc[dim] = (_bc[0], _bc[1])
             ic_configed_dirichlet[dim] = (_f[0], _f[1])
@@ -585,6 +621,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.slab_meshes["x"],
             self.slab_meshes["y"],
             self.slab_meshes["z"],
+            self.conservatives_wrapper,
+            self.fv_average_wrapper,
         )
 
     def _init_snapshots(self):

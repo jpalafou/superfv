@@ -1,4 +1,6 @@
-- [x] does the lazy primitive transformation degrade the accuracy of the solver? yes. shown analytically.
+- [ ] fix number of assigned ghost cells
+- [ ] x_dirichlet, etc args are redundant
+- [ ] apply conservative cell averages for boundary conditions, not conservative point-wise values
 - [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
 - [ ] same for sedov1d, P = (gamma - 1) * 1 / h
 - [ ] Romain v=ax problem

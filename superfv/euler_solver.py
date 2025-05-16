@@ -333,9 +333,7 @@ class EulerSolver(FiniteVolumeSolver):
         _p = 1 if limiting_scheme == "muscl" else cast(int, p)
 
         # apply boundary conditions
-        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2)) + (
-            2 * -(-_p // 2) if not self.lazy_primitives else 0
-        )
+        n_ghost_cells = -(-_p // 2) + 1
         u_padded = self.apply_bc(u, n_ghost_cells, t)
 
         # assign primitive averages to 'w'
