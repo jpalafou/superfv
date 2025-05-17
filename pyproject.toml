@@ -28,7 +28,7 @@ typecheck = ["mypy", "types-tqdm"]
 test = ["pandas", "pytest"]
 
 [tool.setuptools]
-packages = ["superfv"]
+packages = ["superfv", "teyssier"]
 
 [tool.mypy]
 mypy_path = "stubs"

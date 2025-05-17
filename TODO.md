@@ -1,11 +1,8 @@
-- [x] apply conservative cell averages for boundary conditions, not conservative point-wise values
-- [x] Romain v=ax problem
-- [x] clean up riemann solver FiniteVolumeSolver.gamma dependency
-- [x] make labels optional in plot functions
-- [x] vx, vy, vz are passive variables in AdvectionSolver?
-- [ ] fix number of assigned ghost cells
+- [ ] allow overshoots of target time in ODE solver
+- [ ] fix Sod Shock Tube 1D comparison with Romain lecture solver
 - [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
 - [ ] same for sedov1d, P = (gamma - 1) * 1 / h
+- [ ] fix number of assigned ghost cells
 - [ ] a priori limiting on primitive variables with lazy primitive cell averages as fallback
 - [ ] move compute_dt_and_fluxes to FiniteVolumeSolver
 - [ ] fix 2DZS + RK4
