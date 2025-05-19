@@ -53,7 +53,7 @@ class EulerSolver(FiniteVolumeSolver):
         PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
-        gamma: float = 5 / 3,
+        gamma: float = 1.4,
     ):
         """
         Initialize the finite volume solver.
