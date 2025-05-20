@@ -192,6 +192,7 @@ class ExplicitODESolver(ABC):
         log_every_step: bool = False,
         snapshot_dir: Optional[str] = None,
         overwrite: bool = False,
+        allow_overshoot: bool = False,
     ):
         """
         Integrate the ODE.
@@ -204,6 +205,7 @@ class ExplicitODESolver(ABC):
             log_every_step (bool): Take a snapshot at every step.
             snapshot_dir (Optional[str]): Directory to save snapshots. If None, does not save.
             overwrite (bool): Overwrite the snapshot directory if it exists.
+            allow_overshoot (bool): Allow overshooting the target simulation time.
         """
         # if given n, perform a simple time evolution
         if n is not None:
@@ -224,23 +226,24 @@ class ExplicitODESolver(ABC):
                 if self.read_snapshots():
                     return
 
-        # format list of target times
+        # check T
         if T is None:
-            raise ValueError("T must be defined.")
+            raise ValueError("T and n cannot both be None.")
+
+        # format list of target times
+        if allow_overshoot:
+            target_times = [None]
         elif isinstance(T, int) or isinstance(T, float):
             target_times = [T]
         elif isinstance(T, Iterable):
             target_times = sorted([float(t) for t in T])
         else:
             raise ValueError(f"Invalid type for T: {type(T)}")
-        if min(target_times) <= 0:
+        if target_times != [None] and min(target_times) <= 0:
             raise ValueError("Target times must be greater than 0.")
 
-        # define simulation stop time
-        T_max = target_times[-1]
-
         # setup progress bar
-        self.progress_bar_action(action="setup", T=T_max)
+        self.progress_bar_action(action="setup", T=T)
 
         # get unique target times and ignore 0
         target_time = target_times.pop(0)
@@ -251,7 +254,7 @@ class ExplicitODESolver(ABC):
 
         # simulation loop
         self.timer.start("ExplicitODESolver.integrate.body")
-        while self.t < T_max:
+        while self.t < T:
             self.take_step(target_time=target_time)
             self.progress_bar_action(action="update")
 
@@ -259,9 +262,11 @@ class ExplicitODESolver(ABC):
             self.minisnapshot()
 
             # target time actions
-            if self.t == target_time or log_every_step:
+            if self.t > T:  # trigger closing snapshot
                 self.snapshot()
-                if self.t == target_time and self.t < T_max:
+            elif self.t == target_time or log_every_step:
+                self.snapshot()
+                if self.t == target_time and self.t < T:
                     target_time = target_times.pop(0)
         self.timer.stop("ExplicitODESolver.integrate.body")
 
