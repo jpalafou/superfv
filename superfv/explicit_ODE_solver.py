@@ -38,7 +38,6 @@ class ExplicitODESolver(ABC):
         am (ArrayManager): Array manager.
         timer (Timer): Timer object.
         snapshots (dict): Dictionary of snapshots.
-        print_progress_bar (bool): If True, display a progress bar.
         commit_details (dict): Git commit details.
         integrator (str): Name of the integrator.
         stepper (Callable): Stepper function.
@@ -122,7 +121,6 @@ class ExplicitODESolver(ABC):
         self,
         y0: np.ndarray,
         state_array_name: str = "y",
-        progress_bar: bool = True,
     ):
         """
         Initializes the ODE solver.
@@ -130,7 +128,6 @@ class ExplicitODESolver(ABC):
         Args:
             y0 (np.ndarray): Initial solution value.
             state_array_name (str): Name of the state array.
-            progress_bar (bool): If True, display a progress bar.
         """
         # initialize times
         self.t = 0.0
@@ -144,11 +141,10 @@ class ExplicitODESolver(ABC):
         self.arrays.add(state_array_name, y0)
         self.state = state_array_name
 
-        # initialize timer, snapshots, progress bar, and git commit details
+        # initialize timer, snapshots, and git commit details
         self.timer = Timer(cats=["ExplicitODESolver.integrate.body"])
         self.snapshots: Snapshots = Snapshots()
         self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": [], "dt": []}
-        self.print_progress_bar = True if progress_bar else False
         self.commit_details = self._get_commit_details()
 
     def _get_commit_details(self) -> dict:
@@ -193,6 +189,7 @@ class ExplicitODESolver(ABC):
         snapshot_dir: Optional[str] = None,
         overwrite: bool = False,
         allow_overshoot: bool = False,
+        progress_bar: bool = True,
     ):
         """
         Integrate the ODE.
@@ -206,6 +203,7 @@ class ExplicitODESolver(ABC):
             snapshot_dir (Optional[str]): Directory to save snapshots. If None, does not save.
             overwrite (bool): Overwrite the snapshot directory if it exists.
             allow_overshoot (bool): Allow overshooting the target simulation time.
+            progress_bar (bool): Whether to print a progress bar during integration.
         """
         # if given n, perform a simple time evolution
         if n is not None:
@@ -241,12 +239,10 @@ class ExplicitODESolver(ABC):
             raise ValueError(f"Invalid type for T: {type(T)}")
         if target_times != [None] and min(target_times) <= 0:
             raise ValueError("Target times must be greater than 0.")
+        target_time = target_times.pop(0)
 
         # setup progress bar
-        self.progress_bar_action(action="setup", T=T)
-
-        # get unique target times and ignore 0
-        target_time = target_times.pop(0)
+        self.progress_bar_action("setup", T=T, do_nothing=not progress_bar)
 
         # initial snapshot
         self.snapshot()
@@ -256,14 +252,14 @@ class ExplicitODESolver(ABC):
         self.timer.start("ExplicitODESolver.integrate.body")
         while self.t < T:
             self.take_step(target_time=target_time)
-            self.progress_bar_action(action="update")
-
-            # mini snapshot
             self.minisnapshot()
 
-            # target time actions
-            if self.t > T:  # trigger closing snapshot
-                self.snapshot()
+            # update progress bar
+            self.progress_bar_action("update", do_nothing=not progress_bar)
+
+            # snapshot decision and target time update
+            if self.t > T:
+                self.snapshot()  # trigger closing snapshot
             elif self.t == target_time or log_every_step:
                 self.snapshot()
                 if self.t == target_time and self.t < T:
@@ -271,7 +267,7 @@ class ExplicitODESolver(ABC):
         self.timer.stop("ExplicitODESolver.integrate.body")
 
         # clean up progress bar
-        self.progress_bar_action(action="cleanup")
+        self.progress_bar_action("cleanup", do_nothing=not progress_bar)
 
         # write snapshots
         if snapshot_dir is not None:
@@ -295,25 +291,29 @@ class ExplicitODESolver(ABC):
         self.timestamps.append(self.t)
         self.called_at_end_of_step()
 
-    def progress_bar_action(self, action: str, T: Optional[float] = None):
+    def progress_bar_action(
+        self, action: str, T: Optional[float] = None, do_nothing: bool = False
+    ):
         """
         Setup, update, or cleanup the progress bar.
 
         Args:
             action (str): "setup", "update", "cleanup".
             T (Optional[float]): Time to simulate until.
+            do_nothing (bool): Don't do anything.
         """
-        if self.print_progress_bar:
-            if action == "setup":
-                bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]"
-                if T is None:
-                    raise ValueError("T must be defined.")
-                self.progress_bar = tqdm(total=T, bar_format=bar_format)
-            elif action == "update":
-                self.progress_bar.n = self.t
-                self.progress_bar.refresh()
-            elif action == "cleanup":
-                self.progress_bar.close()
+        if do_nothing:
+            return
+        if action == "setup":
+            bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]"
+            if T is None:
+                raise ValueError("T must be defined.")
+            self.progress_bar = tqdm(total=T, bar_format=bar_format)
+        elif action == "update":
+            self.progress_bar.n = self.t
+            self.progress_bar.refresh()
+        elif action == "cleanup":
+            self.progress_bar.close()
 
     def euler(self, *args, **kwargs) -> None:
         self.integrator = "euler"
