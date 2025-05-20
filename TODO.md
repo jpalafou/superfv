@@ -1,8 +1,8 @@
-- [ ] allow overshoots of target time in ODE solver
-- [ ] fix Sod Shock Tube 1D comparison with Romain lecture solver
-- [ ] compare Sod Shock Tube 1D with Romain lecture a priori limited solver (and analytical solution)
-- [ ] same for sedov1d, P = (gamma - 1) * 1 / h
-- [ ] fix number of assigned ghost cells
+- [x] allow overshoots of target time in ODE solver
+- [x] fix Sod Shock Tube 1D comparison with Romain lecture solver
+- [x] compare Sod Shock Tube 1D with Romain lecture a priori limited solver
+- [ ] compare sedov1d with Romain lecture a priori limited solver
+- [ ] fix number of assigned ghost cells for transverse flux
 - [ ] a priori limiting on primitive variables with lazy primitive cell averages as fallback
 - [ ] move compute_dt_and_fluxes to FiniteVolumeSolver
 - [ ] fix 2DZS + RK4
