@@ -1,9 +1,9 @@
+- [x] move compute_dt_and_fluxes to FiniteVolumeSolver
+- [x] a priori limiting on primitive variables with lazy primitive cell averages as fallback
 - [ ] clean up riemann solver primitive variable logic
 - [ ] fix passive scalars
 - [ ] compare sedov1d with Romain lecture a priori limited solver
 - [ ] fix number of assigned ghost cells for transverse flux
-- [ ] a priori limiting on primitive variables with lazy primitive cell averages as fallback
-- [ ] move compute_dt_and_fluxes to FiniteVolumeSolver
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
