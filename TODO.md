@@ -1,6 +1,5 @@
-- [x] allow overshoots of target time in ODE solver
-- [x] fix Sod Shock Tube 1D comparison with Romain lecture solver
-- [x] compare Sod Shock Tube 1D with Romain lecture a priori limited solver
+- [ ] clean up riemann solver primitive variable logic
+- [ ] fix passive scalars
 - [ ] compare sedov1d with Romain lecture a priori limited solver
 - [ ] fix number of assigned ghost cells for transverse flux
 - [ ] a priori limiting on primitive variables with lazy primitive cell averages as fallback

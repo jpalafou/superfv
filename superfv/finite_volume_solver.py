@@ -95,49 +95,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         raise NotImplementedError("Riemann solver not implemented.")
 
     @abstractmethod
-    @partial(method_timer, cat="?.compute_dt_and_fluxes")
-    def compute_dt_and_fluxes(
-        self,
-        t: float,
-        u: ArrayLike,
-        mode: Literal["transverse", "gauss-legendre"],
-        p: int,
-        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
-        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> Tuple[
-        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
-    ]:
+    @partial(method_timer, cat="?.compute_dt")
+    def compute_dt(self, w: ArrayLike) -> float:
         """
-        Compute the time-step size and the fluxes.
+        Compute the time-step size.
 
         Args:
-            t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            mode (str): Mode of interpolation. Possible values:
-                - "transverse": Interpolate nodes at the cell face centers. Compute the
-                    flux integral using a transverse quadrature.
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points. Compute the flux integral using Gauss-Legendre quadrature.
-            p (int): Polynomial degree of the spatial discretization. If
-                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
-            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
-                to use a slope-limiting scheme. Possible values:
-                - "muscl": Use the MUSCL scheme.
-                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
-                    limiter.
-            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
-                use if `slope_limiting` is "muscl". Possible values:
-                - "minmod": Minmod limiter.
-                - "moncen": Moncen limiter.
+            w (ArrayLike): Primitive variables. Has shape (nvars, nx, ny, nz, ...).
 
         Returns:
-            dt (float): Time-step size.
-            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
-                the corresponding dimension is unused. The fluxes have the following
-                shapes if not None:
-                - F: (nvars, nx + 1, ny, nz)
-                - G: (nvars, nx, ny + 1, nz)
-                - H: (nvars, nx, ny, nz + 1)
+            float: Time-step size.
         """
         pass
 
@@ -162,6 +129,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int = 0,
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
+        flux_recipe: Literal[1, 2, 3] = 1,
+        lazy_primitives: bool = False,
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
         ZS: bool = False,
@@ -220,6 +189,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
+            flux_recipe (Literal[1,2,3]): Recipe for interpolating flux nodes.
+                - 1: Interpolate conservative nodes from conservative cell averages.
+                    Apply slope limiting to the conservative nodes. Transform to
+                    primitive variables.
+                - 2: Interpolate conservative nodes from conservative cell averages.
+                    Transform to primitive variables. Apply slope limiting to the
+                    primitive nodes.
+                - 3: Interpolate primitive cell averages from conservative cell
+                    averages, either by interpolating to cell-centered values
+                    intermittently or transforming directly with `lazy_primtives=True`.
+                    Interpolate primitive nodes from primitive cell averages.
+                    Apply slope limiting to the primitive nodes.
+            lazy_primitives (bool): Whether to transform conservative cell averages
+                directly to primitive cell averages. Note that this is a second order
+                operation. If
+                - `flux_recipe=1`: This argument is ignored.
+                - `flux_recipe=2`: The lazy primitives become the fallback option.
+                - `flux_recipe=3`: The lazy primitives are used to interpolate the
+                    primitive flux nodes.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
@@ -255,7 +243,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             SED (bool): Whether to use smooth extrema detection for slope limiting.
             cupy (bool): Whether to use CuPy for array operations.
         """
-        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL, interpolation_scheme)
+        self._init_mesh(
+            xlim,
+            ylim,
+            zlim,
+            nx,
+            ny,
+            nz,
+            p,
+            CFL,
+            interpolation_scheme,
+            flux_recipe,
+            lazy_primitives,
+        )
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_snapshots()
@@ -290,6 +290,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         CFL: float,
         interpolation_scheme: Literal["gauss-legendre", "transverse"],
+        flux_recipe: Literal[1, 2, 3],
+        lazy_primitives: bool,
     ):
         if any([xlim[1] < xlim[0], ylim[1] < ylim[0], zlim[1] < zlim[0]]):
             raise ValueError("The upper limit must be greater than the lower limit.")
@@ -320,7 +322,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.p = p
         self.CFL = CFL
         self.interpolation_scheme = interpolation_scheme
+        self.flux_recipe = flux_recipe
+        self.lazy_primitives = lazy_primitives
 
+        # Validation
+        if self.flux_recipe not in (1, 2, 3):
+            raise ValueError(
+                "flux_recipe must be 1, 2, or 3. See the documentation for details."
+            )
         if self.interpolation_scheme == "gauss-legendre" and self.ndim == 1:
             raise ValueError(
                 "Gauss-Legendre interpolation scheme is not supported in 1D."
@@ -461,7 +470,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if ic_passives is not None:
 
             def passive_wrapper(f):
-                def wrapped_ic_func(array_slicer, x, y, z):
+                def wrapped_ic_func(array_slicer, x, y, z, t=None):
                     actives = f(array_slicer, x, y, z)
                     out = np.concatenate(
                         [
@@ -777,6 +786,109 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.a_priori_slope_limiting_scheme == "zhang-shu":
             self.ZS_cache.clear()
 
+    @partial(method_timer, cat="FiniteVolumeSolver.compute_dt_and_fluxes")
+    def compute_dt_and_fluxes(
+        self,
+        t: float,
+        u: ArrayLike,
+        mode: Literal["transverse", "gauss-legendre"],
+        p: int,
+        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
+        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
+    ) -> Tuple[
+        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
+    ]:
+        """
+        Compute the time-step size and the fluxes.
+
+        Args:
+            t (float): Time value.
+            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            mode (str): Mode of interpolation. Possible values:
+                - "transverse": Interpolate nodes at the cell face centers. Compute the
+                    flux integral using a transverse quadrature.
+                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
+                    points. Compute the flux integral using Gauss-Legendre quadrature.
+            p (int): Polynomial degree of the spatial discretization. If
+                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
+            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
+                to use a slope-limiting scheme. Possible values:
+                - "muscl": Use the MUSCL scheme.
+                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
+                    limiter.
+            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
+                use if `slope_limiting` is "muscl". Possible values:
+                - "minmod": Minmod limiter.
+                - "moncen": Moncen limiter.
+
+        Returns:
+            dt (float): Time-step size.
+            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
+                the corresponding dimension is unused. The fluxes have the following
+                shapes if not None:
+                - F: (nvars, nx + 1, ny, nz)
+                - G: (nvars, nx, ny + 1, nz)
+                - H: (nvars, nx, ny, nz + 1)
+        """
+        _slc = self.array_slicer
+        p = 1 if limiting_scheme == "muscl" else cast(int, p)
+
+        # apply boundary conditions
+        u_padded = self.apply_bc(u, -(-p // 2) + 1, t)
+
+        # assign primitive averages to 'w'
+        if self.lazy_primitives:
+            w_padded = self.primitives_from_conservatives(u_padded)
+        else:
+            w = self.interpolate_cell_centers(
+                self.apply_bc(u, -2 * (-p // 2), t), interpolation_scheme=mode, p=p
+            )
+            w[...] = self.primitives_from_conservatives(w)
+            w = self.interpolate(w, p=p, stencil_type="uniform-quadrature")
+            w_padded = self.apply_bc(w, -(-p // 2) + 1, t, conservatives=False)
+
+        # compute dt
+        dt = self.compute_dt(w_padded)
+
+        # compute fluxes
+        fluxes: List[Optional[ArrayLike]] = []
+        for dim in ["x", "y", "z"]:
+            if not self.using[dim]:
+                fluxes.append(None)
+                continue
+            w_xl, w_xr = self.interpolate_face_nodes(
+                w_padded if self.flux_recipe == 3 else u_padded,
+                dim=dim,
+                interpolation_scheme=mode,
+                limiting_scheme=limiting_scheme,
+                p=p,
+                slope_limiter=slope_limiter,
+                convert_to_primitives=limiting_scheme == "zhang-shu"
+                and self.flux_recipe == 2,
+                primitive_fallback=(
+                    w_padded
+                    if limiting_scheme == "zhang-shu" and self.flux_recipe == 2
+                    else None
+                ),
+            )
+            if self.flux_recipe == 1 or (
+                self.flux_recipe == 2 and limiting_scheme != "zhang-shu"
+            ):
+                w_xl = self.primitives_from_conservatives(w_xl)
+                w_xr = self.primitives_from_conservatives(w_xr)
+            F = self.compute_numerical_fluxes(
+                w_xr[_slc(**{dim: (None, -1)})],
+                w_xl[_slc(**{dim: (1, None)})],
+                dim=dim,
+                quadrature=mode,
+                p=p,
+                primitive=True,
+            )
+            fluxes.append(F)
+
+        # return dt and fluxes
+        return dt, (fluxes[0], fluxes[1], fluxes[2])
+
     @partial(method_timer, cat="FiniteVolumeSolver.MOOD_loop")
     def MOOD_loop(
         self,
@@ -835,7 +947,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @partial(method_timer, cat="FiniteVolumeSolver.apply_bc")
     def apply_bc(
-        self, arr: ArrayLike, n_ghost_cells: int, t: Optional[float] = None
+        self,
+        arr: ArrayLike,
+        n_ghost_cells: int,
+        t: Optional[float] = None,
+        conservatives: bool = True,
+        averages: bool = True,
     ) -> ArrayLike:
         """
         Apply boundary conditions to an array by padding it with ghost cells along the
@@ -845,6 +962,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arr (ArrayLike): Field array. Has shape (nvars, nx, ny, nz).
             n_ghost_cells (int): Number of ghost cells to apply boundary conditions to.
             t (Optional[float]): Time at which boundary conditions are applied.
+            conservatives (bool): Whether the input is conservative variables. If
+                False, the input is assumed to be primitive variables.
+            averages (bool): Whether the input is finite volume averages. If False, the
+                input is assumed to be pointwise values.
 
         Returns:
             ArrayLike: Padded array. Has shape (nvars, >= nx, >= ny, >= nz). Axes
@@ -862,6 +983,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 int(self.using_zdim) * n_ghost_cells,
             ),
             t=t,
+            conservatives=conservatives,
+            averages=averages,
         )
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
@@ -1044,10 +1167,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             slope_limiter (str): Additional option for slope limiting. Possible values:
                 - "minmod": Minmod limiter for the MUSCL scheme.
                 - "moncen": Moncen limiter for the MUSCL scheme.
-            convert_to_primitives (bool): Argument of the Zhang-Shu limiter. It
-                determines whether to convert the high-order nodes to primitive
-                variables before limiting. If True, `primitive_fallback` must be
-                provided.
+            convert_to_primitives (bool): Convert nodes to primitive variables before
+                returning. Only used if `limiting_scheme` is "zhang-shu".
             primitive_fallback (Optional[ArrayLike]): Argument of the Zhang-Shu
                 limiter. It gives the fallback values used by the limiter if
             clear_cache (bool): Whether to clear the interpolation cache before
@@ -1066,6 +1187,31 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.interpolation_cache.clear()
         sweep_orders = {"x": "yzx", "y": "zxy", "z": "xyz"}
 
+        # MUSCL limiter escape
+        if limiting_scheme == "muscl":
+            return muscl(
+                self.xp,
+                averages,
+                dim=dim,
+                slope_limiter=minmod if slope_limiter == "minmod" else moncen,
+            )
+
+        # Zhang-Shu limiter escape
+        if limiting_scheme == "zhang-shu":
+            return zhang_shu_limiter(
+                self,
+                averages,
+                dim=dim,
+                interpolation_scheme=cast(
+                    Literal["transverse", "gauss-legendre"], interpolation_scheme
+                ),
+                p=cast(int, p),
+                SED=self.SED,
+                convert_to_primitives=convert_to_primitives,
+                primitive_fallback=primitive_fallback,
+            )
+
+        # Interpolate unlimited face nodes
         faces = []
         for pos in "lr":
             nodes = []
@@ -1094,26 +1240,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     stencil_type="conservative-interpolation",
                 )
                 faces.append(node[..., np.newaxis])
-            elif limiting_scheme == "muscl":
-                # early escape with MUSCL scheme
-                return muscl(
-                    self.xp,
-                    averages,
-                    dim=dim,
-                    slope_limiter=minmod if slope_limiter == "minmod" else moncen,
-                )
-            elif limiting_scheme == "zhang-shu":
-                # early escape with Zhang-Shu scheme
-                return zhang_shu_limiter(
-                    self,
-                    averages,
-                    dim=dim,
-                    interpolation_scheme=cast(
-                        Literal["transverse", "gauss-legendre"], interpolation_scheme
-                    ),
-                    p=cast(int, p),
-                    SED=self.SED,
-                )
             else:
                 raise ValueError(
                     f"Unsupported interpolation and limiting schemes: {interpolation_scheme}, {limiting_scheme}."
@@ -1267,15 +1393,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         the current time value.
         """
         # compute the average of the primitive variables
-        u_padded = self.apply_bc(
-            self.arrays["u"], n_ghost_cells=2 * -(-self.p // 2), t=self.t
-        )
-        u_centers = self.interpolate_cell_centers(
-            u_padded, self.interpolation_scheme, self.p
-        )
-        w = self.primitives_from_conservatives(u_centers)
-        w_averages = self.interpolate(w, p=self.p, stencil_type="uniform-quadrature")
-        self.arrays["w"] = w_averages
+        if self.lazy_primitives:
+            self.arrays["w"] = self.primitives_from_conservatives(self.arrays["u"])
+        else:
+            u_padded = self.apply_bc(
+                self.arrays["u"], n_ghost_cells=2 * -(-self.p // 2), t=self.t
+            )
+            u_centers = self.interpolate_cell_centers(
+                u_padded, self.interpolation_scheme, self.p
+            )
+            w = self.primitives_from_conservatives(u_centers)
+            self.arrays["w"] = self.interpolate(
+                w, p=self.p, stencil_type="uniform-quadrature"
+            )
 
         # store the snapshot
         data = {

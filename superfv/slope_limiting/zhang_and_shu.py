@@ -164,10 +164,16 @@ def zhang_shu_limiter(
         fv_solver, averages, interpolation_scheme, p
     )
     if convert_to_primitives:
-        hoxl, hoxr, hoyl, hoyr, hozl, hozr, hocc = map(
-            lambda arr: fv_solver.primitives_from_conservatives(cast(ArrayLike, arr)),
-            [hoxl, hoxr, hoyl, hoyr, hozl, hozr, hocc],
-        )
+        if fv_solver.using_xdim:
+            hoxl = fv_solver.primitives_from_conservatives(cast(ArrayLike, hoxl))
+            hoxr = fv_solver.primitives_from_conservatives(cast(ArrayLike, hoxr))
+        if fv_solver.using_ydim:
+            hoyl = fv_solver.primitives_from_conservatives(cast(ArrayLike, hoyl))
+            hoyr = fv_solver.primitives_from_conservatives(cast(ArrayLike, hoyr))
+        if fv_solver.using_zdim:
+            hozl = fv_solver.primitives_from_conservatives(cast(ArrayLike, hozl))
+            hozr = fv_solver.primitives_from_conservatives(cast(ArrayLike, hozr))
+        hocc = fv_solver.primitives_from_conservatives(cast(ArrayLike, hocc))
         if primitive_fallback is None:
             raise ValueError(
                 "Fallback must be provided if convert_to_primitives is True."

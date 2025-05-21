@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -17,7 +17,15 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic: Callable[
+            [
+                ArraySlicer,
+                ArrayLike,
+                ArrayLike,
+                ArrayLike,
+            ],
+            ArrayLike,
+        ],
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
@@ -147,6 +155,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             p=p,
             CFL=CFL,
             interpolation_scheme=interpolation_scheme,
+            flux_recipe=1,
+            lazy_primitives=True,
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
             ZS=ZS,
@@ -187,25 +197,13 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
-        Convert primitive variables to conservative variables.
-
-        Args:
-            w (ArrayLike): Primitive variables.
-
-        Returns:
-            ArrayLike: Conservative variables.
+        Trivial transformation for linear avection.
         """
         return w
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
         """
-        Convert conservative variables to primitive variables.
-
-        Args:
-            u (ArrayLike): Conservative variables.
-
-        Returns:
-            ArrayLike: Primitive variables.
+        Trivial transformation for linear avection.
         """
         return u
 
@@ -229,88 +227,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         out[_slc("vz")] = 0.0
         return out
 
-    @partial(method_timer, cat="AdvectionSolver.compute_dt_and_fluxes")
-    def compute_dt_and_fluxes(
-        self,
-        t: float,
-        u: ArrayLike,
-        mode: Literal["transverse", "gauss-legendre"],
-        p: int,
-        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
-        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> Tuple[
-        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
-    ]:
-        """
-        Compute the time-step size and the fluxes.
-
-        Args:
-            t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            mode (str): Mode of interpolation. Possible values:
-                - "transverse": Interpolate nodes at the cell face centers. Compute the
-                    flux integral using a transverse quadrature.
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points. Compute the flux integral using Gauss-Legendre quadrature.
-            p (int): Polynomial degree of the spatial discretization. If
-                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
-            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
-                to use a slope-limiting scheme. Possible values:
-                - "muscl": Use the MUSCL scheme.
-                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
-                    limiter.
-            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
-                use if `slope_limiting` is "muscl". Possible values:
-                - "minmod": Minmod limiter.
-                - "moncen": Moncen limiter.
-
-        Returns:
-            dt (float): Time-step size.
-            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
-                the corresponding dimension is unused. The fluxes have the following
-                shapes if not None:
-                - F: (nvars, nx + 1, ny, nz)
-                - G: (nvars, nx, ny + 1, nz)
-                - H: (nvars, nx, ny, nz + 1)
-        """
-        _slc = self.array_slicer
-        _p = 1 if limiting_scheme == "muscl" else cast(int, p)
-
-        # compute dt
-        dt = self.get_dt(u)
-
-        # apply boundary conditions
-        n_ghost_cells = max(-(-_p // 2) + 1, 2 * -(-_p // 2))
-        u_padded = self.apply_bc(u, n_ghost_cells, t)
-
-        # compute fluxes
-        fluxes: List[Optional[ArrayLike]] = []
-        for dim in ["x", "y", "z"]:
-            if not self.using[dim]:
-                fluxes.append(None)
-                continue
-            xl, xr = self.interpolate_face_nodes(
-                u_padded,
-                dim=dim,
-                interpolation_scheme=mode,
-                limiting_scheme=limiting_scheme,
-                p=_p,
-                slope_limiter=slope_limiter,
-            )
-            F = self.compute_numerical_fluxes(
-                xr[_slc(**{dim: (None, -1)})],
-                xl[_slc(**{dim: (1, None)})],
-                dim=dim,
-                quadrature=mode,
-                p=_p,
-            )
-            fluxes.append(F)
-
-        # return dt and fluxes
-        return dt, (fluxes[0], fluxes[1], fluxes[2])
-
-    @partial(method_timer, cat="AdvectionSolver.get_dt")
-    def get_dt(self, u: ArrayLike) -> float:
+    @partial(method_timer, cat="AdvectionSolver.compute_dt")
+    def compute_dt(self, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
 

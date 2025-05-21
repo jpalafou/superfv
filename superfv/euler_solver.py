@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 import wtflux
@@ -38,7 +38,7 @@ class EulerSolver(FiniteVolumeSolver):
         p: int = 0,
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
-        flux_nodes: Literal["cfca", "pfpa", "pfcn"] = "cfca",
+        flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
@@ -99,14 +99,25 @@ class EulerSolver(FiniteVolumeSolver):
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
-            flux_nodes (str): Type of flux nodes to use. Possible values:
-                - "cfca": Conservative from conservative averages.
-                - "pfpa": Primitive from primitive averages.
-                - "pfcn": Primitive from conservative nodes. The conservative nodes are
-                interpolated from conservative averages.
-            lazy_primitives (bool): If True, the interpolation of cell centers is
-                skipped and conservative averages are directly transformed to primitive
-                averages.
+            flux_recipe (Literal[1,2,3]): Recipe for interpolating flux nodes.
+                - 1: Interpolate conservative nodes from conservative cell averages.
+                    Apply slope limiting to the conservative nodes. Transform to
+                    primitive variables.
+                - 2: Interpolate conservative nodes from conservative cell averages.
+                    Transform to primitive variables. Apply slope limiting to the
+                    primitive nodes.
+                - 3: Interpolate primitive cell averages from conservative cell
+                    averages, either by interpolating to cell-centered values
+                    intermittently or transforming directly with `lazy_primtives=True`.
+                    Interpolate primitive nodes from primitive cell averages.
+                    Apply slope limiting to the primitive nodes.
+            lazy_primitives (bool): Whether to transform conservative cell averages
+                directly to primitive cell averages. Note that this is a second order
+                operation. If
+                - `flux_recipe=1`: This argument is ignored.
+                - `flux_recipe=2`: The lazy primitives become the fallback option.
+                - `flux_recipe=3`: The lazy primitives are used to interpolate the
+                    primitive flux nodes.
             riemann_solver (str): Name of the Riemann solver function. Must be
                 implemented in the derived class.
             MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
@@ -148,12 +159,6 @@ class EulerSolver(FiniteVolumeSolver):
         if cupy:
             wtflux.backend.set_backend("cupy")
         self.hydro = wtflux.hydro
-        if flux_nodes not in ["cfca", "pfpa", "pfcn"]:
-            raise ValueError(
-                f"flux_nodes must be one of ['cfca', 'pfpa', 'pfcn'], not {flux_nodes}."
-            )
-        self.flux_nodes = flux_nodes
-        self.lazy_primitives = lazy_primitives
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -173,6 +178,8 @@ class EulerSolver(FiniteVolumeSolver):
             CFL=CFL,
             interpolation_scheme=interpolation_scheme,
             riemann_solver=riemann_solver,
+            flux_recipe=flux_recipe,
+            lazy_primitives=lazy_primitives,
             MUSCL=MUSCL,
             ZS=ZS,
             adaptive_timestepping=adaptive_timestepping,
@@ -285,106 +292,8 @@ class EulerSolver(FiniteVolumeSolver):
         """
         return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
 
-    @partial(method_timer, cat="EulerSolver.compute_dt_and_fluxes")
-    def compute_dt_and_fluxes(
-        self,
-        t: float,
-        u: ArrayLike,
-        mode: Literal["transverse", "gauss-legendre"],
-        p: int,
-        limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
-        slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-    ) -> Tuple[
-        float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
-    ]:
-        """
-        Compute the time-step size and the fluxes.
-
-        Args:
-            t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            mode (str): Mode of interpolation. Possible values:
-                - "transverse": Interpolate nodes at the cell face centers. Compute the
-                    flux integral using a transverse quadrature.
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points. Compute the flux integral using Gauss-Legendre quadrature.
-            p (int): Polynomial degree of the spatial discretization. If
-                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
-            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
-                to use a slope-limiting scheme. Possible values:
-                - "muscl": Use the MUSCL scheme.
-                - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
-                    limiter.
-            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
-                use if `slope_limiting` is "muscl". Possible values:
-                - "minmod": Minmod limiter.
-                - "moncen": Moncen limiter.
-
-        Returns:
-            dt (float): Time-step size.
-            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
-                the corresponding dimension is unused. The fluxes have the following
-                shapes if not None:
-                - F: (nvars, nx + 1, ny, nz)
-                - G: (nvars, nx, ny + 1, nz)
-                - H: (nvars, nx, ny, nz + 1)
-        """
-        _slc = self.array_slicer
-        _p = 1 if limiting_scheme == "muscl" else cast(int, p)
-
-        # apply boundary conditions
-        n_ghost_cells = -(-_p // 2) + 1
-        u_padded = self.apply_bc(u, n_ghost_cells, t)
-
-        # assign primitive averages to 'w'
-        if self.lazy_primitives:
-            w_padded = self.primitives_from_conservatives(u_padded)
-        else:
-            w_padded = self.interpolate_cell_centers(
-                u_padded, interpolation_scheme=mode, p=_p
-            )
-            w_padded = self.primitives_from_conservatives(w_padded)
-            w_padded = self.interpolate(
-                w_padded, p=_p, stencil_type="uniform-quadrature"
-            )
-
-        # compute dt
-        dt = self.get_dt(w_padded)
-
-        # compute fluxes
-        fluxes: List[Optional[ArrayLike]] = []
-        for dim in ["x", "y", "z"]:
-            if not self.using[dim]:
-                fluxes.append(None)
-                continue
-            u_xl, u_xr = self.interpolate_face_nodes(
-                w_padded if self.flux_nodes == "pfpa" else u_padded,
-                dim=dim,
-                interpolation_scheme=mode,
-                limiting_scheme=limiting_scheme,
-                p=_p,
-                slope_limiter=slope_limiter,
-                convert_to_primitives=self.flux_nodes == "pfcn",
-                primitive_fallback=w_padded if self.flux_nodes == "pfcn" else None,
-            )
-            if self.flux_nodes == "pfcn" and slope_limiter != "zhang-shu":
-                u_xl = self.primitives_from_conservatives(u_xl)
-                u_xr = self.primitives_from_conservatives(u_xr)
-            F = self.compute_numerical_fluxes(
-                u_xr[_slc(**{dim: (None, -1)})],
-                u_xl[_slc(**{dim: (1, None)})],
-                dim=dim,
-                quadrature=mode,
-                p=_p,
-                primitive=self.flux_nodes in ["pfpa", "pfcn"],
-            )
-            fluxes.append(F)
-
-        # return dt and fluxes
-        return dt, (fluxes[0], fluxes[1], fluxes[2])
-
-    @partial(method_timer, cat="EulerSolver.get_dt")
-    def get_dt(self, w: ArrayLike) -> float:
+    @partial(method_timer, cat="EulerSolver.compute_dt")
+    def compute_dt(self, w: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
 

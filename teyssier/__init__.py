@@ -349,31 +349,31 @@ def weno(
 
         if time == 2:  # RK2 or SSP RK2
 
-            u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 2
-            #            u2[:,4:-4] = u1[:,4:-4] + k1 * dt # SSP
+            # u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 2
+            u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt  # SSP
             flux, w, cs = cmp_flux(
                 u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space
             )
             k2 = -(flux[:, 1:] - flux[:, :-1]) / h
-            unew = u1[:, 4:-4] + k2 * dt
-        #            unew = u1[:,4:-4]/2 + (u2[:,4:-4] + k2 * dt)/2 # SSP
+            # unew = u1[:, 4:-4] + k2 * dt
+            unew = u1[:, 4:-4] / 2 + (u2[:, 4:-4] + k2 * dt) / 2  # SSP
 
         if time == 3:  # RK3 or SSP RK3
 
-            u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 3
-            #            u2[:,4:-4] = u1[:,4:-4] + k1 * dt # SSP
+            # u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 3
+            u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt  # SSP
             flux, w, cs = cmp_flux(
                 u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space
             )
             k2 = -(flux[:, 1:] - flux[:, :-1]) / h
-            u3[:, 4:-4] = u1[:, 4:-4] + k2 * 2 * dt / 3
-            #            u3[:,4:-4] = 3/4*u1[:,4:-4] + 1/4*(u2:,[4:-4]+k2 * dt) # SSP
+            # u3[:, 4:-4] = u1[:, 4:-4] + k2 * 2 * dt / 3
+            u3[:, 4:-4] = 3 / 4 * u1[:, 4:-4] + 1 / 4 * (u2[:, 4:-4] + k2 * dt)  # SSP
             flux, w, cs = cmp_flux(
                 u3, bc_type=bc_type, riemann_solver=riemann_solver, space=space
             )
             k3 = -(flux[:, 1:] - flux[:, :-1]) / h
-            unew = u1[:, 4:-4] + (k1 + 3 * k3) * dt / 4
-        #            unew = 1/3*u1[:,4:-4] + 2/3*(u3[:,4:-4]+k3 * dt)  SSP
+            # unew = u1[:, 4:-4] + (k1 + 3 * k3) * dt / 4
+            unew = 1 / 3 * u1[:, 4:-4] + 2 / 3 * (u3[:, 4:-4] + k3 * dt)  # SSP
 
         if time == 4:  # RK4
 
