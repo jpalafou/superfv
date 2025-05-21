@@ -471,15 +471,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             def passive_wrapper(f):
                 def wrapped_ic_func(array_slicer, x, y, z, t=None):
-                    actives = f(array_slicer, x, y, z)
-                    out = np.concatenate(
-                        [
-                            actives,
-                            np.empty(
-                                (self.n_user_defined_passive_vars, *actives[0].shape)
-                            ),
-                        ]
-                    )
+                    out = f(array_slicer, x, y, z)
                     for pv, pf in ic_passives.items():
                         out[array_slicer(pv)] = pf(x, y, z)
                     return out
