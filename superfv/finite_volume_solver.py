@@ -824,6 +824,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         _slc = self.array_slicer
         p = 1 if limiting_scheme == "muscl" else cast(int, p)
+        ZS = slope_limiter == "zhang-shu"
 
         # apply boundary conditions
         u_padded = self.apply_bc(u, -(-p // 2) + 1, t)
@@ -855,17 +856,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 limiting_scheme=limiting_scheme,
                 p=p,
                 slope_limiter=slope_limiter,
-                convert_to_primitives=limiting_scheme == "zhang-shu"
-                and self.flux_recipe == 2,
-                primitive_fallback=(
-                    w_padded
-                    if limiting_scheme == "zhang-shu" and self.flux_recipe == 2
-                    else None
-                ),
+                convert_to_primitives=ZS and self.flux_recipe == 2,
+                primitive_fallback=w_padded if ZS and self.flux_recipe == 2 else None,
             )
-            if self.flux_recipe == 1 or (
-                self.flux_recipe == 2 and limiting_scheme != "zhang-shu"
-            ):
+            if self.flux_recipe == 1 or (self.flux_recipe == 2 and not ZS):
                 w_xl = self.primitives_from_conservatives(w_xl)
                 w_xr = self.primitives_from_conservatives(w_xr)
             F = self.compute_numerical_fluxes(

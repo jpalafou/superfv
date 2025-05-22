@@ -1,4 +1,4 @@
-- [x] fix passive scalars
+- [ ] nonlinear sound wave test (David)
 - [ ] clean up riemann solver primitive variable logic
 - [ ] compare sedov1d with Romain lecture a priori limited solver
 - [ ] fix number of assigned ghost cells for transverse flux
