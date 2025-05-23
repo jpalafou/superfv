@@ -49,7 +49,7 @@ def l1_norm(array: ArrayLike) -> float:
     Returns:
         float: L1 norm of the array.
     """
-    return np.sum(np.abs(array))
+    return np.mean(np.abs(array))
 
 
 def l2_norm(array: ArrayLike) -> float:
@@ -62,7 +62,7 @@ def l2_norm(array: ArrayLike) -> float:
     Returns:
         float: L2 norm of the array.
     """
-    return np.sqrt(np.sum(np.square(array)))
+    return np.sqrt(np.mean(np.square(array)))
 
 
 def linf_norm(array: ArrayLike) -> float:

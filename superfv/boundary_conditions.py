@@ -138,6 +138,16 @@ class BoundaryConditions:
                     )
             setattr(self, f"{dim}_dirichlet", tuple(configured_dirichlet))
 
+        # validate and assign wrappers
+        if "dirichlet" in (*self.bcx, *self.bcy, *self.bcz):
+            if conservatives_wrapper is None:
+                raise ValueError(
+                    "Conservative wrapper must be provided for Dirichlet BCs."
+                )
+            if fv_average_wrapper is None:
+                raise ValueError(
+                    "Finite-volume average wrapper must be provided for Dirichlet BCs."
+                )
         self.conservatives_wrapper = cast(FieldWrapper, conservatives_wrapper)
         self.fv_average_wrapper = cast(FieldWrapper, fv_average_wrapper)
 
@@ -204,6 +214,10 @@ class BoundaryConditions:
                     )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
+                case "zeros":
+                    self._apply_constant_bc(out, slab_thickness, dim, pos, 0.0)
+                case "ones":
+                    self._apply_constant_bc(out, slab_thickness, dim, pos, 1.0)
                 case _:
                     raise ValueError(f"Boundary condition {bc_type} not implemented.")
 
@@ -331,6 +345,39 @@ class BoundaryConditions:
             outer_slc = _slc(axis=_axis, cut=(-_st, 0))
             inner_slc = _slc(axis=_axis, cut=(-(_st + 1), -_st))
         arr[outer_slc] = arr[inner_slc]
+
+    def _apply_constant_bc(
+        self,
+        arr: ArrayLike,
+        slab_thickness: int,
+        dim: Literal["x", "y", "z"],
+        pos: Literal["l", "r"],
+        value: float,
+    ):
+        """
+        Apply zero boundary conditions to arr, modifying it in place.
+
+        Args:
+            arr (ArrayLike): Array to which to apply boundary conditions.
+            slab_thickness (int): Thickness of the boundary condition slab along the
+                axis.
+            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
+                conditions ("x", "y", or "z").
+            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
+                ("l" for left or "r" for right).
+            value (float): Value to set the boundary condition to.
+
+        Returns:
+            None
+        """
+        _slc = self.array_slicer
+        _axis = "xyz".index(dim) + 1
+        arr[
+            _slc(
+                axis="xyz".index(dim) + 1,
+                cut=(None, slab_thickness) if pos == "l" else (-slab_thickness, None),
+            )
+        ] = value
 
     def _get_slab_coords(
         self,

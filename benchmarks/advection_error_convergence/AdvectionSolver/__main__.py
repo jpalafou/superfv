@@ -1,3 +1,4 @@
+import os
 from functools import partial
 from itertools import product
 
@@ -7,19 +8,22 @@ import pandas as pd
 import superfv.initial_conditions as initial_conditions
 from superfv import AdvectionSolver
 from superfv.tools.array_management import linf_norm
-from superfv.visualization import plot_power_law_fit
 
 # problem inputs
-OUTPUT_NAME = "benchmarks/AdvectionSolver_error_convergence/plot"
+OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
 P_LIST = [0, 1, 2, 3]
 OTHER_INPUTS = dict(
     interpolation_scheme="transverse",
-    MOOD=True,
-    NAD=1e-5,
+    ZS=True,
+    adaptive_timestepping=False,
     SED=True,
 )
+
+# remove old output
+if os.path.exists(OUTPUT_NAME):
+    os.remove(OUTPUT_NAME)
 
 # loop over all combinations of N and p
 data = []
@@ -59,15 +63,12 @@ for p in P_LIST:
         df_p["error"],
         label=f"p={p}",
         marker="o",
-        linestyle="none",
+        linestyle="-",
         color=cmap(p / max(P_LIST)),
-    )
-    plot_power_law_fit(
-        ax, df_p["N"].to_numpy(), df_p["error"].to_numpy(), color="grey", linestyle="--"
     )
 ax.set_xscale("log", base=2)
 ax.set_yscale("log")
 ax.set_xlabel("N")
 ax.set_ylabel("Linf error")
 ax.legend()
-fig.savefig(OUTPUT_NAME + ".png")
+fig.savefig(OUTPUT_NAME)

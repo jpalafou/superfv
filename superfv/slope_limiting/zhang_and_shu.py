@@ -240,10 +240,30 @@ def zhang_shu_limiter(
     # compute smooth extrema detector
     if SED:
         alpha = compute_smooth_extrema_detector(
-            xp, fv_solver.apply_bc(averages, 3)[__limiting_slc__], axes=fv_solver.axes
+            xp,
+            fv_solver.apply_bc(
+                crop_to_center(
+                    (
+                        cast(ArrayLike, primitive_fallback)
+                        if convert_to_primitives
+                        else averages
+                    ),
+                    fv_solver.arrays["u"].shape,
+                ),
+                3,
+            )[__limiting_slc__],
+            axes=fv_solver.axes,
+        )
+        alpha = fv_solver.bc_for_smooth_extrema_detection(
+            alpha,
+            (
+                (theta.shape[1] - fv_solver.nx) // 2,
+                (theta.shape[2] - fv_solver.ny) // 2,
+                (theta.shape[3] - fv_solver.nz) // 2,
+            ),
         )
         alpha = crop(alpha, add_axis=True)
-        theta = np.where(alpha == 1, 1, theta)
+        theta[...] = np.where(alpha == 1, 1, theta)
 
     # limit and escape
     if fv_solver.using_xdim:

@@ -626,6 +626,28 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.fv_average_wrapper,
         )
 
+        # this is used to apply ghost cells to alpha in the smooth extrema detector
+        self.bc_for_smooth_extrema_detection = BoundaryConditions(
+            self.array_slicer,
+            "periodic" if bcx == "periodic" else "ones",
+            "periodic" if bcy == "periodic" else "ones",
+            "periodic" if bcz == "periodic" else "ones",
+            x_slab=self.slab_meshes["x"],
+            y_slab=self.slab_meshes["y"],
+            z_slab=self.slab_meshes["z"],
+        )
+
+        # this is used to apply ghost cells to the troubled cell mask in MOOD
+        self.bc_for_troubled_cell_mask = BoundaryConditions(
+            self.array_slicer,
+            "periodic" if bcx == "periodic" else "free",
+            "periodic" if bcy == "periodic" else "free",
+            "periodic" if bcz == "periodic" else "free",
+            x_slab=self.slab_meshes["x"],
+            y_slab=self.slab_meshes["y"],
+            z_slab=self.slab_meshes["z"],
+        )
+
     def _init_snapshots(self):
         self.minisnapshots["MOOD_iters"] = []
 
@@ -651,6 +673,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize primitive arrays
         self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
+        self.arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
 
         # initialize numpy namespace
         self.xp = xp if self.cupy else np
@@ -677,10 +700,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_tol: float,
         SED: bool,
     ):
-        # Initial setup for a priori slope limiting
-        self.a_priori_slope_limiting_scheme = None
-        self.a_priori_slope_limiter = None
-        self.ZS_adaptive_timestep = False
+        # Initial setup
+        self.a_priori_slope_limiter: Optional[str] = None
+        self.a_priori_slope_limiting_scheme: Optional[str] = None
+        self.limiting_vars: Set[str] = set()
+        self.MOOD: bool = False
+        self.MOOD_cascade: List[str] = []
+        self.MOOD_iter_count: int = 0
+        self.MOOD_max_iter_count: int = np.iinfo(np.int64).max
+        self.NAD: Optional[float] = None
+        self.PAD_tol: float = np.nan
+        self.SED: bool = False
+        self.ZS_adaptive_timestep: bool = False
+
+        if self.p < 1:
+            return
 
         # Validate and assign limiting schemes
         if MUSCL and ZS:
@@ -696,7 +730,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # Determine if MOOD is enabled
         self.MOOD = MOOD or self.ZS_adaptive_timestep
-        self.MOOD_iter_count = 0  # Initialize MOOD iteration count
 
         if self.MOOD:
             self.MOOD_cascade = (
@@ -1372,6 +1405,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
         return dydt
 
+    def primitive_cell_centers(self, u: ArrayLike) -> ArrayLike:
+        """
+        Compute the primitive variables at the cell centers.
+
+        Args:
+            u (ArrayLike): Conservative variables. Has shape (nvars, nx, ny, nz).
+
+        Returns:
+            ArrayLike: Primitive variables at the cell centers. Has shape
+                (nvars, nx, ny, nz).
+        """
+        ucc = self.interpolate_cell_centers(
+            self.apply_bc(self.arrays["u"], -(-self.p // 2), self.t),
+            interpolation_scheme=self.interpolation_scheme,
+            p=self.p,
+        )
+        return self.primitives_from_conservatives(ucc)
+
     @partial(method_timer, cat="FiniteVolumeSolver.snapshot")
     def snapshot(self):
         """
@@ -1380,24 +1431,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         # compute the average of the primitive variables
         if self.lazy_primitives:
-            self.arrays["w"] = self.primitives_from_conservatives(self.arrays["u"])
+            self.arrays["w"][...] = self.primitives_from_conservatives(self.arrays["u"])
         else:
-            u_padded = self.apply_bc(
-                self.arrays["u"], n_ghost_cells=2 * -(-self.p // 2), t=self.t
+            p = self.p
+            ucc = self.interpolate_cell_centers(
+                self.apply_bc(self.arrays["u"], -2 * (-p // 2), self.t),
+                interpolation_scheme=self.interpolation_scheme,
+                p=p,
             )
-            u_centers = self.interpolate_cell_centers(
-                u_padded, self.interpolation_scheme, self.p
-            )
-            w = self.primitives_from_conservatives(u_centers)
-            self.arrays["w"] = self.interpolate(
-                w, p=self.p, stencil_type="uniform-quadrature"
+            wcc = self.primitives_from_conservatives(ucc)
+            self.arrays["wcc"][...] = crop_to_center(wcc, self.arrays["w"].shape)
+            self.arrays["w"][...] = self.interpolate(
+                wcc, p=p, stencil_type="uniform-quadrature"
             )
 
         # store the snapshot
         data = {
             "u": self.arrays.get_numpy_copy("u"),
             "w": self.arrays.get_numpy_copy("w"),
-        }
+        } | ({} if self.lazy_primitives else {"wcc": self.arrays.get_numpy_copy("wcc")})
         self.snapshots.log(self.t, data)
 
     @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")

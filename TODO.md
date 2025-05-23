@@ -1,6 +1,7 @@
-- [ ] nonlinear sound wave test (David)
+- [x] nonlinear sound wave test (David)
+- [ ] SED does not work for *a priori* limiting
 - [ ] clean up riemann solver primitive variable logic
-- [ ] compare sedov1d with Romain lecture a priori limited solver
+- [ ] compare sedov1d with Romain lecture *a priori* limited solver
 - [ ] fix number of assigned ghost cells for transverse flux
 - [ ] fix 2DZS + RK4
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement

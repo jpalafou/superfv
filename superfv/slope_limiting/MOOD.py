@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, Tuple, cast
 
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.array_management import ArrayLike
@@ -62,7 +62,7 @@ def init_MOOD(
             f"Starting scheme {initial_scheme} is not the first scheme in the cascade {fv_solver.MOOD_cascade}."
         )
     _cache_fluxes(fv_solver, fluxes, initial_scheme)
-    fv_solver.MOOD_cache.add("cascade_idx_array", xp.full_like(u[0], 0, dtype=int))
+    fv_solver.MOOD_cache.add("cascade_idx_array", xp.full_like(u[:1], 0, dtype=int))
     fv_solver.MOOD_iter_count = 0
 
 
@@ -255,10 +255,8 @@ def revise_fluxes(
     if fv_solver.using_xdim:
         F_cascade_idx_array = map_cell_values_to_face_values(
             fv_solver,
-            xp.maximum,
             cascade_idx_array,
             "x",
-            periodic=fv_solver.bc.bcx == ("periodic", "periodic"),
         )
         revised_F = xp.zeros_like(fluxes[0])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
@@ -268,10 +266,8 @@ def revise_fluxes(
     if fv_solver.using_ydim:
         G_cascade_idx_array = map_cell_values_to_face_values(
             fv_solver,
-            xp.maximum,
             cascade_idx_array,
             "y",
-            periodic=fv_solver.bc.bcy == ("periodic", "periodic"),
         )
         revised_G = xp.zeros_like(fluxes[1])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
@@ -281,10 +277,8 @@ def revise_fluxes(
     if fv_solver.using_zdim:
         H_cascade_idx_array = map_cell_values_to_face_values(
             fv_solver,
-            xp.maximum,
             cascade_idx_array,
             "z",
-            periodic=fv_solver.bc.bcz == ("periodic", "periodic"),
         )
         revised_H = xp.zeros_like(fluxes[2])
         for i, scheme in enumerate(fv_solver.MOOD_cascade):
@@ -297,20 +291,16 @@ def revise_fluxes(
 
 def map_cell_values_to_face_values(
     fv_solver: FiniteVolumeSolver,
-    f: Callable[[ArrayLike, ArrayLike], ArrayLike],
     cell_values: ArrayLike,
     dim: Literal["x", "y", "z"],
-    periodic: bool = False,
 ) -> ArrayLike:
     """
-    Map cell values to face values using a function `f`.
+    Map cell values to face values by taking the maximum of adjacent cell values.
 
     Args:
         fv_solver (FiniteVolumeSolver): The finite volume solver object.
-        f (Callable[[ArrayLike, ArrayLike], ArrayLike]): The function to use.
         cell_values (ArrayLike): The cell values. Has shape (nx, ny, nz, ...).
         dim (Literal["x", "y", "z"]): The dimension.
-        periodic (bool): Whether the dimension is periodic.
 
     Returns:
         ArrayLike: The face values. Has shape
@@ -318,18 +308,14 @@ def map_cell_values_to_face_values(
             - (nx, ny+1, nz, ...) if dim == "y"
             - (nx, ny, nz+1, ...) if dim == "z"
     """
-    xp = fv_solver.xp
-    padded_cell_values = xp.pad(
+    _slc = fv_solver.array_slicer
+    padded_cell_values = fv_solver.bc_for_troubled_cell_mask(
         cell_values,
-        pad_width=[
-            (1, 1) if dim == "x" else (0, 0),
-            (1, 1) if dim == "y" else (0, 0),
-            (1, 1) if dim == "z" else (0, 0),
-        ],
-        mode="wrap" if periodic else "edge",
+        {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[dim],
     )
-    leftslc, rightslc = [slice(None)] * 3, [slice(None)] * 3
-    leftslc["xyz".index(dim)] = slice(None, -1)
-    rightslc["xyz".index(dim)] = slice(1, None)
-    face_values = f(padded_cell_values[(*leftslc,)], padded_cell_values[(*rightslc,)])
+    leftslc = _slc(axis="xyz".index(dim) + 1, cut=(None, -1))
+    rightslc = _slc(axis="xyz".index(dim) + 1, cut=(1, None))
+    face_values = fv_solver.xp.maximum(
+        padded_cell_values[leftslc], padded_cell_values[rightslc]
+    )
     return face_values
