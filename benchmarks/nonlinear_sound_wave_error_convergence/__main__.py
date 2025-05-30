@@ -13,30 +13,28 @@ gamma = 1.4
 rho0 = 1
 cs0 = 1
 P0 = 1 / gamma
-L = 1
-k = 2 * np.pi / L
-omega = cs0 * k
 A = 1e-5
+T = 1.0
 
 
 def nonlinear_sound_wave(array_slicer, x, y, z, t):
     _slc = array_slicer
 
     def vp(x, t):
-        return A * np.sin(k * x - omega * t) + A**2 * ((gamma + 1) / 4) * (
-            omega * t / cs0
-        ) * np.cos(2 * (k * x - omega * t))
+        return A * np.sin(2 * np.pi * (x - t)) - A**2 * (
+            gamma + 1
+        ) / 4 * 2 * np.pi * t * np.sin(4 * np.pi * (x - t))
 
     out = np.zeros((5, *x.shape))
-    out[_slc("rho")] = rho0 + rho0 * vp(x, 0) / cs0  # only valid for t=0
+    out[_slc("rho")] = rho0 + rho0 * vp(x, 0)  # only valid for t=0
     out[_slc("vx")] = vp(x, t)
-    out[_slc("P")] = P0 + gamma * P0 * vp(x, 0) / cs0  # only valid for t=0
+    out[_slc("P")] = P0 + gamma * P0 * vp(x, 0)  # only valid for t=0
     return out
 
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/nonlinear_sound_wave_error_convergence/" + "plot.png"
-N_LIST = [16, 32, 64, 128, 256]
+N_LIST = [16, 32, 64, 128, 256, 512, 1024]
 P_LIST = [0, 1, 2, 3]
 OTHER_INPUTS = dict(
     gamma=gamma,
@@ -60,9 +58,9 @@ for N, p in product(N_LIST, P_LIST):
 
     # run solver
     solver = EulerSolver(
-        ic=partial(nonlinear_sound_wave, t=0), xlim=(0, L), nx=N, p=p, **OTHER_INPUTS
+        ic=partial(nonlinear_sound_wave, t=0), nx=N, p=p, **OTHER_INPUTS
     )
-    solver.run(L / cs0)
+    solver.run(T)
 
     # measure error
     _slc = solver.array_slicer
@@ -72,9 +70,7 @@ for N, p in product(N_LIST, P_LIST):
         vx_numerical = solver.primitive_cell_centers(solver.snapshots[-1]["u"])[
             _slc("vx")
         ]
-    vx_exact = nonlinear_sound_wave(_slc, solver.X, solver.Y, solver.Z, L / cs0)[
-        _slc("vx")
-    ]
+    vx_exact = nonlinear_sound_wave(_slc, solver.X, solver.Y, solver.Z, T)[_slc("vx")]
     error = l1_norm(vx_numerical - vx_exact)
     data.append(dict(N=N, p=p, error=error))
 df = pd.DataFrame(data)
@@ -93,6 +89,7 @@ for p in P_LIST:
         linestyle="-",
         color=cmap(p / max(P_LIST)),
     )
+ax.set_title("Nonlinear sound wave error convergence")
 ax.set_xscale("log", base=2)
 ax.set_yscale("log")
 ax.set_xlabel("N")

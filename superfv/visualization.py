@@ -135,7 +135,7 @@ def plot_1d_slice(
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
     z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
-    xlabel: bool = True,
+    xlabel: bool = False,
     **kwargs,
 ):
     """
@@ -154,7 +154,7 @@ def plot_1d_slice(
             y-coordinate or range. Defaults to 0.5.
         z (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
             z-coordinate or range. Defaults to 0.5.
-        xlabel (bool): Whether to show the x-axis label. Defaults to True.
+        xlabel (bool): Whether to show the x-axis label. Defaults to False.
         **kwargs: Keyword arguments for the plot.
 
     Raises:

@@ -627,11 +627,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         # this is used to apply ghost cells to alpha in the smooth extrema detector
+        _periodic = ("periodic", "periodic")
         self.bc_for_smooth_extrema_detection = BoundaryConditions(
             self.array_slicer,
-            "periodic" if bcx == "periodic" else "ones",
-            "periodic" if bcy == "periodic" else "ones",
-            "periodic" if bcz == "periodic" else "ones",
+            "periodic" if self.bc.bcx == _periodic else "ones",
+            "periodic" if self.bc.bcy == _periodic else "ones",
+            "periodic" if self.bc.bcz == _periodic else "ones",
             x_slab=self.slab_meshes["x"],
             y_slab=self.slab_meshes["y"],
             z_slab=self.slab_meshes["z"],
@@ -640,9 +641,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # this is used to apply ghost cells to the troubled cell mask in MOOD
         self.bc_for_troubled_cell_mask = BoundaryConditions(
             self.array_slicer,
-            "periodic" if bcx == "periodic" else "free",
-            "periodic" if bcy == "periodic" else "free",
-            "periodic" if bcz == "periodic" else "free",
+            "periodic" if self.bc.bcx == _periodic else "free",
+            "periodic" if self.bc.bcy == _periodic else "free",
+            "periodic" if self.bc.bcz == _periodic else "free",
             x_slab=self.slab_meshes["x"],
             y_slab=self.slab_meshes["y"],
             z_slab=self.slab_meshes["z"],

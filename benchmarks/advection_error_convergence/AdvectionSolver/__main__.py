@@ -7,12 +7,12 @@ import pandas as pd
 
 import superfv.initial_conditions as initial_conditions
 from superfv import AdvectionSolver
-from superfv.tools.array_management import linf_norm
+from superfv.tools.array_management import l1_norm
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"
 DIMS = "x"
-N_LIST = [16, 32, 64, 128, 256]
+N_LIST = [16, 32, 64, 128, 256, 512, 1024]
 P_LIST = [0, 1, 2, 3]
 OTHER_INPUTS = dict(
     interpolation_scheme="transverse",
@@ -47,9 +47,12 @@ for N, p in product(N_LIST, P_LIST):
 
     # measure error
     _slc = solver.array_slicer
-    rho0 = solver.snapshots(0.0)["u"][_slc("rho")]
-    rho1 = solver.snapshots(1.0)["u"][_slc("rho")]
-    data.append(dict(N=N, p=p, error=linf_norm(rho1 - rho0)))
+    rho_numerical = solver.snapshots(1.0)["wcc"][_slc("rho")]
+    rho_analytical = initial_conditions.sinus(_slc, solver.X, solver.Y, solver.Z, P=0)[
+        _slc("rho")
+    ]
+    error = l1_norm(rho_numerical - rho_analytical)
+    data.append(dict(N=N, p=p, error=error))
 df = pd.DataFrame(data)
 
 # plot error curves of p over N
@@ -69,6 +72,6 @@ for p in P_LIST:
 ax.set_xscale("log", base=2)
 ax.set_yscale("log")
 ax.set_xlabel("N")
-ax.set_ylabel("Linf error")
+ax.set_ylabel("L1 error")
 ax.legend()
 fig.savefig(OUTPUT_NAME)

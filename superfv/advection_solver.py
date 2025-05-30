@@ -156,7 +156,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             CFL=CFL,
             interpolation_scheme=interpolation_scheme,
             flux_recipe=1,
-            lazy_primitives=True,
+            lazy_primitives=False,
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
             ZS=ZS,

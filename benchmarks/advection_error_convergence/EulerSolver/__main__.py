@@ -11,7 +11,7 @@ from superfv.tools.array_management import linf_norm
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"
 DIMS = "x"
-N_LIST = [16, 32, 64, 128, 256]
+N_LIST = [16, 32, 64, 128, 256, 512, 1024]
 P_LIST = [0, 1, 2, 3]
 OTHER_INPUTS = dict(
     interpolation_scheme="transverse",
