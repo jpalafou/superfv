@@ -1,6 +1,9 @@
 - [x] nonlinear sound wave test (David)
 - [x] SED does not work for *a priori* limiting
-- [ ] compare sedov1d with Romain lecture *a priori* limited solver and analytical solution
+- [x] compare sedov1d with Romain lecture *a priori* limited solver and analytical solution
+- [ ] remove array="w" terminology from plotting slices
+- [ ] limiting_vars should be a list
+- [ ] fix progress bar for allow_overshoot=True
 - [ ] fix number of assigned ghost cells for transverse flux
 - [ ] fix 2DZS + RK4
 - [ ] clean up riemann solver primitive variable logic

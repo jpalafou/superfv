@@ -117,6 +117,24 @@ def set_ic(x, ic_type="sod test"):
                 d[i] = 0.1
                 v[i] = 0
                 p[i] = 1
+    elif ic_type == "sedov":
+        d[...] = 1.0
+        p[0] = 0.5 * (gamma - 1) * 1.0 / (1 / n)
+    elif ic_type == "nonlinear wave":
+        rho0 = 1
+        P0 = 1 / gamma
+        A = 1e-5
+
+        def vp(x, t):
+            return A * np.sin(2 * np.pi * (x - t)) - A**2 * (
+                gamma + 1
+            ) / 4 * 2 * np.pi * t * np.sin(4 * np.pi * (x - t))
+
+        for i in range(0, n):
+            vpi = vp(x[i], 0)
+            d[i] = rho0 + rho0 * vpi
+            v[i] = vpi
+            p[i] = P0 + gamma * P0 * vpi
 
     else:
         print("Unknown IC type=", ic_type)
@@ -141,6 +159,18 @@ def set_bc(u, type="periodic"):
         u[:, 1] = u[:, 4]
         u[:, 2] = u[:, 4]
         u[:, 3] = u[:, 4]
+        u[:, -1] = u[:, -5]
+        u[:, -2] = u[:, -5]
+        u[:, -3] = u[:, -5]
+        u[:, -4] = u[:, -5]
+    elif type == "sedov":
+        # reflective left side
+        u[:, 0] = u[:, 7]
+        u[:, 1] = u[:, 6]
+        u[:, 2] = u[:, 5]
+        u[:, 3] = u[:, 4]
+        u[1, :4] *= -1
+        # outflow right side
         u[:, -1] = u[:, -5]
         u[:, -2] = u[:, -5]
         u[:, -3] = u[:, -5]
@@ -400,4 +430,4 @@ def weno(
         niter = niter + 1  # update iteration counter
 
     print("Done ", niter - 1, t)
-    return u[0:niter]
+    return t, u[0:niter]

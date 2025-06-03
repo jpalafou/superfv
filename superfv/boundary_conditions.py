@@ -168,10 +168,10 @@ class BoundaryConditions:
             pad_width (Tuple[int, int, int]): Tuple of integers indicating the padding
                 width for each dimension (x, y, z).
             t (Optional[float]): Time at which boundary conditions are applied.
-            conservatives (bool): Whether to convert the Dirichlet function output to
-                conservative variables.
-            averages (bool): Whether to convert the Dirichlet function output to
-                finite-volume average values.
+            conservatives (bool): Whether `arr` contains conservative variables.
+                If False, it is assumed that `arr` contains primitive variables.
+            averages (bool): Whether 'arr' contains finite-volume average values.
+                If False, it is assumed that `arr` contains pointwise values.
             check_for_NaNs (bool): Whether to check for NaN values in the array after
                 applying boundary conditions.
         Returns:
@@ -214,6 +214,10 @@ class BoundaryConditions:
                     )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
+                case "reflective":
+                    self._apply_reflective_bc(
+                        out, slab_thickness, dim, pos, conservatives
+                    )
                 case "zeros":
                     self._apply_constant_bc(out, slab_thickness, dim, pos, 0.0)
                 case "ones":
@@ -282,10 +286,10 @@ class BoundaryConditions:
             pos (Literal["x", "y", "z"]): Position of the boundary condition slab
                 ("l" for left or "r" for right).
             t (Optional[float]): Time at which Dirichlet boundary conditions are applied.
-            conservatives (bool): Whether to convert the Dirichlet function
-                output to conservative variables.
-            averages (bool): Whether to convert the Dirichlet function
-                output to finite-volume average values.
+            conservatives (bool): Whether `arr` contains conservative variables.
+                If False, it is assumed that `arr` contains primitive variables.
+            averages (bool): Whether 'arr' contains finite-volume average values.
+                If False, it is assumed that `arr` contains pointwise values.
 
         Returns:
             None
@@ -345,6 +349,46 @@ class BoundaryConditions:
             outer_slc = _slc(axis=_axis, cut=(-_st, 0))
             inner_slc = _slc(axis=_axis, cut=(-(_st + 1), -_st))
         arr[outer_slc] = arr[inner_slc]
+
+    def _apply_reflective_bc(
+        self,
+        arr: ArrayLike,
+        slab_thickness: int,
+        dim: Literal["x", "y", "z"],
+        pos: Literal["l", "r"],
+        conservatives: bool = True,
+    ):
+        """
+        Apply reflective boundary conditions to arr, modifying it in place.
+
+        Args:
+            arr (ArrayLike): Array to which to apply boundary conditions.
+            slab_thickness (int): Thickness of the boundary condition slab along the
+                axis.
+            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
+                conditions ("x", "y", or "z").
+            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
+                ("l" for left or "r" for right).
+            conservatives (bool): Whether `arr` contains conservative variables.
+                If False, it is assumed that `arr` contains primitive variables.
+
+        Returns:
+            None
+        """
+        _slc = self.array_slicer
+        _st = slab_thickness
+        _axis = "xyz".index(dim) + 1
+        _flip_slc = _slc(axis=_axis, cut=(None, None), step=-1)
+        if pos == "l":
+            outer_slc = _slc(axis=_axis, cut=(0, _st))
+            inner_slc = _slc(axis=_axis, cut=(_st, 2 * _st))
+        else:
+            outer_slc = _slc(axis=_axis, cut=(-_st, 0))
+            inner_slc = _slc(axis=_axis, cut=(-2 * _st, -_st))
+        arr[outer_slc] = arr[inner_slc][_flip_slc]
+
+        # Negate momentum/ velocity
+        arr[outer_slc][_slc(("m" if conservatives else "v") + dim)] *= -1
 
     def _apply_constant_bc(
         self,

@@ -273,3 +273,52 @@ def velocity_ramp(
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
     return out
+
+
+def sedov(
+    array_slicer: ArraySlicer,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    gamma: float,
+    h: float,
+    rho0: float = 1,
+    P0: float = 0,
+) -> ArrayLike:
+    """
+    Returns array for the Sedov blast wave initial condition.
+
+    Args:
+        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
+            the initial condition.
+        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
+        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
+        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        gamma (float): Ratio of specific heats.
+        h (float): Mesh size. Assumed to be the same in all dimensions.
+        rho0 (float): Initial uniform density.
+        P0 (float): Background pressure.
+    """
+    _slc = array_slicer
+    dims = parse_xyz(x, y, z)
+    out = np.zeros((len(_slc.idxs), *x.shape))
+
+    inside_blast_cell = np.ones_like(x, dtype=bool)
+    if "x" in dims:
+        inside_blast_cell &= np.abs(x) < h
+    if "y" in dims:
+        inside_blast_cell &= np.abs(y) < h
+    if "z" in dims:
+        inside_blast_cell &= np.abs(z) < h
+    E_blast_cell = (0.5 / h) ** (len(dims))
+
+    # Validate variables in ArraySlicer
+    if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
+        out[_slc("rho")] = rho0
+        out[_slc("P")] = np.where(inside_blast_cell, (gamma - 1) * E_blast_cell, P0)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+        )
+    return out
