@@ -4,11 +4,11 @@ from typing import Callable, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
-from .tools.array_management import ArrayLike, ArraySlicer, crop_to_center
+from .tools.array_management import ArrayLike, VariableIndexMap, crop, crop_to_center
 
 # define custom type annotations
 Field = Callable[
-    [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+    [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
     ArrayLike,
 ]
 DirichletBC = Union[Field, Tuple[Optional[Field], Optional[Field]]]
@@ -27,7 +27,7 @@ class BoundaryConditions:
 
     def __init__(
         self,
-        array_slicer: ArraySlicer,
+        variable_index_map: VariableIndexMap,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -59,45 +59,38 @@ class BoundaryConditions:
         Initialize boundary conditions.
 
         Args:
-            array_slicer: ArraySlicer object for slicing arrays by x, y, z and variable
-                name.
-            bcx (Union[str, Tuple[str, str]]): Boundary condition string indicating
-                the type of boundary condition to use in the x-direction. Can use one
-                string for both boundaries or a tuple of two strings for the left and
-                right boundaries, respectively.
-            bcy (Union[str, Tuple[str, str]]): Boundary condition string indicating
-                the type of boundary condition to use in the y-direction. Can use one
-                string for both boundaries or a tuple of two strings for the left and
-                right boundaries, respectively.
-            bcz (Union[str, Tuple[str, str]]): Boundary condition string indicating
-                the type of boundary condition to use in the z-direction. Can use one
-                string for both boundaries or a tuple of two strings for the left and
-                right boundaries, respectively.
-            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions for the
-                x-face slabs. If x-direciton "dirichlet" boundaries are used, at least
-                one pointwise, primitive variable Field must be provided.
-            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions for the
-                y-face slabs. If y-direciton "dirichlet" boundaries are used, at least
-                one pointwise, primitive variable Field must be provided.
-            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions for the
-                z-face slabs. If z-direciton "dirichlet" boundaries are used, at least
-                one pointwise, primitive variable Field must be provided.
-            x_slab (Optional[Tuple[Tuple[ArrayLike, ArrayLike, ArrayLike],
-                Tuple[ArrayLike, ArrayLike, ArrayLike]]]): Slab boundary coordinates
-                for the x-direction slabs. The tuple should contain two tuples of three
+            variable_index_map: VariableIndexMap object.
+            bcx, bcy, bcz: Boundary conditions for the x, y, and z directions. Each can
+                be specified as a single string to apply the same condition on both
+                sides, or as a tuple of two strings to apply different conditions on
+                the lower and upper (left and right) boundaries, respectively.
+                Supported boundary condition names include: "periodic", "dirichlet",
+                "free", "reflective", "zeros", and "ones".
+            x_dirichlet, y_dirichlet, z_dirichlet: Additional argument for "dirichlet"
+                boundary conditions. Must be a callable that takes following arguments:
+                - idx: VariableIndexMap object.
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
+                - t: Optional time at which the boundary condition is applied.
+                And returns an array with shape (nvars, nx, ny, nz). Can also be given
+                as a tuple of two callables, one for the left and one for the right
+                boundary condition. If a single callable is provided, it will be used
+                for both boundaries.
+            x_slab, y_slab, z_slab: Optional tuples of three arrays each,
+                representing the slab boundary coordinates for the x, y, and z
+                directions, respectively. Each tuple should contain two tuples of three
                 arrays each, representing the left and right slabs, respectively.
-            y_slab (Optional[Tuple[Tuple[ArrayLike, ArrayLike, ArrayLike],
-                Tuple[ArrayLike, ArrayLike, ArrayLike]]]): Slab boundary coordinates
-                for the y-direction slabs. The tuple should contain two tuples of three
-                arrays each, representing the left and right slabs, respectively.
-            z_slab (Optional[Tuple[Tuple[ArrayLike, ArrayLike, ArrayLike],
-                Tuple[ArrayLike, ArrayLike, ArrayLike]]]): Slab boundary coordinates
-                for the z-direction slabs. The tuple should contain two tuples of three
-                arrays each, representing the left and right slabs, respectively.
-            conservatives_wrapper (Optional[FieldWrapper]): Wrapper to convert output of
-                a function from primitive variables to conservative variables.
-            fv_average_wrapper (Optional[FieldWrapper]): Wrapper to convert output of a
-                function from pointwise to cell-averaged.
+                The arrays should have shapes (nx, ny, nz) and represent the
+                coordinates of the slab boundaries.
+            conservatives_wrapper: Wrapper to convert output of the Dirichlet functions
+                from primitive variables to conservative variables. This is required if
+                any of the boundary conditions is "dirichlet". If not provided, it will
+                raise an error when a Dirichlet boundary condition is applied.
+            fv_average_wrapper: Wrapper to convert output of the Dirichlet functions
+                from pointwise values to finite-volume average values. This is required
+                if any of the boundary conditions is "dirichlet". If not provided, it
+                will raise an error when a Dirichlet boundary condition is applied.
 
         Note:
             See `IMPLEMENTED_BCS` for the implemented boundary condition codes.
@@ -107,7 +100,7 @@ class BoundaryConditions:
                 raise ValueError(
                     "Boundary conditions must be a string or tuple of two strings."
                 )
-        self.array_slicer = array_slicer
+        self.variable_index_map = variable_index_map
         self.bcx = bcx if _is_two_tuple(bcx) else (bcx, bcx)
         self.bcy = bcy if _is_two_tuple(bcy) else (bcy, bcy)
         self.bcz = bcz if _is_two_tuple(bcz) else (bcz, bcz)
@@ -123,7 +116,7 @@ class BoundaryConditions:
         self.x_slab = x_slab if _is_two_tuple(x_slab) else (x_slab, x_slab)
         self.y_slab = y_slab if _is_two_tuple(y_slab) else (y_slab, y_slab)
         self.z_slab = z_slab if _is_two_tuple(z_slab) else (z_slab, z_slab)
-        self.slab_slicer = ArraySlicer({}, ndim=3)
+        self.slab_slicer = VariableIndexMap({})
 
         # configure dirichlet functions
         for dim in "xyz":
@@ -156,38 +149,40 @@ class BoundaryConditions:
         arr: ArrayLike,
         pad_width: Tuple[int, int, int],
         t: Optional[float] = None,
-        conservatives: bool = True,
-        averages: bool = True,
+        primitives: bool = False,
+        pointwise: bool = False,
         check_for_NaNs: bool = False,
     ) -> ArrayLike:
         """
         Apply boundary conditions to an array.
 
         Args:
-            arr (ArrayLike): Array to which to apply boundary conditions.
-            pad_width (Tuple[int, int, int]): Tuple of integers indicating the padding
-                width for each dimension (x, y, z).
-            t (Optional[float]): Time at which boundary conditions are applied.
-            conservatives (bool): Whether `arr` contains conservative variables.
-                If False, it is assumed that `arr` contains primitive variables.
-            averages (bool): Whether 'arr' contains finite-volume average values.
-                If False, it is assumed that `arr` contains pointwise values.
-            check_for_NaNs (bool): Whether to check for NaN values in the array after
-                applying boundary conditions.
+            arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            pad_width: Tuple of integers indicating the padding width for each
+                dimension: x (axis 1), y (axis 2), and z (axis 3).
+            t: Time at which boundary conditions are applied. This is only used for
+                Dirichlet boundary conditions.
+            primitives: Whether `arr` contains primitive variables. If False, it is
+                assumed that `arr` contains conservative variables.
+            pointwise: Whether `arr` contains pointwise values. If False, it is assumed
+                that `arr` contains finite-volume average values.
+            check_for_NaNs: Whether to check for NaN values in the array after applying
+                boundary conditions.
         Returns:
-            (ArrayLike): Array with boundary conditions applied.
+           Array with boundary conditions applied. Has shape
+           (nvars, nx + 2*pad_width[0], ny + 2*pad_width[1], nz + 2*pad_width[2]).
         """
         # initialize array with boundary conditions
-        out = np.pad(
-            arr,
-            pad_width=(
-                (0, 0),
-                (pad_width[0], pad_width[0]),
-                (pad_width[1], pad_width[1]),
-                (pad_width[2], pad_width[2]),
-            ),
-            mode="empty",
+        if arr.ndim != 4:
+            raise ValueError("Array must be 4D (nvars, nx, ny, nz).")
+        _pad_width = (
+            (0, 0),
+            (pad_width[0], pad_width[0]),
+            (pad_width[1], pad_width[1]),
+            (pad_width[2], pad_width[2]),
         )
+        out = np.pad(arr, pad_width=_pad_width, mode="empty")
 
         # loop over boundary slabs
         for i, j in product(range(3), range(2)):
@@ -209,15 +204,13 @@ class BoundaryConditions:
                         dim,
                         pos,
                         t,
-                        conservatives,
-                        averages,
+                        primitives,
+                        pointwise,
                     )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
                 case "reflective":
-                    self._apply_reflective_bc(
-                        out, slab_thickness, dim, pos, conservatives
-                    )
+                    self._apply_reflective_bc(out, slab_thickness, dim, pos, primitives)
                 case "zeros":
                     self._apply_constant_bc(out, slab_thickness, dim, pos, 0.0)
                 case "ones":
@@ -242,27 +235,27 @@ class BoundaryConditions:
         Apply periodic boundary conditions to arr, modifying it in place.
 
         Args:
-            arr (ArrayLike): Array to which to apply boundary conditions.
-            slab_thickness (int): Thickness of the boundary condition slab along the
-                axis.
-            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
-                conditions ("x", "y", or "z").
-            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
-                ("l" or "r").
+            arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            slab_thickness: Number of cells to apply periodic boundary conditions to
+                along the specified axis.
+            dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
+                (axis 2), or "z" (axis 3).
+            pos: Position of the boundary condition slab: "l" for left or "r" for
+                right.
 
         Returns:
-            None
+            None: The array is modified in place.
         """
-        _slc = self.array_slicer
-        _st = slab_thickness
-        _axis = "xyz".index(dim) + 1
+        st = slab_thickness
+        axis = "xyz".index(dim) + 1
         if pos == "l":
-            outer_slc = _slc(axis=_axis, cut=(None, _st))
-            inner_slc = _slc(axis=_axis, cut=(-2 * _st, -_st))
+            outer_slice = crop(axis, (None, st))
+            inner_slice = crop(axis, (-2 * st, -st))
         else:
-            outer_slc = _slc(axis=_axis, cut=(-_st, None))
-            inner_slc = _slc(axis=_axis, cut=(_st, 2 * _st))
-        arr[outer_slc] = arr[inner_slc]
+            outer_slice = crop(axis, (-st, None))
+            inner_slice = crop(axis, (st, 2 * st))
+        arr[outer_slice] = arr[inner_slice]
 
     def _apply_dirichlet_bc(
         self,
@@ -271,51 +264,57 @@ class BoundaryConditions:
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
         t: Optional[float] = None,
-        conservatives: bool = True,
-        averages: bool = True,
+        primitives: bool = False,
+        pointwise: bool = False,
     ):
         """
         Apply Dirichlet boundary conditions to arr, modifying it in place.
 
         Args:
-            arr (ArrayLike): Array to which to apply boundary conditions.
-            slab_thickness (int): Thickness of the boundary condition slab along the
-                axis.
-            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
-                conditions ("x", "y", or "z").
-            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
-                ("l" for left or "r" for right).
-            t (Optional[float]): Time at which Dirichlet boundary conditions are applied.
-            conservatives (bool): Whether `arr` contains conservative variables.
-                If False, it is assumed that `arr` contains primitive variables.
-            averages (bool): Whether 'arr' contains finite-volume average values.
-                If False, it is assumed that `arr` contains pointwise values.
+            arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            slab_thickness: Number of cells to apply periodic boundary conditions to
+                along the specified axis.
+            dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
+                (axis 2), or "z" (axis 3).
+            pos: Position of the boundary condition slab: "l" for left or "r" for
+                right.
+            t: Time at which boundary conditions are applied. This is only used for
+                Dirichlet boundary conditions.
+            primitives: Whether `arr` contains primitive variables. If False, it is
+                assumed that `arr` contains conservative variables.
+            pointwise: Whether `arr` contains pointwise values. If False, it is assumed
+                that `arr` contains finite-volume average values.
 
         Returns:
-            None
+            None: The array is modified in place.
         """
-        _slc = self.array_slicer
-        _axis = "xyz".index(dim) + 1
+        idx = self.variable_index_map
+
+        # configure slice
+        st = slab_thickness
+        axis = "xyz".index(dim) + 1
+        outer_slice = crop(axis, (None, st) if pos == "l" else (-st, None))
+
+        # configure dirichlet function
+        conservative, fv_average = not primitives, not pointwise
         f = getattr(self, f"{dim}_dirichlet")["lr".index(pos)]
         if f is None:
             raise ValueError(f"No {dim}{pos}-dirichlet function defined.")
-        cut = (None, slab_thickness) if pos == "l" else (-slab_thickness, None)
-        shape = arr[_slc(axis=_axis, cut=cut)].shape
+        shape = arr[outer_slice].shape
         slab_coords = self._get_slab_coords((shape[1], shape[2], shape[3]), dim, pos)
-        if conservatives and averages:
-            arr[_slc(axis=_axis, cut=cut)] = self.fv_average_wrapper(
-                self.conservatives_wrapper(f)
-            )(_slc, *slab_coords, t)
-        elif conservatives:
-            arr[_slc(axis=_axis, cut=cut)] = self.conservatives_wrapper(f)(
-                _slc, *slab_coords, t
+
+        # apply the dirichlet function
+        if conservative and fv_average:
+            arr[outer_slice] = self.fv_average_wrapper(self.conservatives_wrapper(f))(
+                idx, *slab_coords, t
             )
-        elif averages:
-            arr[_slc(axis=_axis, cut=cut)] = self.fv_average_wrapper(f)(
-                _slc, *slab_coords, t
-            )
+        elif conservative:
+            arr[outer_slice] = self.conservatives_wrapper(f)(idx, *slab_coords, t)
+        elif fv_average:
+            arr[outer_slice] = self.fv_average_wrapper(f)(idx, *slab_coords, t)
         else:
-            arr[_slc(axis=_axis, cut=cut)] = f(_slc, *slab_coords, t)
+            arr[outer_slice] = f(idx, *slab_coords, t)
 
     def _apply_free_bc(
         self,
@@ -328,27 +327,27 @@ class BoundaryConditions:
         Apply free boundary conditions to arr, modifying it in place.
 
         Args:
-            arr (ArrayLike): Array to which to apply boundary conditions.
-            slab_thickness (int): Thickness of the boundary condition slab along the
-                axis.
-            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
-                conditions ("x", "y", or "z").
-            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
-                ("l" for left or "r" for right).
+             arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            slab_thickness: Number of cells to apply periodic boundary conditions to
+                along the specified axis.
+            dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
+                (axis 2), or "z" (axis 3).
+            pos: Position of the boundary condition slab: "l" for left or "r" for
+                right.
 
         Returns:
-            None
+            None: The array is modified in place.
         """
-        _slc = self.array_slicer
-        _st = slab_thickness
-        _axis = "xyz".index(dim) + 1
+        st = slab_thickness
+        axis = "xyz".index(dim) + 1
         if pos == "l":
-            outer_slc = _slc(axis=_axis, cut=(0, _st))
-            inner_slc = _slc(axis=_axis, cut=(_st, (_st + 1)))
+            outer_slice = crop(axis, (0, st))
+            inner_slice = crop(axis, (st, st + 1))
         else:
-            outer_slc = _slc(axis=_axis, cut=(-_st, 0))
-            inner_slc = _slc(axis=_axis, cut=(-(_st + 1), -_st))
-        arr[outer_slc] = arr[inner_slc]
+            outer_slice = crop(axis, (-st, 0))
+            inner_slice = crop(axis, (-st - 1, -st))
+        arr[outer_slice] = arr[inner_slice]
 
     def _apply_reflective_bc(
         self,
@@ -356,39 +355,40 @@ class BoundaryConditions:
         slab_thickness: int,
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
-        conservatives: bool = True,
+        primitives: bool = False,
     ):
         """
         Apply reflective boundary conditions to arr, modifying it in place.
 
         Args:
-            arr (ArrayLike): Array to which to apply boundary conditions.
-            slab_thickness (int): Thickness of the boundary condition slab along the
-                axis.
-            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
-                conditions ("x", "y", or "z").
-            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
-                ("l" for left or "r" for right).
-            conservatives (bool): Whether `arr` contains conservative variables.
-                If False, it is assumed that `arr` contains primitive variables.
+            arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            slab_thickness: Number of cells to apply periodic boundary conditions to
+                along the specified axis.
+            dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
+                (axis 2), or "z" (axis 3).
+            pos: Position of the boundary condition slab: "l" for left or "r" for
+                right.
+            primitives: Whether `arr` contains primitive variables. If False, it is
+                assumed that `arr` contains conservative variables.
 
         Returns:
-            None
+            None: The array is modified in place.
         """
-        _slc = self.array_slicer
-        _st = slab_thickness
-        _axis = "xyz".index(dim) + 1
-        _flip_slc = _slc(axis=_axis, cut=(None, None), step=-1)
+        idx = self.variable_index_map
+        st = slab_thickness
+        axis = "xyz".index(dim) + 1
+        flipper_slice = crop(axis, (None, None), step=-1)
         if pos == "l":
-            outer_slc = _slc(axis=_axis, cut=(0, _st))
-            inner_slc = _slc(axis=_axis, cut=(_st, 2 * _st))
+            outer_slice = crop(axis, (0, st))
+            inner_slice = crop(axis, (st, 2 * st))
         else:
-            outer_slc = _slc(axis=_axis, cut=(-_st, 0))
-            inner_slc = _slc(axis=_axis, cut=(-2 * _st, -_st))
-        arr[outer_slc] = arr[inner_slc][_flip_slc]
+            outer_slice = crop(axis, (-st, 0))
+            inner_slice = crop(axis, (-2 * st, -st))
+        arr[outer_slice] = arr[inner_slice][flipper_slice]
 
-        # Negate momentum/ velocity
-        arr[outer_slc][_slc(("m" if conservatives else "v") + dim)] *= -1
+        # Negate moment/ velocityum
+        arr[outer_slice][idx(("v" if primitives else "m") + dim)] *= -1
 
     def _apply_constant_bc(
         self,
@@ -402,26 +402,22 @@ class BoundaryConditions:
         Apply zero boundary conditions to arr, modifying it in place.
 
         Args:
-            arr (ArrayLike): Array to which to apply boundary conditions.
-            slab_thickness (int): Thickness of the boundary condition slab along the
-                axis.
-            dim (Literal["x", "y", "z"]): Dimension along which to apply boundary
-                conditions ("x", "y", or "z").
-            pos (Literal["x", "y", "z"]): Position of the boundary condition slab
-                ("l" for left or "r" for right).
-            value (float): Value to set the boundary condition to.
+            arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            slab_thickness: Number of cells to apply periodic boundary conditions to
+                along the specified axis.
+            dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
+                (axis 2), or "z" (axis 3).
+            pos: Position of the boundary condition slab: "l" for left or "r" for
+                right.
+            value: Value to set the boundary condition to.
 
         Returns:
-            None
+            None: The array is modified in place.
         """
-        _slc = self.array_slicer
-        _axis = "xyz".index(dim) + 1
-        arr[
-            _slc(
-                axis="xyz".index(dim) + 1,
-                cut=(None, slab_thickness) if pos == "l" else (-slab_thickness, None),
-            )
-        ] = value
+        st = slab_thickness
+        axis = "xyz".index(dim) + 1
+        arr[crop(axis, (None, st) if pos == "l" else (-st, None))] = value
 
     def _get_slab_coords(
         self,
@@ -434,24 +430,23 @@ class BoundaryConditions:
         the given thickness.
 
         Args:
-            shape (Tuple[int, int, int]): Desired shape of the slab.
-            dim (Literal["x", "y", "z"]): Dimension of the slab
-                ("x", "y", or "z").
-            pos (Literal["l", "r"]): Position of the slab ("l" or "r").
+            shape: Desired shape of the slab (nx, ny, nz).
+            dim: Dimension along which to get the slab: "x", "y", or "z".
+            pos: Position of the slab: "l" for left or "r" for right.
 
         Returns:
-            Tuple[ArrayLike, ArrayLike, ArrayLike]: Coordinates of the slab.
+            Tuple of three arrays representing the slab coordinates in the order
+            (x-coordinates, y-coordinates, z-coordinates).
         """
-        _slc = self.slab_slicer
         axis = "xyz".index(dim)
-        slab_thickness = shape[axis]
+        st = shape[axis]
+        slab_slice = crop(axis, (-st, None) if pos == "l" else (None, st))
         arrs = getattr(self, f"{dim}_slab")["lr".index(pos)]
         if arrs is None:
             raise ValueError(f"No {dim}{pos}-slab defined.")
-        cut = (-slab_thickness, None) if pos == "l" else (None, slab_thickness)
         out = (
-            crop_to_center(arrs[0][_slc(axis=axis, cut=cut)], shape),
-            crop_to_center(arrs[1][_slc(axis=axis, cut=cut)], shape),
-            crop_to_center(arrs[2][_slc(axis=axis, cut=cut)], shape),
+            crop_to_center(arrs[0][slab_slice], shape),
+            crop_to_center(arrs[1][slab_slice], shape),
+            crop_to_center(arrs[2][slab_slice], shape),
         )
         return out

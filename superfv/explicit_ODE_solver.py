@@ -17,12 +17,13 @@ def _dt_ceil(t: float, dt: float, t_max: Optional[float] = None) -> float:
     Returns a reduced dt if it overshoots a target time.
 
     Args:
-        t (float): Time value.
-        dt (float): Potential time-step size.
-        t_max (Optional[float]): Time value to avoid overshooting.
+        t: Time value.
+        dt: Potential time-step size.
+        t_max: Time value to avoid overshooting. If None, dt is returned as is.
 
     Returns:
-        (float): Time-step size that does not overshoot t_max.
+        Time-step size that does not overshoot t_max if it is defined, otherwise
+            returns dt.
     """
     return min(t_max - t, dt) if t_max is not None else dt
 
@@ -32,16 +33,16 @@ class ExplicitODESolver(ABC):
     Base class for explicit ODE solvers for the form y' = f(t, y).
 
     Attributes:
-        t (float): Current time.
-        timestamps (List[float]): List of timestamps.
-        step_count (int): Number of steps taken.
-        am (ArrayManager): Array manager.
-        timer (Timer): Timer object.
-        snapshots (dict): Dictionary of snapshots.
-        commit_details (dict): Git commit details.
-        integrator (str): Name of the integrator.
-        stepper (Callable): Stepper function.
-        snapshot_dir (str): Directory to save snapshots.
+        t: Current time.
+        timestamps: List of timestamps.
+        step_count: Number of steps taken.
+        am: ArrayManager object.
+        timer: Timer object.
+        snapshots: Dictionary of snapshots.
+        commit_details: Git commit details.
+        integrator: Name of the integrator.
+        stepper: Stepper function.
+        snapshot_dir: Directory to save snapshots.
 
     Notes:
         - The `f` method must be implemented by the subclass.
@@ -60,12 +61,12 @@ class ExplicitODESolver(ABC):
         Right-hand side of the ODE.
 
         Args:
-            t (float): Time value.
-            y (ArrayLike): Solution value.
+            t: Time value.
+            y: State at time t as an array.
 
         Returns:
-            dt (float): Time-step size.
-            dydt (ArrayLike): Right-hand side of the ODE at (t, y).
+            dt: Time-step size.
+            dydt: Right-hand side of the ODE at (t, y) as an array.
 
         Notes:
             - Increment `self.substep_count` if the function is called multiple times
@@ -79,7 +80,7 @@ class ExplicitODESolver(ABC):
         Read snapshots from the snapshot directory. Override to load more data.
 
         Returns:
-            (bool): True if snapshots were read successfully.
+            True if snapshots were read successfully, False otherwise.
         """
         raise NotImplementedError("read_snapshots method not implemented.")
 
@@ -89,7 +90,7 @@ class ExplicitODESolver(ABC):
         Write snapshots to the snapshot directory. Override to save more data.
 
         Args:
-            overwrite (bool): Overwrite the snapshot directory if it exists.
+            overwrite: Whether to overwrite the snapshot directory if it exists.
         """
         raise NotImplementedError("write_snapshots method not implemented.")
 
@@ -126,8 +127,8 @@ class ExplicitODESolver(ABC):
         Initializes the ODE solver.
 
         Args:
-            y0 (np.ndarray): Initial solution value.
-            state_array_name (str): Name of the state array.
+            y0: Initial state as an array.
+            state_array_name: Name of the state array.
         """
         # initialize times
         self.t = 0.0
@@ -195,15 +196,15 @@ class ExplicitODESolver(ABC):
         Integrate the ODE.
 
         Args:
-            T (Optional[Union[float, List[float]]]): Time to simulate until. If an
-                iterable, take snapshots at those times.
-            n (Optional[int]): Number of iterations to evolve. If defined, all other arguments are
-                ignored.
-            log_every_step (bool): Take a snapshot at every step.
-            snapshot_dir (Optional[str]): Directory to save snapshots. If None, does not save.
-            overwrite (bool): Overwrite the snapshot directory if it exists.
-            allow_overshoot (bool): Allow overshooting the target simulation time.
-            progress_bar (bool): Whether to print a progress bar during integration.
+            T: Times to simulate until. If list, snapshots are taken at each time
+                in the list. If float, a single time is used. If None, `n` must be
+                defined.
+            n: Number of steps to take. If None, `T` must be defined.
+            log_every_step: Whether to a snapshot at every step.
+            snapshot_dir Directory to save snapshots. If None, does not save.
+            overwrite: Whether to overwrite the snapshot directory if it exists.
+            allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
+            progress_bar: Whether to print a progress bar during integration.
         """
         # if given n, perform a simple time evolution
         if n is not None:
@@ -262,7 +263,7 @@ class ExplicitODESolver(ABC):
             # snapshot decision and target time update
             if self.t > T_max:
                 self.snapshot()  # trigger closing snapshot
-            elif (not allow_overshoot and self.t) == target_time or log_every_step:
+            elif (not allow_overshoot and self.t == target_time) or log_every_step:
                 self.snapshot()
                 if self.t == target_time and self.t < T_max:
                     target_time = target_times.pop(0)
@@ -300,9 +301,9 @@ class ExplicitODESolver(ABC):
         Setup, update, or cleanup the progress bar.
 
         Args:
-            action (str): "setup", "update", "cleanup".
-            T (Optional[float]): Time to simulate until.
-            do_nothing (bool): Don't do anything.
+            action: Name of action to take: "setup", "update", or "cleanup".
+            T: Time to simulate until. If None, no progress bar is set up.
+            do_nothing: Whether to do nothing, e.g., if progress bar is disabled.
         """
         if do_nothing:
             return

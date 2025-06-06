@@ -18,9 +18,9 @@ def zhang_shu_operator(u_ho: ArrayLike, u_fo: ArrayLike, theta: ArrayLike) -> Ar
     Zhang and Shu operator for limiting the high-order solution.
 
     Args:
-        u_ho (ArrayLike): Array of high-order interpolation values.
-        u_fo (ArrayLike): Array of first-order interpolation values.
-        theta (ArrayLike): Array of limiting coefficients.
+        u_ho: Array of high-order interpolation values.
+        u_fo: Array of first-order interpolation values.
+        theta: Array of limiting coefficients.
 
     Returns:
         ArrayLike: Array of limited values.
@@ -46,25 +46,26 @@ def gather_nodes(
     Return nodal interpolations for all cell faces.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Finite volume solver object.
-        averages (ArrayLike): Array of finite volume averages, has shape
-            (nvars, nx, ny, nz).
-        interpolation_scheme (Literal["transverse", "gauss-legendre"]): Interpolation
-            mode.
-        p (int): Polynomial interpolation degree.
+        fv_solver: FiniteVolumeSovler object.
+        averages: Array of finite volume averages, has shape (nvars, nx, ny, nz).
+        interpolation_scheme: Interpolation mode for computing the face nodes. Possible
+            values:
+            - "transverse": Transverse interpolation.
+            - "gauss-legendre": Gauss-Legendre interpolation.
+        p: Polynomial interpolation degree.
 
     Returns:
-        Tuple[Optional[ArrayLike], ...]: Arrays of interpolation nodes if the face
-            along the respective dimension is used, otherwise None. If not None, the
-            arrays have shape (nvars, nx, ny, nz, ninterpolations) and are ordered as
-            follows:
-            - Left x face node array or None.
-            - Right x face node array or None.
-            - Left y face node array or None.
-            - Right y face node array or None.
-            - Left z face node array or None.
-            - Right z face node array or None.
-            - Centroid node array with ninterpolations=1.
+        Seven array of interpolation nodes, one for each face and the centroid.
+        If the face along the respective dimension is not used, the corresponding
+        array is None. The arrays have shape (nvars, nx, ny, nz, ninterpolations) and
+        are ordered as follows:
+        - Left x face node array or None.
+        - Right x face node array or None.
+        - Left y face node array or None.
+        - Right y face node array or None.
+        - Left z face node array or None.
+        - Right z face node array or None.
+        - Centroid node array with ninterpolations=1.
     """
     hoxl, hoxr = (
         fv_solver.interpolate_face_nodes(
@@ -124,28 +125,28 @@ def zhang_shu_limiter(
     Zhang-Shu limiter for all variables.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Finite volume solver object.
-        averages (ArrayLike): Array of conservative cell averages. Has shape
-            (nvars, nx, ny, nz).
-        dim (Literal["x", "y", "z"]): Dimension of the face to limit.
-        interpolation_scheme (Literal["transverse", "gauss-legendre"]): Interpolation
-            mode.
-        p (int): Polynomial order. Must be >= 1.
-        tol (float): Tolerance for dividing by zero.
-        SED (bool): Whether to use the SED method.
-        convert_to_primitives (bool): Whether to convert the high-order nodes to
-            primitive variables before limiting. If True, `primitive_fallback` must be
-            provided.
-        primitive_fallback (Optional[ArrayLike]): Fallback values used by the limiter
-            if `convert_to_primitives` is True.
+        fv_solver: FiniteVolumeSolver object.
+        averages: Array of conservative cell averages. Has shape (nvars, nx, ny, nz).
+        dim: Dimension of the face to limit. Can be "x", "y", or "z".
+        interpolation_scheme: Interpolation mode for computing the face nodes. Possible
+            values:
+            - "transverse": Transverse interpolation.
+            - "gauss-legendre": Gauss-Legendre interpolation.
+        p: Polynomial interpolation degree. Must be >= 1.
+        tol: Tolerance for dividing by zero. Default is 1e-16.
+        SED: Whether to use the Smooth Extrema Detector when computing the limiter
+            theta.
+        convert_to_primitives: Whether to convert the high-order nodes to primitive
+            variables before limiting. If True, `primitive_fallback` must be provided.
+        primitive_fallback: Fallback values used by the limiter if
+            `convert_to_primitives` is True. If None, the averages are used.
 
     Returns:
-        Tuple[ArrayLike, ArrayLike]: Limited face values (left, right). Each has shape
-            (nvars, <nx, <ny, <nz, ninterpolations).
+        Left and right limited face node values as a tuple of two arrays. Each array
+        has shape (nvars, <nx, <ny, <nz, ninterpolations).
     """
     xp = fv_solver.xp
-    _slc = fv_solver.array_slicer
-    __limiting_slc__ = slice(None)  # All variables for now
+    limiting_slice = slice(None)  # All variables for now
 
     def zs_str(p, dim, pos):
         return f"zs_p{p}{dim}{pos}_face_nodes"
@@ -184,7 +185,7 @@ def zhang_shu_limiter(
 
     # get dmp
     m, M = compute_dmp(
-        xp, averages[__limiting_slc__], dims=fv_solver.dims, include_corners=False
+        xp, averages[limiting_slice], dims=fv_solver.dims, include_corners=False
     )
 
     # get common shape
@@ -200,11 +201,11 @@ def zhang_shu_limiter(
         return crop_to_center(
             arr[..., np.newaxis] if add_axis else arr,
             target_shape,
-            axes=(1, 2, 3),
+            ignore_axes=(0, 4),
         )
 
     # crop some arrays
-    hocc = hocc[__limiting_slc__]
+    hocc = hocc[limiting_slice]
     foc, m, M = map(lambda arr: crop(arr, add_axis=True), [foc, m, M])
 
     # compute nodal min, max
@@ -224,11 +225,11 @@ def zhang_shu_limiter(
     ]:
         if using_dim:
             left, right = map(crop, [cast(ArrayLike, left), cast(ArrayLike, right)])
-            update_min_and_max(left[__limiting_slc__])
-            update_min_and_max(right[__limiting_slc__])
+            update_min_and_max(left[limiting_slice])
+            update_min_and_max(right[limiting_slice])
 
     # compute theta
-    _foc = foc[__limiting_slc__]
+    _foc = foc[limiting_slice]
     theta = np.minimum(
         np.minimum(
             np.divide(np.abs(M - _foc), np.abs(Mj - _foc) + tol),
@@ -251,7 +252,7 @@ def zhang_shu_limiter(
                     fv_solver.arrays["u"].shape,
                 ),
                 3,
-            )[__limiting_slc__],
+            )[limiting_slice],
             axes=fv_solver.axes,
         )
         alpha = fv_solver.bc_for_smooth_extrema_detection(

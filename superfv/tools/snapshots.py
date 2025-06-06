@@ -21,8 +21,8 @@ class Snapshots:
         Log snapshot data at time `t`.
 
         Args:
-            t (float): Time at which to log the snapshot data.
-            data (Any): Snapshot data to log.
+            t: Time at which to log the snapshot data.
+            data: Snapshot data to log.
 
         Raises:
             ValueError: If snapshot data already exists for time `t`.
@@ -38,7 +38,7 @@ class Snapshots:
         Remove snapshot data at time `t`.
 
         Args:
-            t (float): Time at which to remove the snapshot data.
+            t: Time at which to remove the snapshot data.
 
         Raises:
             KeyError: If no snapshot data is available for time `t`.
@@ -60,10 +60,10 @@ class Snapshots:
         Returns the snapshot data at time `t`.
 
         Args:
-            t (float): Time at which to retrieve the snapshot data.
+            t: Time at which to retrieve the snapshot data.
 
         Returns:
-            Any: Snapshot data at time
+            Snapshot data at time `t`.
 
         Raises:
             KeyError: If no snapshot data is available for time `t`.
@@ -80,7 +80,7 @@ class Snapshots:
             n (int): Index of the snapshot data.
 
         Returns:
-            Any: Snapshot data at index `n`.
+            Snapshot data at index `n`.
 
         Raises:
             IndexError: If the index `n` is out of range.
@@ -98,7 +98,7 @@ class Snapshots:
         Allows iteration over the snapshots in order of time.
 
         Yields:
-            Tuple[float, Any]: A tuple containing time and snapshot data.
+            A tuple containing time and snapshot data.
         """
         for t in self.time_values:
             yield t, self.data[t]
@@ -108,6 +108,6 @@ class Snapshots:
         Returns the list of time values for which snapshot data is available.
 
         Returns:
-            List[float]: List of time values.
+            List of time values.
         """
         return self.time_values[:]

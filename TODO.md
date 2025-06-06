@@ -1,6 +1,14 @@
-- [x] nonlinear sound wave test (David)
-- [x] SED does not work for *a priori* limiting
-- [x] compare sedov1d with Romain lecture *a priori* limited solver and analytical solution
+- [ ] !!!fix 2D boundary conditions (2D advection, slotted disk, etc)
+- [ ] !!!major bug found: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
+- [ ] allow group_var_map to point to other groups
+- [ ] does bc take (nvar, nx, ny, nz) or (nvar, nx, ny, nz, ninterpolations). make this consistent between the class and FiniteVolumeSolver.apply_bc
+- [ ] add nvars to VariableIndexMap
+- [ ] put custom types somewhere else?
+- [ ] fix tests D:
+- [ ] consider cleaning up interpolation cache stuff
+- [ ] edit docstrings to not have the type of args in paranetheses wtf
+- [ ] remove '_thing' naming convention unless the thing is actually hidden on purpose
+- [ ] remove x, y, z options from array_slicer. enable multi-axis slicing instead
 - [ ] remove array="w" terminology from plotting slices
 - [ ] limiting_vars should be a list
 - [ ] fix progress bar for allow_overshoot=True

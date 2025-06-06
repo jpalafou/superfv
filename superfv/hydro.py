@@ -2,86 +2,80 @@ from typing import Any
 
 import numpy as np
 
-from superfv.tools.array_management import ArrayLike, ArraySlicer
+from superfv.tools.array_management import ArrayLike, VariableIndexMap
 
 
 def conservatives_from_primitives(
-    hydro: Any, array_slicer: ArraySlicer, w: ArrayLike, gamma: float
+    hydro: Any, idx: VariableIndexMap, w: ArrayLike, gamma: float
 ):
     """
     Compute the conservative variables from the primitive variables.
 
     Args:
-        hydro (Any): Hydro namespace.
-        array_slicer (ArraySlicer): Array slicer object.
-        w (ArrayLike): Array of primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
+        hydro: Hydro namespace.
+        idx: VariableIndexMap object with indices for hydro variables.
+        w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
         gamma (float): Adiabatic index.
 
     Returns:
-        u (ArrayLike): Array with conservative variables. Has shape
-            (nvars, nx, ny, nz, ...).
+        u: Array with conservative variables. Has shape (nvars, nx, ny, nz, ...).
     """
-    _slc = array_slicer
     u = np.empty_like(w)
-    HAS_PASSIVES = "user_defined_passives" in _slc.group_names
+    HAS_PASSIVES = "user_defined_passives" in idx.group_names
     (
-        u[_slc("rho")],
-        u[_slc("mx")],
-        u[_slc("my")],
-        u[_slc("mz")],
-        u[_slc("E")],
+        u[idx("rho")],
+        u[idx("mx")],
+        u[idx("my")],
+        u[idx("mz")],
+        u[idx("E")],
         passives,
     ) = hydro.conservatives_from_primitives(
-        rho=w[_slc("rho")],
-        v1=w[_slc("vx")],
-        v2=w[_slc("vy")],
-        v3=w[_slc("vz")],
-        P=w[_slc("P")],
+        rho=w[idx("rho")],
+        v1=w[idx("vx")],
+        v2=w[idx("vy")],
+        v3=w[idx("vz")],
+        P=w[idx("P")],
         gamma=gamma,
-        passives=w[_slc("user_defined_passives")] if HAS_PASSIVES else None,
+        passives=w[idx("user_defined_passives")] if HAS_PASSIVES else None,
     )
     if HAS_PASSIVES:
-        u[_slc("user_defined_passives")] = passives
+        u[idx("user_defined_passives")] = passives
     return u
 
 
 def primitives_from_conservatives(
-    hydro: Any, array_slicer: ArraySlicer, u: ArrayLike, gamma: float
+    hydro: Any, idx: VariableIndexMap, u: ArrayLike, gamma: float
 ):
     """
     Compute the primitive variables from the conservative variables.
 
     Args:
-        hydro (Any): Hydro namespace.
-        array_slicer (ArraySlicer): Array slicer object.
-        u (ArrayLike): Array of conservative variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        gamma (float): Adiabatic index.
+        hydro: Hydro namespace.
+        idx: VariableIndexMap object with indices for hydro variables.
+        u: Array of conservative variables. Has shape (nvars, nx, ny, nz, ...).
+        gamma: Adiabatic index.
 
     Returns:
-        w (ArrayLike): Array with primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
+        w (ArrayLike): Array with primitive variables. Has shape (nvars, nx, ny, nz, ...).
     """
-    _slc = array_slicer
     w = np.empty_like(u)
-    HAS_PASSIVES = "user_defined_passives" in _slc.group_names
+    HAS_PASSIVES = "user_defined_passives" in idx.group_names
     (
-        w[_slc("rho")],
-        w[_slc("mx")],
-        w[_slc("my")],
-        w[_slc("mz")],
-        w[_slc("E")],
+        w[idx("rho")],
+        w[idx("mx")],
+        w[idx("my")],
+        w[idx("mz")],
+        w[idx("E")],
         passives,
     ) = hydro.primitives_from_conservatives(
-        rho=u[_slc("rho")],
-        m1=u[_slc("vx")],
-        m2=u[_slc("vy")],
-        m3=u[_slc("vz")],
-        E=u[_slc("P")],
+        rho=u[idx("rho")],
+        m1=u[idx("vx")],
+        m2=u[idx("vy")],
+        m3=u[idx("vz")],
+        E=u[idx("P")],
         gamma=gamma,
-        conserved_passives=u[_slc("user_defined_passives")] if HAS_PASSIVES else None,
+        conserved_passives=u[idx("user_defined_passives")] if HAS_PASSIVES else None,
     )
     if HAS_PASSIVES:
-        w[_slc("user_defined_passives")] = passives
+        w[idx("user_defined_passives")] = passives
     return w

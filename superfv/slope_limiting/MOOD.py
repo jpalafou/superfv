@@ -3,30 +3,29 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Optional, Tuple, cast
 
 from superfv.slope_limiting import compute_dmp
-from superfv.tools.array_management import ArrayLike
+from superfv.tools.array_management import ArrayLike, crop
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
 from .smooth_extrema_detection import compute_smooth_extrema_detector
 
+# custom type for fluxes
+Fluxes = Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
 
-def _cache_fluxes(
-    fv_solver: FiniteVolumeSolver,
-    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
-    scheme: str,
-):
+
+def _cache_fluxes(fv_solver: FiniteVolumeSolver, fluxes: Fluxes, scheme: str):
     """
     Cache the fluxes for the given scheme in `fv_solver.MOOD_cache`.
 
     Args:
-        fv_solver (FiniteVolumeSolver): The finite volume solver object.
-        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
-            corresponding dimension is unused. Otherwise, is an array with shape:
+        fv_solver: FiniteVolumeSolver object.
+        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
+            Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
-        scheme (str): The scheme name.
+        scheme: Name of the scheme used to compute the fluxes.
     """
     if fv_solver.using_xdim:
         fv_solver.MOOD_cache.add("F_" + scheme, cast(ArrayLike, fluxes[0]))
@@ -36,19 +35,16 @@ def _cache_fluxes(
         fv_solver.MOOD_cache.add("H_" + scheme, cast(ArrayLike, fluxes[2]))
 
 
-def init_MOOD(
-    fv_solver: FiniteVolumeSolver,
-    u: ArrayLike,
-    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
-):
+def init_MOOD(fv_solver: FiniteVolumeSolver, u: ArrayLike, fluxes: Fluxes):
     """
     Initialize the MOOD algorithm.
 
     Args:
-        fv_solver (FiniteVolumeSolver): The finite volume solver object.
-        u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
-        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
-            corresponding dimension is unused. Otherwise, is an array with shape:
+        fv_solver: FiniteVolumeSolver object.
+        u: Array of conservative FV cell-averaged variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
+            Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
@@ -71,7 +67,7 @@ def detect_troubles(
     t: float,
     dt: float,
     u: ArrayLike,
-    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
+    fluxes: Fluxes,
     NAD: Optional[float] = None,
     PAD: Optional[ArrayLike] = None,
     PAD_tol: float = 0.0,
@@ -81,30 +77,30 @@ def detect_troubles(
     Detect troubles in the solution.
 
     Args:
-        fv_solver (FiniteVolumeSolver): The finite volume solver object. Is expected to
-            have variable group "limiting_vars" defined in
-            `fv_solver.array_slicer.group_names`.
-        t (float): The current time.
-        dt (float): The time step.
-        u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
-        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
-            corresponding dimension is unused. Otherwise, is an array with shape:
+        fv_solver: FiniteVolumeSolver object. Is expected to have variable group
+            "limiting_vars" defined in `fv_solver.variable_index_map.group_names`.
+        t: Time value.
+        dt: Time step size.
+        u: Array of conservative FV cell-averaged variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
+            Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
-        NAD (Optional[float]): Numerical admissibility detection tolerance. Numerical
-            admissibility is not checked if None.
-        PAD (Optional[ArrayLike]): Physical admissibility detection bounds. Is an array
-            of shape (nvars, 2) if not None, where the first column is the lower bound
-            and the second column is the upper bound. Physical admissibility is not
-            checked if None.
-        PAD_tol (float): Tolerance for the physical admissibility detection. Default is
-            0.0.
-        SED whether to apply smooth extrema detection.
+        NAD: Numerical admissibility detection tolerance. If not provided, numerical
+            admissibility is not checked.
+        PAD: Physical admissibility detection bounds as an array of shape (nvars, 2)
+            where the first column is the lower bound and the second column is the
+            upper bound. If None, physical admissibility is not checked.
+        PAD_tol: Tolerance for the physical admissibility detection. Default is 0.0.
+        SED: Whether to use the smooth extrema detector (SED) to detect troubles.
+
     Returns:
-        bool: Whether troubles were detected.
+        Whether troubles were detected (bool). If True, the MOOD algorithm will attempt
+            to revise the fluxes in the next step.
     """
-    _slc = fv_solver.array_slicer
+    idx = fv_solver.variable_index_map
     xp = fv_solver.xp
 
     # early escape if max iter count reached
@@ -115,8 +111,8 @@ def detect_troubles(
     ustar = u + dt * fv_solver.RHS(u, *fluxes)
 
     # compute NAD and/or PAD violations
-    __limiting_slc__ = _slc("limiting_vars", keepdims=True)
-    possible_violations = xp.zeros_like(u[__limiting_slc__], dtype=bool)
+    limiting_slice = idx("limiting_vars", keepdims=True)
+    possible_violations = xp.zeros_like(u[limiting_slice], dtype=bool)
     if PAD is None and NAD is None:
         return False
     if NAD is not None:
@@ -127,11 +123,11 @@ def detect_troubles(
             include_corners=True,
         )
         NAD_violations = compute_dmp_violations(xp, ustar, dmp_min, dmp_max, tol=NAD)
-        possible_violations[...] = NAD_violations[__limiting_slc__] < 0
+        possible_violations[...] = NAD_violations[limiting_slice] < 0
     if SED:
         alpha = compute_smooth_extrema_detector(
             xp,
-            fv_solver.apply_bc(ustar, 3)[__limiting_slc__],
+            fv_solver.apply_bc(ustar, 3)[limiting_slice],
             fv_solver.axes,
         )
         possible_violations[...] = xp.logical_and(alpha < 1, possible_violations)
@@ -139,8 +135,8 @@ def detect_troubles(
         possible_violations[...] = xp.logical_or.reduce(
             [
                 possible_violations,
-                ustar[__limiting_slc__] < PAD[__limiting_slc__][..., 0] - PAD_tol,
-                ustar[__limiting_slc__] > PAD[__limiting_slc__][..., 1] + PAD_tol,
+                ustar[limiting_slice] < PAD[limiting_slice][..., 0] - PAD_tol,
+                ustar[limiting_slice] > PAD[limiting_slice][..., 1] + PAD_tol,
             ]
         )
     violations = xp.any(possible_violations, axis=0)
@@ -169,17 +165,14 @@ def compute_dmp_violations(
     maximum principle.
 
     Args:
-        xp (Any): `np` namespace or equivalent.
-        arr (ArrayLike): The array to check. Has shape (nvars, nx, ny, nz).
-        dmp_min (ArrayLike): The minimum values of the array. Has shape
-            (nvars, nx, ny, nz).
-        dmp_max (ArrayLike): The maximum values of the array. Has shape
-            (nvars, nx, ny, nz).
-        tol (float): The tolerance.
+        xp: `np` namespace or equivalent.
+        arr: The array to check for violations. Has shape (nvars, nx, ny, nz).
+        dmp_min: The minimum values of the array. Has shape (nvars, nx, ny, nz).
+        dmp_max: The maximum values of the array. Has shape (nvars, nx, ny, nz).
+        tol: DMP tolerance.
 
     Returns:
-        ArrayLike: The DMP violations as negative values. Has shape
-            (nvars, nx, ny, nz).
+        Array of DMP violations as negative values. Has shape (nvars, nx, ny, nz).
     """
     dmp_range = xp.max(dmp_max, axis=(1, 2, 3), keepdims=True) - xp.min(
         dmp_min, axis=(1, 2, 3), keepdims=True
@@ -193,36 +186,39 @@ def revise_fluxes(
     t: float,
     dt: float,
     u: ArrayLike,
-    fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
+    fluxes: Fluxes,
     mode: Literal["transverse", "gauss-legendre"],
     slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-) -> Tuple[float, Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]]:
+) -> Tuple[float, Fluxes]:
     """
     Revise the fluxes using the MOOD algorithm.
 
     Args:
-        fv_solver (FiniteVolumeSolver): The finite volume solver object.
-        t (float): The current time.
-        dt (float): The time step.
-        u (ArrayLike): The solution array. Has shape (nvars, nx, ny, nz, ...).
-        fluxes (Tuple[Optional[ArrayLike], ...]): The fluxes (F, G, H). None if the
-            corresponding dimension is unused. Otherwise, is an array with shape:
+        fv_solver: FiniteVolumeSolver object.
+        t: Time value.
+        dt: Time step size.
+        u: Array of conservative FV cell-averaged variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
+            Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
             - G: (nvars, nx, ny+1, nz, ...)
             - H: (nvars, nx, ny, nz+1, ...)
-        mode (Literal["transverse", "gauss-legendre"]): The mode for interpolating
-            nodes and integrals.
-        slope_limiter (Optional[Literal["minmod", "moncen"]]): The slope limiter to use
-            if `scheme` is "muscl".
+        mode: The mode for interpolating nodes and integrals. Possible values:
+            - "transverse": Use transverse interpolation.
+            - "gauss-legendre": Use Gauss-Legendre interpolation.
+        slope_limiter: Optional slope limiter to use if `scheme` is "muscl". Possible
+            values:
+            - "minmod": Use the minmod slope limiter.
+            - "moncen": Use the Monotone Central slope limiter.
 
     Returns:
-        Tuple[float, Tuple[Optional[ArrayLike]], ...]: Tuple composed of:
-            - The revised time step.
-            - The revised fluxes (F, G, H). None if the corresponding dimension is
+        dt: The revised time step.
+        fluxes: The revised fluxes (F, G, H). None if the corresponding dimension is
             unused. Otherwise, is an array with shape:
-                - F: (nvars, nx+1, ny, nz, ...)
-                - G: (nvars, nx, ny+1, nz, ...)
-                - H: (nvars, nx, ny, nz+1, ...)
+            - F: (nvars, nx+1, ny, nz, ...)
+            - G: (nvars, nx, ny+1, nz, ...)
+            - H: (nvars, nx, ny, nz+1, ...)
     """
     fv_solver.MOOD_iter_count += 1
     xp = fv_solver.xp
@@ -298,24 +294,25 @@ def map_cell_values_to_face_values(
     Map cell values to face values by taking the maximum of adjacent cell values.
 
     Args:
-        fv_solver (FiniteVolumeSolver): The finite volume solver object.
-        cell_values (ArrayLike): The cell values. Has shape (nx, ny, nz, ...).
-        dim (Literal["x", "y", "z"]): The dimension.
+        fv_solver: FiniteVolumeSolver object.
+        cell_values: Array of cell values. Has shape (nx, ny, nz, ...).
+        dim: Dimension along which to map the cell values to face values: "x", "y", or
+            "z".
 
     Returns:
-        ArrayLike: The face values. Has shape
+        Array of face values with shape:
             - (nx+1, ny, nz, ...) if dim == "x"
             - (nx, ny+1, nz, ...) if dim == "y"
             - (nx, ny, nz+1, ...) if dim == "z"
     """
-    _slc = fv_solver.array_slicer
     padded_cell_values = fv_solver.bc_for_troubled_cell_mask(
         cell_values,
         {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[dim],
     )
-    leftslc = _slc(axis="xyz".index(dim) + 1, cut=(None, -1))
-    rightslc = _slc(axis="xyz".index(dim) + 1, cut=(1, None))
+    axis = "xyz".index(dim) + 1
+    left_slice = crop(axis, (None, -1))
+    right_slice = crop(axis, (1, None))
     face_values = fv_solver.xp.maximum(
-        padded_cell_values[leftslc], padded_cell_values[rightslc]
+        padded_cell_values[left_slice], padded_cell_values[right_slice]
     )
     return face_values

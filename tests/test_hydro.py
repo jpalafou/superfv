@@ -3,7 +3,7 @@ import pytest
 import wtflux.hydro as hydro
 
 from superfv.hydro import conservatives_from_primitives, primitives_from_conservatives
-from superfv.tools.array_management import ArraySlicer
+from superfv.tools.array_management import VariableIndexMap
 
 
 def l1_norm(a, b):
@@ -12,7 +12,7 @@ def l1_norm(a, b):
 
 @pytest.fixture
 def euler_slicer():
-    _euler_slicer = ArraySlicer(
+    _euler_slicer = VariableIndexMap(
         {
             "rho": 0,
             "vx": 1,

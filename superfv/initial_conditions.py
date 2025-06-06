@@ -2,7 +2,7 @@ from typing import Literal, Tuple
 
 import numpy as np
 
-from .tools.array_management import ArrayLike, ArraySlicer
+from .tools.array_management import ArrayLike, VariableIndexMap
 
 
 def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
@@ -10,9 +10,9 @@ def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
     Returns a string with the dimensions of the input arrays.
 
     Args:
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
 
     Returns:
         str: String with the dimensions of the input arrays (some combination of "x",
@@ -24,7 +24,7 @@ def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
 
 
 def sinus(
-    array_slicer: ArraySlicer,
+    idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
@@ -39,43 +39,41 @@ def sinus(
     [0, 1] in each dimension.
 
     Args:
-        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
-            the initial condition.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        bounds (Tuple[float, float]): Bounds of the density sinusoidal function.
-        vx (float): x-component of the velocity.
-        vy (float): y-component of the velocity.
-        vz (float): z-component of the velocity.
-        P (float): Pressure.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        bounds: Bounds of the density sinusoidal function.
+        vx: Uniform velocity in the x-direction.
+        vy: Uniform velocity in the y-direction.
+        vz: Uniform velocity in the z-direction.
+        P: Pressure.
     """
-    _slc = array_slicer
     dims = parse_xyz(x, y, z)
-    out = np.empty((len(_slc.idxs), *x.shape))
+    out = np.empty((len(idx.idxs), *x.shape))
 
-    # Validate variables in ArraySlicers
-    if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
+    # Validate variables in VariableIndexMaps
+    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
         # advection case
         r = int("x" in dims) * x + int("y" in dims) * y + int("z" in dims) * z
-        out[_slc("rho")] = (
+        out[idx("rho")] = (
             0.5 * (bounds[1] - bounds[0]) * np.sin(2 * np.pi * r) + 0.5 + bounds[0]
         )
-        out[_slc("vx")] = vx
-        out[_slc("vy")] = vy
-        out[_slc("vz")] = vz
+        out[idx("vx")] = vx
+        out[idx("vy")] = vy
+        out[idx("vz")] = vz
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
-    if "P" in _slc.var_names:
-        out[_slc("P")] = P
+    if "P" in idx.var_names:
+        out[idx("P")] = P
     return out
 
 
 def square(
-    array_slicer: ArraySlicer,
+    idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
@@ -90,23 +88,21 @@ def square(
     interval [0, 1] in each dimension.
 
     Args:
-        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
-            the initial condition.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        bounds (Tuple[float, float]): Bounds of the density square function.
-        vx (float): x-component of the velocity.
-        vy (float): y-component of the velocity.
-        vz (float): z-component of the velocity.
-        P (float): Pressure.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        bounds: Bounds of the density square function.
+        vx: Uniform velocity in the x-direction.
+        vy: Uniform velocity in the y-direction.
+        vz: Uniform velocity in the z-direction.
+        P: Pressure.
     """
-    _slc = array_slicer
     dims = parse_xyz(x, y, z)
-    out = np.empty((len(_slc.idxs), *x.shape))
+    out = np.empty((len(idx.idxs), *x.shape))
 
-    # Validate variables in ArraySlicer
-    if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
         # advection case
         r = np.ones_like(x).astype(bool)
         if "x" in dims:
@@ -116,22 +112,22 @@ def square(
         if "z" in dims:
             r &= (z >= 0.25) & (z <= 0.75)
         r = r.astype(float)
-        out[_slc("rho")] = (bounds[1] - bounds[0]) * r + bounds[0]
-        out[_slc("vx")] = vx
-        out[_slc("vy")] = vy
-        out[_slc("vz")] = vz
+        out[idx("rho")] = (bounds[1] - bounds[0]) * r + bounds[0]
+        out[idx("vx")] = vx
+        out[idx("vy")] = vy
+        out[idx("vz")] = vz
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
-    if "P" in _slc.var_names:
-        out[_slc("P")] = P
+    if "P" in idx.var_names:
+        out[idx("P")] = P
     return out
 
 
 def slotted_disk(
-    array_slicer: ArraySlicer,
+    idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
@@ -142,18 +138,17 @@ def slotted_disk(
     Returns array for the slotted disk initial condition.
 
     Args:
-        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
-            the initial condition.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        rho_min_max (Tuple[float, float]): Minimum and maximum values of the density.
-        rotation (Literal["cw", "ccw"]): Rotation direction of the disk.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        rho_min_max: Minimum and maximum values of the density.
+        rotation: Rotation direction of the disk: "cw" for clockwise, "ccw" for
+            counter-clockwise.
     """
-    _slc = array_slicer
-    out = np.empty((len(_slc.idxs), *x.shape))
+    out = np.empty((len(idx.idxs), *x.shape))
 
-    if {"rho", "vx", "vy", "vz"} <= _slc.var_names:
+    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
         # advection case
         xc, yc = x - 0.5, y - 0.5
         rsq = np.sqrt(xc**2 + (y - 0.75) ** 2)
@@ -161,13 +156,13 @@ def slotted_disk(
         inside_disk &= np.logical_not(np.logical_and(np.abs(xc) < 0.025, y < 0.85))
 
         out = np.empty((4, *x.shape))
-        out[_slc("rho")] = np.where(inside_disk, rho_min_max[1], rho_min_max[0])
-        out[_slc("vx")] = -yc if rotation == "ccw" else yc
-        out[_slc("vy")] = xc if rotation == "ccw" else -xc
-        out[_slc("vz")] = 0.0
+        out[idx("rho")] = np.where(inside_disk, rho_min_max[1], rho_min_max[0])
+        out[idx("vx")] = -yc if rotation == "ccw" else yc
+        out[idx("vy")] = xc if rotation == "ccw" else -xc
+        out[idx("vz")] = 0.0
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
 
@@ -175,7 +170,7 @@ def slotted_disk(
 
 
 def sod_shock_tube_1d(
-    array_slicer: ArraySlicer,
+    idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
@@ -191,45 +186,43 @@ def sod_shock_tube_1d(
     Returns array for the Sod shock tube initial condition.
 
     Args:
-        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
-            the initial condition.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        pos1 (float): Position of the discontinuity.
-        rhol (float): Density on the left side of the discontinuity.
-        rhor (float): Density on the right side of the discontinuity.
-        vl (float): Velocity on the left side of the discontinuity.
-        vr (float): Velocity on the right side of the discontinuity.
-        pl (float): Pressure on the left side of the discontinuity.
-        pr (float): Pressure on the right side of the discontinuity.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        pos1: Position of the discontinuity.
+        rhol: Density on the left side of the discontinuity.
+        rhor: Density on the right side of the discontinuity.
+        vl: Velocity on the left side of the discontinuity.
+        vr: Velocity on the right side of the discontinuity.
+        pl: Pressure on the left side of the discontinuity.
+        pr: Pressure on the right side of the discontinuity.
     """
-    _slc = array_slicer
     dims = parse_xyz(x, y, z)
-    out = np.empty((len(_slc.idxs), *x.shape))
+    out = np.empty((len(idx.idxs), *x.shape))
 
     if len(dims) != 1:
         raise ValueError("Sod shock tube initial condition only works in 1D.")
 
-    # Validate variables in ArraySlicer
-    if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
         r = {"x": x, "y": y, "z": z}[dims]
         orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dims]
-        out[_slc("rho")] = np.where(r < pos1, rhol, rhor)
-        out[_slc("v" + dims)] = np.where(r < pos1, vl, vr)
-        out[_slc("v" + orth_dim1)] = 0
-        out[_slc("v" + orth_dim2)] = 0
-        out[_slc("P")] = np.where(r < pos1, pl, pr)
+        out[idx("rho")] = np.where(r < pos1, rhol, rhor)
+        out[idx("v" + dims)] = np.where(r < pos1, vl, vr)
+        out[idx("v" + orth_dim1)] = 0
+        out[idx("v" + orth_dim2)] = 0
+        out[idx("P")] = np.where(r < pos1, pl, pr)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
     return out
 
 
 def velocity_ramp(
-    array_slicer: ArraySlicer,
+    idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
@@ -242,41 +235,39 @@ def velocity_ramp(
     pressure.
 
     Args:
-        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
-            the initial condition.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        rho0 (float): Initial uniform density.
-        P0 (float): Initial uniform pressure.
-        H0 (float): Initial uniform velocity gradient.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        rho0: Initial uniform density.
+        P0: Initial uniform pressure.
+        H0: Initial uniform velocity gradient.
     """
-    _slc = array_slicer
     dims = parse_xyz(x, y, z)
-    out = np.empty((len(_slc.idxs), *x.shape))
+    out = np.empty((len(idx.idxs), *x.shape))
 
     if len(dims) != 1:
         raise ValueError("Sod shock tube initial condition only works in 1D.")
 
-    # Validate variables in ArraySlicer
-    if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
         r = {"x": x, "y": y, "z": z}[dims]
         orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dims]
-        out[_slc("rho")] = rho0
-        out[_slc("v" + dims)] = H0 * (r - 0.5)
-        out[_slc("v" + orth_dim1)] = 0
-        out[_slc("v" + orth_dim2)] = 0
-        out[_slc("P")] = P0
+        out[idx("rho")] = rho0
+        out[idx("v" + dims)] = H0 * (r - 0.5)
+        out[idx("v" + orth_dim1)] = 0
+        out[idx("v" + orth_dim2)] = 0
+        out[idx("P")] = P0
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
     return out
 
 
 def sedov(
-    array_slicer: ArraySlicer,
+    idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
@@ -289,19 +280,17 @@ def sedov(
     Returns array for the Sedov blast wave initial condition.
 
     Args:
-        array_slicer (ArraySlicer): Array slicer object. Defines the variables used in
-            the initial condition.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        gamma (float): Ratio of specific heats.
-        h (float): Mesh size. Assumed to be the same in all dimensions.
-        rho0 (float): Initial uniform density.
-        P0 (float): Background pressure.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        gamma: Ratio of specific heats.
+        h: Mesh size. Assumed to be the same in all dimensions.
+        rho0: Initial uniform density.
+        P0: Background pressure.
     """
-    _slc = array_slicer
     dims = parse_xyz(x, y, z)
-    out = np.zeros((len(_slc.idxs), *x.shape))
+    out = np.zeros((len(idx.idxs), *x.shape))
 
     inside_blast_cell = np.ones_like(x, dtype=bool)
     if "x" in dims:
@@ -310,15 +299,16 @@ def sedov(
         inside_blast_cell &= np.abs(y) < h
     if "z" in dims:
         inside_blast_cell &= np.abs(z) < h
-    E_blast_cell = (0.5 / h) ** (len(dims))
 
-    # Validate variables in ArraySlicer
-    if {"rho", "vx", "vy", "vz", "P"} - _slc.var_names != {}:
-        out[_slc("rho")] = rho0
-        out[_slc("P")] = np.where(inside_blast_cell, (gamma - 1) * E_blast_cell, P0)
+    E_blast_cell = 1 / (2 ** len(dims) * h ** len(dims))
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+        out[idx("rho")] = rho0
+        out[idx("P")] = np.where(inside_blast_cell, (gamma - 1) * E_blast_cell, P0)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {_slc.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
     return out

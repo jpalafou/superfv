@@ -9,9 +9,9 @@ from typing import (
     List,
     Literal,
     Optional,
+    Set,
     Tuple,
     Union,
-    cast,
 )
 
 import numpy as np
@@ -36,18 +36,13 @@ if not TYPE_CHECKING:
 
 # define custom types
 ArrayLike = Union[np.ndarray, xp.ndarray]
+IndexLike = Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
 def l1_norm(array: ArrayLike) -> float:
     """
     Compute the L1 norm of an array.
-
-    Args:
-        array (ArrayLike): Array of any shape.
-
-    Returns:
-        float: L1 norm of the array.
     """
     return np.mean(np.abs(array))
 
@@ -55,12 +50,6 @@ def l1_norm(array: ArrayLike) -> float:
 def l2_norm(array: ArrayLike) -> float:
     """
     Compute the L2 norm of an array.
-
-    Args:
-        array (ArrayLike): Array of any shape.
-
-    Returns:
-        float: L2 norm of the array.
     """
     return np.sqrt(np.mean(np.square(array)))
 
@@ -68,111 +57,107 @@ def l2_norm(array: ArrayLike) -> float:
 def linf_norm(array: ArrayLike) -> float:
     """
     Compute the L-infinity norm of an array.
-
-    Args:
-        array (ArrayLike): Array of any shape.
-
-    Returns:
-        float: L-infinity norm of the array.
     """
     return np.max(np.abs(array))
 
 
-def chop(
-    cut: Tuple[Optional[int], Optional[int]],
-    axis: int,
+@lru_cache(maxsize=None)
+def crop(
+    axis: Union[int, Tuple[int, ...]],
+    cut: Tuple[int, int],
     step: Optional[int] = None,
+    ndim: Optional[int] = None,
 ) -> Tuple[slice, ...]:
     """
-    Create a slice object for a given axis.
+    Create an array slice for a given axis or axes.
 
     Args:
-        cut (Tuple[Optional[int], Optional[int]]): Start and stop indices for the
-            slice.
-        axis (int): Axis along which to slice.
-        step (Optional[int]): Step size for the slice.
+        axis: Axis or axes along which to slice.
+        cut: Start and stop indices for the slice.
+        step: Step size for the slice. Default is None.
+        ndim: Number of dimensions of the array. If None, uses the maximum axis value
+            to determine the number of dimensions.
 
     Returns:
-        Tuple[slice, ...]: A tuple of slices for the given axis.
+        Tuple of slices for the given axis or axes.
     """
-    return (slice(None),) * axis + (slice(cut[0] or None, cut[1] or None, step),)
+    if isinstance(axis, int):
+        axis = (axis,)
+    rank = ndim if ndim is not None else max(axis) + 1
+    out = [slice(None)] * rank
+    for ax in axis:
+        if ax < 0 or ax >= rank:
+            raise ValueError(
+                f"Axis {ax} is out of bounds for array with {len(out)} dimensions."
+            )
+        out[ax] = slice(cut[0], cut[1], step)
+    return tuple(out)
 
 
 @lru_cache(maxsize=None)
-def _cached_crop_to_center(
+def _crop_to_center(
     in_shape: Tuple[int, ...],
     target_shape: Tuple[int, ...],
-    axes: Optional[Tuple[int, ...]],
+    ignore_axes: Optional[Union[int, Tuple[int, ...]]] = None,
 ) -> Tuple[slice, ...]:
     """
-    Cached helper function for crop_to_center.
+    Create an array slice to crop an input array to a target shape by removing an equal
+    amount from both ends along each axis.
 
     Args:
-        in_shape (Tuple[int, ...]): The shape of the input array.
-        target_shape (Tuple[int, ...]): The desired shape of the output array.
-        axes (Optional[Tuple[int, ...]]): The axes along which to crop. If None,
-            `target_shape` must have length equal to in_shape. Otherwise `target_shape`
-            must have length equal to len(`axes`).
+        in_shape: The shape of the input array.
+        target_shape: The desired shape of the output array.
+        ignore_axes: Axes to ignore when cropping. If None, all axes are considered. If
+            an int, it is treated as a single axis. If a tuple, it contains multiple
+            axes to ignore.
 
     Returns:
-        Tuple[slice, ...]: A tuple of slices that can be used to crop the input array.
+        Tuple of slices that can be used to crop the input array to the target shape.
     """
-    _axes = tuple(range(len(in_shape))) if axes is None else axes
-
+    out = [slice(None)] * len(in_shape)
     if len(target_shape) != len(in_shape):
         raise ValueError(
             "Target shape must have the same number of dimensions as the input array."
         )
-
-    slices = [slice(None)] * len(in_shape)
-    for axis in _axes:
-        if axis not in _axes:
+    if ignore_axes is None:
+        ignore_axes = tuple()
+    elif isinstance(ignore_axes, int):
+        ignore_axes = (ignore_axes,)
+    for i, (dim_length, target_length) in enumerate(zip(in_shape, target_shape)):
+        if i in ignore_axes or dim_length == target_length:
             continue
-        dim_length = in_shape[axis]
-        target_length = target_shape[axis]
-        crop = dim_length - target_length
-        if crop < 0:
+        if target_length > dim_length:
             raise ValueError(
-                "Target shape must be less than or equal to the input array's shape in all dimensions."
+                f"Target shape {target_shape} must be less than or equal to the input array's shape {in_shape} in all dimensions."
             )
-        if crop == 0:
-            continue
-        elif crop % 2 == 0:
-            start = crop // 2
-            end = dim_length - crop // 2
-            slices[axis] = slice(start, end)
+        elif target_length % 2 == 0:
+            margin = (dim_length - target_length) // 2
+            out[i] = slice(margin, -margin)
         else:
             raise ValueError(
                 f"Cannot evenly crop dimension from {dim_length} to {target_length}."
             )
-
-    return tuple(slices)
+    return tuple(out)
 
 
 def crop_to_center(
-    array: np.ndarray,
+    arr: ArrayLike,
     target_shape: Tuple[int, ...],
-    axes: Optional[Tuple[int, ...]] = None,
-) -> np.ndarray:
+    ignore_axes: Optional[Union[int, Tuple[int, ...]]] = None,
+) -> ArrayLike:
     """
-    Crops the input array to the target shape by removing an equal amount from both
-    ends along each axis.
+    Crop an array to a target shape by removing an equal amount from both ends along each axis.
 
     Args:
-        array (np.ndarray): The input array to be cropped.
-        target_shape (Tuple[int, ...]): The desired shape of the output array. Must
-            have the same number of dimensions as array.
-        axes (Optional[Tuple[int, ...]]): The axes along which to crop.
+        arr: The input array to be cropped.
+        target_shape: The desired shape of the output array.
+        ignore_axes: Axes to ignore when cropping.
 
     Returns:
-        np.ndarray: A cropped version of the input array with the target shape.
-
-    Raises:
-        ValueError: If the target shape is invalid or cropping cannot remove an even
-            amount along any axis.
+        A cropped version of the input array with the target shape.
     """
-    slices = _cached_crop_to_center(array.shape, target_shape, axes)
-    return array[slices]
+    slices = _crop_to_center(arr.shape, target_shape, ignore_axes)
+    return arr[slices]
 
 
 def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
@@ -180,213 +165,196 @@ def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
     Compute the intersection of the shapes of multiple arrays.
 
     Args:
-        *args (Tuple[Tuple[int, ...], ...]): Tuple of shapes.
+        *args: Tuple of shapes.
 
     Returns:
-        Tuple[int, ...]: Intersection shape.
+        Intersection shape.
     """
     return tuple(min(s) for s in zip(*args))
 
 
-def _idxs_to_slice_or_array(
-    idxs: Iterable[int],
-) -> Union[slice, np.ndarray[Any, np.dtype[np.int_]]]:
+def merge_indices(*slices: IndexLike, as_array: bool = False) -> IndexLike:
     """
-    Convert a list of indices to a slice or numpy array.
+    Merge multiple indices, slices, or numpy int arrays into a single slice or numpy
+    array.
 
     Args:
-        idxs (List[int]): List of indices.
+        *slices: Indices, slices, or numpy int arrays to merge.
+        as_array: If True, return a numpy array instead of a slice.
+
+    Returns:
+        Merged slice if merged indices form a contiguous range, otherwise a numpy array
+            of indices.
     """
-    _idxs = sorted(list(set(idxs)))
-    if _idxs == list(range(_idxs[0], _idxs[-1] + 1)):
-        return slice(_idxs[0], _idxs[-1] + 1)
-    return np.array(_idxs)
+    idxs = []
+    for s in slices:
+        if isinstance(s, int):
+            if s < 0:
+                raise ValueError(f"Index must be non-negative, got {s}.")
+            idxs.append(s)
+        elif isinstance(s, slice):
+            if s.start is not None and s.start < 0:
+                raise ValueError(f"Slice start cannot be negative, got {s.start}.")
+            if s.stop is None or s.stop < 0:
+                raise ValueError("Slice stop must be specified and non-negative.")
+            if s.step is not None and s.step != 1:
+                raise ValueError("Slice step must be one.")
+            idxs.extend(range(s.start if s.start is not None else 0, s.stop))
+        elif isinstance(s, np.ndarray):
+            if s.dtype != np.int_:
+                raise ValueError(f"Expected numpy array of dtype int, got {s.dtype}.")
+            idxs.extend(s.tolist())
+        else:
+            raise TypeError(
+                f"Unsupported type {type(s)} for merging indices. Expected int, slice, or numpy array."
+            )
+    idxs = sorted(set(idxs))
+    if len(idxs) == 0:
+        raise ValueError("No valid indices provided to merge.")
+    if not as_array and idxs == list(range(idxs[0], idxs[-1] + 1)):
+        return slice(idxs[0], idxs[-1] + 1)
+    return np.array(idxs, dtype=np.int_)
 
 
 @dataclass
-class ArraySlicer:
+class VariableIndexMap:
     """
-    Class for slicing multivariable fields.
+    Class for managing a mapping of variable names to indices and groups of variables
+    to slices or int arrays.
 
     Args:
-        variables (Dict[str, int]): Dictionary of variable names and indices.
-        ndim (int): Number of dimensions.
-        groups (Dict[str, Tuple[str, ...]]): Dictionary of group names and the variable
-            names they contain.
+        var_idx_map: Dictionary mapping variable names to indices (int) or slices.
+        group_var_map: Dictionary mapping group names to list of variable names.
+
+    Attributes:
+        var_names: Set of variable names.
+        group_names: Set of group names.
+        all_names: Set of all variable and group names.
+        idxs: Set of indices (int) used in the variable index map.
     """
 
-    variables: Dict[str, int]
-    ndim: int
-    groups: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
+    var_idx_map: Dict[str, int] = field(default_factory=dict)
+    group_var_map: Dict[str, List[str]] = field(default_factory=dict)
+    var_names: Set[str] = field(init=False)
+    group_names: Set[str] = field(init=False)
+    all_names: Set[str] = field(init=False)
+    idxs: Set[int] = field(init=False)
+    _cache: Dict[Tuple[str, bool], IndexLike] = field(default_factory=dict)
 
     def __post_init__(self):
-        # Initialize variable index map
-        self.var_idx_map = cast(
-            Dict[str, Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]],
-            self.variables.copy(),
-        )
+        self._refresh_and_validate_mappings()
 
-        # Store variable and index sets
-        self.var_names = set(self.variables.keys())
-        self.idxs = set(self.variables.values())
-
-        # Validate provided groups
-        validated_groups = {}
-        if self.groups:
-            for group_name, var_names in self.groups.items():
-                if any(v not in self.variables for v in var_names):
-                    raise ValueError(f"Variables not found: {var_names}")
-                if group_name in self.variables:
-                    raise ValueError(f"Name '{group_name}' already exists.")
-                group_idxs = [self.variables[v] for v in var_names]
-
-                validated_groups[group_name] = var_names
-                self.var_idx_map[group_name] = _idxs_to_slice_or_array(group_idxs)
-        self.groups = validated_groups
-        self.group_names = set(self.groups.keys())
+    def _refresh_and_validate_mappings(self):
+        self.var_names = set(self.var_idx_map.keys())
+        self.group_names = set(self.group_var_map.keys())
         self.all_names = self.var_names | self.group_names
+        self.idxs = set(self.var_idx_map.values())
+
+        # indices must be non-negative integers
+        if any(idx < 0 for idx in self.idxs):
+            raise ValueError("All indices must be non-negative integers.")
+
+        # indices must be contiguous
+        if not np.all(np.diff(sorted(self.idxs)) == 1):
+            raise ValueError("Indices must be contiguous integers.")
+
+        for group_name, var_names in self.group_var_map.items():
+            # group names must not conflict with variable names
+            if group_name in self.var_names:
+                raise ValueError(
+                    f"Group name '{group_name}' conflicts with variable name."
+                )
+
+            # group names must not contain duplicates
+            if len(set(var_names)) < len(var_names):
+                raise ValueError(
+                    f"Group '{group_name}' contains duplicate variable names."
+                )
+
+            # group names must only contain variables that are in the variable index map
+            if set(var_names) - self.var_names:
+                raise ValueError(
+                    f"Group '{group_name}' contains variables not in var_idx_map: {set(var_names) - self.var_names}"
+                )
+
+    def _invalidate_cache(self):
+        self._cache.clear()
 
     def add_var(self, name: str, idx: int):
         """
-        Add a variable to the slicer.
+        Add a variable to the variable index map.
 
         Args:
-            name (str): Variable name.
-            idx (int): Variable index.
+            name: Variable name.
+            idx: Variable index (must be non-negative).
         """
-        if name in self.all_names:
-            raise ValueError(f"Variable '{name}' already exists.")
-        self.variables[name] = idx
-        self.__post_init__()
 
-    def create_var_group(
-        self, group_name: str, variables: Tuple[str, ...], overwrite=False
-    ):
+        # validate variable name and index
+        self._check_name_available(name)
+        if idx < 0:
+            raise ValueError("Index must be non-negative.")
+        self.var_idx_map[name] = idx
+
+        self._refresh_and_validate_mappings()
+        self._invalidate_cache()
+
+    def add_var_to_group(self, var_names: Union[str, Iterable[str]], group_name: str):
         """
-        Create a group of variables (private method).
+        Create a group of variables or add variables to an existing group.
 
         Args:
-            group_name (str): Name of the group.
-            variables (Tuple[str, ...]): Tuple of variable names.
+            var_names: Name or iterable of variable names to add to the group.
+            group_name: Name of the group to create or add to.
         """
-        if group_name in self.all_names:
-            raise ValueError(f"Name '{group_name}' already exists.")
-        self.groups[group_name] = variables
-        self.__post_init__()
+        var_names = [var_names] if isinstance(var_names, str) else list(var_names)
 
-    def add_to_var_group(self, group_name: str, variables: Tuple[str, ...]):
-        """
-        Add variables to an existing group.
+        if group_name not in self.group_var_map:
+            self._check_name_available(group_name)
+            self.group_var_map[group_name] = []
 
-        Args:
-            group_name (str): Name of the group.
-            variables (Tuple[str, ...]): Tuple of variable names.
-        """
-        if group_name not in self.group_names:
-            raise ValueError(f"Group '{group_name}' not found.")
-        self.groups[group_name] += variables
-        self.__post_init__()
+        self.group_var_map[group_name].extend(var_names)
 
-    def __hash__(self):
-        """
-        Returns the hash of the object based on its memory address.
-        """
-        return id(self)
+        self._refresh_and_validate_mappings()
+        self._invalidate_cache()
 
-    @lru_cache(maxsize=None)
-    def __call__(
-        self,
-        variable: Optional[Union[str, Tuple[str, ...]]] = None,
-        x: Optional[SliceBounds] = None,
-        y: Optional[SliceBounds] = None,
-        z: Optional[SliceBounds] = None,
-        axis: Optional[int] = None,
-        cut: Optional[SliceBounds] = None,
-        step: Optional[int] = None,
-        keepdims: bool = False,
-    ) -> Union[
-        slice,
-        int,
-        np.ndarray,
-        Tuple[Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]], ...],
-    ]:
-        """
-        Generate a slice object for a multivariable field.
-
-        Args:
-            variable (Optional[Union[str, Tuple[str, ...]]]): Variable name or tuple of
-                variable names.
-            x (Optional[SliceBounds]: Start and stop indices for the x-axis (axis 1)
-            y (Optional[SliceBounds]): Start and stop indices for the y-axis (axis 2).
-            z (Optional[SliceBounds]): Start and stop indices for the z-axis (axis 3).
-            axis (Optional[int]): Axis along which to slice the field.
-            cut (Optional[SliceBounds]): Start and stop indices for the axis.
-            step (Optional[int]): Step size for the axis.
-            keepdims (bool): If True, keep the dimensions of the sliced array.
-
-        Returns:
-            Slice object if only the first axis is sliced, or tuple of slice objects.
-        """
-        slices: List[Union[slice, int, np.ndarray]] = [slice(None)] * self.ndim
-
-        if variable is not None:
-            if isinstance(variable, str):
-                # retrieve single variable index
-                if variable not in self.var_idx_map:
-                    raise ValueError(f"Variable '{variable}' not found.")
-                var_idx = self.var_idx_map[variable]
-                if not isinstance(var_idx, (int, slice, np.ndarray)):
-                    raise ValueError(
-                        f"Variable index must be an integer, slice, or numpy.ndarray, not {type(var_idx)}."
-                    )
-                slices[0] = var_idx
-            elif isinstance(variable, tuple):
-                # retrieve multiple variable indices
-                missing_vars = set(variable) - set(self.var_idx_map.keys())
-                if missing_vars:
-                    raise ValueError(f"Variables not found: {missing_vars}")
-                if any(not isinstance(self.var_idx_map[v], int) for v in variable):
-                    raise ValueError("Multiple variables must be indexed by integers.")
-                slices[0] = _idxs_to_slice_or_array(
-                    [cast(int, self.var_idx_map[v]) for v in variable]
-                )
-            else:
-                raise ValueError(f"Invalid type for var: {type(variable)}")
-
-        axes = [1, 2, 3, axis]
-        axis_slices = [x, y, z, cut]
-        for i, axis_slice in zip(axes, axis_slices):
-            if axis_slice is None:
-                continue
-            if cast(int, i) >= self.ndim:
-                raise ValueError(
-                    f"Invalid axis {i} for array with {self.ndim} dimensions."
-                )
-            if not isinstance(axis_slice, tuple) or len(axis_slice) != 2:
-                raise ValueError(f"Expected a tuple (start, stop) for axis {i}.")
-            slices[cast(int, i)] = slice(
-                axis_slice[0] or None,
-                axis_slice[1] or None,
-                step if i == axis else None,
+    def _check_name_available(self, name: str):
+        if name in self.var_idx_map or name in self.group_var_map:
+            raise KeyError(
+                f"Name '{name}' already exists in variable index map or group variable map."
             )
 
-        if keepdims:
-            for i in range(len(slices)):
-                if isinstance(slices[i], int):
-                    slices[i] = slice(slices[i], cast(int, slices[i]) + 1)
-        if len(slices) == 1 or all(s == slice(None) for s in slices[1:]):
-            return slices[0]
-        return tuple(slices)
+    def __call__(
+        self, name: str, keepdims: bool = False
+    ) -> Union[int, slice, np.ndarray]:
+        """
+        Get the index or slice for a variable or group.
 
-    def copy(self) -> "ArraySlicer":
+        Args:
+            name: Name of the variable or group.
+            keepdims: If True, indexes for a single variable will be returned as a
+                slice object to keep the dimensions consistent.
+
+        Returns:
+            Index, slice, or numpy array of indices for the variable or group.
         """
-        Create a copy of the slicer.
-        """
-        return ArraySlicer(
-            variables=self.variables.copy(),
-            ndim=self.ndim,
-            groups=self.groups.copy() if self.groups is not None else None,
-        )
+        key = (name, keepdims)
+        if key in self._cache:
+            return self._cache[key]
+
+        if name in self.var_idx_map:
+            out = (
+                slice(self.var_idx_map[name], self.var_idx_map[name] + 1)
+                if keepdims
+                else self.var_idx_map[name]
+            )
+        elif name in self.group_var_map:
+            idxs = np.array([self.var_idx_map[v] for v in self.group_var_map[name]])
+            out = merge_indices(idxs)
+        else:
+            raise ValueError(f"Variable or group '{name}' not found.")
+
+        self._cache[key] = out
+        return out
 
 
 class ArrayManager:
@@ -411,7 +379,7 @@ class ArrayManager:
         Initializes the array manager.
 
         Args:
-            arrays (Optional[Dict[str, np.ndarray]]): Dictionary of NumPy arrays.
+            arrays: Dictionary of NumPy arrays.
         """
         self.arrays: Dict[str, ArrayLike] = arrays if arrays else {}
         self.device: Literal["cpu", "gpu"] = "cpu"
@@ -438,7 +406,7 @@ class ArrayManager:
         Transfer all arrays to a specific device.
 
         Args:
-            device (Literal["cpu", "gpu"]): Device to transfer arrays to.
+            device: Device to transfer arrays to ("cpu" or "gpu").
         """
         if self.device == device:
             raise ValueError(f"ArrayManager is already using {device}.")
@@ -454,8 +422,8 @@ class ArrayManager:
         Add an array to the manager.
 
         Args:
-            name (str): Name of the array.
-            array (ArrayLike): NumPy or CuPy array.
+            name: Name of the array.
+            array: NumPy or CuPy array.
         """
         self._check_name_available(name)
         self.arrays[name] = array
@@ -466,7 +434,7 @@ class ArrayManager:
         Remove an array from the manager.
 
         Args:
-            name (str): Name of the array.
+            name: Name of the array.
         """
         self._check_name_exists(name)
         del self.arrays[name]
@@ -476,8 +444,8 @@ class ArrayManager:
         Rename an array.
 
         Args:
-            name (str): Current name of the array.
-            new_name (str): New name of the array.
+            name: Current name of the array.
+            new_name: New name of the array.
         """
         self._check_name_exists(name)
         self._check_name_available(new_name)
@@ -497,12 +465,12 @@ class ArrayManager:
         Get an array from the manager.
 
         Args:
-            name (str): Name of the array.
-            copy (bool): If True, return a copy of the array.
-            asnumpy (bool): If True, return a NumPy array.
+            name: Name of the array.
+            copy: If True, return a copy of the array.
+            asnumpy: If True, return a NumPy array.
 
         Returns:
-            ArrayLike: NumPy or CuPy array.
+            NumPy or CuPy array.
         """
         self._check_name_exists(name)
         array = self.arrays[name]
@@ -517,7 +485,7 @@ class ArrayManager:
         Get a NumPy copy of an array.
 
         Args:
-            name (str): Name of the array.
+            name: Name of the array.
         """
         return self.__getitem__(name, True, True)
 
@@ -529,8 +497,8 @@ class ArrayManager:
         preallocated memory is used efficiently.
 
         Args:
-            name (str): Name of the array.
-            array (ArrayLike): New values to assign in-place.
+            name: Name of the array.
+            array: New values to assign in-place.
         """
         self._check_name_exists(name)
         if self.arrays[name].shape != array.shape:
@@ -548,7 +516,7 @@ class ArrayManager:
         Check if an array exists in the manager.
 
         Args:
-            name (str): Name of the array.
+            name: Name of the array.
         """
         return name in self.arrays
 

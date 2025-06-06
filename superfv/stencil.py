@@ -6,7 +6,7 @@ import numpy as np
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
 from stencilpal.stencil import Stencil
 
-from .tools.array_management import ArrayLike, ArraySlicer
+from .tools.array_management import ArrayLike, crop
 
 
 @lru_cache(maxsize=None)
@@ -26,8 +26,8 @@ def resize_stencil(stencil: Stencil, target_size: int):
     with zeros.
 
     Args:
-        stencil (Stencil): The stencil to resize.
-        target_size (int): The desired size of the stencil.
+        stencil: Stencil object to resize.
+        target_size: The desired size of the stencil.
     """
     while stencil.size < target_size:
         stencil.rescope(
@@ -48,14 +48,13 @@ def conservative_interpolation_weights(
 
     Args:
         p: The polynomial degree.
-        x (Union[str, int, float]): interpolation point on the interval [-1, 1] (the
-            cell with center 0).
+        x: interpolation point on the interval [-1, 1] as a number or alias:
             - "l": alias for the leftmost point of the cell (-1).
             - "c": alias for the center of the cell (0).
             - "r": alias for the rightmost point of the cell (1).
 
     Returns:
-        np.ndarray: The weights of the conservative interpolation stencil.
+        Array of weights of the conservative interpolation stencil.
             - If `x` is a string or integer, the returned array has an integer data type,
             with elements representing the numerators of the rational weights after a
             common denominator is applied. In this case, the weights do not necessarily
@@ -90,7 +89,7 @@ def uniform_quadrature_weights(p: int) -> np.ndarray:
         p: The polynomial degree.
 
     Returns:
-        np.ndarray: The weights of the uniform quadrature stencil.
+        Array of weights of the uniform quadrature stencil.
             - The returned array has an integer data type, with elements representing
             the numerators of the rational weights after a common denominator is applied.
             In this case, the weights do not necessarily sum to 1.
@@ -115,16 +114,14 @@ def get_symmetric_slices(
     the given axis.
 
     Args:
-        ndim (int): The number of dimensions of the array.
-        nslices (int): The number of slices to create.
-        axis (int): The axis along which to slice.
+        ndim: The number of dimensions of the array.
+        nslices: The number of slices to create.
+        axis: The axis along which to slice.
 
     Returns:
-        List[Union[slice, int, np.ndarray, Tuple[Union[slice, int, np.ndarray], ...]]]:
-            A list of slices that divide an array into `nslices`.
+        A list of slices that divide an array into `nslices`.
     """
-    slicer = ArraySlicer({}, ndim)
-    return [slicer(axis=axis, cut=(i, -(nslices - 1) + i)) for i in range(nslices)]
+    return [crop(axis, (i, -(nslices - 1) + i), ndim=ndim) for i in range(nslices)]
 
 
 def stencil_sweep(
@@ -134,14 +131,13 @@ def stencil_sweep(
     Perform a stencil sweep on a field.
 
     Args:
-        xp (Any): `np` namespace.
-        y (ArrayLike): The field to sweep. Must have shape (nvars, nx, ny, nz, ...).
-        stencil_weights (np.ndarray): The weights of the stencil to apply. Has shape
-            (nweights,).
-        axis (int): The axis along which to sweep.
+        xp: `np` namespace.
+        y: Array of field values to sweep. Must have shape (nvars, nx, ny, nz, ...).
+        stencil_weights: Array of stencil weights to apply. Has shape (nweights,).
+        axis: The axis along which to sweep.
 
     Returns:
-        ArrayLike: The field after the stencil sweep. Has shape
+        Array of field values after the stencil sweep. Has shape
             (nvars, <= nx, <= ny, <= nz, ...).
     """
     # reshape weights to broadcast with y
@@ -167,15 +163,13 @@ def gauss_legendre_face_nodes_and_weights(
     Returns cell face coordinates and weights for a Gauss-Legendre quadrature.
 
     Args:
-        dims (str): The dimensions of the cell. Must be a combination of "x", "y", and
-            "z".
-        dim (str): The dimension of the face. Must be one of "x", "y", or "z".
-        pos (str): The position of the face. Must be one of "l" or "r".
-        p (int): The polynomial degree.
+        dims: The dimensions of the cell. Must be a combination of "x", "y", and "z".
+        dim: The dimension of the face. Must be one of "x", "y", or "z".
+        pos: The position of the face. Must be one of "l" or "r".
+        p: The polynomial degree.
 
     Returns:
-        nodes, weights (Tuple[List[Dict[str, float]], List[float]]): The cell face
-            coordinates and weights.
+        nodes, weights: Lists of the cell face coordinates and weights.
         - `nodes` is a list of dictionaries, where each dictionary contains the
             coordinates of a face.
         - `weights` is a list of weights corresponding to the face coordinates. The
@@ -218,16 +212,13 @@ def get_gauss_legendre_face_nodes(
     Returns cell face coordinates for a Gauss-Legendre quadrature.
 
     Args:
-        dims (str): The dimensions of the cell. Must be a combination of "x", "y", and
-            "z".
-        dim (str): The dimension of the face. Must be one of "x", "y", or "z".
-        pos (str): The position of the face. Must be one of "l" or "r".
-        p (int): The polynomial degree.
+        dims: The dimensions of the cell. Must be a combination of "x", "y", and "z".
+        dim: The dimension of the face. Must be one of "x", "y", or "z".
+        pos: The position of the face. Must be one of "l" or "r".
+        p: The polynomial degree.
 
     Returns:
-        List[Dict[str, float]]: The cell face coordinates.
-        - The returned list contains dictionaries, where each dictionary contains the
-            coordinates of a face.
+        List of dictionaries mapping dimension names to coordinates for the cell face.
     """
     nodes, _ = gauss_legendre_face_nodes_and_weights(dims, dim, pos, p)
     return nodes
@@ -239,14 +230,12 @@ def get_gauss_legendre_face_weights(dims: str, dim: str, p: int) -> np.ndarray:
     Returns cell face weights for a Gauss-Legendre quadrature.
 
     Args:
-        dims (str): The dimensions of the cell. Must be a combination of "x", "y", and
-            "z".
-        dim (str): The dimension of the face. Must be one of "x", "y", or "z".
-        p (int): The polynomial degree.
+        dims: The dimensions of the cell. Must be a combination of "x", "y", and "z".
+        dim: The dimension of the face. Must be one of "x", "y", or "z".
+        p: The polynomial degree.
 
     Returns:
-        np.ndarray: The cell face weights.
-        - The returned array has a float data type.
+        Array of cell face weights with floating-point data type.
     """
     _, weights = gauss_legendre_face_nodes_and_weights(dims, dim, "l", p)
     return np.array(weights)

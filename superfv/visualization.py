@@ -20,11 +20,11 @@ def _get_nearest_index(
     Get the index of the nearest value in an array to a given coordinate.
 
     Args:
-        array (np.ndarray): 1D array of coordinates.
-        coord (float): Coordinate to find in the array.
+        array: 1D array of coordinates.
+        coord: Coordinate to find in the array.
 
     Returns:
-        int: Index of the nearest value in the array to the given coordinate.
+        Index of the nearest value in the array to the given coordinate.
 
     """
     idx = np.argmin(np.abs(array - coord)).item()
@@ -46,20 +46,21 @@ def _parse_txyz_slices(
     Parse the time and spatial slices for a given time and coordinates.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Solver object.
-        t (Optional[float]): Time to get the nearest snapshot. Defaults to None, which
-            uses the last snapshot time.
-        x (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
-            x-coordinate or range.
-        y (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
-            y-coordinate or range.
-        z (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
-            z-coordinate or range.
+        fv_solver: FiniteVolumeSolver object.
+        t: Desired time. If provided, the snapshot with the closest time will be
+            selected. If None, the latest available snapshot is used.
+        x, y, z : Desired spatial location(s) along the x, y, or z axis. Each can be:
+            - A float: selects the grid index nearest to that coordinate.
+            - A tuple (start, end): selects a slice between the nearest grid points to
+            `start` and `end`. Either bound may be None to indicate an open interval.
+            - None: selects the full range along that dimension.
 
     Returns:
-        Tuple[float, Tuple[Union[int, slice], Union[int, slice], Union[int, slice]]]:
-            nearest_t: Nearest time.
-            tuple_of_slices: Tuple of slices for x, y, z.
+        nearest_t : The snapshot time closest to the requested `t`.
+        tuple_of_slices : A tuple representing slices or indices for the x, y, and z
+            dimensions. Each entry is either:
+            - An integer index (if a single coordinate was requested),
+            - A slice object (if a range or full axis was requested).
 
     Raises:
         ValueError: x, y, or z is not None, a float, or a tuple of length 2.
@@ -106,23 +107,22 @@ def _extract_variable_data(
     Extract the data for a given variable at the nearest time.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Solver object.
-        nearest_t (float): Nearest time.
-        variable (str): Variable to extract.
-        array (str): Array to extract from. Defaults to "u".
-
+        fv_solver: FiniteVolumeSolver object.
+        nearest_t: Nearest time.
+        variable: Name of the variable to extract from the snapshots.
+        array: Source array to extract from. Can be "u" or "w".
     Returns:
-        np.ndarray: Data for the variable at the nearest time.
+        Array of data for the variable at the nearest time.
 
     Raises:
         ValueError: Variable not found in snapshots.
     """
     snapshot = fv_solver.snapshots(nearest_t)
-    _slc = fv_solver.array_slicer
+    idx = fv_solver.variable_index_map
     if variable in snapshot:
         return snapshot[variable]
-    if variable in _slc.var_names:
-        return snapshot[array][_slc(variable)]
+    if variable in idx.var_names:
+        return snapshot[array][idx(variable)]
     raise ValueError(f"Variable {variable} not found in snapshots.")
 
 
@@ -142,19 +142,19 @@ def plot_1d_slice(
     Plot a 1D slice of a variable at a given time and coordinates.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Solver object.
-        ax (Axes): Matplotlib axes object.
-        variable (str): Variable to plot.]
-        array (str): Array to extract from. Defaults to "u".
-        t (Optional[float]): Time to get the nearest snapshot. Defaults to None, which
-            uses the last snapshot time.
-        x (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
-            x-coordinate or range. Defaults to 0.5.
-        y (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
-            y-coordinate or range. Defaults to 0.5.
-        z (Optional[Union[float, Tuple[Optional[float], Optional[float]]]]):
-            z-coordinate or range. Defaults to 0.5.
-        xlabel (bool): Whether to show the x-axis label. Defaults to False.
+        fv_solver: FiniteVolumeSolver object.
+        ax: Matplotlib axes object.
+        variable: Name of the variable to plot.
+        array: Source array to extract from. Can be "u" or "w".
+        t: Desired time. If provided, the snapshot with the closest time will be
+            selected. If None, the latest available snapshot is used.
+        x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
+            a floating-point value of 0.5, but each can be:
+            - A float: selects the grid index nearest to that coordinate.
+            - A tuple (start, end): selects a slice between the nearest grid points to
+            `start` and `end`. Either bound may be None to indicate an open interval.
+            - None: selects the full range along that dimension.
+        xlabel: Whether to show the x-axis label. Defaults to False.
         **kwargs: Keyword arguments for the plot.
 
     Raises:
@@ -198,18 +198,19 @@ def plot_2d_slice(
     Plot a 2D slice of a variable at a given time and coordinates.
 
     Args:
-        fv_solver (FiniteVolumeSolver): Solver object.
-        ax (Axes): Matplotlib axes object.
-        variable (str): Variable to plot.
-        array (str): Array to extract from. Defaults to "u".
-        t (Optional[float]): Time to get the nearest snapshot. Defaults to None, which
-            uses the last snapshot time.
-        x (Union[float, Tuple[Optional[float], Optional[float]]]):
-            x-coordinate or range. Defaults to 0.5.
-        y (Union[float, Tuple[Optional[float], Optional[float]]]):
-            y-coordinate or range. Defaults to 0.5.
-        z (Union[float, Tuple[Optional[float], Optional[float]]]):
-            z-coordinate or range. Defaults to 0.5.
+        fv_solver: FiniteVolumeSolver object.
+        ax: Matplotlib axes object.
+        variable: Name of the variable to plot.
+        array: Source array to extract from. Can be "u" or "w".
+        t: Desired time. If provided, the snapshot with the closest time will be
+            selected. If None, the latest available snapshot is used.
+        x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
+            a floating-point value of 0.5, but each can be:
+            - A float: selects the grid index nearest to that coordinate.
+            - A tuple (start, end): selects a slice between the nearest grid points to
+            `start` and `end`. Either bound may be None to indicate an open interval.
+            - None: selects the full range along that dimension.
+        levels: Contour levels to plot. If None, uses imshow instead of contour.
         **kwargs: Keyword arguments for the plot.
 
     Raises:
@@ -271,13 +272,13 @@ def power_law(
     and (x1, f1) where `r = log(f1 / f0) / log(x1 / x0)`.
 
     Args:
-        x0 (float): First x-coordinate.
-        f0 (float): First y-coordinate.
-        x1 (float): Second x-coordinate.
-        f1 (float): Second y-coordinate.
+        x0: First x-coordinate.
+        f0: First y-coordinate.
+        x1: Second x-coordinate.
+        f1: Second y-coordinate.
 
     Returns:
-        Callable[[np.ndarray], np.ndarray]: Power law function.
+        Power law function.
     """
     r = np.log(f1 / f0) / np.log(x1 / x0)
     return lambda x: f0 * (x / x0) ** r
@@ -289,9 +290,9 @@ def plot_power_law_fit(ax: Axes, x: np.ndarray, f: np.ndarray, **kwargs):
     (x[-1], f[-1]).
 
     Args:
-        ax (Axes): Matplotlib axes object.
-        x (np.ndarray): x-coordinates.
-        f (np.ndarray): y-coordinates.
+        ax: Matplotlib axes object.
+        x: x-coordinates.
+        f: y-coordinates.
         **kwargs: Keyword arguments for the plot.
     """
     p_law = power_law(x[0], f[0], x[-1], f[-1])

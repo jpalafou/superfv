@@ -22,7 +22,8 @@ from .tools.array_management import (
     CUPY_AVAILABLE,
     ArrayLike,
     ArrayManager,
-    ArraySlicer,
+    VariableIndexMap,
+    crop,
     crop_to_center,
     xp,
 )
@@ -37,12 +38,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     """
 
     @abstractmethod
-    def define_vars(self) -> ArraySlicer:
+    def define_vars(self) -> VariableIndexMap:
         """
         Define the names of the solver variables.
 
         Returns:
-            ArraySlicer: ArraySlicer object.
+            VariableIndexMap object.
         """
         pass
 
@@ -51,10 +52,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Convert primitive variables to conservative variables.
 
         Args:
-            w (ArrayLike): Primitive variables.
+            w: Array of primitive variables.
 
         Returns:
-            ArrayLike: Conservative variables.
+            Array of conservative variables.
         """
         raise NotImplementedError("Conservative variables not implemented.")
 
@@ -63,10 +64,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Convert conservative variables to primitive variables.
 
         Args:
-            u (ArrayLike): Conservative variables.
+            u: Array of conservative variables.
 
         Returns:
-            ArrayLike: Primitive variables.
+            Array of primitive variables.
         """
         raise NotImplementedError("Primitive variables not implemented.")
 
@@ -75,22 +76,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        primitives: bool = True,
     ) -> ArrayLike:
         """
         Dummy Riemann solver to give an example of the required signature.
 
         Args:
-            wl (ArrayLike): Left state primitive variables. Has shape
+            wl: Array of primitive variables to the left of the interface. Has shape
                 (nvars, nx, ny, nz, ...).
-            wr (ArrayLike): Right state primitive variables. Has shape
+            wr: Array of primitive variables to the right of the interface. Has shape
                 (nvars, nx, ny, nz, ...).
-            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
-            primitives (bool): Whether the input variables are primitive. If False, the
-                input variables are conservative.
+            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
 
         Returns:
-            ArrayLike: Numerical fluxes. Has shape (nvars, nx, ny, nz, ...).
+            Array of numerical fluxes at the interface. Has shape
+                (nvars, nx, ny, nz, ...).
         """
         raise NotImplementedError("Riemann solver not implemented.")
 
@@ -101,16 +100,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the time-step size.
 
         Args:
-            w (ArrayLike): Primitive variables. Has shape (nvars, nx, ny, nz, ...).
+            w: Array of primitive variables. Has shape (nvars, nx, ny, nz).
 
         Returns:
-            float: Time-step size.
+            Time-step size.
         """
         pass
 
     def __init__(
         self,
-        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
@@ -149,47 +148,49 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Initialize the finite volume solver.
 
         Args:
-            ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
-                Initial condition function of pointwise, primitive variables. The
+            ic: Initial condition function of pointwise, primitive variables. The
                 function must accept the following arguments:
-                - array_slicer (ArraySlicer): ArraySlicer object.
-                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
-                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
-                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+                - idx: VariableIndexMap object.
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
                 The function must return an array with shape (nvars, nx, ny, nz).
-            ic_passives (Optional[Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]]):
-                Initial condition functions for passive variables. The dictionary keys
-                are the names of the passive variables, and the values are the
-                corresponding initial condition functions. Each function must accept
-                the following arguments:
-                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
-                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
-                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+            ic_passives: Dictionary of initial condition functions for passive
+                variables. The dictionary keys are the names of the passive variables
+                and the values are the corresponding initial condition functions.
+                Each function must accept the following arguments:
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
                 The function must return an array with shape (nx, ny, nz).
-            bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
-            bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
-            bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
-            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                x-direction.
-            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                y-direction.
-            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                z-direction.
-            xlim (Tuple[float, float]): x-limits of the domain.
-            ylim (Tuple[float, float]): y-limits of the domain.
-            zlim (Tuple[float, float]): z-limits of the domain.
-            nx (int): Number of cells in the x-direction.
-            ny (int): Number of cells in the y-direction.
-            nz (int): Number of cells in the z-direction.
-            p (int): Maximum polynomial degree of the spatial discretization.
-            CFL (float): CFL number.
-            interpolation_scheme (str): Interpolation scheme to use for the
-                interpolation of face nodes. Possible values:
+            bcx, bcy, bcz: Boundary conditions for the x, y, and z directions. Each can
+                be specified as a single string to apply the same condition on both
+                sides, or as a tuple of two strings to apply different conditions on
+                the lower and upper (left and right) boundaries, respectively.
+                Supported boundary condition names include: "periodic", "dirichlet",
+                "free", "reflective", "zeros", and "ones".
+            x_dirichlet, y_dirichlet, z_dirichlet: Additional argument for "dirichlet"
+                boundary conditions. Must be a callable that takes following arguments:
+                - idx: VariableIndexMap object.
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
+                - t: Optional time at which the boundary condition is applied.
+                And returns an array with shape (nvars, nx, ny, nz). Can also be given
+                as a tuple of two callables, one for the left and one for the right
+                boundary condition. If a single callable is provided, it will be used
+                for both boundaries.
+            xlim, ylim, zlim: Limits of the domain in the x, y, and z-directions.
+            nx, ny, nz: Number of cells in the x, y, and z-directions.
+            p: Maximum polynomial degree of the spatial discretization.
+            CFL: CFL number.
+            interpolation_scheme: Scheme to use for the interpolation of face nodes.
+                Possible values:
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
-            flux_recipe (Literal[1,2,3]): Recipe for interpolating flux nodes.
+            flux_recipe: Recipe for interpolating flux nodes. Possible values:
                 - 1: Interpolate conservative nodes from conservative cell averages.
                     Apply slope limiting to the conservative nodes. Transform to
                     primitive variables.
@@ -198,35 +199,33 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     primitive nodes.
                 - 3: Interpolate primitive cell averages from conservative cell
                     averages, either by interpolating to cell-centered values
-                    intermittently or transforming directly with `lazy_primtives=True`.
+                    intermittently or transforming directly with `lazy_primitives=True`.
                     Interpolate primitive nodes from primitive cell averages.
                     Apply slope limiting to the primitive nodes.
-            lazy_primitives (bool): Whether to transform conservative cell averages
+            lazy_primitives: Whether to transform conservative cell averages
                 directly to primitive cell averages. Note that this is a second order
                 operation. If
                 - `flux_recipe=1`: This argument is ignored.
                 - `flux_recipe=2`: The lazy primitives become the fallback option.
                 - `flux_recipe=3`: The lazy primitives are used to interpolate the
                     primitive flux nodes.
-            riemann_solver (str): Name of the Riemann solver function. Must be
-                implemented in the derived class.
-            MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
-            ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
-                priori slope limiter.
-            adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
-                size if a maximum principle violation is detected. If True, MOOD is
-                overwritten to only modify the time-step size and not the fluxes.
-                Ignored if `ZS=False`.
-            max_adaptive_timesteps (Optional[int]): Maximum number of adaptive time
-                steps. If `ZS=True` and `adaptive_timestepping=True`, the default value
-                is 10. Otherwise, this argument is ignored.
-            MOOD (bool): Whether to use MOOD for a posteriori flux revision. Ignored if
+            riemann_solver: Name of the Riemann solver function. Must be implemented in
+                the derived class.
+            MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
+            ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
+                slope limiter.
+            adaptive_timestepping: Option for `ZS=True` to half the time-step size if a
+                maximum principle violation is detected. If True, MOOD is overwritten
+                to only modify the time-step size and not the fluxes. Ignored if
+                `ZS=False`.
+            max_adaptive_timesteps: Maximum number of adaptive time steps if both
+                `ZS=True` and `adaptive_timestepping=True`. If None, defaults to 10.
+                Ignored if either `ZS` or `adaptive_timestepping` is False.
+            MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
-            max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
-                if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
-                value is 1.
-            limiting_vars (Union[Literal["all", "actives"], Tuple[str, ...]]):
-                Specifies which variables are subject to slope limiting.
+            max_MOOD_iters: Maximum number of MOOD iterations if `MOOD=True`. If None,
+                defaults to 1. If 'MOOD=False', this argument is ignored.
+            limiting_vars: Specifies which variables are subject to slope limiting.
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
                 - Tuple[str, ...]: A tuple of variable names that are subject to slope
@@ -234,14 +233,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 For the Zhang-Shu limiter, all variables are always limited, but
                 `limiting_vars` determines which variables are checked for PAD when
                 using adaptive timestepping.
-            NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
-            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
-                their corresponding PAD tolerances. If a limiting variable is not in
-                the dict, it is given a PAD tolerance of (-np.inf, np.inf).
-            PAD_tol (float): Tolerance for the PAD check as an absolute value from the
-                minimum and maximum values of the variable.
-            SED (bool): Whether to use smooth extrema detection for slope limiting.
-            cupy (bool): Whether to use CuPy for array operations.
+            NAD: The NAD tolerance. If None, NAD is not checked.
+            PAD: Dict of `limiting_vars` and their corresponding PAD tolerances. If a
+                limiting variable is not in the dict, it is given a PAD tolerance of
+                (-np.inf, np.inf). If None, PAD is not checked.
+            PAD_tol: Tolerance for the PAD check as an absolute value from the minimum
+                and maximum values of the variable.
+            SED: Whether to use smooth extrema detection for slope limiting.
+            cupy: Whether to use CuPy for array operations.
         """
         self._init_mesh(
             xlim,
@@ -398,16 +397,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_ic(
         self,
-        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ],
     ):
         # Define the following attributes:
         self.active_vars: Set[str]
-        self.array_slicer: ArraySlicer
+        self.variable_index_map: VariableIndexMap
         self.callable_ic: Callable[
-            [ArraySlicer, ArrayLike, ArrayLike, ArrayLike, Optional[float]], ArrayLike
+            [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+            ArrayLike,
         ]
         self.n_active_vars: int
         self.n_passive_vars: int
@@ -417,37 +417,37 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.vars: Set[str]
 
         # Define active and passive variables
-        self.array_slicer = self.define_vars()
-        if "passives" in self.array_slicer.group_names:
-            self.passive_vars = set(self.array_slicer.groups["passives"])
-            self.active_vars = self.array_slicer.var_names - self.passive_vars
+        self.variable_index_map = self.define_vars()
+        if "passives" in self.variable_index_map.group_names:
+            self.passive_vars = set(self.variable_index_map.groups["passives"])
+            self.active_vars = self.variable_index_map.var_names - self.passive_vars
         else:
-            self.active_vars = self.array_slicer.var_names
+            self.active_vars = self.variable_index_map.var_names
             self.passive_vars = set()
-        self.array_slicer.create_var_group("actives", tuple(self.active_vars))
+        self.variable_index_map.create_var_group("actives", tuple(self.active_vars))
 
         # Count active and passive variables
         self.n_active_vars = len(
-            {self.array_slicer.variables[v] for v in self.active_vars}
+            {self.variable_index_map.variables[v] for v in self.active_vars}
         )
         self.n_passive_vars = len(
-            {self.array_slicer.variables[v] for v in self.passive_vars}
+            {self.variable_index_map.variables[v] for v in self.passive_vars}
         )
 
         # Include user-defined passive variables
         self.user_defined_passive_vars = set()
         if ic_passives is not None:
-            starting_passive_idx = len(self.array_slicer.idxs)
+            starting_passive_idx = len(self.variable_index_map.idxs)
             for i, v in enumerate(ic_passives.keys()):
                 if v in self.active_vars | self.passive_vars:
                     raise ValueError("Variable already defined.")
-                self.array_slicer.add_var(v, starting_passive_idx + i)
-            if "passives" in self.array_slicer.group_names:
-                self.array_slicer.add_to_var_group(
+                self.variable_index_map.add_var(v, starting_passive_idx + i)
+            if "passives" in self.variable_index_map.group_names:
+                self.variable_index_map.add_to_var_group(
                     "passives", tuple(ic_passives.keys())
                 )
             else:
-                self.array_slicer.create_var_group(
+                self.variable_index_map.create_var_group(
                     "passives", tuple(ic_passives.keys())
                 )
             self.n_user_defined_passive_vars = len(ic_passives)
@@ -455,7 +455,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.passive_vars |= set(ic_passives.keys())
 
             self.user_defined_passive_vars = set(ic_passives.keys())
-            self.array_slicer.create_var_group(
+            self.variable_index_map.create_var_group(
                 "user_defined_passives", tuple(self.user_defined_passive_vars)
             )
 
@@ -464,16 +464,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.vars = self.active_vars | self.passive_vars
 
         # Define callable initial condition function
-        def callable_ic(array_slicer, x, y, z, t=None):
-            return ic(array_slicer, x, y, z)
+        def callable_ic(idx, x, y, z, t=None):
+            return ic(idx, x, y, z)
 
         if ic_passives is not None:
 
             def passive_wrapper(f):
-                def wrapped_ic_func(array_slicer, x, y, z, t=None):
-                    out = f(array_slicer, x, y, z)
+                def wrapped_ic_func(idx, x, y, z, t=None):
+                    out = f(idx, x, y, z)
                     for pv, pf in ic_passives.items():
-                        out[array_slicer(pv)] = pf(x, y, z)
+                        out[idx(pv)] = pf(x, y, z)
                     return out
 
                 return wrapped_ic_func
@@ -493,17 +493,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         selected_actives = set(
             cast(
                 List[str],
-                test_arr[self.array_slicer("actives", keepdims=True)].tolist(),
+                test_arr[self.variable_index_map("actives", keepdims=True)].tolist(),
             )
         )
         selected_passives = (
             set(
                 cast(
                     List[str],
-                    test_arr[self.array_slicer("passives", keepdims=True)].tolist(),
+                    test_arr[
+                        self.variable_index_map("passives", keepdims=True)
+                    ].tolist(),
                 )
             )
-            if "passives" in self.array_slicer.group_names
+            if "passives" in self.variable_index_map.group_names
             else None
         )
         all_selected_vars = set(test_arr.tolist())
@@ -522,7 +524,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Active variables must be the set of all variables.")
 
         # Initialize the ODE solver with the initial condition array
-        ic_arr = self.callable_ic(self.array_slicer, self.X, self.Y, self.Z, 0.0)
+        ic_arr = self.callable_ic(self.variable_index_map, self.X, self.Y, self.Z, 0.0)
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
@@ -538,13 +540,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
 
         def wrapped_func(
-            array_slicer: ArraySlicer,
+            variable_index_map: VariableIndexMap,
             x: ArrayLike,
             y: ArrayLike,
             z: ArrayLike,
             t: Optional[float] = None,
         ) -> ArrayLike:
-            return self.conservatives_from_primitives(f(array_slicer, x, y, z, t))
+            return self.conservatives_from_primitives(f(variable_index_map, x, y, z, t))
 
         return wrapped_func
 
@@ -557,14 +559,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
 
         def wrapped_func(
-            array_slicer: ArraySlicer,
+            variable_index_map: VariableIndexMap,
             x: ArrayLike,
             y: ArrayLike,
             z: ArrayLike,
             t: Optional[float] = None,
         ) -> ArrayLike:
             return fv_average(
-                lambda x, y, z: f(array_slicer, x, y, z, t),
+                lambda x, y, z: f(variable_index_map, x, y, z, t),
                 x,
                 y,
                 z,
@@ -598,9 +600,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for i in range(2):
                 if _bc[i] == "ic":
                     _bc[i] = "dirichlet"
-                    _f[i] = lambda array_slicer, x, y, z, t: self.callable_ic(
-                        array_slicer, x, y, z, 0.0
-                    )
+                    _f[i] = lambda idx, x, y, z, t: self.callable_ic(idx, x, y, z, 0.0)
             ic_configed_bc[dim] = (_bc[0], _bc[1])
             ic_configed_dirichlet[dim] = (_f[0], _f[1])
 
@@ -612,7 +612,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         y_dirichlet = ic_configed_dirichlet["y"]
         z_dirichlet = ic_configed_dirichlet["z"]
         self.bc = BoundaryConditions(
-            self.array_slicer,
+            self.variable_index_map,
             bcx,
             bcy,
             bcz,
@@ -629,7 +629,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # this is used to apply ghost cells to alpha in the smooth extrema detector
         _periodic = ("periodic", "periodic")
         self.bc_for_smooth_extrema_detection = BoundaryConditions(
-            self.array_slicer,
+            self.variable_index_map,
             "periodic" if self.bc.bcx == _periodic else "ones",
             "periodic" if self.bc.bcy == _periodic else "ones",
             "periodic" if self.bc.bcz == _periodic else "ones",
@@ -640,7 +640,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # this is used to apply ghost cells to the troubled cell mask in MOOD
         self.bc_for_troubled_cell_mask = BoundaryConditions(
-            self.array_slicer,
+            self.variable_index_map,
             "periodic" if self.bc.bcx == _periodic else "free",
             "periodic" if self.bc.bcy == _periodic else "free",
             "periodic" if self.bc.bcz == _periodic else "free",
@@ -746,7 +746,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if limiting_vars == "actives":
             self.limiting_vars = self.active_vars
         elif limiting_vars == "all":
-            self.limiting_vars = self.array_slicer.var_names
+            self.limiting_vars = self.variable_index_map.var_names
         elif isinstance(limiting_vars, tuple):
             self.limiting_vars = set(limiting_vars)
         else:
@@ -755,7 +755,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
 
         # Assign limiting variables
-        self.array_slicer.create_var_group("limiting_vars", tuple(self.limiting_vars))
+        self.variable_index_map.create_var_group(
+            "limiting_vars", tuple(self.limiting_vars)
+        )
 
         # Set SED
         self.SED = SED
@@ -776,7 +778,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # Create and register PAD array
             _PAD_arr = np.array([[-np.inf, np.inf]] * self.nvars)
             for v, (lb, ub) in PAD.items():
-                _PAD_arr[self.array_slicer(v)] = [lb, ub]
+                _PAD_arr[self.variable_index_map(v)] = [lb, ub]
             _PAD_arr = _PAD_arr.reshape(self.nvars, 1, 1, 1, 2)
             self.arrays.add("PAD", _PAD_arr)  # Register PAD array
 
@@ -786,12 +788,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the right-hand side of the ODE.
 
         Args:
-            t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
+            t: Time value.
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
 
         Returns:
-            dt (float): Time-step size.
-            dudt (ArrayLike): Right-hand side of the ODE. Has shape
+            dt: Time-step size.
+            dudt (ArrayLike): Right-hand side of the ODE as an array. Has shape
                 (nvars, nx, ny, nz).
         """
         self.substep_count += 1
@@ -828,61 +831,64 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the time-step size and the fluxes.
 
         Args:
-            t (float): Time value.
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            mode (str): Mode of interpolation. Possible values:
+            t: Time value.
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            mode: Mode of interpolation. Possible values:
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points. Compute the flux integral using Gauss-Legendre quadrature.
-            p (int): Polynomial degree of the spatial discretization. If
-                `slope_limiting` is "muscl", p is ignored and assumed to be 1.
-            limiting_scheme (Optional[Literal["muscl"]]): Overwrites interpolation mode
-                to use a slope-limiting scheme. Possible values:
+            p: Polynomial degree of the spatial discretization. If `slope_limiting` is
+                "muscl", p is ignored and assumed to be 1.
+            limiting_scheme: Scheme to use for slope limiting. If None, no slope
+                limiting is applied. Possible values:
+                - None: No slope limiting is applied.
                 - "muscl": Use the MUSCL scheme.
                 - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
                     limiter.
-            slope_limiter (Optional[Literal["minmod", "moncen"]]): Slope limiter to
-                use if `slope_limiting` is "muscl". Possible values:
+            slope_limiter: Slope limiter to use if `limiting_scheme` is "muscl".
+                If None, no slope limiter is applied. Possible values:
+                - None: No slope limiter is applied.
                 - "minmod": Minmod limiter.
                 - "moncen": Moncen limiter.
 
         Returns:
-            dt (float): Time-step size.
-            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
-                the corresponding dimension is unused. The fluxes have the following
-                shapes if not None:
-                - F: (nvars, nx + 1, ny, nz)
-                - G: (nvars, nx, ny + 1, nz)
-                - H: (nvars, nx, ny, nz + 1)
+            dt: Time-step size.
+            fluxes: Tuple of flux arrays or None if the corresponding dimension is
+                unused. The fluxes have the following shapes if not None:
+            - F: (nvars, nx + 1, ny, nz)
+            - G: (nvars, nx, ny + 1, nz)
+            - H: (nvars, nx, ny, nz + 1)
         """
-        _slc = self.array_slicer
         p = 1 if limiting_scheme == "muscl" else cast(int, p)
         ZS = slope_limiter == "zhang-shu"
 
-        # apply boundary conditions
-        u_padded = self.apply_bc(u, -(-p // 2) + 1, t)
-
-        # assign primitive averages to 'w'
+        # compute primitive averages
         if self.lazy_primitives:
-            w_padded = self.primitives_from_conservatives(u_padded)
+            w = self.primitives_from_conservatives(u)
         else:
-            w = self.interpolate_cell_centers(
-                self.apply_bc(u, -2 * (-p // 2), t), interpolation_scheme=mode, p=p
-            )
+            w = self.interpolate_cell_centers(self.apply_bc(u, -2 * (-p // 2), t), p)
             w[...] = self.primitives_from_conservatives(w)
-            w = self.interpolate(w, p=p, stencil_type="uniform-quadrature")
-            w_padded = self.apply_bc(w, -(-p // 2) + 1, t, conservatives=False)
+            w = self.interpolate_cell_averages(w, p)
+
+        # apply ghost cells
+        nghost1 = -(-p // 2)
+        u_padded = self.apply_bc(u, nghost1, t)
+        w_padded = self.apply_bc(w, nghost1, t, primitives=True)
 
         # compute dt
         dt = self.compute_dt(w_padded)
 
         # compute fluxes
         fluxes: List[Optional[ArrayLike]] = []
-        for dim in ["x", "y", "z"]:
+        for axis, dim in zip([1, 2, 3], ["x", "y", "z"]):
+            # skip unused dimensions
             if not self.using[dim]:
                 fluxes.append(None)
                 continue
+
+            # interpolate face nodes as primitive variables
             w_xl, w_xr = self.interpolate_face_nodes(
                 w_padded if self.flux_recipe == 3 else u_padded,
                 dim=dim,
@@ -894,15 +900,31 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 primitive_fallback=w_padded if ZS and self.flux_recipe == 2 else None,
             )
             if self.flux_recipe == 1 or (self.flux_recipe == 2 and not ZS):
-                w_xl = self.primitives_from_conservatives(w_xl)
-                w_xr = self.primitives_from_conservatives(w_xr)
+                w_xl[...] = self.primitives_from_conservatives(w_xl)
+                w_xr[...] = self.primitives_from_conservatives(w_xr)
+
+            # apply extra ghost cells for transverse quadrature and riemann solve
+            nghost2 = p // 2 + 1 if mode == "transverse" else 1
+            w_xl = np.expand_dims(
+                self.apply_bc(
+                    w_xl[..., 0], nghost2, t, primitives=True, pointwise=True
+                ),
+                -1,
+            )
+            w_xr = np.expand_dims(
+                self.apply_bc(
+                    w_xr[..., 0], nghost2, t, primitives=True, pointwise=True
+                ),
+                -1,
+            )
+
+            # compute fluxes from the primitive variables
             F = self.compute_numerical_fluxes(
-                w_xr[_slc(**{dim: (None, -1)})],
-                w_xl[_slc(**{dim: (1, None)})],
+                w_xr[crop(axis, (None, -1))],
+                w_xl[crop(axis, (1, None))],
                 dim=dim,
                 quadrature=mode,
                 p=p,
-                primitive=True,
             )
             fluxes.append(F)
 
@@ -923,24 +945,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Revise fluxes using MOOD.
 
         Args:
-            t (float): Time value.
-            dt (float): Time-step size.
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            fluxes (Tuple[Optional[ArrayLike], ...]): Tuple of flux arrays or None if
-                the corresponding dimension is unused. The fluxes have the following
-                shapes if not None:
-                - F: (nvars, nx + 1, ny, nz)
-                - G: (nvars, nx, ny + 1, nz)
-                - H: (nvars, nx, ny, nz + 1)
+            t: Time value.
+            dt: Time step size.
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            fluxes: Tuple of flux arrays (F, G, H). None if the corresponding dimension
+                is unused. Otherwise, is an array with shape:
+                - F: (nvars, nx+1, ny, nz)
+                - G: (nvars, nx, ny+1, nz)
+                - H: (nvars, nx, ny, nz+1)
 
         Returns:
-            Tuple[float, Tuple[Optional[ArrayLike]], ...]: Tuple composed of:
-                - The revised time step.
-                - The revised fluxes (F, G, H). None if the corresponding dimension is
-                unused. Otherwise, is an array with shape:
-                    - F: (nvars, nx+1, ny, nz, ...)
-                    - G: (nvars, nx, ny+1, nz, ...)
-                    - H: (nvars, nx, ny, nz+1, ...)
+            dt: Revised time step size.
+            fluxes: Tuple of revised flux arrays (F, G, H). None if the corresponding
+                dimension is unused. Otherwise, is an array with shape:
+                - F: (nvars, nx+1, ny, nz)
+                - G: (nvars, nx, ny+1, nz)
+                - H: (nvars, nx, ny, nz+1)
         """
         init_MOOD(self, u, fluxes)
         while detect_troubles(
@@ -968,43 +989,44 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @partial(method_timer, cat="FiniteVolumeSolver.apply_bc")
     def apply_bc(
         self,
-        arr: ArrayLike,
+        u: ArrayLike,
         n_ghost_cells: int,
         t: Optional[float] = None,
-        conservatives: bool = True,
-        averages: bool = True,
+        primitives: bool = False,
+        pointwise: bool = False,
     ) -> ArrayLike:
         """
         Apply boundary conditions to an array by padding it with ghost cells along the
         active dimensions.
 
         Args:
-            arr (ArrayLike): Field array. Has shape (nvars, nx, ny, nz).
-            n_ghost_cells (int): Number of ghost cells to apply boundary conditions to.
-            t (Optional[float]): Time at which boundary conditions are applied.
-            conservatives (bool): Whether the input is conservative variables. If
-                False, the input is assumed to be primitive variables.
-            averages (bool): Whether the input is finite volume averages. If False, the
-                input is assumed to be pointwise values.
+            u: Field array. Has shape (nvars, nx, ny, nz).
+            n_ghost_cells: Number of ghost cells to add on each side of the active
+                dimensions.
+            t: Time at which boundary conditions are applied.
+            primitives: Whether 'u' contains primitive variables. If False, it is
+                assumed that 'u' contains conservative variables.
+            pointwise (bool): Whether 'u' contains pointwise values. If False, it is
+                assumed that 'u' contains cell-averaged values.
 
         Returns:
-            ArrayLike: Padded array. Has shape (nvars, >= nx, >= ny, >= nz). Axes
-                corresponding to inactive dimensions are not padded and maintain length
-                n[dim]. Axes corresponding to active dimensions are padded with
-                n_ghost_cells ghost cells on each side, resulting in length
-                n[dim] + 2 * n_ghost_cells.
+            Padded array. Has shape (nvars, >= nx, >= ny, >= nz). Axes corresponding to
+                inactive dimensions are not padded and maintain length 1. Axes
+                corresponding to active dimensions are padded with 'n_ghost_cells'
+                ghost cells on each side, resulting in length
+                'n[dim] + 2 * n_ghost_cells'.
 
         """
         return self.bc(
-            arr,
+            u,
             (
                 int(self.using_xdim) * n_ghost_cells,
                 int(self.using_ydim) * n_ghost_cells,
                 int(self.using_zdim) * n_ghost_cells,
             ),
             t=t,
-            conservatives=conservatives,
-            averages=averages,
+            primitives=primitives,
+            pointwise=pointwise,
         )
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
@@ -1021,28 +1043,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ] = "conservative-interpolation",
     ) -> ArrayLike:
         """
-        Interpolates a node value from the finite-volume cell averages.
+        Interpolates a value from an array using a stencil of polynomial degree `p`.
 
         Args:
-            u (ArrayLike): Array to interpolate. Has shape (nvars, nx, ny, nz).
-            x (Union[int, float, str]): x-coordinate of the desired node. Must be
-                between -1 (leftmost cell face) and nx (rightmost cell face).
-                Alternatively, can be "l", "r", or "c" for left, right, or center.
-            y (Union[int, float, str]): y-coordinate of the desired node. Must be
-                between -1 (leftmost cell face) and nx (rightmost cell face).
-                Alternatively, can be "l", "r", or "c" for left, right, or center.
-            z (Union[int, float, str]): z-coordinate of the desired node. Must be
-                between -1 (leftmost cell face) and nx (rightmost cell face).
-                Alternatively, can be "l", "r", or "c" for left, right, or center.
-            p (int): Polynomial degree of the interpolation.
-            sweep_order (str): Order of the direction of the interpolation sweeps. Any
+            u: Array to interpolate. Has shape (nvars, nx, ny, nz).
+            x, y, z: Coordinates of the desired node. Can be specified as:
+                - Integers or floats: Must be bounded by -1 (leftmost cell face) and 1
+                    (rightmost cell face).
+                - Strings: Can be "l", "r", or "c" for left, right, or center of the
+                  cell, respectively.
+            p: Polynomial degree of the interpolation.
+            sweep_order: Order of the direction of the interpolation sweeps. Any
                 combination of "x", "y", and "z".
-            stencil_type (str): Type of stencil weights to use for the interpolation.
+            stencil_type: Type of stencil weights to use for the interpolation.
                 - "conservative-interpolation": Uses conservative interpolation weights.
                 - "uniform-quadrature": Uses uniform quadrature weights.
 
         Returns:
-            ArrayLike: Interpolated node values. Has shape (nvars, <=nx, <=ny, <=nz).
+            Array of interpolated node values. Has shape (nvars, <=nx, <=ny, <=nz).
 
         Notes:
             - This function utilizes a caching system (`self.interpolation_cache`) to
@@ -1110,45 +1128,107 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_cell_centers(
         self,
         averages: ArrayLike,
-        interpolation_scheme: Literal["transverse", "gauss-legendre"],
+        p: int = None,
+        sweep_order: str = "xyz",
+        clear_cache: bool = True,
+    ) -> ArrayLike:
+        """
+        Interpolate cell-centered values from finite-volume cell averages.
+
+        Args:
+            averages: Array of FV cell averages. Has shape (nvars, nx, ny, nz).
+            p: Polynomial degree of the interpolation for "transverse" and
+                "gauss-legendre" modes. For "muscl" mode, p is ignored and assumed to
+                be 1.
+            sweep_order: Order of the direction of the interpolation sweeps. Any
+                combination of "x", "y", and "z".
+            clear_cache: Whether to clear the interpolation cache before performing the
+                interpolation.
+
+        Returns:
+            Array of FV cell-centered values. Has shape (nvars, <=nx, <=ny, <=nz).
+        """
+        return self._interpolate_cell_quantity(
+            averages,
+            centers=True,
+            p=p,
+            sweep_order=sweep_order,
+            clear_cache=clear_cache,
+        )
+
+    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_cell_averages")
+    def interpolate_cell_averages(
+        self,
+        centers: ArrayLike,
         p: Optional[int] = None,
         sweep_order: str = "xyz",
         clear_cache: bool = True,
     ) -> ArrayLike:
         """
-        Interpolate face nodes from cell averages.
+        Interpolate finite-volume cell averages from cell-centered values.
 
         Args:
-            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
-            interpolation_scheme (Literal["transverse", "gauss-legendre"]): Mode of
-                interpolation. Possible values:
-                - "transverse": Interpolate nodes at the cell face centers.
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points.
-                - "muscl": Interpolate nodes using the MUSCL scheme.
-            p (Optional[int]): Polynomial degree of the interpolation for "transverse" and
-                "gauss-legendre" modes. For "muscl" mode, p is ignored.
-            sweep_order (str): Order of the direction of the interpolation sweeps. Any
+            centers: Array of cell center values. Has shape (nvars, nx, ny, nz).
+            p: Polynomial degree of the interpolation for "transverse" and
+                "gauss-legendre" modes. For "muscl" mode, p is ignored and assumed to
+                be 1.
+            sweep_order: Order of the direction of the interpolation sweeps. Any
                 combination of "x", "y", and "z".
-            clear_cache (bool): Whether to clear the interpolation cache before
-                performing the interpolation.
+            clear_cache: Whether to clear the interpolation cache before performing the
+                interpolation.
 
         Returns:
-            ArrayLike: Cell centers. Has shape (nvars, <=nx, <=ny, <=nz).
+            Array of FV cell averages. Has shape (nvars, <=nx, <=ny, <=nz).
+        """
+        return self._interpolate_cell_quantity(
+            centers,
+            centers=False,
+            p=p,
+            sweep_order=sweep_order,
+            clear_cache=clear_cache,
+        )
+
+    def _interpolate_cell_quantity(
+        self,
+        u: ArrayLike,
+        centers: bool = True,
+        p: Optional[int] = None,
+        sweep_order: str = "xyz",
+        clear_cache: bool = True,
+    ) -> ArrayLike:
+        """
+        Interpolate a cell quantity (cell centers or cell averages) from finite-volume
+        cell averages or cell centers.
+        Args:
+            u: Array of cell averages or cell centers. Has shape (nvars, nx, ny, nz).
+            centers: Whether to interpolate cell centers (True) or cell averages
+                (False).
+            p: Polynomial degree of the interpolation for "transverse" and
+                "gauss-legendre" modes. For "muscl" mode, p is ignored and assumed to
+                be 1.
+            sweep_order: Order of the direction of the interpolation sweeps. Any
+                combination of "x", "y", and "z".
+            clear_cache: Whether to clear the interpolation cache before performing the
+                interpolation.
+
+        Returns:
+            Array of interpolated cell quantity. Has shape (nvars, <=nx, <=ny, <=nz)
         """
         if clear_cache:
             self.interpolation_cache.clear()
 
-        cell_centers = self.interpolate(
-            averages,
+        cell_quantity = self.interpolate(
+            u,
             x=0,
             y=0,
             z=0,
             p=p,
             sweep_order=sweep_order,
-            stencil_type="conservative-interpolation",
+            stencil_type=(
+                "conservative-interpolation" if centers else "uniform-quadrature"
+            ),
         )
-        return cell_centers
+        return cell_quantity
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate_face_nodes")
     def interpolate_face_nodes(
@@ -1157,51 +1237,49 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         dim: Literal["x", "y", "z"],
         interpolation_scheme: Optional[Literal["transverse", "gauss-legendre"]] = None,
         limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
-        p: Optional[int] = None,
+        p: int = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
         convert_to_primitives: bool = False,
         primitive_fallback: Optional[ArrayLike] = None,
         clear_cache: bool = True,
     ) -> Tuple[ArrayLike, ArrayLike]:
         """
-        Interpolate face nodes from cell averages.
+        Interpolate face nodes from finite-volume cell averages.
 
         Args:
-            averages (ArrayLike): Cell averages. Has shape (nvars, nx, ny, nz).
-            dim (Literal["x", "y", "z"]): Direction of the face nodes. Can be "x", "y",
-                or "z".
-            interpolation_scheme (Optional[Literal["transverse", "gauss-legendre"]]):
-                Mode of interpolation. Possible values:
+            averages: Array of FV cell averages. Has shape (nvars, nx, ny, nz).
+            dim: Face dimension to interpolate. Can be "x", "y", or "z".
+            interpolation_scheme: Mode of interpolation. Possible values:
                 - None: Only valid when `limiting_scheme` is "muscl".
                 - "transverse": Interpolate nodes at the cell face centers.
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points.
-            limiting_scheme (Optional[Literal["muscl", "zhang-shu"]]): Slope limiting
-                scheme. Possible values:
+            limiting_scheme: Slope limiting scheme. Possible values:
                 - None: No slope limiting.
                 - "muscl": Use the MUSCL scheme.
                 - "zhang-shu": Use Zhang and Shu's maximum-principle-satisfying slope
                     limiter.
-            p (Optional[int]): Polynomial degree of the interpolation schemes. For
-                "muscl" slope limiting, p is ignored.
-            slope_limiter (str): Additional option for slope limiting. Possible values:
-                - "minmod": Minmod limiter for the MUSCL scheme.
-                - "moncen": Moncen limiter for the MUSCL scheme.
-            convert_to_primitives (bool): Convert nodes to primitive variables before
-                returning. Only used if `limiting_scheme` is "zhang-shu".
-            primitive_fallback (Optional[ArrayLike]): Argument of the Zhang-Shu
-                limiter. It gives the fallback values used by the limiter if
-            clear_cache (bool): Whether to clear the interpolation cache before
-                performing the interpolation.
+            p: Polynomial degree of the interpolation schemes. For "muscl" slope
+                limiting, p is ignored and assumed to be 1.
+            slope_limiter: Additional option for the MUSCL scheme. Possible values:
+                - "minmod": Minmod limiter.
+                - "moncen": Moncen limiter.
+            convert_to_primitives: Option for the Zhang-Shu limiter. If True, the
+                interpolated face nodes are transformed to primitive variables. If
+                False, the face nodes are not transformed and are returned as is.
+            primitive_fallback: Optional fallback values for the Zhang-Shu limiter. If
+                provided, it should be an array of primitive variables with shape
+                (nvars, nx, ny, nz). If not provided, the 'averages' array is used as
+                the fallback values for the Zhang-Shu limiter.
+            clear_cache: Whether to clear the interpolation cache before performing the
+                interpolation.
         Returns:
-            Tuple[ArrayLike, ArrayLike]: Two node arrays. The first element is the left
-                face nodes, and the second element is the right face nodes. Each face
-                node has shape (nvars, <=nx, <=ny, <=nz, ninterpolations), unless the
-                dimension is not used, in which case the face node is None.
-                ninterpolations is the number of Gauss-Legendre interpolation points
-                for a degree `p` reconstruction if `interpolation_scheme` is
-                "gauss-legendre". If `interpolation_scheme` is "face-centers",
-                ninterpolations is 1.
+            Tuple of node arrays for the left and right faces along the specified
+            dimension ('dim'). Each face node has shape
+            (nvars, <=nx, <=ny, <=nz, ninterpolations). If `interpolation_scheme` is
+            "gauss-legendre", `ninterpolations` is the number of Gauss-Legendre
+            interpolation points for a degree `p` reconstruction. If
+            `interpolation_scheme` is "face-centers", `ninterpolations` is 1.
         """
         if clear_cache:
             self.interpolation_cache.clear()
@@ -1278,13 +1356,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the flux integral in a given direction.
 
         Args:
-            node_values (ArrayLike): Node values. Has shape (nvars, nx, ny, nz, 1).
-            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
-            p (int): Polynomial degree of the interpolation.
-            clear_cache (bool): Whether to clear the interpolation cache before
-                performing the quadrature.
+            node_values: Array of node values. Has shape (nvars, nx, ny, nz, 1).
+            dim: Direction of the flux integral: "x", "y", or "z".
+            p: Polynomial degree of the interpolation.
+            clear_cache: Whether to clear the interpolation cache before performing the
+                quadrature.
+
         Returns:
-            ArrayLike: Flux integral. Has shape (nvars, <=nx, <=ny, <=nz).
+            Array of flux integrals. Has shape (nvars, <=nx, <=ny, <=nz).
         """
         if clear_cache:
             self.interpolation_cache.clear()
@@ -1303,13 +1382,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the flux integral using Gauss-Legendre quadrature.
 
         Args:
-            node_values (ArrayLike): Node values. Has shape
+            node_values: Array of node values. Has shape
                 (nvars, nx, ny, nz, ninterpolations).
-            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
-            p (int): Polynomial degree of the interpolation.
+            dim: Direction of the flux integral: "x", "y", or "z".
+            p: Polynomial degree of the interpolation.
 
         Returns:
-            ArrayLike: Flux integral. Has shape (nvars, nx, ny, nz).
+            Array of flux integrals. Has shape (nvars, <=nx, <=ny, <=nz).
         """
         weights_name = f"gauss-legendre-weights-{dim}-{p}"
         if weights_name not in self.arrays:
@@ -1329,33 +1408,32 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         clear_cache: bool = True,
         crop: bool = True,
-        primitive: bool = True,
     ) -> ArrayLike:
         """
         Compute the numerical fluxes.
 
         Args:
-            left_nodes (ArrayLike): Value of primitive variable nodes to the
-                left of the discontinuity. Has shape
-                (nvars, nx, ny, nz, ninterpolations).
-            right_nodes (ArrayLike): Value of primitive variable nodes to the
-                right of the discontinuity. Has shape
-                (nvars, nx, ny, nz, ninterpolations).
-            dim (str): Direction of the flux integral. Can be "x", "y", or "z".
-            quadrature (str): Mode of the numerical flux computation. Possible values:
+            left_nodes: Array of primitive, pointwise variable nodes to the left of the
+                discontinuity. Has shape (nvars, nx, ny, nz, ninterpolations).
+            right_nodes: Array of primitive, pointwise variable nodes to the right of
+                the discontinuity. Has shape (nvars, nx, ny, nz, ninterpolations).
+            dim: Direction of the flux integral: "x", "y", or "z".
+            quadrature: Mode of the numerical flux computation. Possible values:
                 - "transverse": Compute the flux integral using a transverse
                     quadrature.
                 - "gauss-legendre": Compute the flux integral using Gauss-Legendre
                     quadrature.
-            p (int): Polynomial degree of the interpolation.
-            clear_cache (bool): Whether to clear the interpolation cache before
-                performing the quadrature.
-            crop (bool): Whether to crop the numerical fluxes to the shape of the
-                finite-volume mesh.
-            primitive (bool): Whether the input nodes are primitive variables. If
-                False, the input nodes are assumed to be conservative variables.
+            p: Polynomial degree of the interpolation.
+            clear_cache: Whether to clear the interpolation cache before performing the
+                quadrature.
+            crop: Whether to crop the numerical fluxes to the shape of the FV mesh.
+
+        Returns:
+            Array of numerical fluxes. Has shape (nvars, <=nx, <=ny, <=nz).
+            If `crop` is True, the shape is cropped to the shape of the FV mesh.
+            Otherwise, it retains the full shape of the numerical fluxes.
         """
-        nodal_fluxes = self.riemann_solver(left_nodes, right_nodes, dim, primitive)
+        nodal_fluxes = self.riemann_solver(left_nodes, right_nodes, dim)
 
         if quadrature == "transverse":
             numerical_fluxes = self.compute_transverse_flux_integral(
@@ -1384,45 +1462,27 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Compute the right-hand side of the conservation law.
 
         Args:
-            u (ArrayLike): Solution value. Has shape (nvars, nx, ny, nz).
-            F (Optional[ArrayLike]): Flux in the x-direction. Has shape
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            F: Array of fluxes in the x-direction. Has shape
                 (nvars, nx + 1, ny, nz).
-            G (Optional[ArrayLike]): Flux in the y-direction. Has shape
+            G: Array of fluxes in the y-direction. Has shape
                 (nvars, nx, ny + 1, nz).
-            H (Optional[ArrayLike]): Flux in the z-direction. Has shape
+            H: Array of fluxes in the z-direction. Has shape
                 (nvars, nx, ny, nz + 1).
 
         Returns:
-            dydt (ArrayLike): Right-hand side of the conservation law. Has shape
+            dudt: Right-hand side of the ODE at (t, y) as an array. Has shape
                 (nvars, nx, ny, nz).
         """
-        _slc = self.array_slicer
-        dydt = self.xp.zeros_like(u)
-        for dim, _F in zip(["x", "y", "z"], [F, G, H]):
+        dudt = self.xp.zeros_like(u)
+        for axis, dim, _F in zip([1, 2, 3], ["x", "y", "z"], [F, G, H]):
             if self.using[dim]:
-                dydt += -(1 / self.h[dim]) * (
-                    cast(ArrayLike, _F)[_slc(**{dim: (1, None)})]
-                    - cast(ArrayLike, _F)[_slc(**{dim: (None, -1)})]
+                dudt += -(1 / self.h[dim]) * (
+                    cast(ArrayLike, _F)[crop(axis, (1, None))]
+                    - cast(ArrayLike, _F)[crop(axis, (None, -1))]
                 )
-        return dydt
-
-    def primitive_cell_centers(self, u: ArrayLike) -> ArrayLike:
-        """
-        Compute the primitive variables at the cell centers.
-
-        Args:
-            u (ArrayLike): Conservative variables. Has shape (nvars, nx, ny, nz).
-
-        Returns:
-            ArrayLike: Primitive variables at the cell centers. Has shape
-                (nvars, nx, ny, nz).
-        """
-        ucc = self.interpolate_cell_centers(
-            self.apply_bc(self.arrays["u"], -(-self.p // 2), self.t),
-            interpolation_scheme=self.interpolation_scheme,
-            p=self.p,
-        )
-        return self.primitives_from_conservatives(ucc)
+        return dudt
 
     @partial(method_timer, cat="FiniteVolumeSolver.snapshot")
     def snapshot(self):
@@ -1437,7 +1497,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p = self.p
             ucc = self.interpolate_cell_centers(
                 self.apply_bc(self.arrays["u"], -2 * (-p // 2), self.t),
-                interpolation_scheme=self.interpolation_scheme,
                 p=p,
             )
             wcc = self.primitives_from_conservatives(ucc)
@@ -1466,7 +1525,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Args:
             *args: Arguments to pass to the Runge-Kutta method.
-            q_max (int): Maximum degree of the Runge-Kutta method to use.
+            q_max: Maximum degree of the Runge-Kutta method to use.
             **kwargs: Keyword arguments to pass to the Runge-Kutta method.
         """
         q = min(self.p, q_max)

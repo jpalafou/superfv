@@ -32,8 +32,8 @@ class Timer:
         Initializes the timer.
 
         Args:
-            cats (Tuple[str, ...]): Tuple of categories.
-            precision (int): Precision of the time values.
+            cats: Tuple of categories.
+            precision: Precision of the time values.
         """
         self.cats = set(cats)
         self._running: Dict[str, bool] = {cat: False for cat in cats}
@@ -48,7 +48,7 @@ class Timer:
         Add a new timer category.
 
         Args:
-            cat (str): Category.
+            cat: Category name.
         """
         if cat in self.cats:
             raise ValueError(f"Category '{cat}' already exists.")
@@ -69,7 +69,7 @@ class Timer:
         Start timer of a category.
 
         Args:
-            cat (str): Category.
+            cat: Category name.
         """
         self._check_cat_existence(cat)
         if self._running[cat]:
@@ -86,7 +86,7 @@ class Timer:
         Stop timer of a category.
 
         Args:
-            cat (str): Category.
+            cat: Category name.
         """
         self._check_cat_existence(cat)
         if self._running[cat]:
@@ -103,7 +103,7 @@ class Timer:
         Return the cumulative times for all categories as a dictionary.
 
         Args:
-            decimals (int): Number of decimal places to round to.
+            decimals: Number of decimal places to round to.
         """
         out = {cat: np.round(t, decimals) for cat, t in self.cum_time.items()}
         return out
@@ -113,10 +113,10 @@ class Timer:
         Generates a report of the timer categories with ncalls and cumtime.
 
         Args:
-            precision (int): Precision of the time values.
+            precision: Number of decimal places to print for cumulative time.
 
         Returns:
-            str: A string containing the report formatted as a table.
+            A string containing the report formatted as a table.
         """
         # Sort the categories alphabetically
         sorted_cats = sorted(self.cats)

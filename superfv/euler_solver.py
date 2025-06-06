@@ -8,7 +8,7 @@ from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .hydro import conservatives_from_primitives, primitives_from_conservatives
 from .riemann_solvers import call_riemann_solver
-from .tools.array_management import ArrayLike, ArraySlicer
+from .tools.array_management import ArrayLike, VariableIndexMap
 from .tools.timer import method_timer
 
 
@@ -19,7 +19,7 @@ class EulerSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
         ic_passives: Optional[
             Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
         ] = None,
@@ -56,50 +56,53 @@ class EulerSolver(FiniteVolumeSolver):
         gamma: float = 1.4,
     ):
         """
-        Initialize the finite volume solver.
+        Initialize the finite volume solverf or the Euler equations.
 
         Args:
-            ic (Callable[[ArraySlicer, ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
-                Initial condition function. The function must accept the following
-                arguments:
-                - array_slicer (ArraySlicer): ArraySlicer object.
-                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
-                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
-                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+            Args:
+            ic: Initial condition function of pointwise, primitive variables. The
+                function must accept the following arguments:
+                - idx: VariableIndexMap object.
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
                 The function must return an array with shape (nvars, nx, ny, nz).
-            ic_passives (Optional[Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]]):
-                Initial condition functions for passive variables. The dictionary keys
-                are the names of the passive variables, and the values are the
-                corresponding initial condition functions. Each function must accept
-                the following arguments:
-                - x (ArrayLike): x-coordinates. Has shape (nx, ny, nz).
-                - y (ArrayLike): y-coordinates. Has shape (nx, ny, nz).
-                - z (ArrayLike): z-coordinates. Has shape (nx, ny, nz).
+            ic_passives: Dictionary of initial condition functions for passive
+                variables. The dictionary keys are the names of the passive variables
+                and the values are the corresponding initial condition functions.
+                Each function must accept the following arguments:
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
                 The function must return an array with shape (nx, ny, nz).
-            bcx (Union[str, Tuple[str, str]]): Boundary conditions in the x-direction.
-            bcy (Union[str, Tuple[str, str]]): Boundary conditions in the y-direction.
-            bcz (Union[str, Tuple[str, str]]): Boundary conditions in the z-direction.
-            x_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                x-direction.
-            y_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                y-direction.
-            z_dirichlet (Optional[DirichletBC]): Dirichlet boundary conditions in the
-                z-direction.
-            xlim (Tuple[float, float]): x-limits of the domain.
-            ylim (Tuple[float, float]): y-limits of the domain.
-            zlim (Tuple[float, float]): z-limits of the domain.
-            nx (int): Number of cells in the x-direction.
-            ny (int): Number of cells in the y-direction.
-            nz (int): Number of cells in the z-direction.
-            p (int): Maximum polynomial degree of the spatial discretization.
-            CFL (float): CFL number.
-            interpolation_scheme (str): Interpolation scheme to use for the
-                interpolation of face nodes. Possible values:
+            bcx, bcy, bcz: Boundary conditions for the x, y, and z directions. Each can
+                be specified as a single string to apply the same condition on both
+                sides, or as a tuple of two strings to apply different conditions on
+                the lower and upper (left and right) boundaries, respectively.
+                Supported boundary condition names include: "periodic", "dirichlet",
+                "free", "reflective", "zeros", and "ones".
+            x_dirichlet, y_dirichlet, z_dirichlet: Additional argument for "dirichlet"
+                boundary conditions. Must be a callable that takes following arguments:
+                - idx: VariableIndexMap object.
+                - x: x-coordinate array. Has shape (nx, ny, nz).
+                - y: y-coordinate array. Has shape (nx, ny, nz).
+                - z: z-coordinate array. Has shape (nx, ny, nz).
+                - t: Optional time at which the boundary condition is applied.
+                And returns an array with shape (nvars, nx, ny, nz). Can also be given
+                as a tuple of two callables, one for the left and one for the right
+                boundary condition. If a single callable is provided, it will be used
+                for both boundaries.
+            xlim, ylim, zlim: Limits of the domain in the x, y, and z-directions.
+            nx, ny, nz: Number of cells in the x, y, and z-directions.
+            p: Maximum polynomial degree of the spatial discretization.
+            CFL: CFL number.
+            interpolation_scheme: Scheme to use for the interpolation of face nodes.
+                Possible values:
                 - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
                     points. Compute the flux integral using Gauss-Legendre quadrature.
                 - "transverse": Interpolate nodes at the cell face centers. Compute the
                     flux integral using a transverse quadrature.
-            flux_recipe (Literal[1,2,3]): Recipe for interpolating flux nodes.
+            flux_recipe: Recipe for interpolating flux nodes. Possible values:
                 - 1: Interpolate conservative nodes from conservative cell averages.
                     Apply slope limiting to the conservative nodes. Transform to
                     primitive variables.
@@ -108,35 +111,33 @@ class EulerSolver(FiniteVolumeSolver):
                     primitive nodes.
                 - 3: Interpolate primitive cell averages from conservative cell
                     averages, either by interpolating to cell-centered values
-                    intermittently or transforming directly with `lazy_primtives=True`.
+                    intermittently or transforming directly with `lazy_primitives=True`.
                     Interpolate primitive nodes from primitive cell averages.
                     Apply slope limiting to the primitive nodes.
-            lazy_primitives (bool): Whether to transform conservative cell averages
+            lazy_primitives: Whether to transform conservative cell averages
                 directly to primitive cell averages. Note that this is a second order
                 operation. If
                 - `flux_recipe=1`: This argument is ignored.
                 - `flux_recipe=2`: The lazy primitives become the fallback option.
                 - `flux_recipe=3`: The lazy primitives are used to interpolate the
                     primitive flux nodes.
-            riemann_solver (str): Name of the Riemann solver function. Must be
-                implemented in the derived class.
-            MUSCL (bool): Whether to use the MUSCL scheme for a priori slope limiting.
-            ZS (bool): Whether to use Zhang and Shu's maximum-principle-satisfying a
-                priori slope limiter.
-            adaptive_timestepping (bool): Option for `ZS=True` to half the time-step
-                size if a maximum principle violation is detected. If True, MOOD is
-                overwritten to only modify the time-step size and not the fluxes.
-                Ignored if `ZS=False`.
-            max_adaptive_timesteps (Optional[int]): Maximum number of adaptive time
-                steps. If `ZS=True` and `adaptive_timestepping=True`, the default value
-                is 10. Otherwise, this argument is ignored.
-            MOOD (bool): Whether to use MOOD for a posteriori flux revision. Ignored if
+            riemann_solver: Name of the Riemann solver function. Must be implemented in
+                the derived class.
+            MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
+            ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
+                slope limiter.
+            adaptive_timestepping: Option for `ZS=True` to half the time-step size if a
+                maximum principle violation is detected. If True, MOOD is overwritten
+                to only modify the time-step size and not the fluxes. Ignored if
+                `ZS=False`.
+            max_adaptive_timesteps: Maximum number of adaptive time steps if both
+                `ZS=True` and `adaptive_timestepping=True`. If None, defaults to 10.
+                Ignored if either `ZS` or `adaptive_timestepping` is False.
+            MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
-            max_MOOD_iters (Optional[int]): Maximum number of MOOD iterations. Ignored
-                if `ZS=True` and `adaptive_timestepping=True`. Otherwise, the default
-                value is 1.
-            limiting_vars (Union[Literal["all", "actives"], Tuple[str, ...]]):
-                Specifies which variables are subject to slope limiting.
+            max_MOOD_iters: Maximum number of MOOD iterations if `MOOD=True`. If None,
+                defaults to 1. If 'MOOD=False', this argument is ignored.
+            limiting_vars: Specifies which variables are subject to slope limiting.
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
                 - Tuple[str, ...]: A tuple of variable names that are subject to slope
@@ -144,14 +145,14 @@ class EulerSolver(FiniteVolumeSolver):
                 For the Zhang-Shu limiter, all variables are always limited, but
                 `limiting_vars` determines which variables are checked for PAD when
                 using adaptive timestepping.
-            NAD (Optional[float]): The NAD tolerance. If None, NAD is not checked.
-            PAD (Optional[Dict[str, Tuple[float, float]]]): Dict of `limiting_vars` and
-                their corresponding PAD tolerances. If a limiting variable is not in
-                the dict, it is given a PAD tolerance of (-np.inf, np.inf).
-            PAD_tol (float): Tolerance for the PAD check as an absolute value from the
-                minimum and maximum values of the variable.
-            SED (bool): Whether to use smooth extrema detection for slope limiting.
-            cupy (bool): Whether to use CuPy for array operations.
+            NAD: The NAD tolerance. If None, NAD is not checked.
+            PAD: Dict of `limiting_vars` and their corresponding PAD tolerances. If a
+                limiting variable is not in the dict, it is given a PAD tolerance of
+                (-np.inf, np.inf). If None, PAD is not checked.
+            PAD_tol: Tolerance for the PAD check as an absolute value from the minimum
+                and maximum values of the variable.
+            SED: Whether to use smooth extrema detection for slope limiting.
+            cupy: Whether to use CuPy for array operations.
             gamma (float): Adiabatic index.
         """
         # init hydro
@@ -201,55 +202,54 @@ class EulerSolver(FiniteVolumeSolver):
         self.minisnapshots["min_E"] = []
         self.minisnapshots["max_E"] = []
 
-    def define_vars(self) -> ArraySlicer:
+    def define_vars(self) -> VariableIndexMap:
         """
-        Returns an ArraySlicer object with the following variables:
+        Returns an VariableIndexMap object with the following variables:
             - rho: Density.
             - vx: x-component of the velocity.
             - vy: y-component of the velocity.
             - vz: z-component of the velocity.
         """
-        var_map = {
-            "rho": 0,
-            "vx": 1,
-            "vy": 2,
-            "vz": 3,
-            "P": 4,
-            "E": 4,
-            "mx": 1,
-            "my": 2,
-            "mz": 3,
-        }
-
         active_dims = [dim for dim in "xyz" if self.using[dim]]
         passive_dims = [dim for dim in "xyz" if not self.using[dim]]
 
-        groups = {
-            "v": tuple(f"v{dim}" for dim in active_dims),
-            "m": tuple(f"m{dim}" for dim in active_dims),
-        } | (
+        variable_index_map = VariableIndexMap(
             {
-                "passives": tuple(f"v{dim}" for dim in passive_dims)
-                + tuple(f"m{dim}" for dim in passive_dims)
+                "rho": 0,
+                "vx": 1,
+                "vy": 2,
+                "vz": 3,
+                "P": 4,
+                "E": 4,
+                "mx": 1,
+                "my": 2,
+                "mz": 3,
             }
-            if passive_dims
-            else {}
         )
-
-        return ArraySlicer(var_map, groups=groups, ndim=4)
+        variable_index_map.add_var_to_group(["v" + dim for dim in active_dims], "v")
+        variable_index_map.add_var_to_group(["m" + dim for dim in active_dims], "m")
+        variable_index_map.add_var_to_group(
+            ["v" + dim for dim in passive_dims], "passives"
+        )
+        variable_index_map.add_var_to_group(
+            ["m" + dim for dim in passive_dims], "passives"
+        )
+        variable_index_map.add_var_to_group(["rho", "v", "P"], "primitives")
+        variable_index_map.add_var_to_group(["rho", "m", "E"], "conservatives")
+        return variable_index_map
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
         Convert primitive variables to conservative variables.
 
         Args:
-            w (ArrayLike): Primitive variables.
+            w: Array of primitive variables.
 
         Returns:
-            ArrayLike: Conservative variables.
+            Array of conservative variables.
         """
         return conservatives_from_primitives(
-            self.hydro, self.array_slicer, w, self.gamma
+            self.hydro, self.variable_index_map, w, self.gamma
         )
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
@@ -257,13 +257,13 @@ class EulerSolver(FiniteVolumeSolver):
         Convert conservative variables to primitive variables.
 
         Args:
-            u (ArrayLike): Conservative variables.
+            u: Array of conservative variables.
 
         Returns:
-            ArrayLike: Primitive variables.
+            Array of primitive variables.
         """
         return primitives_from_conservatives(
-            self.hydro, self.array_slicer, u, self.gamma
+            self.hydro, self.variable_index_map, u, self.gamma
         )
 
     @partial(method_timer, cat="EulerSolver.llf")
@@ -298,24 +298,23 @@ class EulerSolver(FiniteVolumeSolver):
         Compute the time-step size based on the CFL condition.
 
         Args:
-            w (ArrayLike): Primitive solution values. Has shape (nvars, nx, ny, nz).
+            u: Array of cell-centered or finite-volume averaged primitive variables.
+                Has shape (nvars, nx, ny, nz).
 
         Returns:
-            dt (float): Time-step size.
+            Time-step size.
         """
-        _slc = self.array_slicer
+        idx = self.variable_index_map
         h = min(self.h.values())
-        c = self.hydro.sound_speed(rho=w[_slc("rho")], P=w[_slc("P")], gamma=self.gamma)
-        out = (
-            self.CFL * h / np.max(np.sum(np.abs(w[_slc("v")]), axis=0) + self.ndim * c)
-        )
+        c = self.hydro.sound_speed(rho=w[idx("rho")], P=w[idx("P")], gamma=self.gamma)
+        out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
         return out.item()
 
     @partial(method_timer, cat="EulerSolver.minisnapshot")
     def minisnapshot(self):
         super().minisnapshot()
-        _slc = self.array_slicer
-        self.minisnapshots["min_rho"].append(self.arrays["u"][_slc("rho")].min().item())
-        self.minisnapshots["max_rho"].append(self.arrays["u"][_slc("rho")].max().item())
-        self.minisnapshots["min_E"].append(self.arrays["u"][_slc("E")].min().item())
-        self.minisnapshots["max_E"].append(self.arrays["u"][_slc("E")].max().item())
+        idx = self.variable_index_map
+        self.minisnapshots["min_rho"].append(self.arrays["u"][idx("rho")].min().item())
+        self.minisnapshots["max_rho"].append(self.arrays["u"][idx("rho")].max().item())
+        self.minisnapshots["min_E"].append(self.arrays["u"][idx("E")].min().item())
+        self.minisnapshots["max_E"].append(self.arrays["u"][idx("E")].max().item())

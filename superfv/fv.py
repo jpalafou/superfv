@@ -17,14 +17,12 @@ def fv_average(
     Compute finite volume average of f over 3D domain.
 
     Args:
-        f (Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]): Function to
-            average.
-        x (ArrayLike): x-coordinates, has shape (nx, ny, nz).
-        y (ArrayLike): y-coordinates, has shape (nx, ny, nz).
-        z (ArrayLike): z-coordinates, has shape (nx, ny, nz).
-        h (Tuple[float, float, float]): Mesh spacings (hx, hy, hz).
-        p (Tuple[int, int, int]): Polynomial degree of quadrature rule in each
-            dimension.
+        f: Function at which to evaluate quadrature points.
+        x: x-coordinates, has shape (nx, ny, nz).
+        y: y-coordinates, has shape (nx, ny, nz).
+        z: z-coordinates, has shape (nx, ny, nz).
+        h: Mesh spacings (hx, hy, hz).
+        p: Polynomial degree of quadrature rule in each dimension.
 
     Returns:
         ArrayLike: Finite volume average.
