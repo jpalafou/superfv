@@ -30,5 +30,5 @@ def test_compute_dmp(dims, include_corners):
         shape[2] - 2 * int("y" in dims),
         shape[3] - 2 * int("z" in dims),
     )
-    assert np.all(min_vals <= crop_to_center(arr, min_vals.shape, axes=(1, 2, 3)))
-    assert np.all(max_vals >= crop_to_center(arr, min_vals.shape, axes=(1, 2, 3)))
+    assert np.all(min_vals <= crop_to_center(arr, min_vals.shape, ignore_axes=0))
+    assert np.all(max_vals >= crop_to_center(arr, min_vals.shape, ignore_axes=0))

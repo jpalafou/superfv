@@ -27,13 +27,12 @@ def euler_slicer():
             "passive_scalar2": 6,
             "passive_scalar3": 7,
         },
-        ndim=4,
     )
-    _euler_slicer.create_var_group("v", ("vx", "vy", "vz"))
-    _euler_slicer.create_var_group("m", ("mx", "my", "mz"))
-    _euler_slicer.create_var_group(
-        "user_defined_passives",
+    _euler_slicer.add_var_to_group(("vx", "vy", "vz"), "v")
+    _euler_slicer.add_var_to_group(("mx", "my", "mz"), "m")
+    _euler_slicer.add_var_to_group(
         ("passive_scalar1", "passive_scalar2", "passive_scalar3"),
+        "user_defined_passives",
     )
     return _euler_slicer
 
