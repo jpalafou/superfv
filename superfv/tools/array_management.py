@@ -36,7 +36,9 @@ if not TYPE_CHECKING:
 
 # define custom types
 ArrayLike = Union[np.ndarray, xp.ndarray]
-IndexLike = Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]
+IndexLike = Union[
+    int, slice, Tuple[int, ...], List[int], np.ndarray[Any, np.dtype[np.int_]]
+]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
@@ -175,12 +177,12 @@ def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
 
 def merge_indices(*slices: IndexLike, as_array: bool = False) -> IndexLike:
     """
-    Merge multiple indices, slices, or numpy int arrays into a single slice or numpy
-    array.
+    Merge indices, slices, or sequences of integers into a single slice or numpy array.
 
     Args:
-        *slices: Indices, slices, or numpy int arrays to merge.
-        as_array: If True, return a numpy array instead of a slice.
+        *slices: Indices, slices, or sequences of integers to merge.
+        as_array: If True, return a numpy array instead of a slice, even if the indices
+            are contiguous.
 
     Returns:
         Merged slice if merged indices form a contiguous range, otherwise a numpy array
@@ -198,12 +200,15 @@ def merge_indices(*slices: IndexLike, as_array: bool = False) -> IndexLike:
             if s.stop is None or s.stop < 0:
                 raise ValueError("Slice stop must be specified and non-negative.")
             if s.step is not None and s.step != 1:
-                raise ValueError("Slice step must be one.")
+                raise ValueError("Only slices with step=1 are supported.")
             idxs.extend(range(s.start if s.start is not None else 0, s.stop))
-        elif isinstance(s, np.ndarray):
-            if s.dtype != np.int_:
-                raise ValueError(f"Expected numpy array of dtype int, got {s.dtype}.")
-            idxs.extend(s.tolist())
+        elif isinstance(s, tuple) or isinstance(s, list) or isinstance(s, np.ndarray):
+            s_arr = np.asarray(s)
+            if not np.issubdtype(s_arr.dtype, np.integer):
+                raise ValueError(
+                    f"Expected 1D sequence of integers, got array with dtype {s_arr.dtype}."
+                )
+            idxs.extend(s_arr.tolist())
         else:
             raise TypeError(
                 f"Unsupported type {type(s)} for merging indices. Expected int, slice, or numpy array."
@@ -223,7 +228,7 @@ class VariableIndexMap:
     to slices or int arrays.
 
     Args:
-        var_idx_map: Dictionary mapping variable names to indices (int) or slices.
+        var_idx_map: Dictionary mapping variable names to indices (int).
         group_var_map: Dictionary mapping group names to list of variable names.
 
     Attributes:
@@ -258,23 +263,22 @@ class VariableIndexMap:
         if not np.all(np.diff(sorted(self.idxs)) == 1):
             raise ValueError("Indices must be contiguous integers.")
 
-        for group_name, var_names in self.group_var_map.items():
+        for group_name, members in self.group_var_map.items():
             # group names must not conflict with variable names
             if group_name in self.var_names:
                 raise ValueError(
                     f"Group name '{group_name}' conflicts with variable name."
                 )
 
-            # group names must not contain duplicates
-            if len(set(var_names)) < len(var_names):
-                raise ValueError(
-                    f"Group '{group_name}' contains duplicate variable names."
-                )
+            # group names must not contain themselves as a variable
+            if group_name in members:
+                raise ValueError(f"Group '{group_name}' contains itself as a variable.")
 
             # group names must only contain variables that are in the variable index map
-            if set(var_names) - self.var_names:
+            if set(members) - self.all_names:
                 raise ValueError(
-                    f"Group '{group_name}' contains variables not in var_idx_map: {set(var_names) - self.var_names}"
+                    f"Group '{group_name}' contains variables not in the variable "
+                    f"index map: {set(members) - self.all_names}"
                 )
 
     def _invalidate_cache(self):
@@ -298,13 +302,13 @@ class VariableIndexMap:
         self._refresh_and_validate_mappings()
         self._invalidate_cache()
 
-    def add_var_to_group(self, var_names: Union[str, Iterable[str]], group_name: str):
+    def add_var_to_group(self, group_name: str, var_names: Union[str, Iterable[str]]):
         """
-        Create a group of variables or add variables to an existing group.
+        Add variables to a group in the group variable map.
 
         Args:
+            group_name: Name of the group to which the variables will be added.
             var_names: Name or iterable of variable names to add to the group.
-            group_name: Name of the group to create or add to.
         """
         var_names = [var_names] if isinstance(var_names, str) else list(var_names)
 
@@ -318,14 +322,14 @@ class VariableIndexMap:
         self._invalidate_cache()
 
     def _check_name_available(self, name: str):
-        if name in self.var_idx_map or name in self.group_var_map:
+        if name in self.all_names:
             raise KeyError(
                 f"Name '{name}' already exists in variable index map or group variable map."
             )
 
     def __call__(
         self, name: str, keepdims: bool = False
-    ) -> Union[int, slice, np.ndarray]:
+    ) -> Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]:
         """
         Get the index or slice for a variable or group.
 
@@ -342,19 +346,31 @@ class VariableIndexMap:
             return self._cache[key]
 
         if name in self.var_idx_map:
-            out = (
-                slice(self.var_idx_map[name], self.var_idx_map[name] + 1)
-                if keepdims
-                else self.var_idx_map[name]
-            )
-        elif name in self.group_var_map:
-            idxs = np.array([self.var_idx_map[v] for v in self.group_var_map[name]])
-            out = merge_indices(idxs)
+            idx = self.var_idx_map[name]
+            out = slice(idx, idx + 1) if keepdims else idx
         else:
-            raise ValueError(f"Variable or group '{name}' not found.")
+            idxs = self._resolve_group(name, seen=set())
+            out = merge_indices(idxs)
 
         self._cache[key] = out
         return out
+
+    def _resolve_group(self, name: str, seen: Set[str]) -> List[int]:
+        if name in seen:
+            raise ValueError(
+                f"Cycle detected in group definitions: {' -> '.join(seen)} -> {name}"
+            )
+        seen = seen | {name}
+
+        if name in self.var_idx_map:
+            return [self.var_idx_map[name]]
+        elif name in self.group_var_map:
+            idxs = []
+            for v in self.group_var_map[name]:
+                idxs.extend(self._resolve_group(v, seen))
+            return idxs
+        else:
+            raise KeyError(f"Variable or group '{name}' not found.")
 
 
 class ArrayManager:
