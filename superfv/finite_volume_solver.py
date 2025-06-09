@@ -8,6 +8,7 @@ import numpy as np
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import fv_average
+from .mesh import UniformFVMesh
 from .slope_limiting import minmod, moncen, muscl
 from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
 from .slope_limiting.zhang_and_shu import zhang_shu_limiter
@@ -292,25 +293,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         flux_recipe: Literal[1, 2, 3],
         lazy_primitives: bool,
     ):
-        if any([xlim[1] < xlim[0], ylim[1] < ylim[0], zlim[1] < zlim[0]]):
-            raise ValueError("The upper limit must be greater than the lower limit.")
-        if any([nx < 1, ny < 1, nz < 1]):
-            raise ValueError("The number of cells must be at least 1.")
-        if p < 0:
-            raise ValueError("The polynomial degree must be non-negative.")
-        if CFL <= 0:
-            raise ValueError("The CFL number must be positive.")
-        self.xlim = xlim
-        self.ylim = ylim
-        self.zlim = zlim
-        self.nx = nx
-        self.ny = ny
-        self.nz = nz
-        self.n = {"x": nx, "y": ny, "z": nz}
-        self.hx = (xlim[1] - xlim[0]) / nx
-        self.hy = (ylim[1] - ylim[0]) / ny
-        self.hz = (zlim[1] - zlim[0]) / nz
-        self.h = {"x": self.hx, "y": self.hy, "z": self.hz}
+        # determine which dimensions are used
         self.using_xdim = nx > 1
         self.using_ydim = ny > 1
         self.using_zdim = nz > 1
@@ -318,13 +301,32 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.dims = "".join(dim for dim, using in self.using.items() if using)
         self.axes = tuple("xyz".index(dim) + 1 for dim in self.dims)
         self.ndim = len(self.dims)
+
+        # assign slab thickness
+        slab_thickness = -2 * (-p // 2) + 1
+
+        # init mesh object
+        self.mesh = UniformFVMesh(
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            xlim=xlim,
+            ylim=ylim,
+            zlim=zlim,
+            x_slab_depth=slab_thickness if nx > 1 else 0,
+            y_slab_depth=slab_thickness if ny > 1 else 0,
+            z_slab_depth=slab_thickness if nz > 1 else 0,
+        )
+
+        # assign p and CFL
+        if p < 0:
+            raise ValueError("The polynomial degree must be non-negative.")
+        if CFL <= 0:
+            raise ValueError("The CFL number must be positive.")
         self.p = p
         self.CFL = CFL
-        self.interpolation_scheme = interpolation_scheme
-        self.flux_recipe = flux_recipe
-        self.lazy_primitives = lazy_primitives
 
-        # Validation
+        # assign flux recipe and interpolation scheme
         if self.flux_recipe not in (1, 2, 3):
             raise ValueError(
                 "flux_recipe must be 1, 2, or 3. See the documentation for details."
@@ -333,67 +335,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(
                 "Gauss-Legendre interpolation scheme is not supported in 1D."
             )
-
-        def _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz, as_mesh: bool = True):
-            x_interface = np.linspace(xlim[0], xlim[1], nx + 1)
-            y_interface = np.linspace(ylim[0], ylim[1], ny + 1)
-            z_interface = np.linspace(zlim[0], zlim[1], nz + 1)
-            x_center = 0.5 * (x_interface[1:] + x_interface[:-1])
-            y_center = 0.5 * (y_interface[1:] + y_interface[:-1])
-            z_center = 0.5 * (z_interface[1:] + z_interface[:-1])
-            if as_mesh:
-                return np.meshgrid(x_center, y_center, z_center, indexing="ij")
-            return x_center, y_center, z_center
-
-        # core mesh
-        self.x, self.y, self.z = _get_uniform_3D_mesh(
-            xlim, ylim, zlim, nx, ny, nz, as_mesh=False
-        )
-        self.X, self.Y, self.Z = _get_uniform_3D_mesh(xlim, ylim, zlim, nx, ny, nz)
-
-        # slab meshes
-        slab_thickness = -2 * (-p // 2) + 1
-
-        def _get_slab_limits(lim, spacing, thickness, pos=None):
-            if pos is None:
-                return (lim[0] - spacing * thickness, lim[1] + spacing * thickness)
-            if pos == "l":
-                return (lim[0] - spacing * thickness, lim[0])
-            if pos == "r":
-                return (lim[1], lim[1] + spacing * thickness)
-
-        self.slab_meshes = {}
-        for dim in "xyz":
-            self.slab_meshes[dim] = (
-                tuple(
-                    (
-                        _get_uniform_3D_mesh(
-                            *(
-                                _get_slab_limits(
-                                    getattr(self, _dim + "lim"),
-                                    self.h[_dim],
-                                    slab_thickness if self.using[_dim] else 0,
-                                    pos if dim == _dim else None,
-                                )
-                                for _dim in "xyz"
-                            ),
-                            *(
-                                (
-                                    {_dim: slab_thickness}.get(
-                                        dim, self.n[_dim] + 2 * slab_thickness
-                                    )
-                                    if self.using[_dim]
-                                    else 1
-                                )
-                                for _dim in "xyz"
-                            ),
-                        )
-                        for pos in "lr"
-                    )
-                )
-                if self.using[dim]
-                else None
-            )
+        self.interpolation_scheme = interpolation_scheme
+        self.flux_recipe = flux_recipe
+        self.lazy_primitives = lazy_primitives
 
     def _init_ic(
         self,
@@ -570,7 +514,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 x,
                 y,
                 z,
-                h=(self.hx, self.hy, self.hz),
+                h=(self.mesh.hx, self.mesh.hy, self.mesh.hz),
                 p=(
                     self.p if self.using_xdim else 0,
                     self.p if self.using_ydim else 0,
@@ -613,15 +557,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         z_dirichlet = ic_configed_dirichlet["z"]
         self.bc = BoundaryConditions(
             self.variable_index_map,
+            self.mesh,
             bcx,
             bcy,
             bcz,
             x_dirichlet,
             y_dirichlet,
             z_dirichlet,
-            self.slab_meshes["x"],
-            self.slab_meshes["y"],
-            self.slab_meshes["z"],
             self.conservatives_wrapper,
             self.fv_average_wrapper,
         )
@@ -630,23 +572,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _periodic = ("periodic", "periodic")
         self.bc_for_smooth_extrema_detection = BoundaryConditions(
             self.variable_index_map,
+            self.mesh,
             "periodic" if self.bc.bcx == _periodic else "ones",
             "periodic" if self.bc.bcy == _periodic else "ones",
             "periodic" if self.bc.bcz == _periodic else "ones",
-            x_slab=self.slab_meshes["x"],
-            y_slab=self.slab_meshes["y"],
-            z_slab=self.slab_meshes["z"],
         )
 
         # this is used to apply ghost cells to the troubled cell mask in MOOD
         self.bc_for_troubled_cell_mask = BoundaryConditions(
             self.variable_index_map,
+            self.mesh,
             "periodic" if self.bc.bcx == _periodic else "free",
             "periodic" if self.bc.bcy == _periodic else "free",
             "periodic" if self.bc.bcz == _periodic else "free",
-            x_slab=self.slab_meshes["x"],
-            y_slab=self.slab_meshes["y"],
-            z_slab=self.slab_meshes["z"],
         )
 
     def _init_snapshots(self):
@@ -667,7 +605,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             warnings.warn("CuPy is not available. Using NumPy instead.")
 
         # initialize flux arrays
-        nvars, nx, ny, nz = self.nvars, self.nx, self.ny, self.nz
+        nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
         self.arrays.add("F", np.zeros((nvars, nx + 1, ny, nz)))
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
@@ -1478,7 +1416,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         dudt = self.xp.zeros_like(u)
         for axis, dim, _F in zip([1, 2, 3], ["x", "y", "z"], [F, G, H]):
             if self.using[dim]:
-                dudt += -(1 / self.h[dim]) * (
+                dudt += -(1 / getattr(self.mesh, "h" + dim)) * (
                     cast(ArrayLike, _F)[crop(axis, (1, None))]
                     - cast(ArrayLike, _F)[crop(axis, (None, -1))]
                 )

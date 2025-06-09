@@ -109,6 +109,11 @@ def test_noncontiguous_indices():
         VariableIndexMap({"a": 0, "b": 2, "c": 4}, {"group": ["a", "b", "c"]})
 
 
+def test_nonzero_indices():
+    with pytest.raises(ValueError):
+        VariableIndexMap({"a": 1, "b": 2, "c": 3}, {"group": ["a", "b", "c"]})
+
+
 def test_add_var_duplicate_raises():
     idx = VariableIndexMap()
     idx.add_var("u", 0)

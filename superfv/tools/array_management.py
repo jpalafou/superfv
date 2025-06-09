@@ -92,7 +92,7 @@ def crop(
             raise ValueError(
                 f"Axis {ax} is out of bounds for array with {len(out)} dimensions."
             )
-        out[ax] = slice(cut[0], cut[1], step)
+        out[ax] = slice(cut[0] or None, cut[1] or None, step)
     return tuple(out)
 
 
@@ -134,7 +134,7 @@ def _crop_to_center(
             )
         elif target_length % 2 == 0:
             margin = (dim_length - target_length) // 2
-            out[i] = slice(margin, -margin)
+            out[i] = slice(margin or None, -margin or None)
         else:
             raise ValueError(
                 f"Cannot evenly crop dimension from {dim_length} to {target_length}."
@@ -236,6 +236,7 @@ class VariableIndexMap:
         group_names: Set of group names.
         all_names: Set of all variable and group names.
         idxs: Set of indices (int) used in the variable index map.
+        nvars: Number of variables in the variable index map.
     """
 
     var_idx_map: Dict[str, int] = field(default_factory=dict)
@@ -244,6 +245,7 @@ class VariableIndexMap:
     group_names: Set[str] = field(init=False)
     all_names: Set[str] = field(init=False)
     idxs: Set[int] = field(init=False)
+    nvars: int = field(init=False)
     _cache: Dict[Tuple[str, bool], IndexLike] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -255,13 +257,14 @@ class VariableIndexMap:
         self.all_names = self.var_names | self.group_names
         self.idxs = set(self.var_idx_map.values())
 
-        # indices must be non-negative integers
-        if any(idx < 0 for idx in self.idxs):
-            raise ValueError("All indices must be non-negative integers.")
-
-        # indices must be contiguous
-        if not np.all(np.diff(sorted(self.idxs)) == 1):
-            raise ValueError("Indices must be contiguous integers.")
+        # indices must be contiguous starting from 0
+        if self.idxs:
+            sorted_idxs = sorted(self.idxs)
+            if sorted_idxs != list(range(len(sorted_idxs))):
+                raise ValueError(
+                    f"Indices must be contiguous starting from 0. Current indices: {sorted_idxs}"
+                )
+        self.nvars = len(self.idxs)
 
         for group_name, members in self.group_var_map.items():
             # group names must not conflict with variable names

@@ -305,7 +305,7 @@ class EulerSolver(FiniteVolumeSolver):
             Time-step size.
         """
         idx = self.variable_index_map
-        h = min(self.h.values())
+        h = min(self.mesh.h)
         c = self.hydro.sound_speed(rho=w[idx("rho")], P=w[idx("P")], gamma=self.gamma)
         out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
         return out.item()

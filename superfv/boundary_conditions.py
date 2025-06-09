@@ -4,6 +4,8 @@ from typing import Callable, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
+from superfv.mesh import UniformFVMesh
+
 from .tools.array_management import ArrayLike, VariableIndexMap, crop, crop_to_center
 
 # define custom type annotations
@@ -27,31 +29,14 @@ class BoundaryConditions:
 
     def __init__(
         self,
-        variable_index_map: VariableIndexMap,
+        variable_index_map: Optional[VariableIndexMap] = None,
+        mesh: Optional[UniformFVMesh] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         x_dirichlet: Optional[DirichletBC] = None,
         y_dirichlet: Optional[DirichletBC] = None,
         z_dirichlet: Optional[DirichletBC] = None,
-        x_slab: Optional[
-            Tuple[
-                Tuple[ArrayLike, ArrayLike, ArrayLike],
-                Tuple[ArrayLike, ArrayLike, ArrayLike],
-            ]
-        ] = None,
-        y_slab: Optional[
-            Tuple[
-                Tuple[ArrayLike, ArrayLike, ArrayLike],
-                Tuple[ArrayLike, ArrayLike, ArrayLike],
-            ]
-        ] = None,
-        z_slab: Optional[
-            Tuple[
-                Tuple[ArrayLike, ArrayLike, ArrayLike],
-                Tuple[ArrayLike, ArrayLike, ArrayLike],
-            ]
-        ] = None,
         conservatives_wrapper: Optional[FieldWrapper] = None,
         fv_average_wrapper: Optional[FieldWrapper] = None,
     ):
@@ -60,6 +45,8 @@ class BoundaryConditions:
 
         Args:
             variable_index_map: VariableIndexMap object.
+            mesh: Optional UniformFVMesh object. If provided, it will be used to
+                determine the slab coordinates for the Dirichlet functions.
             bcx, bcy, bcz: Boundary conditions for the x, y, and z directions. Each can
                 be specified as a single string to apply the same condition on both
                 sides, or as a tuple of two strings to apply different conditions on
@@ -77,12 +64,6 @@ class BoundaryConditions:
                 as a tuple of two callables, one for the left and one for the right
                 boundary condition. If a single callable is provided, it will be used
                 for both boundaries.
-            x_slab, y_slab, z_slab: Optional tuples of three arrays each,
-                representing the slab boundary coordinates for the x, y, and z
-                directions, respectively. Each tuple should contain two tuples of three
-                arrays each, representing the left and right slabs, respectively.
-                The arrays should have shapes (nx, ny, nz) and represent the
-                coordinates of the slab boundaries.
             conservatives_wrapper: Wrapper to convert output of the Dirichlet functions
                 from primitive variables to conservative variables. This is required if
                 any of the boundary conditions is "dirichlet". If not provided, it will
@@ -100,7 +81,6 @@ class BoundaryConditions:
                 raise ValueError(
                     "Boundary conditions must be a string or tuple of two strings."
                 )
-        self.variable_index_map = variable_index_map
         self.bcx = bcx if _is_two_tuple(bcx) else (bcx, bcx)
         self.bcy = bcy if _is_two_tuple(bcy) else (bcy, bcy)
         self.bcz = bcz if _is_two_tuple(bcz) else (bcz, bcz)
@@ -113,10 +93,6 @@ class BoundaryConditions:
         self.z_dirichlet = (
             z_dirichlet if _is_two_tuple(z_dirichlet) else (z_dirichlet, z_dirichlet)
         )
-        self.x_slab = x_slab if _is_two_tuple(x_slab) else (x_slab, x_slab)
-        self.y_slab = y_slab if _is_two_tuple(y_slab) else (y_slab, y_slab)
-        self.z_slab = z_slab if _is_two_tuple(z_slab) else (z_slab, z_slab)
-        self.slab_slicer = VariableIndexMap({})
 
         # configure dirichlet functions
         for dim in "xyz":
@@ -131,8 +107,22 @@ class BoundaryConditions:
                     )
             setattr(self, f"{dim}_dirichlet", tuple(configured_dirichlet))
 
-        # validate and assign wrappers
-        if "dirichlet" in (*self.bcx, *self.bcy, *self.bcz):
+        # validate and assign variable index map, mesh, and wrappers
+        if any(
+            bc in ("dirichlet", "reflective")
+            for bc in (*self.bcx, *self.bcy, *self.bcz)
+        ):
+            if variable_index_map is None:
+                raise ValueError(
+                    "VariableIndexMap must be provided for Dirichlet or reflective BCs."
+                )
+        self.variable_index_map = variable_index_map
+
+        if any(bc == "dirichlet" for bc in (*self.bcx, *self.bcy, *self.bcz)):
+            if mesh is None:
+                raise ValueError(
+                    "UniformFVMesh must be provided for Dirichlet BCs to determine slab coordinates."
+                )
             if conservatives_wrapper is None:
                 raise ValueError(
                     "Conservative wrapper must be provided for Dirichlet BCs."
@@ -141,6 +131,7 @@ class BoundaryConditions:
                 raise ValueError(
                     "Finite-volume average wrapper must be provided for Dirichlet BCs."
                 )
+        self.mesh = mesh
         self.conservatives_wrapper = cast(FieldWrapper, conservatives_wrapper)
         self.fv_average_wrapper = cast(FieldWrapper, fv_average_wrapper)
 
@@ -209,6 +200,8 @@ class BoundaryConditions:
                     )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
+                case "symmetric":
+                    self._apply_symmetric_bc(out, slab_thickness, dim, pos)
                 case "reflective":
                     self._apply_reflective_bc(out, slab_thickness, dim, pos, primitives)
                 case "zeros":
@@ -289,7 +282,7 @@ class BoundaryConditions:
         Returns:
             None: The array is modified in place.
         """
-        idx = self.variable_index_map
+        idx = cast(VariableIndexMap, self.variable_index_map)
 
         # configure slice
         st = slab_thickness
@@ -349,6 +342,40 @@ class BoundaryConditions:
             inner_slice = crop(axis, (-st - 1, -st))
         arr[outer_slice] = arr[inner_slice]
 
+    def _apply_symmetric_bc(
+        self,
+        arr: ArrayLike,
+        slab_thickness: int,
+        dim: Literal["x", "y", "z"],
+        pos: Literal["l", "r"],
+    ):
+        """
+        Apply symmetric boundary conditions to arr, modifying it in place.
+
+        Args:
+            arr: Array to which to apply boundary conditions. Has shape
+                (nvars, nx, ny, nz).
+            slab_thickness: Number of cells to apply periodic boundary conditions to
+                along the specified axis.
+            dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
+                (axis 2), or "z" (axis 3).
+            pos: Position of the boundary condition slab: "l" for left or "r" for
+                right.
+
+        Returns:
+            None: The array is modified in place.
+        """
+        st = slab_thickness
+        axis = "xyz".index(dim) + 1
+        flipper_slice = crop(axis, (None, None), step=-1)
+        if pos == "l":
+            outer_slice = crop(axis, (0, st))
+            inner_slice = crop(axis, (st, 2 * st))
+        else:
+            outer_slice = crop(axis, (-st, 0))
+            inner_slice = crop(axis, (-2 * st, -st))
+        arr[outer_slice] = arr[inner_slice][flipper_slice]
+
     def _apply_reflective_bc(
         self,
         arr: ArrayLike,
@@ -375,19 +402,14 @@ class BoundaryConditions:
         Returns:
             None: The array is modified in place.
         """
-        idx = self.variable_index_map
+        idx = cast(VariableIndexMap, self.variable_index_map)
         st = slab_thickness
         axis = "xyz".index(dim) + 1
-        flipper_slice = crop(axis, (None, None), step=-1)
         if pos == "l":
             outer_slice = crop(axis, (0, st))
-            inner_slice = crop(axis, (st, 2 * st))
         else:
             outer_slice = crop(axis, (-st, 0))
-            inner_slice = crop(axis, (-2 * st, -st))
-        arr[outer_slice] = arr[inner_slice][flipper_slice]
-
-        # Negate moment/ velocityum
+        self._apply_symmetric_bc(arr, slab_thickness, dim, pos, primitives)
         arr[outer_slice][idx(("v" if primitives else "m") + dim)] *= -1
 
     def _apply_constant_bc(
@@ -438,12 +460,10 @@ class BoundaryConditions:
             Tuple of three arrays representing the slab coordinates in the order
             (x-coordinates, y-coordinates, z-coordinates).
         """
+        arrs = getattr(cast(UniformFVMesh, self.mesh), f"{dim}{pos}_slab")
         axis = "xyz".index(dim)
         st = shape[axis]
         slab_slice = crop(axis, (-st, None) if pos == "l" else (None, st))
-        arrs = getattr(self, f"{dim}_slab")["lr".index(pos)]
-        if arrs is None:
-            raise ValueError(f"No {dim}{pos}-slab defined.")
         out = (
             crop_to_center(arrs[0][slab_slice], shape),
             crop_to_center(arrs[1][slab_slice], shape),

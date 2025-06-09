@@ -258,9 +258,9 @@ def zhang_shu_limiter(
         alpha = fv_solver.bc_for_smooth_extrema_detection(
             alpha,
             (
-                (theta.shape[1] - fv_solver.nx) // 2,
-                (theta.shape[2] - fv_solver.ny) // 2,
-                (theta.shape[3] - fv_solver.nz) // 2,
+                (theta.shape[1] - fv_solver.mesh.nx) // 2,
+                (theta.shape[2] - fv_solver.mesh.ny) // 2,
+                (theta.shape[3] - fv_solver.mesh.nz) // 2,
             ),
         )
         alpha = crop(alpha, add_axis=True)

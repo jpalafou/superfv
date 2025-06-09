@@ -1,21 +1,21 @@
+- [x] allow group_var_map to point to other groups
+- [x] edit docstrings to not have the type of args in paranetheses wtf
+- [x] remove x, y, z options from array_slicer. enable multi-axis slicing instead
+- [x] .mesh object
+- [x] add nvars to VariableIndexMap
 - [ ] !!!fix 2D boundary conditions (2D advection, slotted disk, etc)
 - [ ] !!!major bug found: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
-- [ ] allow group_var_map to point to other groups
 - [ ] does bc take (nvar, nx, ny, nz) or (nvar, nx, ny, nz, ninterpolations). make this consistent between the class and FiniteVolumeSolver.apply_bc
-- [ ] add nvars to VariableIndexMap
 - [ ] put custom types somewhere else?
 - [ ] fix tests D:
 - [ ] consider cleaning up interpolation cache stuff
-- [ ] edit docstrings to not have the type of args in paranetheses wtf
 - [ ] remove '_thing' naming convention unless the thing is actually hidden on purpose
-- [ ] remove x, y, z options from array_slicer. enable multi-axis slicing instead
 - [ ] remove array="w" terminology from plotting slices
 - [ ] limiting_vars should be a list
 - [ ] fix progress bar for allow_overshoot=True
 - [ ] fix number of assigned ghost cells for transverse flux
 - [ ] fix 2DZS + RK4
 - [ ] clean up riemann solver primitive variable logic
-- [ ] .mesh object
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
 - [ ] coverage
