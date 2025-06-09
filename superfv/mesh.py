@@ -9,9 +9,9 @@ def uniform_3D_mesh(
     nx: int,
     ny: int,
     nz: int,
-    xlim: Tuple[int, int],
-    ylim: Tuple[int, int],
-    zlim: Tuple[int, int],
+    xlim: Tuple[float, float],
+    ylim: Tuple[float, float],
+    zlim: Tuple[float, float],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     x_interface = np.linspace(xlim[0], xlim[1], nx + 1)
     y_interface = np.linspace(ylim[0], ylim[1], ny + 1)
@@ -19,7 +19,8 @@ def uniform_3D_mesh(
     x_center = 0.5 * (x_interface[1:] + x_interface[:-1])
     y_center = 0.5 * (y_interface[1:] + y_interface[:-1])
     z_center = 0.5 * (z_interface[1:] + z_interface[:-1])
-    return np.meshgrid(x_center, y_center, z_center, indexing="ij")
+    X, Y, Z = np.meshgrid(x_center, y_center, z_center, indexing="ij")
+    return X, Y, Z
 
 
 @dataclass
@@ -45,6 +46,8 @@ class UniformFVMesh:
             y, and z dimensions as 1D arrays.
         X, Y, Z (ndarray): Mesh grid arrays for the x, y, and z dimensions as 3D
             arrays.
+        coords (tuple): Tuple of 3D arrays representing the coordinates of the mesh
+            in the x, y, and z dimensions.
         xl_slab, xr_slab, yl_slab, yr_slab, zl_slab, zr_slab (tuple): Slab meshes on
             each of the six sides of the meshes, represented as tuples of 3D arrays for
             the x, y, and z coordinates.
@@ -102,6 +105,7 @@ class UniformFVMesh:
         self.X, self.Y, self.Z = uniform_3D_mesh(
             self.nx, self.ny, self.nz, self.xlim, self.ylim, self.zlim
         )
+        self.coords = (self.X, self.Y, self.Z)
 
     def _init_slabs(self):
         slab_depth = {

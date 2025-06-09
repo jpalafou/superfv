@@ -409,7 +409,7 @@ class BoundaryConditions:
             outer_slice = crop(axis, (0, st))
         else:
             outer_slice = crop(axis, (-st, 0))
-        self._apply_symmetric_bc(arr, slab_thickness, dim, pos, primitives)
+        self._apply_symmetric_bc(arr, slab_thickness, dim, pos)
         arr[outer_slice][idx(("v" if primitives else "m") + dim)] *= -1
 
     def _apply_constant_bc(

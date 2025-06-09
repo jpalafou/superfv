@@ -327,11 +327,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.CFL = CFL
 
         # assign flux recipe and interpolation scheme
-        if self.flux_recipe not in (1, 2, 3):
+        if flux_recipe not in (1, 2, 3):
             raise ValueError(
                 "flux_recipe must be 1, 2, or 3. See the documentation for details."
             )
-        if self.interpolation_scheme == "gauss-legendre" and self.ndim == 1:
+        if interpolation_scheme == "gauss-legendre" and self.ndim == 1:
             raise ValueError(
                 "Gauss-Legendre interpolation scheme is not supported in 1D."
             )
@@ -363,19 +363,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Define active and passive variables
         self.variable_index_map = self.define_vars()
         if "passives" in self.variable_index_map.group_names:
-            self.passive_vars = set(self.variable_index_map.groups["passives"])
+            self.passive_vars = set(self.variable_index_map.group_var_map["passives"])
             self.active_vars = self.variable_index_map.var_names - self.passive_vars
         else:
             self.active_vars = self.variable_index_map.var_names
             self.passive_vars = set()
-        self.variable_index_map.create_var_group("actives", tuple(self.active_vars))
+        self.variable_index_map.add_var_to_group("actives", tuple(self.active_vars))
 
         # Count active and passive variables
-        self.n_active_vars = len(
-            {self.variable_index_map.variables[v] for v in self.active_vars}
-        )
+        self.n_active_vars = len({self.variable_index_map(v) for v in self.active_vars})
         self.n_passive_vars = len(
-            {self.variable_index_map.variables[v] for v in self.passive_vars}
+            {self.variable_index_map(v) for v in self.passive_vars}
         )
 
         # Include user-defined passive variables
@@ -387,11 +385,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     raise ValueError("Variable already defined.")
                 self.variable_index_map.add_var(v, starting_passive_idx + i)
             if "passives" in self.variable_index_map.group_names:
-                self.variable_index_map.add_to_var_group(
+                self.variable_index_map.add_var_to_group(
                     "passives", tuple(ic_passives.keys())
                 )
             else:
-                self.variable_index_map.create_var_group(
+                self.variable_index_map.add_var_to_group(
                     "passives", tuple(ic_passives.keys())
                 )
             self.n_user_defined_passive_vars = len(ic_passives)
@@ -399,7 +397,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.passive_vars |= set(ic_passives.keys())
 
             self.user_defined_passive_vars = set(ic_passives.keys())
-            self.variable_index_map.create_var_group(
+            self.variable_index_map.add_var_to_group(
                 "user_defined_passives", tuple(self.user_defined_passive_vars)
             )
 
@@ -468,7 +466,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Active variables must be the set of all variables.")
 
         # Initialize the ODE solver with the initial condition array
-        ic_arr = self.callable_ic(self.variable_index_map, self.X, self.Y, self.Z, 0.0)
+        ic_arr = self.callable_ic(self.variable_index_map, *self.mesh.coords, 0.0)
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
@@ -693,7 +691,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
 
         # Assign limiting variables
-        self.variable_index_map.create_var_group(
+        self.variable_index_map.add_var_to_group(
             "limiting_vars", tuple(self.limiting_vars)
         )
 
@@ -1066,7 +1064,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_cell_centers(
         self,
         averages: ArrayLike,
-        p: int = None,
+        p: int,
         sweep_order: str = "xyz",
         clear_cache: bool = True,
     ) -> ArrayLike:
@@ -1076,8 +1074,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             averages: Array of FV cell averages. Has shape (nvars, nx, ny, nz).
             p: Polynomial degree of the interpolation for "transverse" and
-                "gauss-legendre" modes. For "muscl" mode, p is ignored and assumed to
-                be 1.
+                "gauss-legendre" modes.
             sweep_order: Order of the direction of the interpolation sweeps. Any
                 combination of "x", "y", and "z".
             clear_cache: Whether to clear the interpolation cache before performing the
@@ -1098,7 +1095,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_cell_averages(
         self,
         centers: ArrayLike,
-        p: Optional[int] = None,
+        p: int,
         sweep_order: str = "xyz",
         clear_cache: bool = True,
     ) -> ArrayLike:
@@ -1108,8 +1105,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             centers: Array of cell center values. Has shape (nvars, nx, ny, nz).
             p: Polynomial degree of the interpolation for "transverse" and
-                "gauss-legendre" modes. For "muscl" mode, p is ignored and assumed to
-                be 1.
+                "gauss-legendre" modes.
             sweep_order: Order of the direction of the interpolation sweeps. Any
                 combination of "x", "y", and "z".
             clear_cache: Whether to clear the interpolation cache before performing the
@@ -1129,8 +1125,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _interpolate_cell_quantity(
         self,
         u: ArrayLike,
+        p: int,
         centers: bool = True,
-        p: Optional[int] = None,
         sweep_order: str = "xyz",
         clear_cache: bool = True,
     ) -> ArrayLike:
@@ -1139,11 +1135,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         cell averages or cell centers.
         Args:
             u: Array of cell averages or cell centers. Has shape (nvars, nx, ny, nz).
+            p: Polynomial degree of the interpolation for "transverse" and
+                "gauss-legendre" modes.
             centers: Whether to interpolate cell centers (True) or cell averages
                 (False).
-            p: Polynomial degree of the interpolation for "transverse" and
-                "gauss-legendre" modes. For "muscl" mode, p is ignored and assumed to
-                be 1.
             sweep_order: Order of the direction of the interpolation sweeps. Any
                 combination of "x", "y", and "z".
             clear_cache: Whether to clear the interpolation cache before performing the
@@ -1175,7 +1170,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         dim: Literal["x", "y", "z"],
         interpolation_scheme: Optional[Literal["transverse", "gauss-legendre"]] = None,
         limiting_scheme: Optional[Literal["muscl", "zhang-shu"]] = None,
-        p: int = None,
+        p: Optional[int] = None,
         slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
         convert_to_primitives: bool = False,
         primitive_fallback: Optional[ArrayLike] = None,
@@ -1230,6 +1225,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 averages,
                 dim=dim,
                 slope_limiter=minmod if slope_limiter == "minmod" else moncen,
+            )
+        elif p is None:
+            raise ValueError(
+                "Polynomial degree 'p' must be specified for interpolation schemes "
+                "other than 'muscl'."
             )
 
         # Zhang-Shu limiter escape

@@ -38,6 +38,8 @@ def test_merge_indices_invalid():
         merge_indices([1.0, 2.0])
     with pytest.raises(TypeError):
         merge_indices("bad")
+    with pytest.raises(ValueError):
+        merge_indices(np.array([[1, 2, 3], [4, 5, 6]]))
 
 
 # ---------- Tests for VariableIndexMap ----------

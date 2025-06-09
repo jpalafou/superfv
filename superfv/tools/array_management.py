@@ -36,9 +36,7 @@ if not TYPE_CHECKING:
 
 # define custom types
 ArrayLike = Union[np.ndarray, xp.ndarray]
-IndexLike = Union[
-    int, slice, Tuple[int, ...], List[int], np.ndarray[Any, np.dtype[np.int_]]
-]
+IndexLike = Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
@@ -175,7 +173,12 @@ def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
     return tuple(min(s) for s in zip(*args))
 
 
-def merge_indices(*slices: IndexLike, as_array: bool = False) -> IndexLike:
+def merge_indices(
+    *slices: Union[
+        int, slice, Tuple[int, ...], List[int], np.ndarray[Any, np.dtype[np.int_]]
+    ],
+    as_array: bool = False,
+) -> IndexLike:
     """
     Merge indices, slices, or sequences of integers into a single slice or numpy array.
 
@@ -204,11 +207,13 @@ def merge_indices(*slices: IndexLike, as_array: bool = False) -> IndexLike:
             idxs.extend(range(s.start if s.start is not None else 0, s.stop))
         elif isinstance(s, tuple) or isinstance(s, list) or isinstance(s, np.ndarray):
             s_arr = np.asarray(s)
+            if s_arr.ndim != 1:
+                raise ValueError("Only 1D arrays/lists of integers are supported.")
             if not np.issubdtype(s_arr.dtype, np.integer):
                 raise ValueError(
                     f"Expected 1D sequence of integers, got array with dtype {s_arr.dtype}."
                 )
-            idxs.extend(s_arr.tolist())
+            idxs.extend([int(i) for i in s_arr])
         else:
             raise TypeError(
                 f"Unsupported type {type(s)} for merging indices. Expected int, slice, or numpy array."
@@ -330,9 +335,7 @@ class VariableIndexMap:
                 f"Name '{name}' already exists in variable index map or group variable map."
             )
 
-    def __call__(
-        self, name: str, keepdims: bool = False
-    ) -> Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]:
+    def __call__(self, name: str, keepdims: bool = False) -> IndexLike:
         """
         Get the index or slice for a variable or group.
 
@@ -345,6 +348,8 @@ class VariableIndexMap:
             Index, slice, or numpy array of indices for the variable or group.
         """
         key = (name, keepdims)
+        out: IndexLike
+
         if key in self._cache:
             return self._cache[key]
 

@@ -226,16 +226,16 @@ class EulerSolver(FiniteVolumeSolver):
                 "mz": 3,
             }
         )
-        variable_index_map.add_var_to_group(["v" + dim for dim in active_dims], "v")
-        variable_index_map.add_var_to_group(["m" + dim for dim in active_dims], "m")
+        variable_index_map.add_var_to_group("v", ["v" + dim for dim in active_dims])
+        variable_index_map.add_var_to_group("m", ["m" + dim for dim in active_dims])
         variable_index_map.add_var_to_group(
-            ["v" + dim for dim in passive_dims], "passives"
+            "passives", ["v" + dim for dim in passive_dims]
         )
         variable_index_map.add_var_to_group(
-            ["m" + dim for dim in passive_dims], "passives"
+            "passives", ["m" + dim for dim in passive_dims]
         )
-        variable_index_map.add_var_to_group(["rho", "v", "P"], "primitives")
-        variable_index_map.add_var_to_group(["rho", "m", "E"], "conservatives")
+        variable_index_map.add_var_to_group("primitives", ["rho", "v", "P"])
+        variable_index_map.add_var_to_group("conservatives", ["rho", "m", "E"])
         return variable_index_map
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
