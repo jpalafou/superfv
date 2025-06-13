@@ -118,7 +118,7 @@ class BoundaryConditions:
                 )
         self.variable_index_map = variable_index_map
 
-        if any(bc == "dirichlet" for bc in (*self.bcx, *self.bcy, *self.bcz)):
+        if "dirichlet" in (*self.bcx, *self.bcy, *self.bcz):
             if mesh is None:
                 raise ValueError(
                     "UniformFVMesh must be provided for Dirichlet BCs to determine slab coordinates."

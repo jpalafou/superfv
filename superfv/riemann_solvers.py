@@ -10,25 +10,25 @@ if TYPE_CHECKING:
     from superfv.euler_solver import EulerSolver
 
 
-def _upwind(yl: ArrayLike, yr: ArrayLike, v: ArrayLike) -> ArrayLike:
+def _upwind(wl: ArrayLike, wr: ArrayLike, v: ArrayLike) -> ArrayLike:
     """
     Upwinding operator for states yl and yr with velocity v.
 
     Args:
-        yl: Left state. Has shape (nx, ny, nz, ...).
-        yr: Right state. Has shape (nx, ny, nz, ...).
-        v: Velocity. Has shape (nx, ny, nz, ...).
+        wl: Left state array.
+        wr: Right state array.
+        v: Velocity array. Should be positive in the direction of the flux.
 
     Returns:
-        Flux array. Has shape (nx, ny, nz, ...).
+        Upwinded state array. Has the same shape as wl and wr.
     """
-    return v * np.where(v > 0, yl, np.where(v < 0, yr, 0))
+    return v * np.where(v > 0, wl, wr)
 
 
 def advection_upwind(
     idx: VariableIndexMap,
-    yl: ArrayLike,
-    yr: ArrayLike,
+    wl: ArrayLike,
+    wr: ArrayLike,
     dim: Literal["x", "y", "z"],
 ) -> ArrayLike:
     """
@@ -36,26 +36,26 @@ def advection_upwind(
 
     Args:
         idx: VariableIndexMap object with indices for hydro variables.
-        yl: Left state. Has shape (nvars, nx, ny, nz, ...).
-        yr: Right state. Has shape (nvars, nx, ny, nz, ...).
+        wl: Left state array of primitive variables.Has shape
+            (nvars, nx, ny, nz, ...).
+        wr: Right state array of primitive variables.Has shape
+            (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
 
     Returns:
         Flux array. Has shape (nvars, nx, ny, nz, ...).
     """
     # get the velocity
-    vl, vr = yl[idx("v" + dim)], yr[idx("v" + dim)]
+    vl, vr = wl[idx("v" + dim, keepdims=True)], wr[idx("v" + dim, keepdims=True)]
     v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
     # compute the density flux
-    out = np.zeros_like(yl)
-    out[idx("rho")] = _upwind(yl[idx("rho")], yr[idx("rho")], v)
+    out = np.zeros_like(wl)
+    out[idx("rho")] = _upwind(wl[idx("rho")], wr[idx("rho")], v[0])
 
     # handle passives
-    if "user_defined_passives" in idx.group_names:
-        out[idx("user_defined_passives")] = _upwind(
-            yl[idx("user_defined_passives")], yr[idx("user_defined_passives")], v
-        )
+    if "passives" in idx.group_var_map:
+        out[idx("passives")] = _upwind(wl[idx("passives")], wr[idx("passives")], v)
     return out
 
 

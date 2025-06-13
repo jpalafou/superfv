@@ -200,11 +200,12 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return VariableIndexMap(
             {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
-            (
-                {"passives": ["v" + dim for dim in "xyz" if not self.using[dim]]}
-                if any(not self.using[dim] for dim in "xyz")
-                else {}
-            ),
+            group_var_map={
+                "v": ["v" + dim for dim in "xyz" if self.using[dim]],
+                "primitives": ["rho", "v"],
+                "conservatives": [],
+                "passives": ["v" + dim for dim in "xyz" if not self.using[dim]],
+            },
         )
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:

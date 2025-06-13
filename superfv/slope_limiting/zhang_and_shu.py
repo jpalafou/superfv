@@ -102,7 +102,6 @@ def gather_nodes(
     )
     hocc = fv_solver.interpolate_cell_centers(
         averages,
-        interpolation_scheme=interpolation_scheme,
         p=p,
         sweep_order="xyz",
     )[..., np.newaxis]

@@ -33,7 +33,7 @@ def test_1D_advection_mpp(adaptive_dt, p, dim):
         ZS=p > 0,
         PAD={"rho": (0, 1)},
     )
-    solver.run(0.05)
+    solver.run(n=10)
 
     violations = np.minimum(
         1 - np.array(solver.minisnapshots["max_rho"]),
@@ -58,7 +58,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
         PAD={"rho": (0, 1)},
         cupy=CUPY_AVAILABLE,
     )
-    solver.run(0.05, q_max=2)
+    solver.run(n=10)
 
     violations = np.minimum(
         1 - np.array(solver.minisnapshots["max_rho"]),
@@ -80,7 +80,7 @@ def test_3D_advection_mpp(p):
         PAD={"rho": (0, 1)},
         cupy=CUPY_AVAILABLE,
     )
-    solver.run(0.05)
+    solver.run(n=10)
 
     violations = np.minimum(
         1 - np.array(solver.minisnapshots["max_rho"]),

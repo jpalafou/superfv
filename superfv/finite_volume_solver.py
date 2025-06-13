@@ -339,6 +339,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.flux_recipe = flux_recipe
         self.lazy_primitives = lazy_primitives
 
+        if self.interpolation_scheme == "gauss-legendre":
+            raise NotImplementedError(
+                "Gauss-Legendre interpolation scheme is not implemented yet."
+            )
+
     def _init_ic(
         self,
         ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
@@ -347,126 +352,46 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ],
     ):
         # Define the following attributes:
-        self.active_vars: Set[str]
         self.variable_index_map: VariableIndexMap
+        self.nvars: int
+        self.n_passive_vars: int
+        self.active_vars: Set[str]
+        self.passive_vars: Set[str]
         self.callable_ic: Callable[
             [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
             ArrayLike,
         ]
-        self.n_active_vars: int
-        self.n_passive_vars: int
-        self.nvars: int
-        self.passive_vars: Set[str]
-        self.user_defined_passive_vars: Set[str]
-        self.vars: Set[str]
 
-        # Define active and passive variables
-        self.variable_index_map = self.define_vars()
-        if "passives" in self.variable_index_map.group_names:
-            self.passive_vars = set(self.variable_index_map.group_var_map["passives"])
-            self.active_vars = self.variable_index_map.var_names - self.passive_vars
+        # Define variable index map
+        idx = self.define_vars()
+
+        if ic_passives:
+            for v in ic_passives.keys():
+                if v not in idx.var_idx_map:
+                    idx.add_var(v, idx.nvars)
+            idx.add_var_to_group("passives", ic_passives.keys())
+
+            def callable_ic(idx, x, y, z, t=None):
+                out = ic(idx, x, y, z)
+                for v, f in ic_passives.items():
+                    out[idx(v)] = f(x, y, z)
+                return out
+
         else:
-            self.active_vars = self.variable_index_map.var_names
-            self.passive_vars = set()
-        self.variable_index_map.add_var_to_group("actives", tuple(self.active_vars))
 
-        # Count active and passive variables
-        self.n_active_vars = len({self.variable_index_map(v) for v in self.active_vars})
-        self.n_passive_vars = len(
-            {self.variable_index_map(v) for v in self.passive_vars}
-        )
+            def callable_ic(idx, x, y, z, t=None):
+                return ic(idx, x, y, z)
 
-        # Include user-defined passive variables
-        self.user_defined_passive_vars = set()
-        if ic_passives is not None:
-            starting_passive_idx = len(self.variable_index_map.idxs)
-            for i, v in enumerate(ic_passives.keys()):
-                if v in self.active_vars | self.passive_vars:
-                    raise ValueError("Variable already defined.")
-                self.variable_index_map.add_var(v, starting_passive_idx + i)
-            if "passives" in self.variable_index_map.group_names:
-                self.variable_index_map.add_var_to_group(
-                    "passives", tuple(ic_passives.keys())
-                )
-            else:
-                self.variable_index_map.add_var_to_group(
-                    "passives", tuple(ic_passives.keys())
-                )
-            self.n_user_defined_passive_vars = len(ic_passives)
-            self.n_passive_vars += self.n_user_defined_passive_vars
-            self.passive_vars |= set(ic_passives.keys())
+        self.callable_ic = callable_ic
 
-            self.user_defined_passive_vars = set(ic_passives.keys())
-            self.variable_index_map.add_var_to_group(
-                "user_defined_passives", tuple(self.user_defined_passive_vars)
-            )
-
-        # Define all variables
-        self.nvars = self.n_active_vars + self.n_passive_vars
-        self.vars = self.active_vars | self.passive_vars
-
-        # Define callable initial condition function
-        def callable_ic(idx, x, y, z, t=None):
-            return ic(idx, x, y, z)
-
-        if ic_passives is not None:
-
-            def passive_wrapper(f):
-                def wrapped_ic_func(idx, x, y, z, t=None):
-                    out = f(idx, x, y, z)
-                    for pv, pf in ic_passives.items():
-                        out[idx(pv)] = pf(x, y, z)
-                    return out
-
-                return wrapped_ic_func
-
-        # Apply wrappers
-        if ic_passives is None:
-            self.callable_ic = self.fv_average_wrapper(
-                self.conservatives_wrapper(callable_ic)
-            )
-        else:
-            self.callable_ic = self.fv_average_wrapper(
-                self.conservatives_wrapper(passive_wrapper(callable_ic))
-            )
-
-        # Test array slicing
-        test_arr = np.arange(self.nvars)
-        selected_actives = set(
-            cast(
-                List[str],
-                test_arr[self.variable_index_map("actives", keepdims=True)].tolist(),
-            )
-        )
-        selected_passives = (
-            set(
-                cast(
-                    List[str],
-                    test_arr[
-                        self.variable_index_map("passives", keepdims=True)
-                    ].tolist(),
-                )
-            )
-            if "passives" in self.variable_index_map.group_names
-            else None
-        )
-        all_selected_vars = set(test_arr.tolist())
-        if (
-            self.n_passive_vars > 0
-            and not selected_actives | cast(Set[str], selected_passives)
-            == all_selected_vars
-        ):
-            raise ValueError(
-                "The intersection of active and passive variables must be the set of all variables."
-            )
-        elif (
-            self.n_passive_vars == 0
-            and not selected_actives == selected_actives == all_selected_vars
-        ):
-            raise ValueError("Active variables must be the set of all variables.")
+        self.variable_index_map = idx
+        self.nvars = idx.nvars
+        self.n_passive_vars = len(np.arange(self.nvars)[idx("passives")])
 
         # Initialize the ODE solver with the initial condition array
-        ic_arr = self.callable_ic(self.variable_index_map, *self.mesh.coords, 0.0)
+        ic_arr = self.fv_average_wrapper(self.conservatives_wrapper(self.callable_ic))(
+            self.variable_index_map, *self.mesh.coords, 0.0
+        )
         self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
@@ -532,38 +457,38 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         z_dirichlet: Optional[DirichletBC],
     ):
         # configure "ic" boundary conditions as "dirichlet" boundary conditions
+        def as_two_list(x):
+            if isinstance(x, list) or isinstance(x, tuple):
+                if len(x) != 2:
+                    raise TypeError("Expected a two-element iterable.")
+                return list(x)
+            else:
+                return [x, x]
+
         ic_configed_bc = {"x": bcx, "y": bcy, "z": bcz}
         ic_configed_dirichlet = {"x": x_dirichlet, "y": y_dirichlet, "z": z_dirichlet}
         for dim in "xyz":
-            bc = ic_configed_bc[dim]
-            f = ic_configed_dirichlet[dim]
-            _bc = list(bc) if isinstance(bc, tuple) else [bc, bc]
-            _f = list(f) if isinstance(f, tuple) else [f, f]
+            bc2 = as_two_list(ic_configed_bc[dim])
+            f2 = as_two_list(ic_configed_dirichlet[dim])
             for i in range(2):
-                if _bc[i] == "ic":
-                    _bc[i] = "dirichlet"
-                    _f[i] = lambda idx, x, y, z, t: self.callable_ic(idx, x, y, z, 0.0)
-            ic_configed_bc[dim] = (_bc[0], _bc[1])
-            ic_configed_dirichlet[dim] = (_f[0], _f[1])
+                if bc2[i] == "ic":
+                    bc2[i] = "dirichlet"
+                    f2[i] = lambda idx, x, y, z, t: self.callable_ic(idx, x, y, z, 0.0)
+            ic_configed_bc[dim] = (bc2[0], bc2[1])
+            ic_configed_dirichlet[dim] = (f2[0], f2[1])
 
         # initialize boundary conditions
-        bcx = ic_configed_bc["x"]
-        bcy = ic_configed_bc["y"]
-        bcz = ic_configed_bc["z"]
-        x_dirichlet = ic_configed_dirichlet["x"]
-        y_dirichlet = ic_configed_dirichlet["y"]
-        z_dirichlet = ic_configed_dirichlet["z"]
         self.bc = BoundaryConditions(
             self.variable_index_map,
             self.mesh,
-            bcx,
-            bcy,
-            bcz,
-            x_dirichlet,
-            y_dirichlet,
-            z_dirichlet,
-            self.conservatives_wrapper,
-            self.fv_average_wrapper,
+            bcx=ic_configed_bc["x"],
+            bcy=ic_configed_bc["y"],
+            bcz=ic_configed_bc["z"],
+            x_dirichlet=ic_configed_dirichlet["x"],
+            y_dirichlet=ic_configed_dirichlet["y"],
+            z_dirichlet=ic_configed_dirichlet["z"],
+            conservatives_wrapper=self.conservatives_wrapper,
+            fv_average_wrapper=self.fv_average_wrapper,
         )
 
         # this is used to apply ghost cells to alpha in the smooth extrema detector
@@ -608,9 +533,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
         self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
 
-        # initialize primitive arrays
-        self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
+        # initialize snapshot arrays
+        self.arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
         self.arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
+        self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
 
         # initialize numpy namespace
         self.xp = xp if self.cupy else np
@@ -640,7 +566,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Initial setup
         self.a_priori_slope_limiter: Optional[str] = None
         self.a_priori_slope_limiting_scheme: Optional[str] = None
-        self.limiting_vars: Set[str] = set()
         self.MOOD: bool = False
         self.MOOD_cascade: List[str] = []
         self.MOOD_iter_count: int = 0
@@ -680,20 +605,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # Prespare limiting variables
         if limiting_vars == "actives":
-            self.limiting_vars = self.active_vars
+            self.variable_index_map.add_var_to_group("limiting_vars", "primitives")
         elif limiting_vars == "all":
-            self.limiting_vars = self.variable_index_map.var_names
+            self.variable_index_map.add_var_to_group(
+                "limiting_vars", self.variable_index_map.var_idx_map.keys()
+            )
         elif isinstance(limiting_vars, tuple):
-            self.limiting_vars = set(limiting_vars)
+            self.variable_index_map.add_var_to_group("limiting_vars", limiting_vars)
         else:
             raise ValueError(
                 "limiting_vars must be a tuple of variable names, 'actives', or 'all'."
             )
-
-        # Assign limiting variables
-        self.variable_index_map.add_var_to_group(
-            "limiting_vars", tuple(self.limiting_vars)
-        )
 
         # Set SED
         self.SED = SED
@@ -1152,9 +1074,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         cell_quantity = self.interpolate(
             u,
-            x=0,
-            y=0,
-            z=0,
             p=p,
             sweep_order=sweep_order,
             stencil_type=(
@@ -1428,26 +1347,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        # compute the average of the primitive variables
+        p = self.p
+        ucc = self.interpolate_cell_centers(
+            self.apply_bc(self.arrays["u"], -(-p // 2), self.t), p=p
+        )
+        wcc = self.primitives_from_conservatives(ucc)
         if self.lazy_primitives:
-            self.arrays["w"][...] = self.primitives_from_conservatives(self.arrays["u"])
+            w = self.primitives_from_conservatives(self.arrays["u"])
         else:
-            p = self.p
-            ucc = self.interpolate_cell_centers(
-                self.apply_bc(self.arrays["u"], -2 * (-p // 2), self.t),
-                p=p,
+            w = self.interpolate_cell_averages(
+                self.apply_bc(wcc, -(-p // 2), primitives=True, pointwise=True), p=p
             )
-            wcc = self.primitives_from_conservatives(ucc)
-            self.arrays["wcc"][...] = crop_to_center(wcc, self.arrays["w"].shape)
-            self.arrays["w"][...] = self.interpolate(
-                wcc, p=p, stencil_type="uniform-quadrature"
-            )
+
+        # update the arrays
+        self.arrays["ucc"][...] = ucc
+        self.arrays["wcc"][...] = wcc
+        self.arrays["w"][...] = w
 
         # store the snapshot
         data = {
             "u": self.arrays.get_numpy_copy("u"),
             "w": self.arrays.get_numpy_copy("w"),
-        } | ({} if self.lazy_primitives else {"wcc": self.arrays.get_numpy_copy("wcc")})
+            "ucc": self.arrays.get_numpy_copy("ucc"),
+            "wcc": self.arrays.get_numpy_copy("wcc"),
+        }
         self.snapshots.log(self.t, data)
 
     @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")

@@ -21,7 +21,7 @@ def conservatives_from_primitives(
         u: Array with conservative variables. Has shape (nvars, nx, ny, nz, ...).
     """
     u = np.empty_like(w)
-    HAS_PASSIVES = "user_defined_passives" in idx.group_names
+    HAS_PASSIVES = "user_defined_passives" in idx.group_var_map
     (
         u[idx("rho")],
         u[idx("mx")],
@@ -59,7 +59,7 @@ def primitives_from_conservatives(
         w (ArrayLike): Array with primitive variables. Has shape (nvars, nx, ny, nz, ...).
     """
     w = np.empty_like(u)
-    HAS_PASSIVES = "user_defined_passives" in idx.group_names
+    HAS_PASSIVES = "user_defined_passives" in idx.group_var_map
     (
         w[idx("rho")],
         w[idx("mx")],

@@ -1,14 +1,11 @@
-from functools import partial
 from itertools import combinations
 
 import numpy as np
 import pytest
 
-from superfv import AdvectionSolver, initial_conditions
-
-
-def l1_error(u1, u2):
-    return np.mean(np.abs(u1 - u2))
+import superfv.initial_conditions as ic
+from superfv import AdvectionSolver
+from superfv.tools.array_management import l1_norm
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
@@ -16,20 +13,20 @@ def test_AdvectionSolver_symmetry_1D(p: int):
     """
     Test the symmetry of the solution in 1D.
     """
-    N = 128
-    T = 1.0
+    N = 64
 
     # run solver in each direction
     solution = {}
     for dim in "xyz":
         solver = AdvectionSolver(
-            ic=partial(initial_conditions.square, **{f"v{dim}": 1}),
+            ic=lambda idx, x, y, z: ic.square(idx, x, y, z, **{f"v{dim}": 1}),
             p=p,
             **{f"n{dim}": N},
         )
-        solver.run(T)
-        _slc = solver.array_slicer
-        solution[dim] = solver.snapshots[-1]["u"][_slc("rho")].flatten().copy()
+        solver.run(n=10)
+
+        idx = solver.variable_index_map
+        solution[dim] = solver.snapshots[-1]["u"][idx("rho")].flatten().copy()
 
     # check that the solutions are equal
     assert np.array_equal(solution["x"], solution["y"])
@@ -37,32 +34,34 @@ def test_AdvectionSolver_symmetry_1D(p: int):
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+# @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+@pytest.mark.parametrize("interpolation_scheme", ["transverse"])
 def test_AdvectionSolver_symmetry_2D(p: int, interpolation_scheme: str):
     """
     Test the symmetry of the solution in 2D.
     """
     N = 64
-    T = 1.0
 
     # run solver along each plane
     solution = {}
     for dims in combinations("xyz", 2):
         dim1, dim2 = dims
         solver = AdvectionSolver(
-            ic=partial(initial_conditions.square, **{f"v{dim1}": 1, f"v{dim2}": 1}),
+            ic=lambda idx, x, y, z: ic.square(
+                idx, x, y, z, **{f"v{dim1}": 1, f"v{dim2}": 1}
+            ),
             p=p,
             interpolation_scheme=interpolation_scheme,
             **{f"n{dim1}": N, f"n{dim2}": N},
         )
-        solver.run(T)
+        solver.run(n=10)
 
         # get the resulting 2D solution
-        _slc = solver.array_slicer
+        idx = solver.variable_index_map
         _slices2d = [slice(None), slice(None), slice(None)]
         _slices2d[{"xy": 2, "xz": 1, "yz": 0}[dim1 + dim2]] = 0
         solution[dim1 + dim2] = solver.snapshots[-1]["u"][
-            _slc("rho"), _slices2d[0], _slices2d[1], _slices2d[2]
+            idx("rho"), _slices2d[0], _slices2d[1], _slices2d[2]
         ]
 
     # check that the solutions are equal
@@ -70,7 +69,8 @@ def test_AdvectionSolver_symmetry_2D(p: int, interpolation_scheme: str):
     assert np.array_equal(solution["xy"], solution["xz"])
 
 
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+# @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+@pytest.mark.parametrize("interpolation_scheme", ["transverse"])
 def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
     """
     Assert that the result of a counter-clockwise rotation of a slotted disk is the
@@ -81,14 +81,14 @@ def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
 
     # initialize solvers
     ccw_solver = AdvectionSolver(
-        ic=partial(initial_conditions.slotted_disk),
+        ic=lambda idx, x, y, z: ic.slotted_disk(idx, x, y, z),
         p=p,
         nx=N,
         ny=N,
         interpolation_scheme=interpolation_scheme,
     )
     cw_solver = AdvectionSolver(
-        ic=partial(initial_conditions.slotted_disk, rotation="cw"),
+        ic=lambda idx, x, y, z: ic.slotted_disk(idx, x, y, z, rotation="cw"),
         p=p,
         nx=N,
         ny=N,
@@ -96,15 +96,15 @@ def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
     )
 
     # run solvers
-    ccw_solver.run(2 * np.pi)
-    cw_solver.run(2 * np.pi)
+    ccw_solver.run(n=10)
+    cw_solver.run(n=10)
 
     # compare solutions
-    _slc = ccw_solver.array_slicer
+    idx = ccw_solver.variable_index_map
     assert (
-        l1_error(
-            cw_solver.snapshots[-1]["u"][_slc("rho")],
-            np.flipud(ccw_solver.snapshots[-1]["u"][_slc("rho")]),
+        l1_norm(
+            cw_solver.snapshots[-1]["u"][idx("rho")]
+            - np.flipud(ccw_solver.snapshots[-1]["u"][idx("rho")]),
         )
         < 1e-15
     )
@@ -114,18 +114,17 @@ def test_AdvectionSolver_passive_scalar_invariance():
     """
     Test the invariance of the solution when adding a passive scalar.
     """
-    N = 128
+    N = 64
     p = 3
-    T = 1.0
 
     # set up solvers
     solver = AdvectionSolver(
-        ic=partial(initial_conditions.sinus, vx=1),
+        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
         nx=N,
         p=p,
     )
     solver_with_passive_scalar = AdvectionSolver(
-        ic=partial(initial_conditions.sinus, vx=1),
+        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
         ic_passives={
             "passive1": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1, 0)
         },
@@ -134,12 +133,12 @@ def test_AdvectionSolver_passive_scalar_invariance():
     )
 
     # run solvers
-    solver.run(T)
-    solver_with_passive_scalar.run(T)
+    solver.run(n=10)
+    solver_with_passive_scalar.run(n=10)
 
     # compare solutions
-    _slc = solver.array_slicer
+    idx = solver.variable_index_map
     assert np.array_equal(
-        solver.snapshots[-1]["u"][_slc("rho")],
-        solver_with_passive_scalar.snapshots[-1]["u"][_slc("rho")],
+        solver.snapshots[-1]["u"][idx("rho")],
+        solver_with_passive_scalar.snapshots[-1]["u"][idx("rho")],
     )

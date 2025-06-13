@@ -25,6 +25,12 @@ def test_merge_indices_sequences():
     )
 
 
+def test_merge_empty():
+    assert merge_indices(()) == slice(0, 0)
+    assert merge_indices([]) == slice(0, 0)
+    assert np.array_equal(merge_indices([], as_array=True), np.array([], dtype=np.int_))
+
+
 def test_merge_indices_invalid():
     with pytest.raises(ValueError):
         merge_indices(-1)
@@ -80,7 +86,36 @@ def test_variable_index_map_nested_group():
     assert vmap("abcd") == slice(0, 4)
 
 
-def test_variable_index_map_with_hydro_indices():
+def test_empty_groups():
+    idx = VariableIndexMap(
+        {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
+        {
+            "primitives": ["rho", "v"],
+            "conservatives": [],
+            "v": ["v" + dim for dim in "xyz"],
+        },
+    )
+
+    assert idx.all_names == {
+        "rho",
+        "vx",
+        "vy",
+        "vz",
+        "v",
+        "primitives",
+        "conservatives",
+    }
+    assert np.array_equal(idx.idxs, np.arange(4))
+    assert idx.nvars == 4
+
+    assert idx("rho") == 0
+    assert idx("rho", keepdims=True) == slice(0, 1)
+    assert idx("v") == slice(1, 4)
+    assert idx("primitives") == slice(0, 4)
+    assert idx("conservatives") == slice(0, 0)
+
+
+def test_hydro_groups():
     idx = VariableIndexMap(
         {
             "rho": 0,
@@ -94,16 +129,42 @@ def test_variable_index_map_with_hydro_indices():
             "mz": 3,
         }
     )
+
+    assert idx.all_names == {"rho", "vx", "vy", "vz", "P", "E", "mx", "my", "mz"}
+    assert np.array_equal(idx.idxs, np.arange(5))
+    assert idx.nvars == 5
+
     idx.add_var_to_group("v", ["vx", "vy", "vz"])
     idx.add_var_to_group("m", ["mx", "my", "mz"])
     idx.add_var_to_group("primitives", ["rho", "v", "P"])
     idx.add_var_to_group("conservatives", ["rho", "m", "E"])
+    idx.add_var_to_group("state", ["rho", "E", "P"])
     assert idx("rho") == 0
     assert idx("rho", keepdims=True) == slice(0, 1)
     assert idx("v") == slice(1, 4)
     assert idx("m") == slice(1, 4)
     assert idx("primitives") == slice(0, 5)
     assert idx("conservatives") == slice(0, 5)
+    assert np.array_equal(idx("state"), np.array([0, 4]))
+
+    assert idx.all_names == {
+        "rho",
+        "vx",
+        "vy",
+        "vz",
+        "P",
+        "E",
+        "mx",
+        "my",
+        "mz",
+        "v",
+        "m",
+        "primitives",
+        "conservatives",
+        "state",
+    }
+    assert np.array_equal(idx.idxs, np.arange(5))
+    assert idx.nvars == 5
 
 
 def test_noncontiguous_indices():
@@ -180,8 +241,6 @@ def test_cache_behavior():
 
 
 def test_variable_index_map_cycle():
-    vmap = VariableIndexMap({"x": 0, "y": 1, "z": 2}, {"g1": ["x"], "g2": ["y"]})
-    vmap.add_var_to_group("g1", ["g2"])
-    vmap.add_var_to_group("g2", ["g1"])  # create cycle
+    vmap = VariableIndexMap({"x": 0, "y": 1, "z": 2}, {"g1": ["x", "g2"], "g2": ["y"]})
     with pytest.raises(ValueError):
-        vmap("g1")
+        vmap.add_var_to_group("g2", ["g1"])  # create cycle

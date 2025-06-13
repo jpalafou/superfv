@@ -155,7 +155,6 @@ def slotted_disk(
         inside_disk = rsq < 0.15
         inside_disk &= np.logical_not(np.logical_and(np.abs(xc) < 0.025, y < 0.85))
 
-        out = np.empty((4, *x.shape))
         out[idx("rho")] = np.where(inside_disk, rho_min_max[1], rho_min_max[0])
         out[idx("vx")] = -yc if rotation == "ccw" else yc
         out[idx("vy")] = xc if rotation == "ccw" else -xc

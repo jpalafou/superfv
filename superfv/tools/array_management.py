@@ -124,13 +124,14 @@ def _crop_to_center(
     elif isinstance(ignore_axes, int):
         ignore_axes = (ignore_axes,)
     for i, (dim_length, target_length) in enumerate(zip(in_shape, target_shape)):
-        if i in ignore_axes or dim_length == target_length:
+        if i in ignore_axes:
+            out[i] = slice(None)
             continue
         if target_length > dim_length:
             raise ValueError(
                 f"Target shape {target_shape} must be less than or equal to the input array's shape {in_shape} in all dimensions."
             )
-        elif target_length % 2 == 0:
+        elif (dim_length - target_length) % 2 == 0:
             margin = (dim_length - target_length) // 2
             out[i] = slice(margin or None, -margin or None)
         else:
@@ -206,88 +207,114 @@ def merge_indices(
                 raise ValueError("Only slices with step=1 are supported.")
             idxs.extend(range(s.start if s.start is not None else 0, s.stop))
         elif isinstance(s, tuple) or isinstance(s, list) or isinstance(s, np.ndarray):
-            s_arr = np.asarray(s)
-            if s_arr.ndim != 1:
-                raise ValueError("Only 1D arrays/lists of integers are supported.")
-            if not np.issubdtype(s_arr.dtype, np.integer):
-                raise ValueError(
-                    f"Expected 1D sequence of integers, got array with dtype {s_arr.dtype}."
-                )
-            idxs.extend([int(i) for i in s_arr])
+            if len(s) > 0:
+                s_arr = np.asarray(s)
+                if s_arr.ndim != 1:
+                    raise ValueError("Only 1D arrays/lists of integers are supported.")
+                if not np.issubdtype(s_arr.dtype, np.integer):
+                    raise ValueError(
+                        f"Expected 1D sequence of integers, got array with dtype {s_arr.dtype}."
+                    )
+                idxs.extend([int(i) for i in s_arr])
+            else:
+                s_arr = np.array([], dtype=np.int_)
         else:
             raise TypeError(
                 f"Unsupported type {type(s)} for merging indices. Expected int, slice, or numpy array."
             )
     idxs = sorted(set(idxs))
-    if len(idxs) == 0:
-        raise ValueError("No valid indices provided to merge.")
-    if not as_array and idxs == list(range(idxs[0], idxs[-1] + 1)):
-        return slice(idxs[0], idxs[-1] + 1)
+    if not as_array:
+        if len(idxs) == 0:
+            return slice(0, 0)
+        if idxs == list(range(idxs[0], idxs[-1] + 1)):
+            return slice(idxs[0], idxs[-1] + 1)
     return np.array(idxs, dtype=np.int_)
 
 
 @dataclass
 class VariableIndexMap:
     """
-    Class for managing a mapping of variable names to indices and groups of variables
-    to slices or int arrays.
+    A class to manage a mapping of variable names to indices and groups of variables.
 
     Args:
-        var_idx_map: Dictionary mapping variable names to indices (int).
-        group_var_map: Dictionary mapping group names to list of variable names.
+        var_idx_map: A dictionary mapping variable names to their indices.
+        group_var_map: A dictionary mapping group names to lists of variable and
+            subgroup names.
 
     Attributes:
-        var_names: Set of variable names.
-        group_names: Set of group names.
-        all_names: Set of all variable and group names.
-        idxs: Set of indices (int) used in the variable index map.
-        nvars: Number of variables in the variable index map.
+        all_names: A set of all variable and group names.
+        idxs: A numpy array of unique indices for the variables.
+        nvars: The number of unique variables.
     """
 
     var_idx_map: Dict[str, int] = field(default_factory=dict)
     group_var_map: Dict[str, List[str]] = field(default_factory=dict)
     var_names: Set[str] = field(init=False)
-    group_names: Set[str] = field(init=False)
     all_names: Set[str] = field(init=False)
-    idxs: Set[int] = field(init=False)
+    idxs: np.ndarray[Any, np.dtype[np.int_]] = field(init=False)
     nvars: int = field(init=False)
-    _cache: Dict[Tuple[str, bool], IndexLike] = field(default_factory=dict)
+    _cache: Dict[Tuple[str, bool], IndexLike] = field(default_factory=dict, init=False)
 
     def __post_init__(self):
+        self._cache: Dict[Tuple[str, bool], IndexLike] = {}
         self._refresh_and_validate_mappings()
 
     def _refresh_and_validate_mappings(self):
-        self.var_names = set(self.var_idx_map.keys())
-        self.group_names = set(self.group_var_map.keys())
-        self.all_names = self.var_names | self.group_names
-        self.idxs = set(self.var_idx_map.values())
+        self.var_names: Set[str] = set(self.var_idx_map.keys())
+        self.all_names: Set[str] = set(self.var_idx_map.keys()) | set(
+            self.group_var_map.keys()
+        )
+        self.idxs: np.ndarray[Any, np.dtype[np.int_]] = np.array(
+            sorted(set(self.var_idx_map.values()))
+        )
+        self.nvars: int = len(self.idxs)
 
         # indices must be contiguous starting from 0
-        if self.idxs:
-            sorted_idxs = sorted(self.idxs)
-            if sorted_idxs != list(range(len(sorted_idxs))):
-                raise ValueError(
-                    f"Indices must be contiguous starting from 0. Current indices: {sorted_idxs}"
-                )
-        self.nvars = len(self.idxs)
+        if self.idxs.size > 0 and not np.array_equal(self.idxs, np.arange(self.nvars)):
+            raise ValueError(
+                "Variable indices must be contiguous starting from 0. "
+                f"Current indices: {self.idxs}"
+            )
 
-        for group_name, members in self.group_var_map.items():
-            # group names must not conflict with variable names
-            if group_name in self.var_names:
-                raise ValueError(
-                    f"Group name '{group_name}' conflicts with variable name."
-                )
-
-            # group names must not contain themselves as a variable
+        # validate group variable map
+        for group_name in self.group_var_map.keys():
+            members = set(self.group_var_map[group_name])
+            members.update(set(self._resolve_group_variables(group_name, seen=set())))
             if group_name in members:
                 raise ValueError(f"Group '{group_name}' contains itself as a variable.")
-
-            # group names must only contain variables that are in the variable index map
-            if set(members) - self.all_names:
+            if members - self.all_names:
                 raise ValueError(
-                    f"Group '{group_name}' contains variables not in the variable "
-                    f"index map: {set(members) - self.all_names}"
+                    f"Group '{group_name}' contains variables not in the variable index map: "
+                    f"{set(members) - self.all_names}"
                 )
+            self.group_var_map[group_name] = sorted(members)
+
+    def _resolve_group_variables(self, group_name: str, seen: Set[str]) -> List[str]:
+        """
+        Resolve a group name to a list of its variable members.
+
+        Args:
+            group_name: Name of the group to resolve.
+            seen: Set of already seen group names to avoid infinite recursion.
+
+        Returns:
+            List of variable names that are members of the group.
+        """
+        if group_name in seen:
+            raise ValueError(f"Group '{group_name}' contains a circular reference.")
+        seen.add(group_name)
+
+        if group_name not in self.group_var_map:
+            raise KeyError(f"Group '{group_name}' not found in group variable map.")
+
+        members = self.group_var_map[group_name]
+        resolved = []
+        for member in members:
+            if member in self.group_var_map:
+                resolved.extend(self._resolve_group_variables(member, seen))
+            else:
+                resolved.append(member)
+        return resolved
 
     def _invalidate_cache(self):
         self._cache.clear()
@@ -357,28 +384,11 @@ class VariableIndexMap:
             idx = self.var_idx_map[name]
             out = slice(idx, idx + 1) if keepdims else idx
         else:
-            idxs = self._resolve_group(name, seen=set())
-            out = merge_indices(idxs)
+            variables = self._resolve_group_variables(name, seen=set())
+            out = merge_indices([self.var_idx_map[v] for v in variables])
 
         self._cache[key] = out
         return out
-
-    def _resolve_group(self, name: str, seen: Set[str]) -> List[int]:
-        if name in seen:
-            raise ValueError(
-                f"Cycle detected in group definitions: {' -> '.join(seen)} -> {name}"
-            )
-        seen = seen | {name}
-
-        if name in self.var_idx_map:
-            return [self.var_idx_map[name]]
-        elif name in self.group_var_map:
-            idxs = []
-            for v in self.group_var_map[name]:
-                idxs.extend(self._resolve_group(v, seen))
-            return idxs
-        else:
-            raise KeyError(f"Variable or group '{name}' not found.")
 
 
 class ArrayManager:

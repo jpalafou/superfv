@@ -111,7 +111,7 @@ def detect_troubles(
     ustar = u + dt * fv_solver.RHS(u, *fluxes)
 
     # compute NAD and/or PAD violations
-    limiting_slice = idx("limiting_vars", keepdims=True)
+    limiting_slice = idx("limiting_vars")
     possible_violations = xp.zeros_like(u[limiting_slice], dtype=bool)
     if PAD is None and NAD is None:
         return False

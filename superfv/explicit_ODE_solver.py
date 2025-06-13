@@ -143,7 +143,7 @@ class ExplicitODESolver(ABC):
         self.state = state_array_name
 
         # initialize timer, snapshots, and git commit details
-        self.timer = Timer(cats=["ExplicitODESolver.integrate.body"])
+        self.timer = Timer(cats=["!ExplicitODESolver.integrate.body"])
         self.snapshots: Snapshots = Snapshots()
         self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": [], "dt": []}
         self.commit_details = self._get_commit_details()
@@ -210,11 +210,11 @@ class ExplicitODESolver(ABC):
         if n is not None:
             self.snapshot()
             self.minisnapshot()
-            self.timer.start("ExplicitODESolver.integrate.body")
+            self.timer.start("!ExplicitODESolver.integrate.body")
             for _ in tqdm(range(n)):
                 self.take_step()
                 self.minisnapshot()
-            self.timer.stop("ExplicitODESolver.integrate.body")
+            self.timer.stop("!ExplicitODESolver.integrate.body")
             self.snapshot()
             return
 
@@ -252,7 +252,7 @@ class ExplicitODESolver(ABC):
         self.minisnapshot()
 
         # simulation loop
-        self.timer.start("ExplicitODESolver.integrate.body")
+        self.timer.start("!ExplicitODESolver.integrate.body")
         while self.t < T_max:
             self.take_step(target_time=target_time)
             self.minisnapshot()
@@ -267,7 +267,7 @@ class ExplicitODESolver(ABC):
                 self.snapshot()
                 if self.t == target_time and self.t < T_max:
                     target_time = target_times.pop(0)
-        self.timer.stop("ExplicitODESolver.integrate.body")
+        self.timer.stop("!ExplicitODESolver.integrate.body")
 
         # clean up progress bar
         self.progress_bar_action("cleanup", do_nothing=not progress_bar)

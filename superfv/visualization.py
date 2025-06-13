@@ -77,7 +77,7 @@ def _parse_txyz_slices(
         "z": slice(None),
     }
     for dim, coord in zip("xyz", [x, y, z]):
-        x_array = getattr(fv_solver, dim)
+        x_array = getattr(fv_solver.mesh, dim + "_centers")
         if coord is None:
             continue
         elif isinstance(coord, float):
@@ -101,7 +101,7 @@ def _parse_txyz_slices(
 
 
 def _extract_variable_data(
-    fv_solver: FiniteVolumeSolver, nearest_t: float, variable: str, array: str = "u"
+    fv_solver: FiniteVolumeSolver, nearest_t: float, variable: str, cell_averaged: bool
 ) -> np.ndarray:
     """
     Extract the data for a given variable at the nearest time.
@@ -110,27 +110,42 @@ def _extract_variable_data(
         fv_solver: FiniteVolumeSolver object.
         nearest_t: Nearest time.
         variable: Name of the variable to extract from the snapshots.
-        array: Source array to extract from. Can be "u" or "w".
+        cell_averaged: Whether to extract the cell-averaged data. If False, the
+            variable is extracted using its cell-centered values.
     Returns:
         Array of data for the variable at the nearest time.
 
     Raises:
         ValueError: Variable not found in snapshots.
     """
-    snapshot = fv_solver.snapshots(nearest_t)
     idx = fv_solver.variable_index_map
-    if variable in snapshot:
-        return snapshot[variable]
-    if variable in idx.var_names:
-        return snapshot[array][idx(variable)]
-    raise ValueError(f"Variable {variable} not found in snapshots.")
+
+    # choose the snapshot with the nearest time
+    snapshot = fv_solver.snapshots(nearest_t)
+
+    # determine the key for the variable
+    if variable in idx.group_var_map["primitives"]:
+        key = "w"
+    elif variable in idx.group_var_map["conservatives"]:
+        key = "u"
+    elif variable in idx.group_var_map["passives"]:
+        key = "w"
+    else:
+        raise ValueError(
+            f"Variable {variable} not found in groups 'primitives' 'conservatives', or 'passives'."
+        )
+    if not cell_averaged:
+        key += "cc"
+
+    # extract the data
+    return snapshot[key][idx(variable)]
 
 
 def plot_1d_slice(
     fv_solver: FiniteVolumeSolver,
     ax: Axes,
     variable: str,
-    array: str = "u",
+    cell_averaged: bool = False,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
@@ -145,7 +160,8 @@ def plot_1d_slice(
         fv_solver: FiniteVolumeSolver object.
         ax: Matplotlib axes object.
         variable: Name of the variable to plot.
-        array: Source array to extract from. Can be "u" or "w".
+        cell_averaged: Whether to plot the cell average of the variable. If False, the
+            variable is plotted using its cell-centered values.
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -171,8 +187,8 @@ def plot_1d_slice(
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # gather data
-    _x = getattr(fv_solver, dim)[slices[0], slices[1], slices[2]]
-    _y = _extract_variable_data(fv_solver, nearest_t, variable, array)[
+    _x = getattr(fv_solver.mesh, dim)[slices[0], slices[1], slices[2]]
+    _y = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
 
@@ -186,7 +202,7 @@ def plot_2d_slice(
     fv_solver: FiniteVolumeSolver,
     ax: Axes,
     variable: str,
-    array: str = "u",
+    cell_averaged: bool = False,
     t: Optional[float] = None,
     x: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
     y: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
@@ -201,7 +217,8 @@ def plot_2d_slice(
         fv_solver: FiniteVolumeSolver object.
         ax: Matplotlib axes object.
         variable: Name of the variable to plot.
-        array: Source array to extract from. Can be "u" or "w".
+        cell_averaged: Whether to plot the cell average of the variable. If False, the
+            variable is plotted using its cell-centered values.
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -230,12 +247,16 @@ def plot_2d_slice(
     using = "imshow" if levels is None else "contour"
 
     if using == "contour":
-        _x = getattr(fv_solver, dim1)[slices[0], slices[1], slices[2]]
-        _y = getattr(fv_solver, dim2)[slices[0], slices[1], slices[2]]
+        _x = getattr(fv_solver.mesh, dim1)[slices[0], slices[1], slices[2]]
+        _y = getattr(fv_solver.mesh, dim2)[slices[0], slices[1], slices[2]]
     else:
-        _x = getattr(fv_solver, dim1.lower())[slices["XYZ".index(dim1)]]
-        _y = getattr(fv_solver, dim2.lower())[slices["XYZ".index(dim2)]]
-    _z = _extract_variable_data(fv_solver, nearest_t, variable, array)[
+        _x = getattr(fv_solver.mesh, dim1.lower() + "_centers")[
+            slices["XYZ".index(dim1)]
+        ]
+        _y = getattr(fv_solver.mesh, dim2.lower() + "_centers")[
+            slices["XYZ".index(dim2)]
+        ]
+    _z = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
 

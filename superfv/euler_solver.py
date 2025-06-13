@@ -210,33 +210,17 @@ class EulerSolver(FiniteVolumeSolver):
             - vy: y-component of the velocity.
             - vz: z-component of the velocity.
         """
-        active_dims = [dim for dim in "xyz" if self.using[dim]]
-        passive_dims = [dim for dim in "xyz" if not self.using[dim]]
-
-        variable_index_map = VariableIndexMap(
-            {
-                "rho": 0,
-                "vx": 1,
-                "vy": 2,
-                "vz": 3,
-                "P": 4,
-                "E": 4,
-                "mx": 1,
-                "my": 2,
-                "mz": 3,
-            }
+        return VariableIndexMap(
+            {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
+            group_var_map={
+                "v": ["v" + dim for dim in "xyz" if self.using[dim]],
+                "m": ["m" + dim for dim in "xyz" if self.using[dim]],
+                "primitives": ["rho", "v", "P"],
+                "conservatives": ["rho", "m", "E"],
+                "passives": ["v" + dim for dim in "xyz" if not self.using[dim]]
+                + ["m" + dim for dim in "xyz" if not self.using[dim]],
+            },
         )
-        variable_index_map.add_var_to_group("v", ["v" + dim for dim in active_dims])
-        variable_index_map.add_var_to_group("m", ["m" + dim for dim in active_dims])
-        variable_index_map.add_var_to_group(
-            "passives", ["v" + dim for dim in passive_dims]
-        )
-        variable_index_map.add_var_to_group(
-            "passives", ["m" + dim for dim in passive_dims]
-        )
-        variable_index_map.add_var_to_group("primitives", ["rho", "v", "P"])
-        variable_index_map.add_var_to_group("conservatives", ["rho", "m", "E"])
-        return variable_index_map
 
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """

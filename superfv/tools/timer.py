@@ -108,9 +108,9 @@ class Timer:
         out = {cat: np.round(t, decimals) for cat, t in self.cum_time.items()}
         return out
 
-    def report(self, precision: int = 2) -> str:
+    def print_report(self, precision: int = 2):
         """
-        Generates a report of the timer categories with ncalls and cumtime.
+        Prints a report of the timer categories with ncalls and cumtime.
 
         Args:
             precision: Number of decimal places to print for cumulative time.
@@ -140,7 +140,7 @@ class Timer:
                 f"{cat:<{cat_width}} {ncalls:>10} {cumtime:>20.{precision}f}\n"
             )
 
-        return report_str
+        print(report_str)
 
     def __contains__(self, cat: str) -> bool:
         return cat in self.cats

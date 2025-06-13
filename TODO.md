@@ -1,22 +1,29 @@
-- [x] allow group_var_map to point to other groups
-- [x] edit docstrings to not have the type of args in paranetheses wtf
-- [x] remove x, y, z options from array_slicer. enable multi-axis slicing instead
-- [x] .mesh object
-- [x] add nvars to VariableIndexMap
-- [ ] !!!fix 2D boundary conditions (2D advection, slotted disk, etc)
-- [ ] !!!major bug found: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
-- [ ] does bc take (nvar, nx, ny, nz) or (nvar, nx, ny, nz, ninterpolations). make this consistent between the class and FiniteVolumeSolver.apply_bc
-- [ ] put custom types somewhere else?
-- [ ] fix tests D:
-- [ ] consider cleaning up interpolation cache stuff
+changes:
+- [x] does bc take (nvar, nx, ny, nz) or (nvar, nx, ny, nz, ninterpolations). make this consistent between the class and FiniteVolumeSolver.apply_bc
+- [x] !!!fix 2D boundary conditions (2D advection, slotted disk, etc)
+- [x] fix number of assigned ghost cells for transverse flux
+- [x] fix: advection tests
+- [x] remove array="w" terminology from plotting slices
+
+bugs:
+- [ ] !major bug: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
+- [ ] !major bug: no way to apply dirichlet boundary conditions with gauss-legendre fluxes. update advection tests once this is done
+- [ ] fix: the rest of the tests
+- [ ] clean up hydro/riemann solver modules
+- [ ] fix: 2DZS + RK4
+
+optimizations:
+- [ ] preallocate padded arrays?
+- [ ] timer should pause during snapshot
+- [ ] look into cleaning up interpolation cache
+
+cosmetics:
+- [ ] make gauss-legendre a boolean option
 - [ ] remove '_thing' naming convention unless the thing is actually hidden on purpose
-- [ ] remove array="w" terminology from plotting slices
-- [ ] limiting_vars should be a list
-- [ ] fix progress bar for allow_overshoot=True
-- [ ] fix number of assigned ghost cells for transverse flux
-- [ ] fix 2DZS + RK4
-- [ ] clean up riemann solver primitive variable logic
+- [ ] fix: progress bar for allow_overshoot=True
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md
-- [ ] coverage
+
+very ambitious changes:
 - [ ] multi-core support
+- [ ] coverage
