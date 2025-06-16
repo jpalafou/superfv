@@ -1,8 +1,31 @@
+from functools import lru_cache
 from typing import Callable, Tuple
 
 import numpy as np
 
 from .tools.array_management import ArrayLike
+
+
+def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayLike]:
+    unscaled_points, unscaled_weights = np.polynomial.legendre.leggauss(
+        -(-(p + 1) // 2)
+    )
+    scaling = np.sum(unscaled_weights)
+    return unscaled_points / scaling, unscaled_weights / scaling
+
+
+@lru_cache(maxsize=None)
+def _gauss_legendre_mesh(
+    px: int, py: int, pz: int
+) -> Tuple[
+    Tuple[ArrayLike, ArrayLike, ArrayLike], Tuple[ArrayLike, ArrayLike, ArrayLike]
+]:
+    x_pts, x_wts = _scaled_gauss_legendre_points_and_weights(px)
+    y_pts, y_wts = _scaled_gauss_legendre_points_and_weights(py)
+    z_pts, z_wts = _scaled_gauss_legendre_points_and_weights(pz)
+    xp, yp, zp = np.meshgrid(x_pts, y_pts, z_pts, indexing="ij")
+    xw, yw, zw = np.meshgrid(x_wts, y_wts, z_wts, indexing="ij")
+    return (xp, yp, zp), (xw, yw, zw)
 
 
 def fv_average(
@@ -27,27 +50,20 @@ def fv_average(
     Returns:
         ArrayLike: Finite volume average.
     """
-    # mesh spacings
     hx, hy, hz = h
+    px, py, pz = p
+    (xp, yp, zp), (xw, yw, zw) = _gauss_legendre_mesh(px, py, pz)
+    na = np.newaxis
 
-    # quadrature points and weights
-    unscaled_points_and_weights = [
-        np.polynomial.legendre.leggauss(-(-(_p + 1) // 2)) for _p in p
-    ]
+    x_eval = x[..., na, na, na] + xp[na, na, na, :, :, :] * hx
+    y_eval = y[..., na, na, na] + yp[na, na, na, :, :, :] * hy
+    z_eval = z[..., na, na, na] + zp[na, na, na, :, :, :] * hz
 
-    # rescale to have sum of exactly 1
-    error_factors = [1 / np.sum(weights) for _, weights in unscaled_points_and_weights]
-    points_and_weights = [
-        [points * factor, weights * factor]
-        for (points, weights), factor in zip(unscaled_points_and_weights, error_factors)
-    ]
+    # Evaluate f on the whole grid at once (result shape: (px, py, pz, nx, ny, nz))
+    vals = f(x_eval, y_eval, z_eval)
 
-    # find cell averages
-    out = np.zeros_like(f(x, y, z))
-    for xp, xw in zip(*points_and_weights[0]):
-        for yp, yw in zip(*points_and_weights[1]):
-            for zp, zw in zip(*points_and_weights[2]):
-                weight = xw * yw * zw
-                out += weight * f(x + xp * hx, y + yp * hy, z + zp * hz)
+    weights = xw * yw * zw
+    weights = weights[na, na, na, :, :, :]
 
-    return out
+    # Weighted sum over quadrature points
+    return np.sum(weights * vals, axis=(3, 4, 5))
