@@ -87,7 +87,7 @@ def call_riemann_solver(
     # Get relevant variables
     idx = euler_solver.variable_index_map
     hydro = euler_solver.hydro
-    HAS_PASSIVES = "user_defined_passives" in idx.group_names
+    HAS_PASSIVES = "user_defined_passives" in idx.group_var_map
 
     # Get the principal dimension and the other two transverse dimensions
     dim1, (dim2, dim3) = dim, {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
