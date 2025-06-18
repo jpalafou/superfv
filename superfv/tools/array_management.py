@@ -115,10 +115,6 @@ def _crop_to_center(
         Tuple of slices that can be used to crop the input array to the target shape.
     """
     out = [slice(None)] * len(in_shape)
-    if len(target_shape) != len(in_shape):
-        raise ValueError(
-            "Target shape must have the same number of dimensions as the input array."
-        )
     if ignore_axes is None:
         ignore_axes = tuple()
     elif isinstance(ignore_axes, int):

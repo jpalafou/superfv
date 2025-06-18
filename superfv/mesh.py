@@ -1,8 +1,18 @@
 from dataclasses import dataclass
 from itertools import product
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
+
+from superfv.fv import gauss_legendre_mesh
+
+
+def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[np.ndarray, np.ndarray]:
+    unscaled_points, unscaled_weights = np.polynomial.legendre.leggauss(
+        -(-(p + 1) // 2)
+    )
+    scaling = np.sum(unscaled_weights)
+    return unscaled_points / scaling, unscaled_weights / scaling
 
 
 def uniform_3D_mesh(
@@ -29,28 +39,29 @@ class UniformFVMesh:
     A class to represent a uniform finite volume mesh in 3D space.
 
     Args:
-        nx, ny, nz (int): Number of cells in the x, y, and z dimensions.
-        xlim, ylim, zlim (tuple): Limits of the mesh in the x, y, and z dimensions.
-        x_slab_depth, y_slab_depth, z_slab_depth (int): Depth of the slabs on each side
-            of the mesh in the x, y, and z dimensions. In total, the mesh will have
-            (nx + 2 * x_slab_depth, ny + 2 * y_slab_depth, nz + 2 * z_slab_depth)
-            cells in the x, y, and z dimensions.
+        nx, ny, nz: Number of cells in the x, y, and z dimensions.
+        xlim, ylim, zlim: Limits of the mesh in the x, y, and z dimensions.
+        ignore_x, ignore_y, ignore_z: If True, this dimension will no longer be
+            considered 'active' in the mesh, meaning it will not be considered when
+            generating slabs or quadrature points.
+        slab_depth: Number of cells to add as slabs on each side of the mesh along each
+            active dimension.
 
     Attributes:
-        shape (tuple): Shape of the mesh as (nx, ny, nz).
-        hx, hy, hz (float): Cell sizes in the x, y, and z dimensions.
-        h (tuple): Tuple of cell sizes (hx, hy, hz).
-        x_interfaces, y_interfaces, z_interfaces (ndarray): Interfaces in the x, y,
+        shape: Shape of the mesh as (nx, ny, nz).
+        hx, hy, hz: Cell sizes in the x, y, and z dimensions.
+        h: Tuple of cell sizes (hx, hy, hz).
+        x_interfaces, y_interfaces, z_interfaces: Interfaces in the x, y, and z
             and z dimensions as 1D arrays.
         x_centers, y_centers, z_centers (ndarray): Centers of the cells in the x,
-            y, and z dimensions as 1D arrays.
-        X, Y, Z (ndarray): Mesh grid arrays for the x, y, and z dimensions as 3D
-            arrays.
-        coords (tuple): Tuple of 3D arrays representing the coordinates of the mesh
-            in the x, y, and z dimensions.
-        xl_slab, xr_slab, yl_slab, yr_slab, zl_slab, zr_slab (tuple): Slab meshes on
-            each of the six sides of the meshes, represented as tuples of 3D arrays for
-            the x, y, and z coordinates.
+            dimensions as 1D arrays.
+        X, Y, Z: Mesh grid arrays for the x, y, and z dimensions as 3D arrays.
+        coords: Tuple of 3D arrays representing the coordinates of the mesh in the x,
+            y, and z dimensions.
+        xl_slab, xr_slab, yl_slab, yr_slab, zl_slab, zr_slab: Slab meshes on each of
+            the six sides of the meshes, represented as tuples of 3D arrays for the x,
+            y, and z coordinates.
+
     """
 
     nx: int = 1
@@ -59,9 +70,10 @@ class UniformFVMesh:
     xlim: Tuple[float, float] = (0, 1)
     ylim: Tuple[float, float] = (0, 1)
     zlim: Tuple[float, float] = (0, 1)
-    x_slab_depth: int = 1
-    y_slab_depth: int = 1
-    z_slab_depth: int = 1
+    ignore_x: bool = False
+    ignore_y: bool = False
+    ignore_z: bool = False
+    slab_depth: int = 1
 
     def __post_init__(self):
         # validate mesh dimensions
@@ -76,11 +88,8 @@ class UniformFVMesh:
                 "Limits must be tuples of two values (min, max) with min < max."
             )
         # validate slab depths
-        if any(
-            (not isinstance(depth, int) or depth < 0)
-            for depth in (self.x_slab_depth, self.y_slab_depth, self.z_slab_depth)
-        ):
-            raise ValueError("Slab depths must be non-negative integers.")
+        if self.slab_depth < 0 or not isinstance(self.slab_depth, int):
+            raise ValueError("Slab depth must be non-negative integer.")
 
         # assign mesh properties
         self.shape = (self.nx, self.ny, self.nz)
@@ -88,10 +97,18 @@ class UniformFVMesh:
         self.hy = (self.ylim[1] - self.ylim[0]) / self.ny
         self.hz = (self.zlim[1] - self.zlim[0]) / self.nz
         self.h = (self.hx, self.hy, self.hz)
+        self.x_active = not self.ignore_x
+        self.y_active = not self.ignore_y
+        self.z_active = not self.ignore_z
 
         self._set_interfaces_and_centers()
         self._init_mesh()
         self._init_slabs()
+
+        self.gauss_legendre_quadrature_cache: dict[
+            Tuple[int, Optional[str], Optional[str]],
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        ] = {}
 
     def _set_interfaces_and_centers(self):
         self.x_interfaces = np.linspace(self.xlim[0], self.xlim[1], self.nx + 1)
@@ -108,10 +125,17 @@ class UniformFVMesh:
         self.coords = (self.X, self.Y, self.Z)
 
     def _init_slabs(self):
+        self.xl_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+        self.xr_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+        self.yl_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+        self.yr_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+        self.zl_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+        self.zr_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+
         slab_depth = {
-            "x": self.x_slab_depth,
-            "y": self.y_slab_depth,
-            "z": self.z_slab_depth,
+            "x": self.slab_depth if self.x_active else 0,
+            "y": self.slab_depth if self.y_active else 0,
+            "z": self.slab_depth if self.z_active else 0,
         }
         lim1 = {"x": self.xlim[0], "y": self.ylim[0], "z": self.zlim[0]}
         lim2 = {"x": self.xlim[1], "y": self.ylim[1], "z": self.zlim[1]}
@@ -119,6 +143,8 @@ class UniformFVMesh:
         n = {"x": self.nx, "y": self.ny, "z": self.nz}
 
         for dim, pos in product("xyz", "lr"):
+            if getattr(self, f"ignore_{dim}"):
+                continue
             shape = {
                 ax: (slab_depth[ax] if ax == dim else n[ax] + 2 * slab_depth[ax])
                 for ax in "xyz"
@@ -147,3 +173,63 @@ class UniformFVMesh:
                 bounds["z"],
             )
             setattr(self, f"{dim}{pos}_slab", (X, Y, Z))
+
+    def get_slab(self, dim: str, pos: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        out = getattr(self, f"{dim}{pos}_slab", None)
+        if out is None:
+            raise ValueError(f"Slab {dim}{pos} is not defined in this mesh.")
+        return out
+
+    def get_gauss_legendre_quadrature(
+        self, p: int, slab: Optional[str] = None, face: Optional[str] = None
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Get Gauss-Legendre quadrature points and weights for the mesh.
+
+        Args:
+            p: Polynomial degree of the quadrature rule. This determines the number of
+                quadrature points in each dimension.
+            slab: Slab to use for the quadrature. May be one of "xl", "xr", "yl", "yr",
+                "zl", "zr". If None, the core mesh will be used.
+            face: Face over which to integrate. May be one of "xl", "xr", "yl", "yr",
+                "zl", "zr". If None, the quadrature will span the interior of each
+                cell.
+
+        Returns:
+            Xp, Yp, Zp: Arrays of the quadrature points in the x, y, and z dimensions,
+                respectively. Each has shape (nx, ny, nz, n_quadrature_points), where
+                `n_quadrature_points` depends on the polynomial degree `p`.
+            w: Array of quadrature weights with shape (1, 1, 1, n_quadrature_points).
+        """
+        key = (p, slab, face)
+        if key in self.gauss_legendre_quadrature_cache:
+            return self.gauss_legendre_quadrature_cache[key]
+
+        if slab is None:
+            X, Y, Z = self.X, self.Y, self.Z
+        else:
+            slab_dim, slab_pos = slab[0], slab[1]
+            X, Y, Z = self.get_slab(slab_dim, slab_pos)
+
+        px = p if self.x_active else 0
+        py = p if self.y_active else 0
+        pz = p if self.z_active else 0
+        h = (self.hx, self.hy, self.hz)
+        if face is None:
+            Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, py, pz))
+        else:
+            dim, pos = face[0], face[1]
+            match dim:
+                case "x":
+                    Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (0, py, pz))
+                    Xp += (-1 if pos == "l" else 1) * 0.5 * self.hx
+                case "y":
+                    Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, 0, pz))
+                    Yp += (-1 if pos == "l" else 1) * 0.5 * self.hy
+                case "z":
+                    Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, py, 0))
+                    Zp += (-1 if pos == "l" else 1) * 0.5 * self.hz
+
+        val = Xp, Yp, Zp, w
+        self.gauss_legendre_quadrature_cache[key] = val
+        return val

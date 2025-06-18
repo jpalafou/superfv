@@ -5,6 +5,8 @@ from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, Union, c
 
 import numpy as np
 
+from superfv.fv import gauss_legendre_for_finite_volume
+
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import fv_average
@@ -15,7 +17,6 @@ from .slope_limiting.zhang_and_shu import zhang_shu_limiter
 from .stencil import (
     conservative_interpolation_weights,
     get_gauss_legendre_face_nodes,
-    get_gauss_legendre_face_weights,
     stencil_sweep,
     uniform_quadrature_weights,
 )
@@ -243,6 +244,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
         """
+        self._init_cupy(cupy)
         self._init_mesh(
             xlim,
             ylim,
@@ -259,7 +261,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_snapshots()
-        self._init_array_manager(cupy)
+        self._init_array_manager()
         self._init_riemann_solver(riemann_solver)
         self._init_slope_limiting(
             MUSCL,
@@ -275,9 +277,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             SED,
         )
 
-    def _init_kwarg_attributes(self, kwarg_attributes):
-        for key, value in kwarg_attributes.items():
-            setattr(self, key, value)
+    def _init_cupy(self, cupy: bool):
+        self.cupy = False
+        if cupy and CUPY_AVAILABLE:
+            self.cupy = True
+        elif cupy:
+            warnings.warn("CuPy is not available. Using NumPy instead.")
+        self.xp = xp if self.cupy else np
 
     def _init_mesh(
         self,
@@ -313,9 +319,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             xlim=xlim,
             ylim=ylim,
             zlim=zlim,
-            x_slab_depth=slab_thickness if nx > 1 else 0,
-            y_slab_depth=slab_thickness if ny > 1 else 0,
-            z_slab_depth=slab_thickness if nz > 1 else 0,
+            ignore_x=not self.using_xdim,
+            ignore_y=not self.using_ydim,
+            ignore_z=not self.using_zdim,
+            slab_depth=slab_thickness,
         )
 
         # assign p and CFL
@@ -324,6 +331,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if CFL <= 0:
             raise ValueError("The CFL number must be positive.")
         self.p = p
+        self.px = p if self.using_xdim else 0
+        self.py = p if self.using_ydim else 0
+        self.pz = p if self.using_zdim else 0
         self.CFL = CFL
 
         # assign flux recipe and interpolation scheme
@@ -338,11 +348,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.interpolation_scheme = interpolation_scheme
         self.flux_recipe = flux_recipe
         self.lazy_primitives = lazy_primitives
-
-        if self.interpolation_scheme == "gauss-legendre":
-            raise NotImplementedError(
-                "Gauss-Legendre interpolation scheme is not implemented yet."
-            )
 
     def _init_ic(
         self,
@@ -438,11 +443,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 y,
                 z,
                 h=(self.mesh.hx, self.mesh.hy, self.mesh.hz),
-                p=(
-                    self.p if self.using_xdim else 0,
-                    self.p if self.using_ydim else 0,
-                    self.p if self.using_zdim else 0,
-                ),
+                p=(self.px, self.py, self.pz),
             )
 
         return wrapped_func
@@ -488,7 +489,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             y_dirichlet=ic_configed_dirichlet["y"],
             z_dirichlet=ic_configed_dirichlet["z"],
             conservatives_wrapper=self.conservatives_wrapper,
-            fv_average_wrapper=self.fv_average_wrapper,
+            cupy=self.cupy,
         )
 
         # this is used to apply ghost cells to alpha in the smooth extrema detector
@@ -496,36 +497,34 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.bc_for_smooth_extrema_detection = BoundaryConditions(
             self.variable_index_map,
             self.mesh,
-            "periodic" if self.bc.bcx == _periodic else "ones",
-            "periodic" if self.bc.bcy == _periodic else "ones",
-            "periodic" if self.bc.bcz == _periodic else "ones",
+            bcx="periodic" if self.bc.bcx == _periodic else "ones",
+            bcy="periodic" if self.bc.bcy == _periodic else "ones",
+            bcz="periodic" if self.bc.bcz == _periodic else "ones",
+            cupy=self.cupy,
         )
 
         # this is used to apply ghost cells to the troubled cell mask in MOOD
         self.bc_for_troubled_cell_mask = BoundaryConditions(
             self.variable_index_map,
             self.mesh,
-            "periodic" if self.bc.bcx == _periodic else "free",
-            "periodic" if self.bc.bcy == _periodic else "free",
-            "periodic" if self.bc.bcz == _periodic else "free",
+            bcx="periodic" if self.bc.bcx == _periodic else "free",
+            bcy="periodic" if self.bc.bcy == _periodic else "free",
+            bcz="periodic" if self.bc.bcz == _periodic else "free",
+            cupy=self.cupy,
         )
 
     def _init_snapshots(self):
         self.minisnapshots["MOOD_iters"] = []
 
-    def _init_array_manager(self, cupy: bool):
-        self.cupy = False
+    def _init_array_manager(self):
         self.interpolation_cache = ArrayManager()
         self.MOOD_cache = ArrayManager()
         self.ZS_cache = ArrayManager()
-        if cupy and CUPY_AVAILABLE:
-            self.cupy = True
+        if self.cupy:
             self.arrays.transfer_to_device("gpu")
             self.interpolation_cache.transfer_to_device("gpu")
             self.MOOD_cache.transfer_to_device("gpu")
             self.ZS_cache.transfer_to_device("gpu")
-        elif cupy:
-            warnings.warn("CuPy is not available. Using NumPy instead.")
 
         # initialize flux arrays
         nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
@@ -537,9 +536,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
         self.arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
         self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
-
-        # initialize numpy namespace
-        self.xp = xp if self.cupy else np
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -726,14 +722,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.lazy_primitives:
             w = self.primitives_from_conservatives(u)
         else:
-            w = self.interpolate_cell_centers(self.apply_bc(u, -2 * (-p // 2), t), p)
+            u_padded = self.apply_bc(u, -2 * (-p // 2), t=t, p=p)
+            w = self.interpolate_cell_centers(u_padded, p)
             w[...] = self.primitives_from_conservatives(w)
             w = self.interpolate_cell_averages(w, p)
 
         # apply ghost cells
         nghost1 = -(-p // 2)
-        u_padded = self.apply_bc(u, nghost1, t)
-        w_padded = self.apply_bc(w, nghost1, t, primitives=True)
+        u_padded = self.apply_bc(u, nghost1, t=t, p=p)
+        w_padded = self.apply_bc(w, nghost1, t=t, p=p, primitives=True)
 
         # compute dt
         dt = self.compute_dt(w_padded)
@@ -763,17 +760,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             # apply extra ghost cells for transverse quadrature and riemann solve
             nghost2 = p // 2 + 1 if mode == "transverse" else 1
-            w_xl = np.expand_dims(
-                self.apply_bc(
-                    w_xl[..., 0], nghost2, t, primitives=True, pointwise=True
-                ),
-                -1,
+            w_xl = self.apply_bc(
+                w_xl,
+                nghost2,
+                primitives=True,
+                fv_averages=False,
+                t=t,
+                face_quadrature=dim + "l",
+                p=0 if mode == "transverse" else p,
             )
-            w_xr = np.expand_dims(
-                self.apply_bc(
-                    w_xr[..., 0], nghost2, t, primitives=True, pointwise=True
-                ),
-                -1,
+            w_xr = self.apply_bc(
+                w_xr,
+                nghost2,
+                primitives=True,
+                fv_averages=False,
+                t=t,
+                face_quadrature=dim + "r",
+                p=0 if mode == "transverse" else p,
             )
 
             # compute fluxes from the primitive variables
@@ -848,43 +851,60 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def apply_bc(
         self,
         u: ArrayLike,
-        n_ghost_cells: int,
-        t: Optional[float] = None,
+        n: int,
         primitives: bool = False,
-        pointwise: bool = False,
+        fv_averages: bool = True,
+        t: Optional[float] = None,
+        face_quadrature: Optional[Literal["xl", "xr", "yl", "yr", "zl", "zr"]] = None,
+        p: int = 0,
     ) -> ArrayLike:
         """
-        Apply boundary conditions to an array by padding it with ghost cells along the
-        active dimensions.
+        Apply boundary conditions to an array.
 
         Args:
             u: Field array. Has shape (nvars, nx, ny, nz).
-            n_ghost_cells: Number of ghost cells to add on each side of the active
-                dimensions.
-            t: Time at which boundary conditions are applied.
-            primitives: Whether 'u' contains primitive variables. If False, it is
-                assumed that 'u' contains conservative variables.
-            pointwise (bool): Whether 'u' contains pointwise values. If False, it is
-                assumed that 'u' contains cell-averaged values.
+            n: Number of ghost cells to add on each side along each active dimension.
+            primitives: Whether `arr` contains primitive variables. If False, it is
+                assumed that `arr` contains conservative variables. Only used for
+                Dirichlet and reflective boundary conditions.
+            fv_averages: Whether to compute finite-volume averages of the Dirichlet
+                function. If True, the Dirichlet function will be averaged over the
+                quadrature points and `arr.ndim` is expected to be 4
+                (nvar, nx, ny, nz). If False, the Dirichlet function will be evaluated
+                at the quadrature points and the result will be assigned to the
+                boundary slab directly, meaning `arr.ndim` is expected to be 5
+                (nvar, nx, ny, nz, n_quadrature_points).
+            t: Time at which boundary conditions are applied as an argument to the
+                Dirichlet function. May be None if the Dirichlet function does not
+                depend on time.
+            face_quadrature: Optional; if provided, it specifies the face location for
+                which to compute quadrature points which are used to evaluate the
+                Dirichlet function. Can be one of "xl", "xr", "yl", "yr", "zl", "zr".
+                If not provided, the returned qauadrature will span the interior of the
+                cell.
+            p: Argument for the polynomial degree of the quadrature rule which
+                determines the points and weights used to evaluate the Dirichlet
+                function. Defaults to 0, in which case the returned quadrature is a
+                single face-centered point if `face_quadrature` is provided, or a
+                single point in the center of the cell if `face_quadrature` is not
+                provided.
 
         Returns:
             Padded array. Has shape (nvars, >= nx, >= ny, >= nz). Axes corresponding to
                 inactive dimensions are not padded and maintain length 1. Axes
-                corresponding to active dimensions are padded with 'n_ghost_cells'
-                ghost cells on each side, resulting in length
-                'n[dim] + 2 * n_ghost_cells'.
+                corresponding to active dimensions are padded with 'n' ghost cells on
+                each side, resulting in length 'n[dim] + 2 * n' along that axis.
 
         """
+        using = self.using
         return self.bc(
             u,
-            (
-                int(self.using_xdim) * n_ghost_cells,
-                int(self.using_ydim) * n_ghost_cells,
-                int(self.using_zdim) * n_ghost_cells,
-            ),
-            t=t,
+            (int(using["x"]) * n, int(using["y"]) * n, int(using["z"]) * n),
             primitives=primitives,
-            pointwise=pointwise,
+            fv_averages=fv_averages,
+            t=t,
+            face_quadrature=face_quadrature,
+            p=p,
         )
 
     @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
@@ -1173,12 +1193,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             if not self.using[dim]:
                 raise ValueError(f"Dimension {dim} is not used in the mesh.")
             if interpolation_scheme == "gauss-legendre" and limiting_scheme is None:
-                all_coords = get_gauss_legendre_face_nodes(self.dims, dim, pos, p)
-                for coords in all_coords:
+                px, py, pz = self.px, self.py, self.pz
+                match dim:
+                    case "x":
+                        xp, yp, zp, _ = gauss_legendre_for_finite_volume(0, py, pz)
+                        xp += -0.5 if pos == "l" else 0.5
+                    case "y":
+                        xp, yp, zp, _ = gauss_legendre_for_finite_volume(px, 0, pz)
+                        yp += -0.5 if pos == "l" else 0.5
+                    case "z":
+                        xp, yp, zp, _ = gauss_legendre_for_finite_volume(px, py, 0)
+                        zp += -0.5 if pos == "l" else 0.5
+                for xpi, ypi, zpi in zip(xp.tolist(), yp.tolist(), zp.tolist()):
                     nodes.append(
                         self.interpolate(
                             averages,
-                            **coords,
+                            xpi,
+                            ypi,
+                            zpi,
                             p=cast(int, p),
                             sweep_order=sweep_orders[dim],
                             stencil_type="conservative-interpolation",
@@ -1247,13 +1279,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             Array of flux integrals. Has shape (nvars, <=nx, <=ny, <=nz).
         """
-        weights_name = f"gauss-legendre-weights-{dim}-{p}"
-        if weights_name not in self.arrays:
-            self.arrays.add(
-                weights_name, get_gauss_legendre_face_weights(self.dims, dim, p)
-            )
-        weights = self.arrays[weights_name]
-        return self.xp.sum(node_values * weights.reshape(1, 1, 1, 1, -1), axis=4)
+        px, py, pz = self.px, self.py, self.pz
+        match dim:
+            case "x":
+                _, _, _, w = gauss_legendre_for_finite_volume(0, py, pz)
+            case "y":
+                _, _, _, w = gauss_legendre_for_finite_volume(px, 0, pz)
+            case "z":
+                _, _, _, w = gauss_legendre_for_finite_volume(px, py, 0)
+        return self.xp.sum(node_values * w, axis=4)
 
     @partial(method_timer, cat="FiniteVolumeSolver.compute_numerical_fluxes")
     def compute_numerical_fluxes(
@@ -1349,14 +1383,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         p = self.p
         ucc = self.interpolate_cell_centers(
-            self.apply_bc(self.arrays["u"], -(-p // 2), self.t), p=p
+            self.apply_bc(self.arrays["u"], -(-p // 2), t=self.t, p=p), p=p
         )
         wcc = self.primitives_from_conservatives(ucc)
         if self.lazy_primitives:
             w = self.primitives_from_conservatives(self.arrays["u"])
         else:
             w = self.interpolate_cell_averages(
-                self.apply_bc(wcc, -(-p // 2), primitives=True, pointwise=True), p=p
+                self.apply_bc(
+                    wcc, -(-p // 2), primitives=True, fv_averages=False, t=self.t, p=0
+                ),
+                p=p,
             )
 
         # update the arrays

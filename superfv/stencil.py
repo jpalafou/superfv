@@ -125,7 +125,7 @@ def get_symmetric_slices(
 
 
 def stencil_sweep(
-    xp: Any, y: ArrayLike, stencil_weights: np.ndarray, axis: int
+    xp: Any, arr: ArrayLike, stencil_weights: np.ndarray, axis: int
 ) -> ArrayLike:
     """
     Perform a stencil sweep on a field.
@@ -141,17 +141,17 @@ def stencil_sweep(
             (nvars, <= nx, <= ny, <= nz, ...).
     """
     # reshape weights to broadcast with y
-    weights = stencil_weights.T.reshape((len(stencil_weights),) + (1,) * y.ndim)
+    weights = stencil_weights.T.reshape((len(stencil_weights),) + (1,) * arr.ndim)
 
     # get slices
-    slices = get_symmetric_slices(y.ndim, len(stencil_weights), axis)
+    slices = get_symmetric_slices(arr.ndim, len(stencil_weights), axis)
 
     # initialize output array
-    out = xp.zeros_like(y[slices[0]])
+    out = xp.zeros_like(arr[slices[0]])
 
     # sweep
     for w, s in zip(weights, slices):
-        xp.add(out, xp.multiply(y[s], w), out)
+        xp.add(out, xp.multiply(arr[s], w), out)
 
     return out
 

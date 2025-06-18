@@ -6,7 +6,14 @@ import numpy as np
 
 from superfv.mesh import UniformFVMesh
 
-from .tools.array_management import ArrayLike, VariableIndexMap, crop, crop_to_center
+from .tools.array_management import (
+    CUPY_AVAILABLE,
+    ArrayLike,
+    VariableIndexMap,
+    crop,
+    crop_to_center,
+    xp,
+)
 
 # define custom type annotations
 Field = Callable[
@@ -38,7 +45,7 @@ class BoundaryConditions:
         y_dirichlet: Optional[DirichletBC] = None,
         z_dirichlet: Optional[DirichletBC] = None,
         conservatives_wrapper: Optional[FieldWrapper] = None,
-        fv_average_wrapper: Optional[FieldWrapper] = None,
+        cupy: bool = False,
     ):
         """
         Initialize boundary conditions.
@@ -68,10 +75,8 @@ class BoundaryConditions:
                 from primitive variables to conservative variables. This is required if
                 any of the boundary conditions is "dirichlet". If not provided, it will
                 raise an error when a Dirichlet boundary condition is applied.
-            fv_average_wrapper: Wrapper to convert output of the Dirichlet functions
-                from pointwise values to finite-volume average values. This is required
-                if any of the boundary conditions is "dirichlet". If not provided, it
-                will raise an error when a Dirichlet boundary condition is applied.
+            cupy: If True, use CuPy for array operations instead of NumPy. This is
+                useful for GPU acceleration. If False, NumPy will be used.
 
         Note:
             See `IMPLEMENTED_BCS` for the implemented boundary condition codes.
@@ -127,22 +132,24 @@ class BoundaryConditions:
                 raise ValueError(
                     "Conservative wrapper must be provided for Dirichlet BCs."
                 )
-            if fv_average_wrapper is None:
-                raise ValueError(
-                    "Finite-volume average wrapper must be provided for Dirichlet BCs."
-                )
         self.mesh = mesh
         self.conservatives_wrapper = cast(FieldWrapper, conservatives_wrapper)
-        self.fv_average_wrapper = cast(FieldWrapper, fv_average_wrapper)
+
+        # assign numpy namespace
+        if cupy and CUPY_AVAILABLE:
+            self.xp = xp
+        else:
+            self.xp = np
 
     def __call__(
         self,
         arr: ArrayLike,
         pad_width: Tuple[int, int, int],
-        t: Optional[float] = None,
         primitives: bool = False,
-        pointwise: bool = False,
-        check_for_NaNs: bool = False,
+        fv_averages: bool = True,
+        t: Optional[float] = None,
+        face_quadrature: Optional[Literal["xl", "xr", "yl", "yr", "zl", "zr"]] = None,
+        p: int = 0,
     ) -> ArrayLike:
         """
         Apply boundary conditions to an array.
@@ -152,28 +159,49 @@ class BoundaryConditions:
                 (nvars, nx, ny, nz).
             pad_width: Tuple of integers indicating the padding width for each
                 dimension: x (axis 1), y (axis 2), and z (axis 3).
-            t: Time at which boundary conditions are applied. This is only used for
-                Dirichlet boundary conditions.
             primitives: Whether `arr` contains primitive variables. If False, it is
-                assumed that `arr` contains conservative variables.
-            pointwise: Whether `arr` contains pointwise values. If False, it is assumed
-                that `arr` contains finite-volume average values.
-            check_for_NaNs: Whether to check for NaN values in the array after applying
-                boundary conditions.
+                assumed that `arr` contains conservative variables. Only used for
+                Dirichlet and reflective boundary conditions.
+            fv_averages: Whether to compute finite-volume averages of the Dirichlet
+                function. If True, the Dirichlet function will be averaged over the
+                quadrature points and `arr.ndim` is expected to be 4
+                (nvar, nx, ny, nz). If False, the Dirichlet function will be evaluated
+                at the quadrature points and the result will be assigned to the
+                boundary slab directly, meaning `arr.ndim` is expected to be 5
+                (nvar, nx, ny, nz, n_quadrature_points).
+            t: Time at which boundary conditions are applied as an argument to the
+                Dirichlet function. May be None if the Dirichlet function does not
+                depend on time.
+            face_quadrature: Optional; if provided, it specifies the face location for
+                which to compute quadrature points which are used to evaluate the
+                Dirichlet function. Can be one of "xl", "xr", "yl", "yr", "zl", "zr".
+                If not provided, the returned qauadrature will span the interior of the
+                cell.
+            p: Argument for the polynomial degree of the quadrature rule which
+                determines the points and weights used to evaluate the Dirichlet
+                function. Defaults to 0, in which case the returned quadrature is a
+                single face-centered point if `face_quadrature` is provided, or a
+                single point in the center of the cell if `face_quadrature` is not
+                provided.
+
         Returns:
            Array with boundary conditions applied. Has shape
            (nvars, nx + 2*pad_width[0], ny + 2*pad_width[1], nz + 2*pad_width[2]).
         """
         # initialize array with boundary conditions
-        if arr.ndim != 4:
-            raise ValueError("Array must be 4D (nvars, nx, ny, nz).")
-        _pad_width = (
+        _pad_width: Tuple[Tuple[int, int], ...] = (
             (0, 0),
             (pad_width[0], pad_width[0]),
             (pad_width[1], pad_width[1]),
             (pad_width[2], pad_width[2]),
         )
-        out = np.pad(arr, pad_width=_pad_width, mode="empty")
+        if arr.ndim == 5:
+            _pad_width += ((0, 0),)
+        elif arr.ndim != 4:
+            raise ValueError(
+                "Array must be 4D or 5D (nvars, nx, ny, nz[, n_quadrature])"
+            )
+        out = self.xp.pad(arr, pad_width=_pad_width, mode="empty")
 
         # loop over boundary slabs
         for i, j in product(range(3), range(2)):
@@ -194,26 +222,26 @@ class BoundaryConditions:
                         slab_thickness,
                         dim,
                         pos,
-                        t,
-                        primitives,
-                        pointwise,
+                        primitives=primitives,
+                        fv_averages=fv_averages,
+                        t=t,
+                        face_quadrature=face_quadrature,
+                        p=p,
                     )
                 case "free":
                     self._apply_free_bc(out, slab_thickness, dim, pos)
                 case "symmetric":
                     self._apply_symmetric_bc(out, slab_thickness, dim, pos)
                 case "reflective":
-                    self._apply_reflective_bc(out, slab_thickness, dim, pos, primitives)
+                    self._apply_reflective_bc(
+                        out, slab_thickness, dim, pos, primitives=primitives
+                    )
                 case "zeros":
                     self._apply_constant_bc(out, slab_thickness, dim, pos, 0.0)
                 case "ones":
                     self._apply_constant_bc(out, slab_thickness, dim, pos, 1.0)
                 case _:
                     raise ValueError(f"Boundary condition {bc_type} not implemented.")
-
-        # check for NAN values
-        if check_for_NaNs and np.any(np.isnan(out)):
-            raise ValueError("Boundary conditions resulted in NaN values.")
 
         return out
 
@@ -256,28 +284,47 @@ class BoundaryConditions:
         slab_thickness: int,
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
-        t: Optional[float] = None,
         primitives: bool = False,
-        pointwise: bool = False,
+        fv_averages: bool = True,
+        t: Optional[float] = None,
+        face_quadrature: Optional[Literal["xl", "xr", "yl", "yr", "zl", "zr"]] = None,
+        p: int = 0,
     ):
         """
         Apply Dirichlet boundary conditions to arr, modifying it in place.
 
         Args:
             arr: Array to which to apply boundary conditions. Has shape
-                (nvars, nx, ny, nz).
+                (nvars, nx, ny, nz) or (nvars, nx, ny, nz, n_quadrature_points).
             slab_thickness: Number of cells to apply periodic boundary conditions to
                 along the specified axis.
             dim: Dimension along which to apply boundary conditions: "x" (axis 1), "y"
                 (axis 2), or "z" (axis 3).
             pos: Position of the boundary condition slab: "l" for left or "r" for
                 right.
-            t: Time at which boundary conditions are applied. This is only used for
-                Dirichlet boundary conditions.
             primitives: Whether `arr` contains primitive variables. If False, it is
                 assumed that `arr` contains conservative variables.
-            pointwise: Whether `arr` contains pointwise values. If False, it is assumed
-                that `arr` contains finite-volume average values.
+            fv_averages: Whether to compute finite-volume averages of the Dirichlet
+                function. If True, the Dirichlet function will be averaged over the
+                quadrature points and `arr.ndim` is expected to be 4
+                (nvar, nx, ny, nz). If False, the Dirichlet function will be evaluated
+                at the quadrature points and the result will be assigned to the
+                boundary slab directly, meaning `arr.ndim` is expected to be 5
+                (nvar, nx, ny, nz, n_quadrature_points).
+            t: Time at which boundary conditions are applied as an argument to the
+                Dirichlet function. May be None if the Dirichlet function does not
+                depend on time.
+            face_quadrature: Optional; if provided, it specifies the face location for
+                which to compute quadrature points which are used to evaluate the
+                Dirichlet function. Can be one of "xl", "xr", "yl", "yr", "zl", "zr".
+                If not provided, the returned qauadrature will span the interior of the
+                cell.
+            p: Argument for the polynomial degree of the quadrature rule which
+                determines the points and weights used to evaluate the Dirichlet
+                function. Defaults to 0, in which case the returned quadrature is a
+                single face-centered point if `face_quadrature` is provided, or a
+                single point in the center of the cell if `face_quadrature` is not
+                provided.
 
         Returns:
             None: The array is modified in place.
@@ -289,25 +336,27 @@ class BoundaryConditions:
         axis = "xyz".index(dim) + 1
         outer_slice = crop(axis, (None, st) if pos == "l" else (-st, None))
 
-        # configure dirichlet function
-        conservative, fv_average = not primitives, not pointwise
+        # retrieve the appropriate Dirichlet function
         f = getattr(self, f"{dim}_dirichlet")["lr".index(pos)]
         if f is None:
             raise ValueError(f"No {dim}{pos}-dirichlet function defined.")
-        shape = arr[outer_slice].shape
-        slab_coords = self._get_slab_coords((shape[1], shape[2], shape[3]), dim, pos)
 
-        # apply the dirichlet function
-        if conservative and fv_average:
-            arr[outer_slice] = self.fv_average_wrapper(self.conservatives_wrapper(f))(
-                idx, *slab_coords, t
-            )
-        elif conservative:
-            arr[outer_slice] = self.conservatives_wrapper(f)(idx, *slab_coords, t)
-        elif fv_average:
-            arr[outer_slice] = self.fv_average_wrapper(f)(idx, *slab_coords, t)
-        else:
-            arr[outer_slice] = f(idx, *slab_coords, t)
+        # get slab coordinates
+        shape = arr[outer_slice].shape
+        X, Y, Z, w = self._get_slab_face_quadrature_coords(
+            (shape[1], shape[2], shape[3]),
+            dim,
+            pos,
+            face_quadrature,
+            p,
+        )
+
+        # evaluate the Dirichlet function
+        f_wrapped = f if primitives else self.conservatives_wrapper(f)
+        f_eval = f_wrapped(idx, X, Y, Z, t)
+        if fv_averages:
+            f_eval = self.xp.sum(f_eval * w, axis=4)
+        arr[outer_slice] = f_eval
 
     def _apply_free_bc(
         self,
@@ -441,32 +490,38 @@ class BoundaryConditions:
         axis = "xyz".index(dim) + 1
         arr[crop(axis, (None, st) if pos == "l" else (-st, None))] = value
 
-    def _get_slab_coords(
+    def _get_slab_face_quadrature_coords(
         self,
         shape: Tuple[int, int, int],
         dim: Literal["x", "y", "z"],
         pos: Literal["l", "r"],
-    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
+        face_quadrature: Optional[Literal["xl", "xr", "yl", "yr", "zl", "zr"]] = None,
+        p: int = 0,
+    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
         """
         Get the coordinates of the slab along the given axis and position, trimmed to
-        the given thickness.
+        the given thickness, using Gauss-Legendre quadrature points.
 
         Args:
             shape: Desired shape of the slab (nx, ny, nz).
-            dim: Dimension along which to get the slab: "x", "y", or "z".
+            dim: Dimension along which to get the slab coordinates: "x", "y", or "z".
             pos: Position of the slab: "l" for left or "r" for right.
+            face_quadrature: Face identifier for quadrature points, e.g., "xl", "xr",
+                "yl", "yr", "zl", "zr".
+            p: Polynomial degree of the quadrature rule.
 
         Returns:
-            Tuple of three arrays representing the slab coordinates in the order
-            (x-coordinates, y-coordinates, z-coordinates).
+            ...
         """
-        arrs = getattr(cast(UniformFVMesh, self.mesh), f"{dim}{pos}_slab")
+        X, Y, Z, w = cast(UniformFVMesh, self.mesh).get_gauss_legendre_quadrature(
+            p, dim + pos, face_quadrature
+        )
         axis = "xyz".index(dim)
         st = shape[axis]
         slab_slice = crop(axis, (-st, None) if pos == "l" else (None, st))
-        out = (
-            crop_to_center(arrs[0][slab_slice], shape),
-            crop_to_center(arrs[1][slab_slice], shape),
-            crop_to_center(arrs[2][slab_slice], shape),
+        X, Y, Z = (
+            crop_to_center(X[slab_slice], shape),
+            crop_to_center(Y[slab_slice], shape),
+            crop_to_center(Z[slab_slice], shape),
         )
-        return out
+        return X, Y, Z, w

@@ -47,9 +47,10 @@ def test_dirichlet_boundary_condition(dims):
         nx=32 if "x" in dims else 1,
         ny=32 if "y" in dims else 1,
         nz=32 if "z" in dims else 1,
-        x_slab_depth=16 if "x" in dims else 0,
-        y_slab_depth=16 if "y" in dims else 0,
-        z_slab_depth=16 if "z" in dims else 0,
+        ignore_x="x" not in dims,
+        ignore_y="y" not in dims,
+        ignore_z="z" not in dims,
+        slab_depth=16,
     )
     megamesh = UniformFVMesh(
         nx=64 if "x" in dims else 1,
@@ -58,9 +59,7 @@ def test_dirichlet_boundary_condition(dims):
         xlim=(-0.5, 1.5) if "x" in dims else (0, 1),
         ylim=(-0.5, 1.5) if "y" in dims else (0, 1),
         zlim=(-0.5, 1.5) if "z" in dims else (0, 1),
-        x_slab_depth=0,
-        y_slab_depth=0,
-        z_slab_depth=0,
+        slab_depth=0,
     )
     bc = BoundaryConditions(
         VariableIndexMap(),

@@ -1,11 +1,12 @@
 changes:
+- [x] !major bug: no way to apply dirichlet boundary conditions with gauss-legendre fluxes. update advection tests once this is done
 
 bugs:
 - [ ] !major bug: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
-- [ ] !major bug: no way to apply dirichlet boundary conditions with gauss-legendre fluxes. update advection tests once this is done
 - [ ] fix: the rest of the tests
 - [ ] clean up hydro/riemann solver modules
 - [ ] fix: 2DZS + RK4
+- [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
 
 optimizations:
 - [ ] preallocate padded arrays?
