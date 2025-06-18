@@ -71,7 +71,6 @@ def test_dirichlet_boundary_condition(dims):
         y_dirichlet=sinus if "y" in dims else None,
         z_dirichlet=sinus if "z" in dims else None,
         conservatives_wrapper=trivial,
-        fv_average_wrapper=trivial,
     )
 
     # compare dirichlet boundary condition with (-0.5, 1.5) mesh

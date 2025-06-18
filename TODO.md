@@ -7,6 +7,7 @@ bugs:
 - [ ] clean up hydro/riemann solver modules
 - [ ] fix: 2DZS + RK4
 - [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
+- [ ] GL asymmetry in slotted disk test
 
 optimizations:
 - [ ] preallocate padded arrays?

@@ -14,6 +14,7 @@ def test_AdvectionSolver_symmetry_1D(p: int):
     Test the symmetry of the solution in 1D.
     """
     N = 64
+    n_steps = 10
 
     # run solver in each direction
     solution = {}
@@ -23,7 +24,7 @@ def test_AdvectionSolver_symmetry_1D(p: int):
             p=p,
             **{f"n{dim}": N},
         )
-        solver.run(n=10)
+        solver.run(n=n_steps)
 
         idx = solver.variable_index_map
         solution[dim] = solver.snapshots[-1]["u"][idx("rho")].flatten().copy()
@@ -34,13 +35,13 @@ def test_AdvectionSolver_symmetry_1D(p: int):
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
-# @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse"])
+@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
 def test_AdvectionSolver_symmetry_2D(p: int, interpolation_scheme: str):
     """
     Test the symmetry of the solution in 2D.
     """
     N = 64
+    n_steps = 10
 
     # run solver along each plane
     solution = {}
@@ -54,7 +55,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, interpolation_scheme: str):
             interpolation_scheme=interpolation_scheme,
             **{f"n{dim1}": N, f"n{dim2}": N},
         )
-        solver.run(n=10)
+        solver.run(n=n_steps)
 
         # get the resulting 2D solution
         idx = solver.variable_index_map
@@ -69,8 +70,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, interpolation_scheme: str):
     assert np.array_equal(solution["xy"], solution["xz"])
 
 
-# @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse"])
+@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
 def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
     """
     Assert that the result of a counter-clockwise rotation of a slotted disk is the
@@ -78,10 +78,13 @@ def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
     """
     N = 64
     p = 3
+    n_steps = 10
 
     # initialize solvers
     ccw_solver = AdvectionSolver(
         ic=lambda idx, x, y, z: ic.slotted_disk(idx, x, y, z),
+        bcx="ic",
+        bcy="ic",
         p=p,
         nx=N,
         ny=N,
@@ -89,6 +92,8 @@ def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
     )
     cw_solver = AdvectionSolver(
         ic=lambda idx, x, y, z: ic.slotted_disk(idx, x, y, z, rotation="cw"),
+        bcx="ic",
+        bcy="ic",
         p=p,
         nx=N,
         ny=N,
@@ -96,8 +101,8 @@ def test_AdvectionSolver_rotational_symmetry_xy(interpolation_scheme: str):
     )
 
     # run solvers
-    ccw_solver.run(n=10)
-    cw_solver.run(n=10)
+    ccw_solver.run(n=n_steps)
+    cw_solver.run(n=n_steps)
 
     # compare solutions
     idx = ccw_solver.variable_index_map
@@ -116,6 +121,7 @@ def test_AdvectionSolver_passive_scalar_invariance():
     """
     N = 64
     p = 3
+    n_steps = 10
 
     # set up solvers
     solver = AdvectionSolver(
@@ -133,8 +139,8 @@ def test_AdvectionSolver_passive_scalar_invariance():
     )
 
     # run solvers
-    solver.run(n=10)
-    solver_with_passive_scalar.run(n=10)
+    solver.run(n=n_steps)
+    solver_with_passive_scalar.run(n=n_steps)
 
     # compare solutions
     idx = solver.variable_index_map
