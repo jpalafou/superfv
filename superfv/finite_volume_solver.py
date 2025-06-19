@@ -715,7 +715,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             - H: (nvars, nx, ny, nz + 1)
         """
         p = 1 if limiting_scheme == "muscl" else cast(int, p)
-        ZS = slope_limiter == "zhang-shu"
+        ZS = limiting_scheme == "zhang-shu"
 
         # compute primitive averages
         if self.lazy_primitives:
