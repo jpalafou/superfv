@@ -228,11 +228,11 @@ def zhang_shu_limiter(
             update_min_and_max(right[limiting_slice])
 
     # compute theta
-    _foc = foc[limiting_slice]
+    foc = foc[limiting_slice]
     theta = np.minimum(
         np.minimum(
-            np.divide(np.abs(M - _foc), np.abs(Mj - _foc) + tol),
-            np.divide(np.abs(m - _foc), np.abs(mj - _foc) + tol),
+            np.divide(np.abs(M - foc), np.abs(Mj - foc) + tol),
+            np.divide(np.abs(m - foc), np.abs(mj - foc) + tol),
         ),
         1,
     )

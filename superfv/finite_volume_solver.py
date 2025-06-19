@@ -492,13 +492,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         # this is used to apply ghost cells to alpha in the smooth extrema detector
-        _periodic = ("periodic", "periodic")
+        periodic = ("periodic", "periodic")
         self.bc_for_smooth_extrema_detection = BoundaryConditions(
             self.variable_index_map,
             self.mesh,
-            bcx="periodic" if self.bc.bcx == _periodic else "ones",
-            bcy="periodic" if self.bc.bcy == _periodic else "ones",
-            bcz="periodic" if self.bc.bcz == _periodic else "ones",
+            bcx="periodic" if self.bc.bcx == periodic else "ones",
+            bcy="periodic" if self.bc.bcy == periodic else "ones",
+            bcz="periodic" if self.bc.bcz == periodic else "ones",
             cupy=self.cupy,
         )
 
@@ -506,9 +506,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.bc_for_troubled_cell_mask = BoundaryConditions(
             self.variable_index_map,
             self.mesh,
-            bcx="periodic" if self.bc.bcx == _periodic else "free",
-            bcy="periodic" if self.bc.bcy == _periodic else "free",
-            bcz="periodic" if self.bc.bcz == _periodic else "free",
+            bcx="periodic" if self.bc.bcx == periodic else "free",
+            bcy="periodic" if self.bc.bcy == periodic else "free",
+            bcz="periodic" if self.bc.bcz == periodic else "free",
             cupy=self.cupy,
         )
 
@@ -629,11 +629,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 raise ValueError("PAD must be provided if adaptive_timestepping=True.")
         else:
             # Create and register PAD array
-            _PAD_arr = np.array([[-np.inf, np.inf]] * self.nvars)
+            PAD_arr = np.array([[-np.inf, np.inf]] * self.nvars)
             for v, (lb, ub) in PAD.items():
-                _PAD_arr[self.variable_index_map(v)] = [lb, ub]
-            _PAD_arr = _PAD_arr.reshape(self.nvars, 1, 1, 1, 2)
-            self.arrays.add("PAD", _PAD_arr)  # Register PAD array
+                PAD_arr[self.variable_index_map(v)] = [lb, ub]
+            PAD_arr = PAD_arr.reshape(self.nvars, 1, 1, 1, 2)
+            self.arrays.add("PAD", PAD_arr)  # Register PAD array
 
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:

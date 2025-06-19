@@ -1,6 +1,7 @@
 changes:
 - [x] !major bug: no way to apply dirichlet boundary conditions with gauss-legendre fluxes. update advection tests once this is done
 - [x] fix: GL asymmetry in slotted disk test
+- [x] remove '_thing' naming convention unless the thing is actually hidden on purpose
 
 bugs:
 - [ ] !major bug: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
@@ -16,7 +17,6 @@ optimizations:
 cosmetics:
 - [ ] clean up hydro/riemann solver modules
 - [ ] make gauss-legendre a boolean option
-- [ ] remove '_thing' naming convention unless the thing is actually hidden on purpose
 - [ ] fix: progress bar for allow_overshoot=True
 - [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
 - [ ] expand README.md

@@ -187,13 +187,13 @@ def plot_1d_slice(
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # gather data
-    _x = getattr(fv_solver.mesh, dim)[slices[0], slices[1], slices[2]]
-    _y = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
+    x_arr = getattr(fv_solver.mesh, dim)[slices[0], slices[1], slices[2]]
+    f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
 
     # plot
-    ax.plot(_x, _y, **kwargs)
+    ax.plot(x_arr, f_arr, **kwargs)
     if xlabel:
         ax.set_xlabel(rf"${dim.lower()}$")
 
@@ -247,39 +247,39 @@ def plot_2d_slice(
     using = "imshow" if levels is None else "contour"
 
     if using == "contour":
-        _x = getattr(fv_solver.mesh, dim1)[slices[0], slices[1], slices[2]]
-        _y = getattr(fv_solver.mesh, dim2)[slices[0], slices[1], slices[2]]
+        x_arr = getattr(fv_solver.mesh, dim1)[slices[0], slices[1], slices[2]]
+        y_arr = getattr(fv_solver.mesh, dim2)[slices[0], slices[1], slices[2]]
     else:
-        _x = getattr(fv_solver.mesh, dim1.lower() + "_centers")[
+        x_arr = getattr(fv_solver.mesh, dim1.lower() + "_centers")[
             slices["XYZ".index(dim1)]
         ]
-        _y = getattr(fv_solver.mesh, dim2.lower() + "_centers")[
+        y_arr = getattr(fv_solver.mesh, dim2.lower() + "_centers")[
             slices["XYZ".index(dim2)]
         ]
-    _z = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
+    f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
 
     # rotate for imshow
-    _z_rotated = np.rot90(_z, 1)
+    f_arr = np.rot90(f_arr, 1)
     if using == "contour":
-        _x_rotated = np.rot90(_x, 1)
-        _y_rotated = np.rot90(_y, 1)
+        x_arr = np.rot90(x_arr, 1)
+        y_arr = np.rot90(y_arr, 1)
 
     # plot
     if using == "imshow":
         ax.imshow(
-            _z_rotated,
+            f_arr,
             extent=(
-                cast(float, _x[0]),
-                cast(float, _x[-1]),
-                cast(float, _y[0]),
-                cast(float, _y[-1]),
+                cast(float, x_arr[0]),
+                cast(float, x_arr[-1]),
+                cast(float, y_arr[0]),
+                cast(float, y_arr[-1]),
             ),
             **kwargs,
         )
     elif using == "contour":
-        ax.contour(_x_rotated, _y_rotated, _z_rotated, levels=levels, **kwargs)
+        ax.contour(x_arr, y_arr, f_arr, levels=levels, **kwargs)
 
     ax.set_xlabel(rf"${dim1}$")
     ax.set_ylabel(rf"${dim2}$")
