@@ -16,7 +16,6 @@ from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
 from .slope_limiting.zhang_and_shu import zhang_shu_limiter
 from .stencil import (
     conservative_interpolation_weights,
-    get_gauss_legendre_face_nodes,
     stencil_sweep,
     uniform_quadrature_weights,
 )
@@ -1192,41 +1191,36 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             nodes = []
             if not self.using[dim]:
                 raise ValueError(f"Dimension {dim} is not used in the mesh.")
-            if interpolation_scheme == "gauss-legendre" and limiting_scheme is None:
-                px, py, pz = self.px, self.py, self.pz
-                match dim:
-                    case "x":
-                        xp, yp, zp, _ = gauss_legendre_for_finite_volume(0, py, pz)
-                        xp += -0.5 if pos == "l" else 0.5
-                    case "y":
-                        xp, yp, zp, _ = gauss_legendre_for_finite_volume(px, 0, pz)
-                        yp += -0.5 if pos == "l" else 0.5
-                    case "z":
-                        xp, yp, zp, _ = gauss_legendre_for_finite_volume(px, py, 0)
-                        zp += -0.5 if pos == "l" else 0.5
-                for xpi, ypi, zpi in zip(xp.tolist(), yp.tolist(), zp.tolist()):
+            if (
+                interpolation_scheme in ("gauss-legendre", "transverse")
+                and limiting_scheme is None
+            ):
+                px = p if self.using_xdim else 0
+                py = p if self.using_ydim else 0
+                pz = p if self.using_zdim else 0
+                if interpolation_scheme == "transverse":
+                    xp, yp, zp, _ = gauss_legendre_for_finite_volume(0, 0, 0)
+                else:
+                    xp, yp, zp, _ = gauss_legendre_for_finite_volume(
+                        0 if dim == "x" else px,
+                        0 if dim == "y" else py,
+                        0 if dim == "z" else pz,
+                    )
+                coords = {"x": 2 * xp, "y": 2 * yp, "z": 2 * zp}  # scale to [-1, 1]
+                coords[dim] += -1 if pos == "l" else 1
+                for xpi, ypi, zpi in zip(coords["x"], coords["y"], coords["z"]):
                     nodes.append(
                         self.interpolate(
                             averages,
-                            xpi,
-                            ypi,
-                            zpi,
+                            xpi.item(),
+                            ypi.item(),
+                            zpi.item(),
                             p=cast(int, p),
                             sweep_order=sweep_orders[dim],
                             stencil_type="conservative-interpolation",
                         )
                     )
                 faces.append(self.xp.stack(nodes, axis=-1))
-            elif interpolation_scheme == "transverse" and limiting_scheme is None:
-                (coords,) = get_gauss_legendre_face_nodes(self.dims, dim, pos, 0)
-                node = self.interpolate(
-                    averages,
-                    **coords,
-                    p=cast(int, p),
-                    sweep_order=sweep_orders[dim],
-                    stencil_type="conservative-interpolation",
-                )
-                faces.append(node[..., np.newaxis])
             else:
                 raise ValueError(
                     f"Unsupported interpolation and limiting schemes: {interpolation_scheme}, {limiting_scheme}."

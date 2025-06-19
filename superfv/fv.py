@@ -18,11 +18,8 @@ def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayL
         x: Quadrature points, has shape (n,).
         w: Quadrature weights, has shape (n,).
     """
-    unscaled_points, unscaled_weights = np.polynomial.legendre.leggauss(
-        -(-(p + 1) // 2)
-    )
-    scaling = np.sum(unscaled_weights)
-    return unscaled_points / scaling, unscaled_weights / scaling
+    x, w = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))
+    return 0.5 * x, 0.5 * w
 
 
 @lru_cache(maxsize=None)

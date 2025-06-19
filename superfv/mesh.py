@@ -222,13 +222,13 @@ class UniformFVMesh:
             match dim:
                 case "x":
                     Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (0, py, pz))
-                    Xp += (-1 if pos == "l" else 1) * 0.5 * self.hx
+                    Xp = Xp + (-0.5 * self.hx if pos == "l" else 0.5 * self.hx)
                 case "y":
                     Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, 0, pz))
-                    Yp += (-1 if pos == "l" else 1) * 0.5 * self.hy
+                    Yp = Yp + (-0.5 * self.hy if pos == "l" else 0.5 * self.hy)
                 case "z":
                     Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, py, 0))
-                    Zp += (-1 if pos == "l" else 1) * 0.5 * self.hz
+                    Zp = Zp + (-0.5 * self.hz if pos == "l" else 0.5 * self.hz)
 
         val = Xp, Yp, Zp, w
         self.gauss_legendre_quadrature_cache[key] = val

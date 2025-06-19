@@ -1,13 +1,12 @@
 changes:
 - [x] !major bug: no way to apply dirichlet boundary conditions with gauss-legendre fluxes. update advection tests once this is done
+- [x] fix: GL asymmetry in slotted disk test
 
 bugs:
 - [ ] !major bug: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
-- [ ] fix: the rest of the tests
-- [ ] clean up hydro/riemann solver modules
+- [ ] fix: only working tests are --ignore=tests/test_AdvectionMPP.py --ignore tests/test_SodShockTube1D.py
 - [ ] fix: 2DZS + RK4
 - [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
-- [ ] GL asymmetry in slotted disk test
 
 optimizations:
 - [ ] preallocate padded arrays?
@@ -15,6 +14,7 @@ optimizations:
 - [ ] look into cleaning up interpolation cache
 
 cosmetics:
+- [ ] clean up hydro/riemann solver modules
 - [ ] make gauss-legendre a boolean option
 - [ ] remove '_thing' naming convention unless the thing is actually hidden on purpose
 - [ ] fix: progress bar for allow_overshoot=True

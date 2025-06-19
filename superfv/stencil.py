@@ -1,6 +1,5 @@
 from functools import lru_cache
-from itertools import product
-from typing import Any, Dict, List, Literal, Tuple, Union, cast
+from typing import Any, List, Literal, Tuple, Union, cast
 
 import numpy as np
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
@@ -154,88 +153,3 @@ def stencil_sweep(
         xp.add(out, xp.multiply(arr[s], w), out)
 
     return out
-
-
-def gauss_legendre_face_nodes_and_weights(
-    dims: str, dim: str, pos: str, p: int
-) -> Tuple[List[Dict[str, Union[int, float]]], List[Union[int, float]]]:
-    """
-    Returns cell face coordinates and weights for a Gauss-Legendre quadrature.
-
-    Args:
-        dims: The dimensions of the cell. Must be a combination of "x", "y", and "z".
-        dim: The dimension of the face. Must be one of "x", "y", or "z".
-        pos: The position of the face. Must be one of "l" or "r".
-        p: The polynomial degree.
-
-    Returns:
-        nodes, weights: Lists of the cell face coordinates and weights.
-        - `nodes` is a list of dictionaries, where each dictionary contains the
-            coordinates of a face.
-        - `weights` is a list of weights corresponding to the face coordinates. The
-            weights are normalized to sum to 1.
-    """
-    # validate inputs
-    if dim not in "xyz":
-        raise ValueError(f"Invalid dimension '{dim}'. Must be one of 'x', 'y', or 'z'.")
-    if pos not in {"l", "r"}:
-        raise ValueError(f"Invalid position '{pos}'. Must be 'l' or 'r'.")
-    if not set(dims).issubset("xyz"):
-        raise ValueError(f"Invalid dims '{dims}'. Must be a subset of 'xyz'.")
-
-    ndim = len(dims)
-    perpendicular_dims = [d for d in "xyz" if d != dim]
-    dim1, dim2 = perpendicular_dims
-
-    # get Gauss-Legendre coordinates and weights on [-1, 1]
-    coords1, weights1 = (
-        np.polynomial.legendre.leggauss(p + 1) if dim1 in dims and p > 0 else ([0], [2])
-    )
-    coords2, weights2 = (
-        np.polynomial.legendre.leggauss(p + 1) if dim2 in dims and p > 0 else ([0], [2])
-    )
-
-    nodes, weights = [], []
-    for i, j in product(range(len(coords1)), range(len(coords2))):
-        coord1, weight1 = coords1[i], weights1[i]
-        coord2, weight2 = coords2[j], weights2[j]
-        nodes.append({dim: {"l": -1, "r": 1}[pos], dim1: coord1, dim2: coord2})
-        weights.append(weight1 * weight2 / (2 ** (ndim)) if p > 0 else 1)
-    return nodes, weights
-
-
-@lru_cache(maxsize=None)
-def get_gauss_legendre_face_nodes(
-    dims: str, dim: str, pos: str, p: int
-) -> List[Dict[str, Union[int, float]]]:
-    """
-    Returns cell face coordinates for a Gauss-Legendre quadrature.
-
-    Args:
-        dims: The dimensions of the cell. Must be a combination of "x", "y", and "z".
-        dim: The dimension of the face. Must be one of "x", "y", or "z".
-        pos: The position of the face. Must be one of "l" or "r".
-        p: The polynomial degree.
-
-    Returns:
-        List of dictionaries mapping dimension names to coordinates for the cell face.
-    """
-    nodes, _ = gauss_legendre_face_nodes_and_weights(dims, dim, pos, p)
-    return nodes
-
-
-@lru_cache(maxsize=None)
-def get_gauss_legendre_face_weights(dims: str, dim: str, p: int) -> np.ndarray:
-    """
-    Returns cell face weights for a Gauss-Legendre quadrature.
-
-    Args:
-        dims: The dimensions of the cell. Must be a combination of "x", "y", and "z".
-        dim: The dimension of the face. Must be one of "x", "y", or "z".
-        p: The polynomial degree.
-
-    Returns:
-        Array of cell face weights with floating-point data type.
-    """
-    _, weights = gauss_legendre_face_nodes_and_weights(dims, dim, "l", p)
-    return np.array(weights)

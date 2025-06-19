@@ -354,8 +354,16 @@ class BoundaryConditions:
         # evaluate the Dirichlet function
         f_wrapped = f if primitives else self.conservatives_wrapper(f)
         f_eval = f_wrapped(idx, X, Y, Z, t)
-        if fv_averages:
+        if fv_averages and arr.ndim == 4:
             f_eval = self.xp.sum(f_eval * w, axis=4)
+        elif fv_averages:
+            raise ValueError(
+                "Array must be 4D (nvars, nx, ny, nz) for finite-volume averages."
+            )
+        elif arr.ndim != 5:
+            raise ValueError(
+                "Array must be 5D (nvars, nx, ny, nz, n_quadrature_points) for direct evaluation."
+            )
         arr[outer_slice] = f_eval
 
     def _apply_free_bc(
