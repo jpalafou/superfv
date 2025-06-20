@@ -44,10 +44,10 @@ class AdvectionSolver(FiniteVolumeSolver):
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
         MOOD: bool = False,
-        max_MOOD_iters: Optional[int] = None,
+        max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
         NAD: Optional[float] = None,
-        PAD: Optional[Dict[str, Tuple[float, float]]] = None,
+        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
@@ -125,12 +125,12 @@ class AdvectionSolver(FiniteVolumeSolver):
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
                 halve the timestep size if the proposed solution fails PAD.
             max_dt_revisions: Option for the Zhang and Shu limiter; The maximum number
-                of timestep size revisions that may be attempted if `adaptive_dt=True`.
-                Defaults to 8.
+                of timestep size revisions that may be attempted in an update step
+                if `adaptive_dt=True`. Defaults to 8.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
-            max_MOOD_iters: Maximum number of MOOD iterations if `MOOD=True`. If None,
-                defaults to 1. If 'MOOD=False', this argument is ignored.
+            max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
+                iterations that may be performed in an update step. Defaults to 1.
             limiting_vars: Specifies which variables are subject to slope limiting.
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
@@ -140,9 +140,10 @@ class AdvectionSolver(FiniteVolumeSolver):
                 `limiting_vars` determines which variables are checked for PAD when
                 using adaptive timestepping.
             NAD: The NAD tolerance. If None, NAD is not checked.
-            PAD: Dict of `limiting_vars` and their corresponding PAD tolerances. If a
-                limiting variable is not in the dict, it is given a PAD tolerance of
-                (-np.inf, np.inf). If None, PAD is not checked.
+            PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
+                tuple: (lower_bound, upper_bound). Any variable or bound not provided
+                in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
+                respectively.
             PAD_tol: Tolerance for the PAD check as an absolute value from the minimum
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
@@ -244,7 +245,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         Compute the time-step size based on the CFL condition.
 
         Args:
-            t: Current time. Unused.
+            t: Current time (not used in this implementation, but included for
+                compatibility with the base class).
             u: Solution value. Has shape (nvars, nx, ny, nz).
 
         Returns:

@@ -4,9 +4,10 @@ changes:
 - [x] remove '_thing' naming convention unless the thing is actually hidden on purpose
 - [x] !major bug: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
 - [x] fix: 2DZS + RK4
+- [x] fix: only working tests are pytest --ignore tests/test_SodShockTube1D.py
+- [x] fix: CI pipeline
 
 issues:
-- [ ] fix: only working tests are pytest --ignore tests/test_SodShockTube1D.py
 - [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
 - [ ] test_ZS and test_MOOD
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles

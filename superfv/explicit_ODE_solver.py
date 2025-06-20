@@ -2,7 +2,7 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from tqdm import tqdm
@@ -85,8 +85,8 @@ class ExplicitODESolver(ABC):
 
     def dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
         """
-        Determine if dt is okay and does not need to be revised. Defaults to always
-        True, so override for more specific behavior.
+        Determine if dt is okay and does not need to be revised. Override
+        `_dt_criterion` to implement specific behavior.
 
         Args:
             tnew: New time after the step.
@@ -96,12 +96,26 @@ class ExplicitODESolver(ABC):
             bool: True if the time-step size should be revised based on the new state,
                 False otherwise.
         """
+        return self._dt_criterion(tnew, unew)
+
+    def default_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
+        """
+        Default dt criterion that always returns True. Override `_dt_criterion` to
+        implement specific behavior.
+
+        Args:
+            tnew: New time after the step.
+            unew: New proposed state as an array.
+
+        Returns:
+            bool: Always returns True.
+        """
         return True
 
     def compute_revised_dt(self, t: float, u: ArrayLike, dt: float) -> float:
         """
-        Compute a revised time-step size based on the new state. Override for custom
-        behavior.
+        Compute a revised time-step size based on the new state. Override
+        `_compute_revised_dt` to implement specific behavior.
 
         Args:
             t: Current time.
@@ -111,7 +125,22 @@ class ExplicitODESolver(ABC):
         Returns:
             Revised time-step size.
         """
-        raise NotImplementedError("compute_revised_dt not implemented.")
+        return self._compute_revised_dt(t, u, dt)
+
+    def default_compute_revised_dt(self, t: float, u: ArrayLike, dt: float) -> float:
+        """
+        Default compute revised dt that raises NotImplementedError. Override
+        `_compute_revised_dt` to implement specific behavior.
+
+        Args:
+            t: Current time.
+            u: Current state as an array.
+            dt: Proposed time-step size.
+
+        Returns:
+            Raises NotImplementedError.
+        """
+        raise NotImplementedError("compute_revised_dt method not implemented.")
 
     @partial(method_timer, cat="ExplicitODESolver.read_snapshots")
     def read_snapshots(self) -> bool:
@@ -169,8 +198,10 @@ class ExplicitODESolver(ABC):
         self.arrays = ArrayManager()
         self.arrays.add("u", u0)
 
-        # initialize timer, snapshots, and git commit details
+        # initialize timer
         self.timer = Timer(cats=["!ExplicitODESolver.integrate.body"])
+
+        # initialize snapshots
         self.snapshots: Snapshots = Snapshots()
         self.minisnapshots: Dict[str, list] = {
             "t": [],
@@ -178,7 +209,16 @@ class ExplicitODESolver(ABC):
             "dt": [],
             "dt_revisions": [],
         }
+
+        # initialize commit details
         self.commit_details = self._get_commit_details()
+
+        # assign default timestep revision and dt criterion
+        self._dt_criterion = self.default_dt_criterion
+        self._compute_revised_dt = self.default_compute_revised_dt
+
+        # assign stepper signature
+        self.stepper: Callable[[float, ArrayLike, float], ArrayLike]
 
     def _get_commit_details(self) -> dict:
         """
@@ -352,20 +392,6 @@ class ExplicitODESolver(ABC):
         """
         self.step_count += 1
         self.minisnapshot()
-
-    def stepper(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
-        """
-        Stepper function to be defined by integration method.
-
-        Args:
-            t: Current time.
-            u: Current state as an array.
-            dt: Time-step size.
-
-        Returns:
-            unew: Next state as an array.
-        """
-        raise NotImplementedError("Stepper function not implemented.")
 
     def progress_bar_action(
         self, action: str, T: Optional[float] = None, do_nothing: bool = False

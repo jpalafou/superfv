@@ -35,10 +35,10 @@ def test_AdvectionSolver_translational_symmetry_1D(p: int, dim1_dim2: Tuple[str,
     solver2.run(n=n_steps)
 
     # compare solutions
-    idx1 = solver1.variable_index_map
+    idx = solver1.variable_index_map
     l1_error = l1_norm(
-        solver1.snapshots[-1]["u"][idx1("rho")].flatten()
-        - solver2.snapshots[-1]["u"][idx1("rho")].flatten()
+        solver1.snapshots[-1]["u"][idx("rho")].flatten()
+        - solver2.snapshots[-1]["u"][idx("rho")].flatten()
     )
     assert l1_error == 0
 
@@ -75,10 +75,10 @@ def test_AdvectionSolver_translational_symmetry_2D(
     solver2.run(n=n_steps)
 
     # compare solutions
-    idx1 = solver1.variable_index_map
+    idx = solver1.variable_index_map
     l1_error = l1_norm(
-        solver1.snapshots[-1]["u"][idx1("rho")].flatten()
-        - solver2.snapshots[-1]["u"][idx1("rho")].flatten()
+        solver1.snapshots[-1]["u"][idx("rho")].flatten()
+        - solver2.snapshots[-1]["u"][idx("rho")].flatten()
     )
     assert l1_error == 0
 

@@ -30,7 +30,7 @@ def test_1D_advection_mpp(adaptive_dt, p, dim):
         **{"n" + dim: 64},
         CFL=0.8 if adaptive_dt else p_CFL_map[p],
         adaptive_dt=adaptive_dt and p > 0,
-        ZS=p > 0,
+        ZS=True,
         PAD={"rho": (0, 1)},
     )
     solver.run(n=10)
@@ -54,7 +54,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
         ),
         **{"n" + dim1: 32, "n" + dim2: 32},
         interpolation_scheme="gauss-legendre",
-        ZS=p > 0,
+        ZS=True,
         PAD={"rho": (0, 1)},
         cupy=CUPY_AVAILABLE,
     )
@@ -76,7 +76,7 @@ def test_3D_advection_mpp(p):
         ny=32,
         nz=32,
         interpolation_scheme="gauss-legendre",
-        ZS=p > 0,
+        ZS=True,
         PAD={"rho": (0, 1)},
         cupy=CUPY_AVAILABLE,
     )
