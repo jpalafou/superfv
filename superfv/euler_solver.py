@@ -43,8 +43,8 @@ class EulerSolver(FiniteVolumeSolver):
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
         ZS: bool = False,
-        adaptive_timestepping: bool = True,
-        max_adaptive_timesteps: Optional[int] = None,
+        adaptive_dt: bool = True,
+        max_dt_revisions: int = 8,
         MOOD: bool = False,
         max_MOOD_iters: Optional[int] = None,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
@@ -126,13 +126,11 @@ class EulerSolver(FiniteVolumeSolver):
             MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
-            adaptive_timestepping: Option for `ZS=True` to half the time-step size if a
-                maximum principle violation is detected. If True, MOOD is overwritten
-                to only modify the time-step size and not the fluxes. Ignored if
-                `ZS=False`.
-            max_adaptive_timesteps: Maximum number of adaptive time steps if both
-                `ZS=True` and `adaptive_timestepping=True`. If None, defaults to 10.
-                Ignored if either `ZS` or `adaptive_timestepping` is False.
+            adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
+                halve the timestep size if the proposed solution fails PAD.
+            max_dt_revisions: Option for the Zhang and Shu limiter; The maximum number
+                of timestep size revisions that may be attempted if `adaptive_dt=True`.
+                Defaults to 8.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
             max_MOOD_iters: Maximum number of MOOD iterations if `MOOD=True`. If None,
@@ -183,8 +181,8 @@ class EulerSolver(FiniteVolumeSolver):
             lazy_primitives=lazy_primitives,
             MUSCL=MUSCL,
             ZS=ZS,
-            adaptive_timestepping=adaptive_timestepping,
-            max_adaptive_timesteps=max_adaptive_timesteps,
+            adaptive_dt=adaptive_dt,
+            max_dt_revisions=max_dt_revisions,
             MOOD=MOOD,
             max_MOOD_iters=max_MOOD_iters,
             limiting_vars=limiting_vars,

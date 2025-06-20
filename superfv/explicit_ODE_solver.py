@@ -12,25 +12,24 @@ from .tools.snapshots import Snapshots
 from .tools.timer import Timer, method_timer
 
 
-def _dt_ceil(t: float, dt: float, t_max: Optional[float] = None) -> float:
+def clamp_dt(t: float, dt: float, target_time: Optional[float] = None) -> float:
     """
-    Returns a reduced dt if it overshoots a target time.
+    Clamp the time-step size to avoid overshooting the target time.
 
     Args:
-        t: Time value.
-        dt: Potential time-step size.
-        t_max: Time value to avoid overshooting. If None, dt is returned as is.
+        t: Current time.
+        dt: Proposed time-step size.
+        target_time: Optional target time to avoid overshooting.
 
     Returns:
-        Time-step size that does not overshoot t_max if it is defined, otherwise
-            returns dt.
+        Clamped time-step size if target_time is provided, otherwise returns dt.
     """
-    return min(t_max - t, dt) if t_max is not None else dt
+    return dt if target_time is None else min(target_time - t, dt)
 
 
 class ExplicitODESolver(ABC):
     """
-    Base class for explicit ODE solvers for the form y' = f(t, y).
+    Base class for explicit ODE solvers for the form u' = f(t, u).
 
     Attributes:
         t: Current time.
@@ -55,24 +54,64 @@ class ExplicitODESolver(ABC):
     """
 
     @abstractmethod
-    @partial(method_timer, cat="ExplicitODESolver.f")
-    def f(self, t: float, y: ArrayLike) -> Tuple[float, ArrayLike]:
+    @partial(method_timer, cat="?.compute_dt")
+    def compute_dt(self, t: float, u: ArrayLike) -> float:
+        """
+        Compute the time-step size.
+
+        Args:
+            t: Current time.
+            u: Current state as an array.
+
+        Returns:
+            dt: Time-step size.
+        """
+        pass
+
+    @abstractmethod
+    @partial(method_timer, cat="?.f")
+    def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
         """
         Right-hand side of the ODE.
 
         Args:
-            t: Time value.
-            y: State at time t as an array.
+            t: Current time.
+            u: Current state as an array.
 
         Returns:
-            dt: Time-step size.
-            dydt: Right-hand side of the ODE at (t, y) as an array.
-
-        Notes:
-            - Increment `self.substep_count` if the function is called multiple times
-                per step: `self.substep_count += 1`.
+            dudt: Right-hand side of the ODE at (t, u) as an array.
         """
         pass
+
+    def dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
+        """
+        Determine if dt is okay and does not need to be revised. Defaults to always
+        True, so override for more specific behavior.
+
+        Args:
+            tnew: New time after the step.
+            unew: New proposed state as an array.
+
+        Returns:
+            bool: True if the time-step size should be revised based on the new state,
+                False otherwise.
+        """
+        return True
+
+    def compute_revised_dt(self, t: float, u: ArrayLike, dt: float) -> float:
+        """
+        Compute a revised time-step size based on the new state. Override for custom
+        behavior.
+
+        Args:
+            t: Current time.
+            u: Current state as an array.
+            dt: Proposed time-step size.
+
+        Returns:
+            Revised time-step size.
+        """
+        raise NotImplementedError("compute_revised_dt not implemented.")
 
     @partial(method_timer, cat="ExplicitODESolver.read_snapshots")
     def read_snapshots(self) -> bool:
@@ -110,42 +149,35 @@ class ExplicitODESolver(ABC):
         self.minisnapshots["t"].append(self.t)
         self.minisnapshots["dt"].append(self.dt)
         self.minisnapshots["n_substeps"].append(self.substep_count)
+        self.minisnapshots["dt_revisions"].append(self.dt_revision_count)
 
-    def called_at_end_of_step(self):
-        """
-        Helper function called at the end of each step. Override for additional
-        routines.
-        """
-        pass
-
-    def __init__(
-        self,
-        y0: np.ndarray,
-        state_array_name: str = "y",
-    ):
+    def __init__(self, u0: np.ndarray):
         """
         Initializes the ODE solver.
 
         Args:
-            y0: Initial state as an array.
-            state_array_name: Name of the state array.
+            u0: Initial state as an array.
         """
         # initialize times
         self.t = 0.0
         self.dt = np.nan
-        self.timestamps = [0.0]
         self.step_count = 0
         self.substep_count = 0
+        self.dt_revision_count = 0
 
         # initialize array manager
         self.arrays = ArrayManager()
-        self.arrays.add(state_array_name, y0)
-        self.state = state_array_name
+        self.arrays.add("u", u0)
 
         # initialize timer, snapshots, and git commit details
         self.timer = Timer(cats=["!ExplicitODESolver.integrate.body"])
         self.snapshots: Snapshots = Snapshots()
-        self.minisnapshots: Dict[str, list] = {"t": [], "n_substeps": [], "dt": []}
+        self.minisnapshots: Dict[str, list] = {
+            "t": [],
+            "n_substeps": [],
+            "dt": [],
+            "dt_revisions": [],
+        }
         self.commit_details = self._get_commit_details()
 
     def _get_commit_details(self) -> dict:
@@ -276,6 +308,7 @@ class ExplicitODESolver(ABC):
         if snapshot_dir is not None:
             self.write_snapshots(overwrite)
 
+    @partial(method_timer, cat="ExplicitODESolver.take_step")
     def take_step(self, target_time: Optional[float] = None):
         """
         Take a single step in the integration.
@@ -283,16 +316,56 @@ class ExplicitODESolver(ABC):
         Args:
             target_time (Optional[float]): Time to avoid overshooting.
         """
-        self.substep_count = 0
-        self.step_count += 1
-        dt, ynext = self.stepper(
-            self.t, self.arrays[self.state], target_time=target_time
-        )
+        self.called_at_beginning_of_step()
+
+        # define current time and state
+        t, u = self.t, self.arrays["u"]
+
+        # determine time-step size and next state
+        dt = clamp_dt(t, self.compute_dt(t, u), target_time)
+        while True:
+            unew = self.stepper(t, u, dt)
+            if self.dt_criterion(t + dt, unew):
+                break
+            dt = clamp_dt(t, self.compute_revised_dt(t, u, dt), target_time)
+            self.dt_revision_count += 1
+
+        # update attributes
+        self.arrays["u"][...] = unew
         self.t += dt
         self.dt = dt
-        self.arrays[self.state] = ynext
-        self.timestamps.append(self.t)
+
         self.called_at_end_of_step()
+
+    def called_at_beginning_of_step(self):
+        """
+        Helper function called at the beginning of each step. Override for additional
+        routines.
+        """
+        self.substep_count = 0
+        self.dt_revision_count = 0
+
+    def called_at_end_of_step(self):
+        """
+        Helper function called at the end of each step. Override for additional
+        routines.
+        """
+        self.step_count += 1
+        self.minisnapshot()
+
+    def stepper(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
+        """
+        Stepper function to be defined by integration method.
+
+        Args:
+            t: Current time.
+            u: Current state as an array.
+            dt: Time-step size.
+
+        Returns:
+            unew: Next state as an array.
+        """
+        raise NotImplementedError("Stepper function not implemented.")
 
     def progress_bar_action(
         self, action: str, T: Optional[float] = None, do_nothing: bool = False
@@ -321,11 +394,15 @@ class ExplicitODESolver(ABC):
     def euler(self, *args, **kwargs) -> None:
         self.integrator = "euler"
 
-        def stepper(t, u, target_time=None):
-            dt, dudt = self.f(t, u)
-            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
-            unext = u + dt * dudt
-            return dt, unext
+        def stepper(t, u, dt):
+            self.substep_dt = dt
+
+            # stage 1
+            k0 = self.f(t, u)
+            unew = u + dt * k0
+            self.substep_count += 1
+
+            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)
@@ -333,13 +410,20 @@ class ExplicitODESolver(ABC):
     def ssprk2(self, *args, **kwargs) -> None:
         self.integrator = "ssprk2"
 
-        def stepper(t, u, target_time=None):
-            dt, k0 = self.f(t, u)
-            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
+        def stepper(t, u, dt):
+            self.substep_dt = dt  # constant throughout all SSPRK2 stages
+
+            # stage 1
+            k0 = self.f(t, u)
             u1 = u + dt * k0
-            _, k1 = self.f(t, u1)
-            unext = 0.5 * u + 0.5 * (u1 + dt * k1)
-            return dt, unext
+            self.substep_count += 1
+
+            # stage 2
+            k1 = self.f(t + dt, u1)
+            unew = 0.5 * u + 0.5 * (u1 + dt * k1)
+            self.substep_count += 1
+
+            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)
@@ -347,13 +431,23 @@ class ExplicitODESolver(ABC):
     def ssprk3(self, *args, **kwargs) -> None:
         self.integrator = "ssprk3"
 
-        def stepper(t, u, target_time=None):
-            dt, k0 = self.f(t, u)
-            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
-            _, k1 = self.f(t + dt, u + dt * k0)
-            _, k2 = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
-            unext = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
-            return dt, unext
+        def stepper(t, u, dt):
+            self.substep_dt = dt  # constant throughout all SSPRK3 stages
+
+            # stage 1
+            k0 = self.f(t, u)
+            self.substep_count += 1
+
+            # stage 2
+            k1 = self.f(t + dt, u + dt * k0)
+            self.substep_count += 1
+
+            # stage 3
+            k2 = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
+            unew = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+            self.substep_count += 1
+
+            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)
@@ -361,14 +455,27 @@ class ExplicitODESolver(ABC):
     def rk4(self, *args, **kwargs) -> None:
         self.integrator = "rk4"
 
-        def stepper(t, u, target_time=None):
-            dt, k0 = self.f(t, u)
-            dt = _dt_ceil(t=t, dt=dt, t_max=target_time)
-            _, k1 = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
-            _, k2 = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
-            _, k3 = self.f(t + dt, u + dt * k2)
-            unext = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
-            return dt, unext
+        def stepper(t, u, dt):
+            self.substep_dt = dt  # constant throughout all RK4 stages
+
+            # stage 1
+            k0 = self.f(t, u)
+            self.substep_count += 1
+
+            # stage 2
+            k1 = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
+            self.substep_count += 1
+
+            # stage 3
+            k2 = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
+            self.substep_count += 1
+
+            # stage 4
+            k3 = self.f(t + dt, u + dt * k2)
+            unew = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
+            self.substep_count += 1
+
+            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)

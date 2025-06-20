@@ -65,7 +65,6 @@ def init_MOOD(fv_solver: FiniteVolumeSolver, u: ArrayLike, fluxes: Fluxes):
 def detect_troubles(
     fv_solver: FiniteVolumeSolver,
     t: float,
-    dt: float,
     u: ArrayLike,
     fluxes: Fluxes,
     NAD: Optional[float] = None,
@@ -80,7 +79,6 @@ def detect_troubles(
         fv_solver: FiniteVolumeSolver object. Is expected to have variable group
             "limiting_vars" defined in `fv_solver.variable_index_map.group_names`.
         t: Time value.
-        dt: Time step size.
         u: Array of conservative FV cell-averaged variables. Has shape
             (nvars, nx, ny, nz, ...).
         fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
@@ -108,6 +106,7 @@ def detect_troubles(
         return False
 
     # compute candidate solution
+    dt = fv_solver.substep_dt
     ustar = u + dt * fv_solver.RHS(u, *fluxes)
 
     # compute NAD and/or PAD violations
@@ -184,19 +183,17 @@ def compute_dmp_violations(
 def revise_fluxes(
     fv_solver: FiniteVolumeSolver,
     t: float,
-    dt: float,
     u: ArrayLike,
     fluxes: Fluxes,
     mode: Literal["transverse", "gauss-legendre"],
     slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-) -> Tuple[float, Fluxes]:
+) -> Fluxes:
     """
     Revise the fluxes using the MOOD algorithm.
 
     Args:
         fv_solver: FiniteVolumeSolver object.
         t: Time value.
-        dt: Time step size.
         u: Array of conservative FV cell-averaged variables. Has shape
             (nvars, nx, ny, nz, ...).
         fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
@@ -213,7 +210,6 @@ def revise_fluxes(
             - "moncen": Use the Monotone Central slope limiter.
 
     Returns:
-        dt: The revised time step.
         fluxes: The revised fluxes (F, G, H). None if the corresponding dimension is
             unused. Otherwise, is an array with shape:
             - F: (nvars, nx+1, ny, nz, ...)
@@ -236,12 +232,14 @@ def revise_fluxes(
             limiting_scheme = "muscl"
             slope_limiter = slope_limiter
         elif fallback_scheme == "half-dt":
-            return dt / 2, fluxes  # early escape for time-step halving
+            raise NotImplementedError(
+                "Half-dt scheme is not implemented in MOOD revision."
+            )
         else:
             raise ValueError(f"Unknown fallback scheme {fallback_scheme}.")
 
         # compute fluxes needed
-        _, fallback_fluxes = fv_solver.compute_dt_and_fluxes(
+        fallback_fluxes = fv_solver.compute_fluxes(
             t, u, mode, p, limiting_scheme, slope_limiter
         )
         _cache_fluxes(fv_solver, fallback_fluxes, fallback_scheme)
@@ -282,7 +280,7 @@ def revise_fluxes(
                 H_cascade_idx_array == i, 1, 0
             )
 
-    return dt, (revised_F, revised_G, revised_H)
+    return revised_F, revised_G, revised_H
 
 
 def map_cell_values_to_face_values(

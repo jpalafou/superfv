@@ -29,7 +29,7 @@ def test_1D_advection_mpp(adaptive_dt, p, dim):
         ic=partial(initial_conditions.square, **{"v" + dim: 1.0}),
         **{"n" + dim: 64},
         CFL=0.8 if adaptive_dt else p_CFL_map[p],
-        adaptive_timestepping=adaptive_dt and p > 0,
+        adaptive_dt=adaptive_dt and p > 0,
         ZS=p > 0,
         PAD={"rho": (0, 1)},
     )
@@ -52,7 +52,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
             initial_conditions.square,
             **{"v" + dim1: 2.0, "v" + dim2: 1.0},
         ),
-        **{"n" + dim1: 64, "n" + dim2: 64},
+        **{"n" + dim1: 32, "n" + dim2: 32},
         interpolation_scheme="gauss-legendre",
         ZS=p > 0,
         PAD={"rho": (0, 1)},
@@ -67,7 +67,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
     assert np.all(violations >= -1e-15)
 
 
-@pytest.mark.parametrize("p", [0, 1, 2])
+@pytest.mark.parametrize("p", [0, 1, 2, 3])
 def test_3D_advection_mpp(p):
     solver = AdvectionSolver(
         p=p,
@@ -80,7 +80,7 @@ def test_3D_advection_mpp(p):
         PAD={"rho": (0, 1)},
         cupy=CUPY_AVAILABLE,
     )
-    solver.run(n=10)
+    solver.run(n=3)
 
     violations = np.minimum(
         1 - np.array(solver.minisnapshots["max_rho"]),

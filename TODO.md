@@ -3,11 +3,15 @@ changes:
 - [x] fix: GL asymmetry in slotted disk test
 - [x] remove '_thing' naming convention unless the thing is actually hidden on purpose
 - [x] !major bug: 'ZS = slope_limiter == "zhang-shu"' should be ZS = limiting_scheme == "zhang-shu"'
+- [x] fix: 2DZS + RK4
 
-bugs:
-- [ ] fix: only working tests are --ignore=tests/test_AdvectionMPP.py --ignore tests/test_SodShockTube1D.py
-- [ ] fix: 2DZS + RK4
+issues:
+- [ ] fix: only working tests are pytest --ignore tests/test_SodShockTube1D.py
 - [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
+- [ ] test_ZS and test_MOOD
+- [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
+- [ ] vestigial 'half-dt' option in MOOD
+- [ ] move interpolation and integration functions to fv or some other modules
 
 optimizations:
 - [ ] preallocate padded arrays?
