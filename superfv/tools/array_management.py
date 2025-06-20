@@ -157,7 +157,7 @@ def crop_to_center(
     return arr[slices]
 
 
-def intersection_shape(*args: Tuple[Tuple[int, ...], ...]) -> Tuple[int, ...]:
+def intersection_shape(*args: Tuple[int, ...]) -> Tuple[int, ...]:
     """
     Compute the intersection of the shapes of multiple arrays.
 
