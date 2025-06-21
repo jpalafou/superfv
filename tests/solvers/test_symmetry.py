@@ -4,15 +4,15 @@ import numpy as np
 import pytest
 
 import superfv.initial_conditions as ic
-from superfv import AdvectionSolver
+from superfv import AdvectionSolver, EulerSolver
 from superfv.tools.array_management import l1_norm
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z")])
-def test_AdvectionSolver_translational_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
+def test_AdvectionSolver_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
     """
-    Test the symmetry of the solver along each dimension in 1D.
+    Assert that the solution is the same along each solver dimension in 1D.
     """
     dim1, dim2 = dim1_dim2
     N = 64
@@ -46,11 +46,11 @@ def test_AdvectionSolver_translational_symmetry_1D(p: int, dim1_dim2: Tuple[str,
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
 @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
 @pytest.mark.parametrize("dims1_dims2", [("xy", "yz"), ("yz", "xz")])
-def test_AdvectionSolver_translational_symmetry_2D(
+def test_AdvectionSolver_symmetry_2D(
     p: int, interpolation_scheme: str, dims1_dims2: Tuple[str, str]
 ):
     """
-    Test the symmetry of the solver along each plane in 2D.
+    Assert that the solution is the same along each solver plane in 2D.
     """
     (d1x, d1y), (d2x, d2y) = dims1_dims2
     N = 64
@@ -85,7 +85,7 @@ def test_AdvectionSolver_translational_symmetry_2D(
 
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
 @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-def test_AdvectionSolver_rotational_symmetry_xy(p: int, interpolation_scheme: str):
+def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: str):
     """
     Assert that the result of a counter-clockwise rotation of a slotted disk is the
     same as the mirror of the result of a clockwise rotation.
@@ -129,7 +129,7 @@ def test_AdvectionSolver_rotational_symmetry_xy(p: int, interpolation_scheme: st
 @pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
 def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
     """
-    Assert that the solution is invariant under translation in 3D.
+    Assert that the solution is equivariant under translation in 3D.
     """
     N = 32
     p = 3
@@ -166,36 +166,37 @@ def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
     assert l1_error < 1e-15
 
 
-def test_AdvectionSolver_passive_scalar_invariance():
+@pytest.mark.parametrize("p", [0, 3, 7])
+@pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
+@pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z")])
+def test_Sod_shock_tube_symmetry_1D(p: int, limiting: str, dim1_dim2: Tuple[str, str]):
     """
-    Test the invariance of the solution when adding a passive scalar.
+    Assert that the 1D Sod shock tube solution is the same along each solver dimension.
     """
+    dim1, dim2 = dim1_dim2
     N = 64
-    p = 3
-    n_steps = 10
 
     # set up solvers
-    solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
-        nx=N,
-        p=p,
+    limiting_config = (
+        {"ZS": True, "PAD": {"rho": (0, None)}}
+        if limiting == "a priori"
+        else {"MOOD": True, "NAD": 1e-5}
     )
-    solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
-        ic_passives={
-            "passive1": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1, 0)
-        },
-        nx=N,
-        p=p,
+    solver1 = EulerSolver(
+        ic=ic.sod_shock_tube_1d, **{f"n{dim1}": N}, p=p, **limiting_config
+    )
+    solver2 = EulerSolver(
+        ic=ic.sod_shock_tube_1d, **{f"n{dim2}": N}, p=p, **limiting_config
     )
 
     # run solvers
-    solver1.run(n=n_steps)
-    solver2.run(n=n_steps)
+    solver1.run(0.245)
+    solver2.run(0.245)
 
     # compare solutions
     idx = solver1.variable_index_map
     l1_error = l1_norm(
-        solver1.snapshots[-1]["u"][idx("rho")] - solver2.snapshots[-1]["u"][idx("rho")]
+        solver1.snapshots[-1]["u"][idx("rho")].flatten()
+        - solver2.snapshots[-1]["u"][idx("rho")].flatten()
     )
     assert l1_error == 0

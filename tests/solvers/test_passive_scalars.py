@@ -1,49 +1,42 @@
-from typing import Tuple
-
 import numpy as np
 import pytest
 
 import superfv.initial_conditions as ic
-from superfv.euler_solver import EulerSolver
+from superfv import AdvectionSolver, EulerSolver
 from superfv.tools.array_management import l1_norm
 
 
-def linf_error(u1, u2):
-    return np.max(np.abs(u1 - u2))
-
-
-@pytest.mark.parametrize("p", [0, 3, 7])
-@pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
-@pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z")])
-def test_sod_shock_tube_1d_symmetry(p: int, limiting: str, dim1_dim2: Tuple[str, str]):
+def test_AdvectionSolver_passive_scalar_invariance():
     """
-    Test that the Sod shock tube solution is symmetric in all dimensions.
+    Test that passive scalars don't change the advection solution.
     """
-    dim1, dim2 = dim1_dim2
     N = 64
+    p = 3
+    n_steps = 10
 
     # set up solvers
-    limiting_config = (
-        {"ZS": True, "PAD": {"rho": (0, None)}}
-        if limiting == "a priori"
-        else {"MOOD": True, "NAD": 1e-5}
+    solver1 = AdvectionSolver(
+        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
+        nx=N,
+        p=p,
     )
-    solver1 = EulerSolver(
-        ic=ic.sod_shock_tube_1d, **{f"n{dim1}": N}, p=p, **limiting_config
-    )
-    solver2 = EulerSolver(
-        ic=ic.sod_shock_tube_1d, **{f"n{dim2}": N}, p=p, **limiting_config
+    solver2 = AdvectionSolver(
+        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
+        ic_passives={
+            "passive1": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1, 0)
+        },
+        nx=N,
+        p=p,
     )
 
     # run solvers
-    solver1.run(0.245)
-    solver2.run(0.245)
+    solver1.run(n=n_steps)
+    solver2.run(n=n_steps)
 
     # compare solutions
     idx = solver1.variable_index_map
     l1_error = l1_norm(
-        solver1.snapshots[-1]["u"][idx("rho")].flatten()
-        - solver2.snapshots[-1]["u"][idx("rho")].flatten()
+        solver1.snapshots[-1]["u"][idx("rho")] - solver2.snapshots[-1]["u"][idx("rho")]
     )
     assert l1_error == 0
 
@@ -51,9 +44,9 @@ def test_sod_shock_tube_1d_symmetry(p: int, limiting: str, dim1_dim2: Tuple[str,
 @pytest.mark.parametrize("p", [0, 3, 7])
 @pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
-def test_sod_shock_tube_passive_scalars(p: int, limiting: str, dim: str):
+def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: str):
     """
-    Test that passive scalars don't affect the Sod shock tube solution.
+    Test that passive scalars don't change the Sod shock tube solution.
     """
     N = 64
 
