@@ -78,9 +78,7 @@ def conservative_interpolation_weights(
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        print(stencil)
         return numerators / denominator
-    print(stencil.w)
     return cast(np.ndarray, stencil.w)
 
 

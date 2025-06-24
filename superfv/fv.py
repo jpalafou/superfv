@@ -341,8 +341,6 @@ def _fv_interpolate_2sweeps(
         slices2.append(modified)
     slices.append(merge_slices(*slices2, union=True))
 
-    for s in slices:
-        print(s)
     return merge_slices(*slices)
 
 
