@@ -157,12 +157,15 @@ def fv_interpolate(
             (nvars, nx, ny, nz).
         nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.
             Each value may be a float or an array of floats representing the
-            coordinates to interpolate along the respective dimension.
+            coordinates to interpolate along the respective dimension on [-1, 1].
         p: Polynomial degree of the interpolation stencil.
         buffer: Array to store intermediate results. Has shape
             (nvars, nx, ny, nz, nbuffer).
         out: Output array to store the interpolated values. Has shape
-            (nvars, nx, ny, nz, nout).
+            (nvars, nx, ny, nz, nout). Results are written to
+            `out[..., :ninterpolations]`, where `ninterpolations` is the flattened
+            number of coordinates across the specified dimensions. The order of the
+            coordinates is determined by the order of the keys in `nodes`.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -181,7 +184,7 @@ def fv_interpolate(
 def fv_integrate(
     xp: ModuleType,
     u: ArrayLike,
-    dims: List[Literal["x", "y", "z"]],
+    dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
@@ -192,14 +195,14 @@ def fv_integrate(
     Args:
         xp: `np` namespace.
         u: Array of central nodes to integrate, has shape (nvars, nx, ny, nz).
-        dims: List of strings indicating the dimensions to integrate over with
+        dims: Tuple of strings indicating the dimensions to integrate over with
             dimensions indicated as 'x', 'y', or 'z'. Can have length 1, 2, or 3
             and cannot be empty or contain duplicates.
         p: Polynomial degree of the interpolation stencil.
         buffer: Array to store intermediate results. Has shape
             (nvars, nx, ny, nz, nbuffer).
         out: Output array to store the interpolated values. Has shape
-            (nvars, nx, ny, nz, nout).
+            (nvars, nx, ny, nz, nout). Results are written to `out[..., 0]`.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -211,7 +214,7 @@ def fv_integrate(
         {dim: 0 for dim in dims},
         p,
         buffer,
-        out,
+        out[..., 0],
     )
 
 
@@ -236,7 +239,7 @@ def _fv_interpolate_direct(
             (nvars, nx, ny, nz).
         nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.
             Each value may be a float or an array of floats representing the
-            coordinates to interpolate along the respective dimension.
+            coordinates to interpolate along the respective dimension on [-1, 1].
         p: Polynomial degree of the interpolation stencil.
         buffer: Array to store intermediate results. Has shape
             (nvars, nx, ny, nz, nbuffer).
@@ -246,6 +249,19 @@ def _fv_interpolate_direct(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if u.ndim != 4:
+        raise ValueError(
+            f"Input array u must have 4 dimensions, but has {u.ndim} dimensions."
+        )
+    if out.ndim != 5:
+        raise ValueError(
+            f"Output array out must have 5 dimensions, but has {out.ndim} dimensions."
+        )
+    if buffer.ndim != 5:
+        raise ValueError(
+            f"Buffer array must have 5 dimensions, but has {buffer.ndim} dimensions."
+        )
+
     # one-dimensional interpolation
     if len(nodes) == 1:
         return _fv_interpolate_1sweep(xp, stencil_func, u, nodes, p, out)
@@ -298,7 +314,7 @@ def _fv_interpolate_2sweeps(
     buffer: ArrayLike,
     out: ArrayLike,
 ):
-    dim1, dim2 = nodes.keys()
+    dim1, dim2 = list(nodes)
     coords1 = _to_iter(nodes[dim1])
     coords2 = _to_iter(nodes[dim2])
     layer1_len = len(coords1)
@@ -320,7 +336,7 @@ def _fv_interpolate_2sweeps(
     slices = []
     slices1 = []
     for i in range(layer1_len):
-        stencil1 = stencil_func(p, 2 * coords1[i])
+        stencil1 = stencil_func(p, coords1[i])
         modified = inplace_stencil_sweep(
             xp, u, stencil1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, i]
         )
@@ -330,7 +346,7 @@ def _fv_interpolate_2sweeps(
     # interpolate nodes from buffer
     slices2 = []
     for i, j in product(range(layer1_len), range(layer2_len)):
-        stencil2 = stencil_func(p, 2 * coords2[j])
+        stencil2 = stencil_func(p, coords2[j])
         modified = inplace_stencil_sweep(
             xp,
             buffer[:, :, :, :, i],
@@ -353,7 +369,7 @@ def _fv_interpolate_3sweeps(
     buffer: ArrayLike,
     out: ArrayLike,
 ):
-    dim1, dim2, dim3 = nodes.keys()
+    dim1, dim2, dim3 = list(nodes)
     coords1 = _to_iter(nodes[dim1])
     coords2 = _to_iter(nodes[dim2])
     coords3 = _to_iter(nodes[dim3])
@@ -378,7 +394,7 @@ def _fv_interpolate_3sweeps(
     slices = []
     slices1 = []
     for i in range(layer1_len):
-        stencil1 = stencil_func(p, 2 * coords1[i])
+        stencil1 = stencil_func(p, coords1[i])
         modified = inplace_stencil_sweep(
             xp, u, stencil1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, i]
         )
@@ -388,7 +404,7 @@ def _fv_interpolate_3sweeps(
     # fill buffer layer 2
     slices2 = []
     for i, j in product(range(layer1_len), range(layer2_len)):
-        stencil2 = stencil_func(p, 2 * coords2[j])
+        stencil2 = stencil_func(p, coords2[j])
         flat_idx = layer1_len + i * layer2_len + j
         modified = inplace_stencil_sweep(
             xp,
@@ -403,7 +419,7 @@ def _fv_interpolate_3sweeps(
     # interpolate nodes from buffer
     slices3 = []
     for i, j, k in product(range(layer1_len), range(layer2_len), range(layer3_len)):
-        stencil3 = stencil_func(p, 2 * coords3[k])
+        stencil3 = stencil_func(p, coords3[k])
         in_idx = layer1_len + i * layer2_len + j
         out_idx = (i * layer2_len + j) * layer3_len + k
         modified = inplace_stencil_sweep(
@@ -445,7 +461,7 @@ def _fv_interpolate_recursive(
             (nvars, nx, ny, nz).
         nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.
             Each value may be a float or an array of floats representing the
-            coordinates to interpolate along the respective dimension.
+            coordinates to interpolate along the respective dimension on [-1, 1].
         p: Polynomial degree of the interpolation stencil.
         buffer: Array to store intermediate results. Has shape
             (nvars, nx, ny, nz, nbuffer).
@@ -495,7 +511,7 @@ def _fv_interpolate_recursive_helper(
     FOUND_NODE = depth == len(dims) - 1
     child_slices = []
     for i, x in enumerate(coords[depth]):
-        stencil = stencil_func(p, 2 * x)
+        stencil = stencil_func(p, x)
         next_path = path + (i,)
 
         if FOUND_NODE:
@@ -560,3 +576,256 @@ def _buffer_flat_index(shape: Tuple[int, ...], idx: Tuple[int, ...]) -> int:
     if len(idx) > 1:
         base_idx += np.sum(np.cumprod(shape[: len(idx) - 1])).item()
     return _flattened_index(shape, idx) + base_idx
+
+
+def interpolate_cell_centers(
+    xp: ModuleType,
+    u: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    buffer: ArrayLike,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Interpolate cell-centered nodes from an array of finite volume averages.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to interpolate, has shape
+            (nvars, nx, ny, nz).
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for a
+            two-dimensional interpolation.
+        p: Polynomial degree of the interpolation stencil.
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, nbuffer).
+        out: Output array to store the interpolated values. Has shape
+            (nvars, nx, ny, nz, nout). Result is stored in out[..., 0].
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    return fv_interpolate(
+        xp,
+        u,
+        {d: 0 for d in active_dims},
+        p,
+        buffer,
+        out,
+    )
+
+
+def integrate_fv_averages(
+    xp: ModuleType,
+    u: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    buffer: ArrayLike,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Integrate the finite volume averages from an array of cell-centered values.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of cell-centered nodal values to integrate, has shape
+            (nvars, nx, ny, nz).
+        active_dims: Tuple indicating the active dimensions for integration. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            integration of a cell in a two-dimensional grid.
+        p: Polynomial degree of the integration stencil.
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, nbuffer).
+        out: Output array to store the integrated values. Has shape
+            (nvars, nx, ny, nz, nout). Result is stored in out[..., 0].
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    return fv_integrate(
+        xp,
+        u,
+        active_dims,
+        p,
+        buffer,
+        out,
+    )
+
+
+def interpolate_GaussLegendre_nodes(
+    xp: ModuleType,
+    u: ArrayLike,
+    face_dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    buffer: ArrayLike,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Interpolate opposing Gauss-Legendre nodes from an array of finite volume averages.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to interpolate, has shape
+            (nvars, nx, ny, nz).
+        face_dim: Dimension along which the Gauss-Legendre interpolation is performed.
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            interpolation of nodes along the face of a cell on a two-dimensional grid.
+        p: Polynomial degree of the interpolation stencil.
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, nbuffer).
+        out: Output array to store the interpolated values. Has shape
+            (nvars, nx, ny, nz, nout). The "left" Gauss-Legendre node is stored in
+            out[..., :n_gauss_legendre] and the "right" Gauss-Legendre node is stored
+            in out[..., n_gauss_legendre:2*n_gauss_legendre].
+    """
+    nodes, _ = _get_GaussLegendre_nodes_and_weights(face_dim, active_dims, p)
+    return fv_interpolate(
+        xp,
+        u,
+        nodes,
+        p,
+        buffer,
+        out,
+    )
+
+
+def integrate_GaussLegendre_nodes(
+    xp: ModuleType,
+    u: ArrayLike,
+    face_dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Integrate the finite volume averages at Gauss-Legendre nodes across the specified
+    face dimension.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of face-centered nodal values to integrate, has shape
+            (nvars, nx, ny, nz, ninterpolations) with the Gauss-Legendre nodes stored
+            along u[..., :n_GaussLegendre_nodes].
+        face_dim: Dimension along which the integration is performed.
+        active_dims: Tuple indicating the active dimensions for integration. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for a
+            two-dimensional integration.
+        p: Polynomial degree of the integration stencil.
+        out: Output array to store the integrated values. Has shape
+            (nvars, nx, ny, nz).
+    """
+    if len(active_dims) < 2:
+        raise ValueError(
+            "At least two active dimensions are required for Gauss-Legendre node "
+            "integration."
+        )
+    _, w = _get_GaussLegendre_nodes_and_weights(face_dim, active_dims, p)
+    n_GaussLegendre_nodes = w.shape[-1]
+    out[...] = xp.sum(u[..., :n_GaussLegendre_nodes] * w, axis=-1)
+
+
+@lru_cache(maxsize=None)
+def _get_GaussLegendre_nodes_and_weights(
+    face_dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+) -> Tuple[Dict[Literal["x", "y", "z"], FloatArray], np.ndarray]:
+    if face_dim not in active_dims:
+        raise ValueError(
+            f"face_dim '{face_dim}' must be one of the active dimensions: {active_dims}"
+        )
+    nodes = {face_dim: [-1, 1]}
+    weights = {face_dim: np.array([1, 1])}
+    for dim in active_dims:
+        if dim == face_dim:
+            continue
+        x, w = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))
+        nodes[dim] = x
+        weights[dim] = w / 2  # scale to [-0.5, 0.5] interval
+    wmesh = np.meshgrid(*weights.values(), indexing="ij")
+    flattened_weights = np.prod(np.array(wmesh), axis=0).reshape(1, 1, 1, 1, -1)
+    return nodes, flattened_weights
+
+
+def interpolate_face_centers(
+    xp: ModuleType,
+    u: ArrayLike,
+    face_dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    buffer: ArrayLike,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Interpolate opposing face-centered nodes from an array of finite volume averages.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to interpolate, has shape
+            (nvars, nx, ny, nz).
+        face_dim: Dimension along which the face-centered interpolation is performed.
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            interpolation of the face center of a cell on a two-dimensional grid.
+        p: Polynomial degree of the interpolation stencil.
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, nbuffer).
+        out: Output array to store the interpolated values. Has shape
+            (nvars, nx, ny, nz, nout). The "left" face-centered node is stored in
+            out[..., 0] and the "right" face-centered node is stored in out[..., 1].
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    transverse_dims = [d for d in active_dims if d != face_dim]
+    return fv_interpolate(
+        xp,
+        u,
+        {face_dim: [-1, 1]} | {d: 0 for d in transverse_dims},
+        p,
+        buffer,
+        out,
+    )
+
+
+def transversely_integrate_nodes(
+    xp: ModuleType,
+    u: ArrayLike,
+    face_dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    buffer: ArrayLike,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Integrate the finite volume averages transversely across the specified face
+    dimension using their central nodes.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of face-centered nodal values to integrate, has shape
+            (nvars, nx, ny, nz).
+        face_dim: Dimension along which the integration is performed.
+        active_dims: Tuple indicating the active dimensions for integration. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            integration of the face of a cell in a two-dimensional grid.
+        p: Polynomial degree of the integration stencil.
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, nbuffer).
+        out: Output array to store the integrated values. Has shape
+            (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
+    """
+    if len(active_dims) < 2:
+        raise ValueError(
+            "At least two active dimensions are required for transverse integration."
+        )
+    return fv_integrate(
+        xp,
+        u,
+        tuple(d for d in active_dims if d != face_dim),
+        p,
+        buffer,
+        out,
+    )

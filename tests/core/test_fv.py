@@ -59,9 +59,9 @@ def test_ones_stencil(stencil_size: int, axis: int):
     assert np.array_equal(out, out_original)
 
 
-@pytest.mark.parametrize("x_coord", [{"x": 0}, {"x": [-0.5, 0.5]}])
-@pytest.mark.parametrize("y_coord", [{}, {"y": 0}, {"y": [-np.nan, np.nan]}])
-@pytest.mark.parametrize("z_coord", [{}, {"z": 0}, {"z": [-0.5, 0, 0.5]}])
+@pytest.mark.parametrize("x_coord", [{"x": 0}, {"x": [-1.0, 1.0]}])
+@pytest.mark.parametrize("y_coord", [{}, {"y": 0}, {"y": np.nan}])
+@pytest.mark.parametrize("z_coord", [{}, {"z": 0}, {"z": [-1, -0.5, 0, 0.5, 1]}])
 @pytest.mark.parametrize(
     "fv_interpolate", [_fv_interpolate_direct, _fv_interpolate_recursive]
 )
@@ -77,11 +77,13 @@ def test_interpolate_node_from_uniform_field(
     Test interpolation of a uniform field at specified coordinates.
     """
     # Merge coordinate specs
-    y_coord_GL = y_coord.copy()
-    if isinstance(y_coord_GL.get("y", None), list) and len(y_coord_GL["y"]) == 2:
-        y_coord_GL["y"][0] = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))[0][0]
-        y_coord_GL["y"][1] = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))[0][-1]
-    nodes = x_coord | y_coord | z_coord
+    y_coord_copy = y_coord.copy()
+    if np.isnan(y_coord_copy.get("y", 1)):
+        y_coord_copy["y"] = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))[
+            0
+        ].tolist()
+    print(y_coord_copy)
+    nodes = x_coord | y_coord_copy | z_coord
     dims = list(nodes)
 
     # Count output nodes and intermediate buffer size
