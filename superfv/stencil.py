@@ -1,4 +1,5 @@
 from functools import lru_cache
+from types import ModuleType
 from typing import Any, List, Literal, Tuple, Union, cast
 
 import numpy as np
@@ -68,14 +69,19 @@ def conservative_interpolation_weights(
         called before `conservative_interpolation_weights(3, -1)`, the latter will
         return a float array, not an integer array.
     """
+    if x in ("l", "c", "r"):
+        x = {"l": -1, "c": 0, "r": 1}[cast(str, x)]
+    if x in (-1.0, 0.0, 1.0):
+        x = int(x)
     stencil = conservative_interpolation_stencil(p, x)
     resize_stencil(stencil, stencil_size(p))
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
+        print(stencil)
         return numerators / denominator
-    else:
-        return cast(np.ndarray, stencil.w)
+    print(stencil.w)
+    return cast(np.ndarray, stencil.w)
 
 
 @lru_cache(maxsize=None)
@@ -104,23 +110,33 @@ def uniform_quadrature_weights(p: int) -> np.ndarray:
         return cast(np.ndarray, stencil.w)
 
 
-@lru_cache(maxsize=None)
-def get_symmetric_slices(
-    ndim: int, nslices: int, axis: int
-) -> List[Union[slice, int, np.ndarray, Tuple[Union[slice, int, np.ndarray], ...]]]:
+def inplace_stencil_sweep(
+    xp: ModuleType,
+    arr: ArrayLike,
+    stencil_weights: Union[List[float], np.ndarray],
+    axis: int,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
     """
-    Returns a list of slices that divide an array into `nslices` symmetric slices along
-    the given axis.
+    Apply a symmetric stencil along a given axis and accumulate the result into the
+    central region.
 
     Args:
-        ndim: The number of dimensions of the array.
-        nslices: The number of slices to create.
-        axis: The axis along which to slice.
+        xp: Array namespace (e.g., `np` or `cupy`).
+        arr: Input array of field values to apply the stencil to.
+        stencil_weights: List or array of stencil weights. Expected to have odd length.
+        axis: Axis along which to apply the stencil.
+        out: Array to store the result. Expected to have the same shape as `arr`.
 
     Returns:
-        A list of slices that divide an array into `nslices`.
+        A slice object specifying the region of `out` that was modified.
     """
-    return [crop(axis, (i, -(nslices - 1) + i), ndim=ndim) for i in range(nslices)]
+    slices = get_symmetric_slices(arr.ndim, len(stencil_weights), axis)
+    modified = slices[len(slices) // 2]
+    out[modified] = 0.0
+    for w, s in zip(stencil_weights, slices):
+        xp.add(out[modified], xp.multiply(arr[s], w), out=out[modified])
+    return modified
 
 
 def stencil_sweep(
@@ -153,3 +169,20 @@ def stencil_sweep(
         xp.add(out, xp.multiply(arr[s], w), out)
 
     return out
+
+
+@lru_cache(maxsize=None)
+def get_symmetric_slices(ndim: int, nslices: int, axis: int) -> List[Tuple[slice, ...]]:
+    """
+    Returns a list of slices that divide an array into `nslices` symmetric slices along
+    the given axis.
+
+    Args:
+        ndim: The number of dimensions of the array.
+        nslices: The number of slices to create.
+        axis: The axis along which to slice.
+
+    Returns:
+        A list of slices that divide an array into `nslices`.
+    """
+    return [crop(axis, (i, -(nslices - 1) + i), ndim=ndim) for i in range(nslices)]

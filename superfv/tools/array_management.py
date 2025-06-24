@@ -61,10 +61,9 @@ def linf_norm(array: ArrayLike) -> float:
     return np.max(np.abs(array))
 
 
-@lru_cache(maxsize=None)
 def crop(
     axis: Union[int, Tuple[int, ...]],
-    cut: Tuple[int, int],
+    cut: Tuple[Optional[int], Optional[int]],
     step: Optional[int] = None,
     ndim: Optional[int] = None,
 ) -> Tuple[slice, ...]:
@@ -81,6 +80,16 @@ def crop(
     Returns:
         Tuple of slices for the given axis or axes.
     """
+    return _crop(axis, cut, step, ndim)
+
+
+@lru_cache(maxsize=None)
+def _crop(
+    axis: Union[int, Tuple[int, ...]],
+    cut: Tuple[Optional[int], Optional[int]],
+    step: Optional[int] = None,
+    ndim: Optional[int] = None,
+) -> Tuple[slice, ...]:
     if isinstance(axis, int):
         axis = (axis,)
     rank = ndim if ndim is not None else max(axis) + 1
@@ -92,6 +101,26 @@ def crop(
             )
         out[ax] = slice(cut[0] or None, cut[1] or None, step)
     return tuple(out)
+
+
+def crop_to_center(
+    arr: ArrayLike,
+    target_shape: Tuple[int, ...],
+    ignore_axes: Optional[Union[int, Tuple[int, ...]]] = None,
+) -> ArrayLike:
+    """
+    Crop an array to a target shape by removing an equal amount from both ends along each axis.
+
+    Args:
+        arr: The input array to be cropped.
+        target_shape: The desired shape of the output array.
+        ignore_axes: Axes to ignore when cropping.
+
+    Returns:
+        A cropped version of the input array with the target shape.
+    """
+    slices = _crop_to_center(arr.shape, target_shape, ignore_axes)
+    return arr[slices]
 
 
 @lru_cache(maxsize=None)
@@ -137,26 +166,6 @@ def _crop_to_center(
     return tuple(out)
 
 
-def crop_to_center(
-    arr: ArrayLike,
-    target_shape: Tuple[int, ...],
-    ignore_axes: Optional[Union[int, Tuple[int, ...]]] = None,
-) -> ArrayLike:
-    """
-    Crop an array to a target shape by removing an equal amount from both ends along each axis.
-
-    Args:
-        arr: The input array to be cropped.
-        target_shape: The desired shape of the output array.
-        ignore_axes: Axes to ignore when cropping.
-
-    Returns:
-        A cropped version of the input array with the target shape.
-    """
-    slices = _crop_to_center(arr.shape, target_shape, ignore_axes)
-    return arr[slices]
-
-
 def intersection_shape(*args: Tuple[int, ...]) -> Tuple[int, ...]:
     """
     Compute the intersection of the shapes of multiple arrays.
@@ -177,7 +186,8 @@ def merge_indices(
     as_array: bool = False,
 ) -> IndexLike:
     """
-    Merge indices, slices, or sequences of integers into a single slice or numpy array.
+    Merge indices, slices, or sequences of integers into a union of indices as a slice
+    if they form a contiguous range, or as a numpy array otherwise.
 
     Args:
         *slices: Indices, slices, or sequences of integers to merge.
@@ -225,6 +235,43 @@ def merge_indices(
         if idxs == list(range(idxs[0], idxs[-1] + 1)):
             return slice(idxs[0], idxs[-1] + 1)
     return np.array(idxs, dtype=np.int_)
+
+
+def merge_slices(*args: Tuple[slice, ...], union: bool = False) -> Tuple[slice, ...]:
+    """
+    Merge multiple N-dimensional slices into a single tuple of slices that covers the
+    intersection or union of all input slices along each axis.
+
+    Args:
+        *args: Tuples of slices (e.g., for indexing a multi-dimensional array).
+        union: If True, compute the union of the slices instead of the intersection.
+
+    Returns:
+        Tuple of slices that represent the merged slices along each axis.
+    """
+    return _merge_slices(*args, union=union)
+
+
+@lru_cache(maxsize=None)
+def _merge_slices(*args: Tuple[slice, ...], union: bool = False) -> Tuple[slice, ...]:
+    n = max(len(s) for s in args)
+    result = []
+    for i in range(n):
+        starts_raw = [s[i].start if i < len(s) else None for s in args]
+        stops_raw = [s[i].stop if i < len(s) else None for s in args]
+
+        starts = [x for x in starts_raw if x is not None]
+        stops = [x for x in stops_raw if x is not None]
+
+        if union:
+            start = min(starts) if len(starts) == len(starts_raw) else None
+            stop = max(stops) if len(stops) == len(stops_raw) else None
+        else:
+            start = max(starts) if starts else None
+            stop = min(stops) if stops else None
+
+        result.append(slice(start, stop))
+    return tuple(result)
 
 
 @dataclass
