@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from functools import lru_cache
 from itertools import product
 from types import ModuleType
-from typing import Callable, Dict, List, Literal, Tuple, Union
+from typing import Callable, Dict, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -13,9 +13,11 @@ from .stencil import (
 )
 from .tools.array_management import ArrayLike, merge_slices
 
-DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
+InterpCoord = Union[int, float]
+InterpCoords = Union[Sequence[InterpCoord], np.ndarray]
+StencilWeights = Union[Sequence[float], np.ndarray]
 
-FloatArray = Union[List[float], np.ndarray]
+DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
 
 
 def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayLike]:
@@ -140,10 +142,13 @@ def fv_average(
     return np.sum(weights * vals, axis=4)
 
 
+Union[int, float, Sequence[Union[int, float]]]
+
+
 def fv_interpolate(
     xp: ModuleType,
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[float, FloatArray]],
+    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
@@ -220,9 +225,9 @@ def fv_integrate(
 
 def _fv_interpolate_direct(
     xp: ModuleType,
-    stencil_func: Callable[[int, float], FloatArray],
+    stencil_func: Callable[[int, InterpCoord], StencilWeights],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[float, FloatArray]],
+    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
@@ -281,9 +286,9 @@ def _fv_interpolate_direct(
 
 def _fv_interpolate_1sweep(
     xp: ModuleType,
-    stencil_func: Callable[[int, float], FloatArray],
+    stencil_func: Callable[[int, InterpCoord], StencilWeights],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[float, FloatArray]],
+    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     out: ArrayLike,
 ):
@@ -307,9 +312,9 @@ def _fv_interpolate_1sweep(
 
 def _fv_interpolate_2sweeps(
     xp: ModuleType,
-    stencil_func: Callable[[int, float], FloatArray],
+    stencil_func: Callable[[int, InterpCoord], StencilWeights],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[float, FloatArray]],
+    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
@@ -362,9 +367,9 @@ def _fv_interpolate_2sweeps(
 
 def _fv_interpolate_3sweeps(
     xp: ModuleType,
-    stencil_func: Callable[[int, float], FloatArray],
+    stencil_func: Callable[[int, InterpCoord], StencilWeights],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[float, FloatArray]],
+    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
@@ -441,9 +446,9 @@ def _to_iter(x):
 
 def _fv_interpolate_recursive(
     xp: ModuleType,
-    stencil_func: Callable[[int, float], FloatArray],
+    stencil_func: Callable[[int, InterpCoord], StencilWeights],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[float, FloatArray]],
+    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
@@ -488,7 +493,7 @@ def _fv_interpolate_recursive(
 
 def _fv_interpolate_recursive_helper(
     xp: ModuleType,
-    stencil_func: Callable[[int, float], FloatArray],
+    stencil_func: Callable[[int, InterpCoord], StencilWeights],
     u: ArrayLike,
     dims: List[str],
     coords: List[List[float]],
@@ -698,7 +703,7 @@ def integrate_GaussLegendre_nodes(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     out: ArrayLike,
-) -> Tuple[slice, ...]:
+):
     """
     Integrate the finite volume averages at Gauss-Legendre nodes across the specified
     face dimension.
@@ -731,12 +736,12 @@ def _get_GaussLegendre_nodes_and_weights(
     face_dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
-) -> Tuple[Dict[Literal["x", "y", "z"], FloatArray], np.ndarray]:
+) -> Tuple[Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]], np.ndarray]:
     if face_dim not in active_dims:
         raise ValueError(
             f"face_dim '{face_dim}' must be one of the active dimensions: {active_dims}"
         )
-    nodes = {face_dim: [-1, 1]}
+    nodes = {face_dim: cast(Union[InterpCoord, InterpCoords], [-1, 1])}
     weights = {face_dim: np.array([1, 1])}
     for dim in active_dims:
         if dim == face_dim:
@@ -783,7 +788,8 @@ def interpolate_face_centers(
     return fv_interpolate(
         xp,
         u,
-        {face_dim: [-1, 1]} | {d: 0 for d in transverse_dims},
+        {face_dim: cast(Union[InterpCoord, InterpCoords], [-1, 1])}
+        | {d: 0 for d in transverse_dims},
         p,
         buffer,
         out,

@@ -59,9 +59,9 @@ def test_ones_stencil(stencil_size: int, axis: int):
     assert np.array_equal(out, out_original)
 
 
-@pytest.mark.parametrize("x_coord", [{"x": 0}, {"x": [-1.0, 1.0]}])
+@pytest.mark.parametrize("x_coord", [{"x": 0}, {"x": [-1, 1]}])
 @pytest.mark.parametrize("y_coord", [{}, {"y": 0}, {"y": np.nan}])
-@pytest.mark.parametrize("z_coord", [{}, {"z": 0}, {"z": [-1, -0.5, 0, 0.5, 1]}])
+@pytest.mark.parametrize("z_coord", [{}, {"z": 0}, {"z": [-1.0, -0.5, 0.0, 0.5, 1.0]}])
 @pytest.mark.parametrize(
     "fv_interpolate", [_fv_interpolate_direct, _fv_interpolate_recursive]
 )
