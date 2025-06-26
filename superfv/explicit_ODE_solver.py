@@ -283,7 +283,7 @@ class ExplicitODESolver(ABC):
             self.snapshot()
             self.minisnapshot()
             self.timer.start("!ExplicitODESolver.integrate.body")
-            for _ in tqdm(range(n)):
+            for _ in tqdm(range(n)) if progress_bar else range(n):
                 self.take_step()
                 self.minisnapshot()
             self.timer.stop("!ExplicitODESolver.integrate.body")

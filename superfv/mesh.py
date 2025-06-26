@@ -61,7 +61,11 @@ class UniformFVMesh:
         xl_slab, xr_slab, yl_slab, yr_slab, zl_slab, zr_slab: Slab meshes on each of
             the six sides of the meshes, represented as tuples of 3D arrays for the x,
             y, and z coordinates.
-
+        x_active, y_active, z_active: Boolean flags indicating whether the x, y, and z
+            dimensions are active in the mesh (i.e., not ignored).
+        pad_x, pad_y, pad_z: Depth of each slab along each dimension.
+        _nx_, _ny_, _nz_: Effective number of cells in the x, y, and z dimensions,
+            including slabs if applicable.
     """
 
     nx: int = 1
@@ -100,6 +104,12 @@ class UniformFVMesh:
         self.x_active = not self.ignore_x
         self.y_active = not self.ignore_y
         self.z_active = not self.ignore_z
+        self.pad_x = self.slab_depth if self.x_active else 0
+        self.pad_y = self.slab_depth if self.y_active else 0
+        self.pad_z = self.slab_depth if self.z_active else 0
+        self._nx_ = self.nx + 2 * self.pad_x
+        self._ny_ = self.ny + 2 * self.pad_y
+        self._nz_ = self.nz + 2 * self.pad_z
 
         self._set_interfaces_and_centers()
         self._init_mesh()

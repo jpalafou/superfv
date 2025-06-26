@@ -207,6 +207,9 @@ class AdvectionSolver(FiniteVolumeSolver):
             },
         )
 
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
+        w[...] = u
+
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
         Trivial transformation for linear avection.

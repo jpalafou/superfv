@@ -5,6 +5,7 @@ from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, Union, c
 
 import numpy as np
 
+import superfv.fv as fv
 from superfv.fv import gauss_legendre_for_finite_volume
 
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
@@ -26,6 +27,7 @@ from .tools.array_management import (
     VariableIndexMap,
     crop,
     crop_to_center,
+    merge_slices,
     xp,
 )
 from .tools.timer import method_timer
@@ -261,7 +263,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_snapshots()
-        self._init_array_manager()
+        self._init_array_allocation()
         self._init_riemann_solver(riemann_solver)
         self._init_slope_limiting(
             MUSCL,
@@ -305,11 +307,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.using_zdim = nz > 1
         self.using = {"x": self.using_xdim, "y": self.using_ydim, "z": self.using_zdim}
         self.dims = "".join(dim for dim, using in self.using.items() if using)
+        self.active_dims = tuple(d for d in "xyz" if self.using[d])
         self.axes = tuple("xyz".index(dim) + 1 for dim in self.dims)
-        self.ndim = len(self.dims)
+        self.axis = {
+            d: i
+            for i, d in enumerate(["x", "y", "z"], start=1)
+            if d in self.active_dims
+        }
+        self.ndim = len(self.active_dims)
 
         # assign slab thickness
-        slab_thickness = -2 * (-p // 2) + 1
+        slab_thickness = -(-p // 2) + 1
+        self.slab_thickness = slab_thickness
+        self.interior = merge_slices(
+            *[crop(ax, (slab_thickness, -slab_thickness)) for ax in self.axis.values()]
+        )
 
         # init mesh object
         self.mesh = UniformFVMesh(
@@ -324,6 +336,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ignore_z=not self.using_zdim,
             slab_depth=slab_thickness,
         )
+        assert self.mesh.pad_x == (slab_thickness if self.using_xdim else 0)
+        assert self.mesh.pad_y == (slab_thickness if self.using_ydim else 0)
+        assert self.mesh.pad_z == (slab_thickness if self.using_zdim else 0)
 
         # assign p and CFL
         if p < 0:
@@ -346,6 +361,38 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 "Gauss-Legendre interpolation scheme is not supported in 1D."
             )
         self.interpolation_scheme = interpolation_scheme
+        self.GL = interpolation_scheme == "gauss-legendre"
+        if self.GL:
+
+            def interpolate(u, face_dim, p, buffer, out):
+                return fv.interpolate_GaussLegendre_nodes(
+                    self.xp, u, face_dim, self.active_dims, p, buffer, out
+                )
+
+            def integrate(f, face_dim, p, buffer, out):
+                return fv.integrate_GaussLegendre_nodes(
+                    self.xp, f, face_dim, self.active_dims, p, buffer, out[..., 0]
+                )
+
+        else:
+
+            def interpolate(u, face_dim, p, buffer, out):
+                return fv.interpolate_face_centers(
+                    self.xp, u, face_dim, self.active_dims, p, buffer, out
+                )
+
+            def integrate(f, face_dim, p, buffer, out):
+                return fv.transversely_integrate_nodes(
+                    self.xp, f[..., 0], face_dim, self.active_dims, p, buffer, out
+                )
+
+        if self.ndim == 1:
+
+            def integrate(f, face_dim, p, buffer, out):
+                out[...] = f
+
+        self.interpolation_func = interpolate
+        self.integration_func = integrate
         self.flux_recipe = flux_recipe
         self.lazy_primitives = lazy_primitives
 
@@ -516,7 +563,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_snapshots(self):
         self.minisnapshots["MOOD_iters"] = []
 
-    def _init_array_manager(self):
+    def _init_array_allocation(self):
         self.interpolation_cache = ArrayManager()
         self.MOOD_cache = ArrayManager()
         self.ZS_cache = ArrayManager()
@@ -528,14 +575,49 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize flux arrays
         nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
-        self.arrays.add("F", np.zeros((nvars, nx + 1, ny, nz)))
-        self.arrays.add("G", np.zeros((nvars, nx, ny + 1, nz)))
-        self.arrays.add("H", np.zeros((nvars, nx, ny, nz + 1)))
+        self.arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
+        self.arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
+        self.arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
 
         # initialize snapshot arrays
+        assert self.arrays["u"].shape == (nvars, nx, ny, nz)
         self.arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
         self.arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
         self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
+        self.arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+
+        # initialize workspace arrays
+        _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
+        max_nodes = self.nodes_per_face(self.p)
+        max_ninterps = 2 * max_nodes
+
+        self.arrays.add("u_workspace", np.empty((nvars, _nx_, _ny_, _nz_)))
+        self.arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        self.arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        self.arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        self.arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        self.arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        self.arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
+        self.arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
+        self.arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
+
+        # fill arrays with NaNs to sabotage unpermitted use
+        self.arrays["F"].fill(np.nan)
+        self.arrays["G"].fill(np.nan)
+        self.arrays["H"].fill(np.nan)
+        self.arrays["ucc"].fill(np.nan)
+        self.arrays["wcc"].fill(np.nan)
+        self.arrays["w"].fill(np.nan)
+        self.arrays["dudt"].fill(np.nan)
+        self.arrays["u_workspace"].fill(np.nan)
+        self.arrays["buffer"].fill(np.nan)
+        self.arrays["x_nodes"].fill(np.nan)
+        self.arrays["y_nodes"].fill(np.nan)
+        self.arrays["z_nodes"].fill(np.nan)
+        self.arrays["centroid"].fill(np.nan)
+        self.arrays["F_wrkspce"].fill(np.nan)
+        self.arrays["G_wrkspce"].fill(np.nan)
+        self.arrays["H_wrkspce"].fill(np.nan)
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -686,22 +768,137 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dudt (ArrayLike): Right-hand side of the ODE as an array. Has shape
                 (nvars, nx, ny, nz).
         """
-        fluxes = self.compute_fluxes(
-            t=t,
-            u=u,
-            mode=self.interpolation_scheme,
-            p=self.p,
-            limiting_scheme=self.a_priori_slope_limiting_scheme,
-            slope_limiter=self.a_priori_slope_limiter,
-        )
-        if self.MOOD:
-            fluxes = self.MOOD_loop(t, u, fluxes)
-        self._f_cleanup()
-        return self.RHS(u, *fluxes)
+        out = self.arrays["dudt"]
 
-    def _f_cleanup(self):
-        if self.a_priori_slope_limiting_scheme == "zhang-shu":
-            self.ZS_cache.clear()
+        self.inplace_compute_fluxes(u, self.p)
+
+        # compute the right-hand side of the ODE
+        out[...] = 0.0
+        for dim in self.active_dims:
+            F = self.arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
+            h = getattr(self.mesh, "h" + dim)
+            self.xp.add(
+                out,
+                -(1 / h)
+                * (
+                    F[crop(self.axis[dim], (1, None))]
+                    - F[crop(self.axis[dim], (None, -1))]
+                ),
+                out=out,
+            )
+        return out.copy()
+
+    def inplace_compute_fluxes(self, u: ArrayLike, p: int):
+        """
+        Writes fluxes computed with polynomial degree `p` to `self.arrays["F"]`,
+        `self.arrays["G"]`, and `self.arrays["H"]`.
+        """
+        _u_ = self.arrays["u_workspace"]
+        _u_[self.interior] = u
+        self.inplace_apply_bc(_u_)
+
+        for dim in self.active_dims:
+            self.inplace_interpolate_faces(_u_, dim, p, convert_to_primitives=False)
+
+        for dim in self.active_dims:
+            self.inplace_integrate_fluxes(dim, p)
+
+    def inplace_apply_bc(self, u: ArrayLike, primitives: bool = False):
+        self.bc(u, (self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z))
+
+    def inplace_interpolate_faces(
+        self,
+        u: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        p: int,
+        convert_to_primitives: bool = True,
+    ):
+        """
+        Interpolate the face nodes at the opposing face centers and optionally convert
+        the interpolated values to primitive variables.
+
+        Args:
+            u: Workspace array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            dim: Dimension in which to interpolate the face nodes. Possible values:
+                - "x": Interpolate in the x-direction.
+                - "y": Interpolate in the y-direction.
+                - "z": Interpolate in the z-direction.
+            p: Polynomial degree of the spatial discretization.
+            convert_to_primitives: Whether to convert the interpolated values to
+                primitive variables.
+
+        Returns:
+            None. Modifies `self.arrays[dim + "_nodes"]` in place.
+
+        Notes:
+            - `self.arrays["buffer"]` is used as a temporary buffer for sweeps.
+            - Boundary conditions are applied to the interpolated face nodes.
+        """
+        out = self.arrays[dim + "_nodes"]
+        buffer = self.arrays["buffer"]
+
+        self.interpolation_func(
+            u,
+            face_dim=dim,
+            p=p,
+            buffer=buffer,
+            out=out,
+        )
+
+        if convert_to_primitives:
+            self.conservatives_to_primitives(out, buffer)
+            out[...] = buffer
+
+        self.inplace_apply_bc(out, primitives=convert_to_primitives)
+
+    def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
+        """
+        Integrate the flux nodes at the face centers using the transverse quadrature or
+        Gauss-Legendre quadrature.
+
+        Args:
+            dim: Dimension in which to integrate the flux nodes. Possible values:
+                - "x": Integrate in the x-direction.
+                - "y": Integrate in the y-direction.
+                - "z": Integrate in the z-direction.
+            p: Polynomial degree of the spatial discretization.
+
+        Returns:
+            None. Modifies `self.arrays["F" + dim]` in place.
+
+        Notes:
+            - `self.arrays["buffer"]` is used as a temporary buffer for the sweeps.
+        """
+        Fname = {"x": "F", "y": "G", "z": "H"}[dim]
+        flux_workspace = self.arrays[Fname + "_wrkspce"]
+        out = self.arrays[Fname]
+        buffer = self.arrays["buffer"]
+        primitive_nodes = self.arrays[dim + "_nodes"]
+
+        # separate into left and right face nodes
+        n = self.nodes_per_face(p)
+        wl = primitive_nodes[crop(4, (None, n))]
+        wr = primitive_nodes[crop(4, (n, 2 * n))]
+
+        # compute the flux nodes using the Riemann solver
+        pad = getattr(self.mesh, f"pad_{dim}")
+        right_state = wl[crop(self.axis[dim], (pad, -pad + 1))]
+        left_state = wr[crop(self.axis[dim], (pad - 1, -pad))]
+        flux_nodes = self.riemann_solver(left_state, right_state, dim)
+
+        # integrate the flux nodes
+        self.integration_func(flux_nodes, dim, p, buffer, flux_workspace)
+
+        # crop the flux workspace to the interior
+        out[...] = flux_workspace[
+            merge_slices(self.interior, crop(self.axis[dim], (None, None)), union=True)
+        ][..., 0]
+
+    def nodes_per_face(self, p: int) -> int:
+        if self.GL:
+            return (-(-(p + 1) // 2)) ** (self.ndim - 1)
+        return 1
 
     @partial(method_timer, cat="FiniteVolumeSolver.compute_fluxes")
     def compute_fluxes(
@@ -1409,25 +1606,40 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        p = self.p
-        ucc = self.interpolate_cell_centers(
-            self.apply_bc(self.arrays["u"], -(-p // 2), t=self.t, p=p), p=p
-        )
-        wcc = self.primitives_from_conservatives(ucc)
-        if self.lazy_primitives:
-            w = self.primitives_from_conservatives(self.arrays["u"])
-        else:
-            w = self.interpolate_cell_averages(
-                self.apply_bc(
-                    wcc, -(-p // 2), primitives=True, fv_averages=False, t=self.t, p=0
-                ),
-                p=p,
-            )
+        _u_ = self.arrays["u_workspace"]
+        _u_[self.interior] = self.arrays["u"]
+        self.inplace_apply_bc(_u_)
 
-        # update the arrays
-        self.arrays["ucc"][...] = ucc
-        self.arrays["wcc"][...] = wcc
-        self.arrays["w"][...] = w
+        ucc = self.arrays["ucc"]
+        wcc = self.arrays["wcc"]
+        w = self.arrays["w"]
+        temp_out = self.arrays["x_nodes"]
+        buffer = self.arrays["buffer"]
+
+        p = self.p
+        dims = self.active_dims
+
+        # conservative cell centers
+        fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer, temp_out)
+        ucc[...] = temp_out[self.interior][..., 0]
+
+        # primitive cell centers
+        self.conservatives_to_primitives(ucc, buffer[self.interior][..., 0])
+        wcc[...] = buffer[self.interior][..., 0]
+
+        # primitive cell averages
+        if self.lazy_primitives:
+            self.conservatives_to_primitives(
+                self.arrays["u"], buffer[self.interior][..., 0]
+            )
+            w[...] = buffer[self.interior][..., 0]
+        else:
+            _u_[self.interior] = wcc
+            self.apply_bc(_u_, primitives=True)
+            fv.integrate_fv_averages(
+                self.xp, _u_, self.active_dims, p, buffer, temp_out
+            )
+            w[...] = temp_out[self.interior][..., 0]
 
         # store the snapshot
         data = {

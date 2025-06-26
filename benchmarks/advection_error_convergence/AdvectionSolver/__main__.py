@@ -14,13 +14,14 @@ OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256, 512, 1024]
 P_LIST = [0, 1, 2, 3]
-OTHER_INPUTS = dict(
-    interpolation_scheme="transverse",
-    ZS=True,
-    adaptive_timestepping=False,
-    SED=True,
-    lazy_primitives=False,
-)
+OTHER_INPUTS = {}
+# OTHER_INPUTS = dict(
+#     interpolation_scheme="transverse",
+#     ZS=True,
+#     adaptive_timestepping=False,
+#     SED=True,
+#     lazy_primitives=False,
+# )
 
 # remove old output
 if os.path.exists(OUTPUT_NAME):
@@ -44,7 +45,7 @@ for N, p in product(N_LIST, P_LIST):
         p=p,
         **OTHER_INPUTS,
     )
-    solver.run(1.0)
+    solver.run(1.0, progress_bar=False)
 
     # measure error
     idx = solver.variable_index_map

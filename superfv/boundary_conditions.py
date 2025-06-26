@@ -215,7 +215,7 @@ class BoundaryConditions:
 
             match bc_type:
                 case "periodic":
-                    self._apply_periodic_bc(out, slab_thickness, dim, pos)
+                    self._apply_periodic_bc(arr, slab_thickness, dim, pos)
                 case "dirichlet":
                     self._apply_dirichlet_bc(
                         out,
