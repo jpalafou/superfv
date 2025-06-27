@@ -738,6 +738,28 @@ def _get_GaussLegendre_nodes_and_weights(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
 ) -> Tuple[Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]], np.ndarray]:
+    """
+    Get Gauss-Legendre nodes and weights for two opposing cells along a specified face
+    dimension.
+
+    Args:
+        face_dim: Dimension along which the Gauss-Legendre nodes are defined.
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            interpolation of nodes along the face of a cell on a two-dimensional grid.
+        p: Polynomial degree of the interpolation stencil.
+
+    Returns:
+        nodes: Dictionary with keys 'x', 'y', 'z' and values as the Gauss-Legendre
+            nodes for the specified face dimension. The nodes corresponding to the
+            `dim` key are the left and right nodes of the face, represented as
+            `[-1, 1]`.
+        weights: Array of shape (1, 1, 1, 1, 2 * n_GaussLegendre_nodes) containing the
+            Gauss-Legendre weights for the left and right nodes of the face, written to
+            `weights[..., :n_GaussLegendre_nodes]` and
+            `weights[..., n_GaussLegendre_nodes:]`, respectively. The weights are
+            scaled to the interval [-0.5, 0.5].
+    """
     if face_dim not in active_dims:
         raise ValueError(
             f"face_dim '{face_dim}' must be one of the active dimensions: {active_dims}"

@@ -256,7 +256,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             Time-step size.
         """
         idx = self.variable_index_map
-        h = min(self.mesh.h)
+        h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
         vx = np.max(np.abs(u[idx("vx")]))
         vy = np.max(np.abs(u[idx("vy")]))
         vz = np.max(np.abs(u[idx("vz")]))

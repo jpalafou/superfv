@@ -50,7 +50,8 @@ class UniformFVMesh:
     Attributes:
         shape: Shape of the mesh as (nx, ny, nz).
         hx, hy, hz: Cell sizes in the x, y, and z dimensions.
-        h: Tuple of cell sizes (hx, hy, hz).
+        h: Dictionary containing cell sizes in each dimension, e.g.,
+            {"x": hx, "y": hy, "z": hz}.
         x_interfaces, y_interfaces, z_interfaces: Interfaces in the x, y, and z
             and z dimensions as 1D arrays.
         x_centers, y_centers, z_centers (ndarray): Centers of the cells in the x,
@@ -100,7 +101,7 @@ class UniformFVMesh:
         self.hx = (self.xlim[1] - self.xlim[0]) / self.nx
         self.hy = (self.ylim[1] - self.ylim[0]) / self.ny
         self.hz = (self.zlim[1] - self.zlim[0]) / self.nz
-        self.h = (self.hx, self.hy, self.hz)
+        self.h = {"x": self.hx, "y": self.hy, "z": self.hz}
         self.x_active = not self.ignore_x
         self.y_active = not self.ignore_y
         self.z_active = not self.ignore_z

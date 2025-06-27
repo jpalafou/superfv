@@ -300,7 +300,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         idx = self.variable_index_map
         w = self.primitives_from_conservatives(u)
-        h = min(self.mesh.h)
+        h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
         c = self.hydro.sound_speed(rho=w[idx("rho")], P=w[idx("P")], gamma=self.gamma)
         out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
         return out.item()

@@ -50,6 +50,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
+    @abstractmethod
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
+        """
+        Convert conservative variables to primitive variables and write them to `w`.
+        """
+        pass
+
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
         Convert primitive variables to conservative variables.
@@ -307,21 +314,43 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.using_zdim = nz > 1
         self.using = {"x": self.using_xdim, "y": self.using_ydim, "z": self.using_zdim}
         self.dims = "".join(dim for dim, using in self.using.items() if using)
-        self.active_dims = tuple(d for d in "xyz" if self.using[d])
+        self.active_dims = tuple(
+            cast(Literal["x", "y", "z"], d) for d in ["x", "y", "z"] if self.using[d]
+        )
         self.axes = tuple("xyz".index(dim) + 1 for dim in self.dims)
         self.axis = {
-            d: i
+            cast(Literal["x", "y", "z"], d): i
             for i, d in enumerate(["x", "y", "z"], start=1)
-            if d in self.active_dims
         }
         self.ndim = len(self.active_dims)
 
         # assign slab thickness
         slab_thickness = -(-p // 2) + 1
         self.slab_thickness = slab_thickness
+
+        # interior workspace view
         self.interior = merge_slices(
-            *[crop(ax, (slab_thickness, -slab_thickness)) for ax in self.axis.values()]
+            *[
+                crop(self.axis[d], (slab_thickness, -slab_thickness))
+                for d in self.active_dims
+            ]
         )
+
+        # interior workspace view for fluxes
+        self.flux_interior = {
+            dim: (
+                merge_slices(
+                    *[
+                        crop(self.axis[d], (slab_thickness, -slab_thickness))
+                        for d in self.active_dims
+                        if d != dim
+                    ],
+                )
+                if self.ndim > 1
+                else slice(None)
+            )
+            for dim in self.active_dims
+        }
 
         # init mesh object
         self.mesh = UniformFVMesh(
@@ -573,51 +602,56 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.MOOD_cache.transfer_to_device("gpu")
             self.ZS_cache.transfer_to_device("gpu")
 
+        arrays = self.arrays
+
         # initialize flux arrays
         nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
-        self.arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
-        self.arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
-        self.arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
+        arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
+        arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
+        arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
 
         # initialize snapshot arrays
-        assert self.arrays["u"].shape == (nvars, nx, ny, nz)
-        self.arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
-        self.arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
-        self.arrays.add("w", np.empty((nvars, nx, ny, nz)))
-        self.arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+        assert arrays["u"].shape == (nvars, nx, ny, nz)
+        arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
+        arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
+        arrays.add("w", np.empty((nvars, nx, ny, nz)))
+        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
 
         # initialize workspace arrays
         _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
         max_nodes = self.nodes_per_face(self.p)
         max_ninterps = 2 * max_nodes
 
-        self.arrays.add("u_workspace", np.empty((nvars, _nx_, _ny_, _nz_)))
-        self.arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        self.arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        self.arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        self.arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        self.arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        self.arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
-        self.arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
-        self.arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
+        arrays.add("u_workspace", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
+        arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
+        arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
         # fill arrays with NaNs to sabotage unpermitted use
-        self.arrays["F"].fill(np.nan)
-        self.arrays["G"].fill(np.nan)
-        self.arrays["H"].fill(np.nan)
-        self.arrays["ucc"].fill(np.nan)
-        self.arrays["wcc"].fill(np.nan)
-        self.arrays["w"].fill(np.nan)
-        self.arrays["dudt"].fill(np.nan)
-        self.arrays["u_workspace"].fill(np.nan)
-        self.arrays["buffer"].fill(np.nan)
-        self.arrays["x_nodes"].fill(np.nan)
-        self.arrays["y_nodes"].fill(np.nan)
-        self.arrays["z_nodes"].fill(np.nan)
-        self.arrays["centroid"].fill(np.nan)
-        self.arrays["F_wrkspce"].fill(np.nan)
-        self.arrays["G_wrkspce"].fill(np.nan)
-        self.arrays["H_wrkspce"].fill(np.nan)
+        arrays["F"].fill(np.nan)
+        arrays["G"].fill(np.nan)
+        arrays["H"].fill(np.nan)
+        arrays["ucc"].fill(np.nan)
+        arrays["wcc"].fill(np.nan)
+        arrays["w"].fill(np.nan)
+        arrays["dudt"].fill(np.nan)
+        arrays["u_workspace"].fill(np.nan)
+        arrays["buffer"].fill(np.nan)
+        arrays["x_nodes"].fill(np.nan)
+        arrays["y_nodes"].fill(np.nan)
+        arrays["z_nodes"].fill(np.nan)
+        arrays["centroid"].fill(np.nan)
+        arrays["F_wrkspce"].fill(np.nan)
+        arrays["G_wrkspce"].fill(np.nan)
+        arrays["H_wrkspce"].fill(np.nan)
+
+        # helper attribute
+        self.flux_names = {"x": "F", "y": "G", "z": "H"}
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -757,41 +791,43 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @partial(method_timer, cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
-        Compute the right-hand side of the ODE.
+        Compute the right-hand side of the ODE:
+
+            du/dt = -∇·F(u)
 
         Args:
             t: Time value.
-            u: Array of conservative, cell-averaged values. Has shape
-                (nvars, nx, ny, nz).
+            u: Array of conservative, cell-averaged values. Shape: (nvars, nx, ny, nz).
 
         Returns:
-            dudt (ArrayLike): Right-hand side of the ODE as an array. Has shape
-                (nvars, nx, ny, nz).
+            dudt: Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
         """
         out = self.arrays["dudt"]
 
         self.inplace_compute_fluxes(u, self.p)
 
-        # compute the right-hand side of the ODE
         out[...] = 0.0
         for dim in self.active_dims:
-            F = self.arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
-            h = getattr(self.mesh, "h" + dim)
-            self.xp.add(
-                out,
-                -(1 / h)
-                * (
-                    F[crop(self.axis[dim], (1, None))]
-                    - F[crop(self.axis[dim], (None, -1))]
-                ),
-                out=out,
-            )
+            self._add_flux_divergence(dim, out)
         return out.copy()
 
     def inplace_compute_fluxes(self, u: ArrayLike, p: int):
         """
-        Writes fluxes computed with polynomial degree `p` to `self.arrays["F"]`,
-        `self.arrays["G"]`, and `self.arrays["H"]`.
+        Updates the interior of `self.arrays["u_workspace"]` with the provided
+        conservative values `u` and applies boundary conditions in place.
+
+        Interpolates the face nodes in each active dimension with polynomial degree `p`
+        and writes the results to `self.arrays["x_nodes"]`, `self.arrays["y_nodes"]`,
+        and/or `self.arrays["z_nodes"]`.
+
+        Computes the face flux integral in each active dimension with polynomial degree
+        `p` and writes the results to `self.arrays["F"]`, `self.arrays["G"]`, and/or
+        `self.arrays["H"]`.
+
+        Args:
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            p: Polynomial degree of the spatial discretization.
         """
         _u_ = self.arrays["u_workspace"]
         _u_[self.interior] = u
@@ -803,7 +839,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for dim in self.active_dims:
             self.inplace_integrate_fluxes(dim, p)
 
-    def inplace_apply_bc(self, u: ArrayLike, primitives: bool = False):
+    def inplace_apply_bc(
+        self, u: ArrayLike, primitives: bool = False, pointwise: bool = False
+    ):
+        """
+        Apply boundary conditions to the provided array `u` in place.
+
+        Args:
+            u: Array of conservative or primitive variables. Has shape
+                (nvars, _nx_, _ny_, _nz_).
+            primitives: Whether to apply primitive boundary conditions instead of
+                conservative boundary conditions.
+            pointwise: Whether to apply pointwise boundary conditions instead of
+                cell-averaged boundary conditions.
+        """
         self.bc(u, (self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z))
 
     def inplace_interpolate_faces(
@@ -815,7 +864,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         """
         Interpolate the face nodes at the opposing face centers and optionally convert
-        the interpolated values to primitive variables.
+        the interpolated values to primitive variables, then update boundaries.
 
         Args:
             u: Workspace array of conservative, cell-averaged values. Has shape
@@ -833,7 +882,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Notes:
             - `self.arrays["buffer"]` is used as a temporary buffer for sweeps.
-            - Boundary conditions are applied to the interpolated face nodes.
         """
         out = self.arrays[dim + "_nodes"]
         buffer = self.arrays["buffer"]
@@ -865,55 +913,70 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p: Polynomial degree of the spatial discretization.
 
         Returns:
-            None. Modifies `self.arrays["F" + dim]` in place.
+            None. Modifies `self.arrays[{"x": "F", ...}[dim]]` in place.
 
         Notes:
             - `self.arrays["buffer"]` is used as a temporary buffer for the sweeps.
+            - `self.arrays[{"x": "F_wrkspce", ...}[dim]]` is used as a workspace for
+            the flux integration.
+            - `self.arrays[dim + "_nodes"]` contains the interpolated primitive
+                variables at the face nodes.
+
         """
-        Fname = {"x": "F", "y": "G", "z": "H"}[dim]
-        flux_workspace = self.arrays[Fname + "_wrkspce"]
-        out = self.arrays[Fname]
-        buffer = self.arrays["buffer"]
-        primitive_nodes = self.arrays[dim + "_nodes"]
-
-        # separate into left and right face nodes
         n = self.nodes_per_face(p)
-        wl = primitive_nodes[crop(4, (None, n))]
-        wr = primitive_nodes[crop(4, (n, 2 * n))]
-
-        # compute the flux nodes using the Riemann solver
         pad = getattr(self.mesh, f"pad_{dim}")
-        right_state = wl[crop(self.axis[dim], (pad, -pad + 1))]
-        left_state = wr[crop(self.axis[dim], (pad - 1, -pad))]
+        axis = self.axis[dim]
+        flux_name = self.flux_names[dim]
+        flux_workspace_name = flux_name + "_wrkspce"
+
+        out = self.arrays[flux_name]
+        flux_workspace = self.arrays[flux_workspace_name]
+
+        nodes = self.arrays[dim + "_nodes"]
+        wl = nodes[crop(4, (None, n))]
+        wr = nodes[crop(4, (n, 2 * n))]
+
+        left_state = wr[crop(axis, (pad - 1, -pad))]
+        right_state = wl[crop(axis, (pad, -pad + 1))]
         flux_nodes = self.riemann_solver(left_state, right_state, dim)
 
-        # integrate the flux nodes
-        self.integration_func(flux_nodes, dim, p, buffer, flux_workspace)
+        self.integration_func(flux_nodes, dim, p, self.arrays["buffer"], flux_workspace)
 
-        # crop the flux workspace to the interior
-        if self.ndim > 1:
-            trans_dims = [d for d in "xyz" if (d != dim and d in self.active_dims)]
-            flux_interior = merge_slices(
-                *[
-                    crop(
-                        self.axis[d],
-                        (
-                            getattr(self.mesh, "pad_" + d),
-                            -getattr(self.mesh, "pad_" + d),
-                        ),
-                    )
-                    for d in trans_dims
-                ]
-            )
-        else:
-            flux_interior = slice(None)
-
-        out[...] = flux_workspace[flux_interior][..., 0]
+        out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 
     def nodes_per_face(self, p: int) -> int:
+        """
+        Returns the number of nodes per face for a given polynomial degree `p`.
+
+        Args:
+            p: Polynomial degree of the spatial discretization.
+        """
         if self.GL:
             return (-(-(p + 1) // 2)) ** (self.ndim - 1)
         return 1
+
+    def _add_flux_divergence(self, dim: Literal["x", "y", "z"], out: ArrayLike):
+        """
+        Add the flux divergence in the specified dimension to the output array.
+
+        Args:
+            dim: Dimension in which to compute the flux divergence. Possible values:
+                - "x": Compute in the x-direction.
+                - "y": Compute in the y-direction.
+                - "z": Compute in the z-direction.
+            out: Output array to which the flux divergence is added. Has shape
+                (nvars, nx, ny, nz).
+        """
+        flux_name = self.flux_names[dim]
+        h = self.mesh.h[dim]
+        axis = self.axis[dim]
+
+        F = self.arrays[flux_name]
+        self.xp.add(
+            out,
+            -(1 / h) * (F[crop(axis, (1, None))] - F[crop(axis, (None, -1))]),
+            out=out,
+        )
 
     @partial(method_timer, cat="FiniteVolumeSolver.compute_fluxes")
     def compute_fluxes(
