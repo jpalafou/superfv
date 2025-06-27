@@ -13,6 +13,7 @@ issues:
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
 - [ ] vestigial 'half-dt' option in MOOD
 - [ ] move interpolation and integration functions to fv or some other modules
+- [ ] for large p and N, the first step is actually the fastest
 
 optimizations:
 - [ ] preallocate padded arrays?

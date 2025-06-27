@@ -1,8 +1,6 @@
 from functools import partial
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
-import numpy as np
-
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
@@ -51,6 +49,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        log_every_step: bool = True,
     ):
         """
         Initialize the finite volume solver of the advection equation.
@@ -148,6 +147,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
         super().__init__(
             ic=ic,
@@ -182,12 +182,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             PAD_tol=PAD_tol,
             SED=SED,
             cupy=cupy,
+            log_every_step=log_every_step,
         )
-
-    def _init_snapshots(self):
-        super()._init_snapshots()
-        self.minisnapshots["min_rho"] = []
-        self.minisnapshots["max_rho"] = []
 
     def define_vars(self) -> VariableIndexMap:
         """
@@ -255,16 +251,19 @@ class AdvectionSolver(FiniteVolumeSolver):
         Returns:
             Time-step size.
         """
+        xp = self.xp
         idx = self.variable_index_map
+
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        vx = np.max(np.abs(u[idx("vx")]))
-        vy = np.max(np.abs(u[idx("vy")]))
-        vz = np.max(np.abs(u[idx("vz")]))
+        vx = xp.max(xp.abs(u[idx("vx")]))
+        vy = xp.max(xp.abs(u[idx("vy")]))
+        vz = xp.max(xp.abs(u[idx("vz")]))
         return (self.CFL * h / (vx + vy + vz)).item()
 
-    @partial(method_timer, cat="AdvectionSolver.minisnapshot")
-    def minisnapshot(self):
-        super().minisnapshot()
+    @partial(method_timer, cat="AdvectionSolver.log_quantity")
+    def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, float]:
         idx = self.variable_index_map
-        self.minisnapshots["min_rho"].append(self.arrays["u"][idx("rho")].min().item())
-        self.minisnapshots["max_rho"].append(self.arrays["u"][idx("rho")].max().item())
+        return {
+            "min_rho": self.arrays["u"][idx("rho")].min().item(),
+            "max_rho": self.arrays["u"][idx("rho")].max().item(),
+        }

@@ -53,6 +53,7 @@ class EulerSolver(FiniteVolumeSolver):
         PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        log_every_step: bool = True,
         gamma: float = 1.4,
     ):
         """
@@ -152,6 +153,7 @@ class EulerSolver(FiniteVolumeSolver):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            log_every_step: Whether to call `log_quantity` at the end of each timestep.
             gamma (float): Adiabatic index.
         """
         # init hydro
@@ -192,14 +194,8 @@ class EulerSolver(FiniteVolumeSolver):
             PAD_tol=PAD_tol,
             SED=SED,
             cupy=cupy,
+            log_every_step=log_every_step,
         )
-
-    def _init_snapshots(self):
-        super()._init_snapshots()
-        self.minisnapshots["min_rho"] = []
-        self.minisnapshots["max_rho"] = []
-        self.minisnapshots["min_E"] = []
-        self.minisnapshots["max_E"] = []
 
     def define_vars(self) -> VariableIndexMap:
         """
@@ -305,11 +301,12 @@ class EulerSolver(FiniteVolumeSolver):
         out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
         return out.item()
 
-    @partial(method_timer, cat="EulerSolver.minisnapshot")
-    def minisnapshot(self):
-        super().minisnapshot()
+    @partial(method_timer, cat="EulerSolver.log_quantity")
+    def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, float]:
         idx = self.variable_index_map
-        self.minisnapshots["min_rho"].append(self.arrays["u"][idx("rho")].min().item())
-        self.minisnapshots["max_rho"].append(self.arrays["u"][idx("rho")].max().item())
-        self.minisnapshots["min_E"].append(self.arrays["u"][idx("E")].min().item())
-        self.minisnapshots["max_E"].append(self.arrays["u"][idx("E")].max().item())
+        return {
+            "min_rho": self.arrays["u"][idx("rho")].min().item(),
+            "max_rho": self.arrays["u"][idx("rho")].max().item(),
+            "min_E": self.arrays["u"][idx("E")].min().item(),
+            "max_E": self.arrays["u"][idx("E")].min().item(),
+        }

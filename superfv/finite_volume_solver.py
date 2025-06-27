@@ -1,7 +1,7 @@
 import warnings
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 
 import numpy as np
 
@@ -119,6 +119,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
+    @abstractmethod
+    def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, Any]:
+        """
+        Log a quantity at the end of each time step.
+
+        Args:
+            u: Array of finite volume averaged conservative variables. Has shape
+                (nvars, nx, ny, nz).
+            t: Time value.
+
+        Returns:
+            Dictionary of logged quantities.
+        """
+        pass
+
     def __init__(
         self,
         ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
@@ -155,6 +170,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_tol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        log_every_step: bool = True,
     ):
         """
         Initialize the finite volume solver.
@@ -252,6 +268,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
         self._init_cupy(cupy)
         self._init_mesh(
@@ -269,7 +286,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
-        self._init_snapshots()
+        self._init_snapshots(log_every_step)
         self._init_array_allocation()
         self._init_riemann_solver(riemann_solver)
         self._init_slope_limiting(
@@ -589,8 +606,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cupy=self.cupy,
         )
 
-    def _init_snapshots(self):
+    def _init_snapshots(self, log_every_step: bool):
+        self.log_every_step = log_every_step
+        self.n_updates = 0
+        self.minisnapshots["n_updates"] = []
         self.minisnapshots["MOOD_iters"] = []
+        dummy_log = self.log_quantity(self.arrays["u"], 0.0)
+        for key in dummy_log.keys():
+            self.minisnapshots[key] = []
 
     def _init_array_allocation(self):
         self.interpolation_cache = ArrayManager()
@@ -809,6 +832,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         out[...] = 0.0
         for dim in self.active_dims:
             self._add_flux_divergence(dim, out)
+        self.n_updates += self.mesh.size
         return out.copy()
 
     def inplace_compute_fluxes(self, u: ArrayLike, p: int):
@@ -1731,7 +1755,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")
     def minisnapshot(self):
         super().minisnapshot()
+        self.minisnapshots["n_updates"].append(self.n_updates)
         self.minisnapshots["MOOD_iters"].append(self.MOOD_iter_count)
+        if self.log_every_step:
+            log = self.log_quantity(self.arrays["u"], self.t)
+            for key, value in log.items():
+                self.minisnapshots[key].append(value)
+        self.n_updates = 0
 
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):

@@ -685,7 +685,7 @@ def interpolate_GaussLegendre_nodes(
             out[..., :n_gauss_legendre] and the "right" Gauss-Legendre node is stored
             in out[..., n_gauss_legendre:2*n_gauss_legendre].
     """
-    nodes, _ = _get_GaussLegendre_nodes_and_weights(face_dim, active_dims, p)
+    nodes, _ = _get_GaussLegendre_nodes_and_weights(xp, face_dim, active_dims, p)
     return fv_interpolate(
         xp,
         u,
@@ -726,7 +726,7 @@ def integrate_GaussLegendre_nodes(
             "At least two active dimensions are required for Gauss-Legendre node "
             "integration."
         )
-    _, w2 = _get_GaussLegendre_nodes_and_weights(face_dim, active_dims, p)
+    _, w2 = _get_GaussLegendre_nodes_and_weights(xp, face_dim, active_dims, p)
     n_GaussLegendre_nodes = w2.shape[-1]
     w = w2[:, :, :, :, : n_GaussLegendre_nodes // 2]
     out[...] = xp.sum(u[..., :n_GaussLegendre_nodes] * w, axis=-1)
@@ -734,6 +734,7 @@ def integrate_GaussLegendre_nodes(
 
 @lru_cache(maxsize=None)
 def _get_GaussLegendre_nodes_and_weights(
+    xp: ModuleType,
     face_dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
@@ -743,6 +744,7 @@ def _get_GaussLegendre_nodes_and_weights(
     dimension.
 
     Args:
+        xp: `np` namespace.
         face_dim: Dimension along which the Gauss-Legendre nodes are defined.
         active_dims: Tuple indicating the active dimensions for interpolation. Can be
             some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
@@ -765,15 +767,15 @@ def _get_GaussLegendre_nodes_and_weights(
             f"face_dim '{face_dim}' must be one of the active dimensions: {active_dims}"
         )
     nodes = {face_dim: cast(Union[InterpCoord, InterpCoords], [-1, 1])}
-    weights = {face_dim: np.array([1, 1])}
+    weights = {face_dim: xp.array([1, 1])}
     for dim in active_dims:
         if dim == face_dim:
             continue
         x, w = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))
-        nodes[dim] = x
-        weights[dim] = w / 2  # scale to [-0.5, 0.5] interval
-    wmesh = np.meshgrid(*weights.values(), indexing="ij")
-    flattened_weights = np.prod(np.array(wmesh), axis=0).reshape(1, 1, 1, 1, -1)
+        nodes[dim] = x.tolist()
+        weights[dim] = xp.asarray(w) / 2  # scale to [-0.5, 0.5] interval
+    wmesh = xp.meshgrid(*weights.values(), indexing="ij")
+    flattened_weights = xp.prod(xp.array(wmesh), axis=0).reshape(1, 1, 1, 1, -1)
     return nodes, flattened_weights
 
 

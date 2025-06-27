@@ -58,10 +58,6 @@ def conservative_interpolation_weights(p: int, x: Coordinate) -> np.ndarray:
         called before `conservative_interpolation_weights(3, -1)`, the latter will
         return a float array, not an integer array.
     """
-    print(
-        f"Generating conservative interpolation stencil for p={p}, x={x} with size",
-        f" {stencil_size(p)}",
-    )
     stencil = conservative_interpolation_stencil(p, x)
     resize_stencil(stencil, stencil_size(p))
     if stencil.rational:
@@ -116,9 +112,6 @@ def uniform_quadrature_weights(p: int) -> np.ndarray:
             In this case, the weights do not necessarily sum to 1.
 
     """
-    print(
-        f"Generating uniform quadrature stencil for p={p} with size {stencil_size(p)}"
-    )
     stencil = uniform_quadrature(p)
     resize_stencil(stencil, stencil_size(p))
     if stencil.rational:

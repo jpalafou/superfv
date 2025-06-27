@@ -179,6 +179,8 @@ class ExplicitODESolver(ABC):
         self.minisnapshots["dt"].append(self.dt)
         self.minisnapshots["n_substeps"].append(self.substep_count)
         self.minisnapshots["dt_revisions"].append(self.dt_revision_count)
+        self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
+        self.timer.reset("current_step")
 
     def __init__(self, u0: np.ndarray):
         """
@@ -199,7 +201,7 @@ class ExplicitODESolver(ABC):
         self.arrays.add("u", u0)
 
         # initialize timer
-        self.timer = Timer(cats=["!ExplicitODESolver.integrate.body"])
+        self.timer = Timer(cats=["!ExplicitODESolver.integrate.body", "current_step"])
 
         # initialize snapshots
         self.snapshots: Snapshots = Snapshots()
@@ -208,6 +210,7 @@ class ExplicitODESolver(ABC):
             "n_substeps": [],
             "dt": [],
             "dt_revisions": [],
+            "run_time": [],
         }
 
         # initialize commit details
@@ -382,6 +385,7 @@ class ExplicitODESolver(ABC):
         Helper function called at the beginning of each step. Override for additional
         routines.
         """
+        self.timer.start("current_step")
         self.substep_count = 0
         self.dt_revision_count = 0
 
@@ -391,7 +395,7 @@ class ExplicitODESolver(ABC):
         routines.
         """
         self.step_count += 1
-        self.minisnapshot()
+        self.timer.stop("current_step")
 
     def progress_bar_action(
         self, action: str, T: Optional[float] = None, do_nothing: bool = False

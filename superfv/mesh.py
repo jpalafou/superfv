@@ -48,23 +48,24 @@ class UniformFVMesh:
             active dimension.
 
     Attributes:
-        shape: Shape of the mesh as (nx, ny, nz).
-        hx, hy, hz: Cell sizes in the x, y, and z dimensions.
+        coords: Tuple of 3D arrays representing the coordinates of the mesh
+            `(X, Y, Z)`.
         h: Dictionary containing cell sizes in each dimension, e.g.,
             {"x": hx, "y": hy, "z": hz}.
-        x_interfaces, y_interfaces, z_interfaces: Interfaces in the x, y, and z
-            and z dimensions as 1D arrays.
+        hx, hy, hz: Cell sizes in the x, y, and z dimensions.
+        pad_x, pad_y, pad_z: Depth of each slab along each dimension.
+        shape: Shape of the mesh as (nx, ny, nz).
+        size: Total number of cells in the mesh (nx * ny * nz).
+        X, Y, Z: Mesh grid arrays for the x, y, and z dimensions as 3D arrays.
+        x_active, y_active, z_active: Boolean flags indicating whether the x, y, and z
+            dimensions are active in the mesh (i.e., not ignored).
         x_centers, y_centers, z_centers (ndarray): Centers of the cells in the x,
             dimensions as 1D arrays.
-        X, Y, Z: Mesh grid arrays for the x, y, and z dimensions as 3D arrays.
-        coords: Tuple of 3D arrays representing the coordinates of the mesh in the x,
-            y, and z dimensions.
+        x_interfaces, y_interfaces, z_interfaces: Interfaces in the x, y, and z
+            and z dimensions as 1D arrays.
         xl_slab, xr_slab, yl_slab, yr_slab, zl_slab, zr_slab: Slab meshes on each of
             the six sides of the meshes, represented as tuples of 3D arrays for the x,
             y, and z coordinates.
-        x_active, y_active, z_active: Boolean flags indicating whether the x, y, and z
-            dimensions are active in the mesh (i.e., not ignored).
-        pad_x, pad_y, pad_z: Depth of each slab along each dimension.
         _nx_, _ny_, _nz_: Effective number of cells in the x, y, and z dimensions,
             including slabs if applicable.
     """
@@ -98,6 +99,7 @@ class UniformFVMesh:
 
         # assign mesh properties
         self.shape = (self.nx, self.ny, self.nz)
+        self.size = self.nx * self.ny * self.nz
         self.hx = (self.xlim[1] - self.xlim[0]) / self.nx
         self.hy = (self.ylim[1] - self.ylim[0]) / self.ny
         self.hz = (self.zlim[1] - self.zlim[0]) / self.nz

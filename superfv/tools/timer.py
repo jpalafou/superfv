@@ -98,6 +98,19 @@ class Timer:
                 f"Cannot stop '{cat}' timer since it is not in progress."
             )
 
+    def reset(self, cat: str):
+        """
+        Reset the timer for a specific category.
+
+        Args:
+            cat: Category name.
+        """
+        self._check_cat_existence(cat)
+        self.cum_time[cat] = 0.0
+        self.n_calls[cat] = 0
+        self._running[cat] = False
+        self._start_time[cat] = None
+
     def to_dict(self, decimals: int = 2) -> dict:
         """
         Return the cumulative times for all categories as a dictionary.
