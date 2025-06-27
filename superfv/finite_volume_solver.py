@@ -371,7 +371,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             def integrate(f, face_dim, p, buffer, out):
                 return fv.integrate_GaussLegendre_nodes(
-                    self.xp, f, face_dim, self.active_dims, p, buffer, out[..., 0]
+                    self.xp, f, face_dim, self.active_dims, p, out[..., 0]
                 )
 
         else:
@@ -891,9 +891,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.integration_func(flux_nodes, dim, p, buffer, flux_workspace)
 
         # crop the flux workspace to the interior
-        out[...] = flux_workspace[
-            merge_slices(self.interior, crop(self.axis[dim], (None, None)), union=True)
-        ][..., 0]
+        if self.ndim > 1:
+            trans_dims = [d for d in "xyz" if (d != dim and d in self.active_dims)]
+            flux_interior = merge_slices(
+                *[
+                    crop(
+                        self.axis[d],
+                        (
+                            getattr(self.mesh, "pad_" + d),
+                            -getattr(self.mesh, "pad_" + d),
+                        ),
+                    )
+                    for d in trans_dims
+                ]
+            )
+        else:
+            flux_interior = slice(None)
+
+        out[...] = flux_workspace[flux_interior][..., 0]
 
     def nodes_per_face(self, p: int) -> int:
         if self.GL:

@@ -219,7 +219,7 @@ def fv_integrate(
         {dim: 0 for dim in dims},
         p,
         buffer,
-        out[..., 0],
+        out,
     )
 
 
@@ -726,8 +726,9 @@ def integrate_GaussLegendre_nodes(
             "At least two active dimensions are required for Gauss-Legendre node "
             "integration."
         )
-    _, w = _get_GaussLegendre_nodes_and_weights(face_dim, active_dims, p)
-    n_GaussLegendre_nodes = w.shape[-1]
+    _, w2 = _get_GaussLegendre_nodes_and_weights(face_dim, active_dims, p)
+    n_GaussLegendre_nodes = w2.shape[-1]
+    w = w2[:, :, :, :, : n_GaussLegendre_nodes // 2]
     out[...] = xp.sum(u[..., :n_GaussLegendre_nodes] * w, axis=-1)
 
 

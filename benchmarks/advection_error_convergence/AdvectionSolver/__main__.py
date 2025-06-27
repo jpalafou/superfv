@@ -11,10 +11,10 @@ from superfv.tools.array_management import l1_norm
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"
-DIMS = "x"
-N_LIST = [16, 32, 64, 128, 256, 512, 1024]
+DIMS = "xy"
+N_LIST = [16, 32, 64]
 P_LIST = [0, 1, 2, 3]
-OTHER_INPUTS = {}
+OTHER_INPUTS = dict(interpolation_scheme="gauss-legendre")
 # OTHER_INPUTS = dict(
 #     interpolation_scheme="transverse",
 #     ZS=True,

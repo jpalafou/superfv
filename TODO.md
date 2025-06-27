@@ -20,6 +20,7 @@ optimizations:
 - [ ] look into cleaning up interpolation cache
 
 cosmetics:
+- [ ] plot_1d_slice and others should default to x=None, y=0.5, z=0.5
 - [ ] clean up hydro/riemann solver modules
 - [ ] make gauss-legendre a boolean option
 - [ ] fix: progress bar for allow_overshoot=True
