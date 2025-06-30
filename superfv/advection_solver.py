@@ -255,9 +255,9 @@ class AdvectionSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
 
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        vx = xp.max(xp.abs(u[idx("vx")]))
-        vy = xp.max(xp.abs(u[idx("vy")]))
-        vz = xp.max(xp.abs(u[idx("vz")]))
+        vx = xp.max(xp.abs(u[idx("vx")])) if self.using["x"] else 0.0
+        vy = xp.max(xp.abs(u[idx("vy")])) if self.using["y"] else 0.0
+        vz = xp.max(xp.abs(u[idx("vz")])) if self.using["z"] else 0.0
         return (self.CFL * h / (vx + vy + vz)).item()
 
     @partial(method_timer, cat="AdvectionSolver.log_quantity")

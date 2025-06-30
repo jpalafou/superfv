@@ -21,17 +21,17 @@ def canonicalize_interp_coord(
     """
 
     @wraps(func)
-    def wrapper(p: int, x: Coordinate) -> np.ndarray:
+    def wrapper(xp, p: int, x: Coordinate) -> np.ndarray:
         if isinstance(x, float) and x in (-1.0, 0.0, 1.0):
             x = int(x)
-        return func(p, x)
+        return func(xp, p, x)
 
     return wrapper
 
 
 @canonicalize_interp_coord
 @lru_cache(maxsize=None)
-def conservative_interpolation_weights(p: int, x: Coordinate) -> np.ndarray:
+def conservative_interpolation_weights(xp, p: int, x: Coordinate) -> np.ndarray:
     """
     Returns the weights of the conservative interpolation stencil for a given
     polynomial degree.
@@ -63,8 +63,8 @@ def conservative_interpolation_weights(p: int, x: Coordinate) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return numerators / denominator
-    return cast(np.ndarray, stencil.w)
+        return xp.asarray(numerators / denominator)
+    return xp.asarray(cast(np.ndarray, stencil.w))
 
 
 @lru_cache(maxsize=None)
@@ -97,7 +97,7 @@ def resize_stencil(stencil: Stencil, target_size: int):
 
 
 @lru_cache(maxsize=None)
-def uniform_quadrature_weights(p: int) -> np.ndarray:
+def uniform_quadrature_weights(xp, p: int) -> np.ndarray:
     """
     Returns the weights of the uniform quadrature stencil for a given polynomial
     degree.
@@ -117,15 +117,15 @@ def uniform_quadrature_weights(p: int) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return numerators / denominator
+        return xp.asarray(numerators / denominator)
     else:
-        return cast(np.ndarray, stencil.w)
+        return xp.asarray(cast(np.ndarray, stencil.w))
 
 
 def inplace_stencil_sweep(
     xp: ModuleType,
     arr: ArrayLike,
-    stencil_weights: Union[Sequence[float], np.ndarray],
+    stencil_weights: Union[Sequence[float], ArrayLike],
     axis: int,
     out: ArrayLike,
 ) -> Tuple[slice, ...]:

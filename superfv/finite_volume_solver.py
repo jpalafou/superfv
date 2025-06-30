@@ -1763,6 +1763,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 self.minisnapshots[key].append(value)
         self.n_updates = 0
 
+    def called_at_end_of_step(self):
+        """
+        Called at the end of each time step to synchronize the GPU if using CuPy and to
+        perform any additional end-of-step operations.
+
+        """
+        if self.cupy:
+            self.xp.cuda.Device().synchronize()
+        super().called_at_end_of_step()
+
     @partial(method_timer, cat="!FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
         """

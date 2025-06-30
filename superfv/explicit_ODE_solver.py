@@ -199,6 +199,16 @@ class ExplicitODESolver(ABC):
         # initialize array manager
         self.arrays = ArrayManager()
         self.arrays.add("u", u0)
+        self.arrays.add("k0", np.empty_like(u0))
+        self.arrays.add("k1", np.empty_like(u0))
+        self.arrays.add("k2", np.empty_like(u0))
+        self.arrays.add("k3", np.empty_like(u0))
+        self.arrays.add("unew", np.empty_like(u0))
+        self.arrays["k0"].fill(np.nan)
+        self.arrays["k1"].fill(np.nan)
+        self.arrays["k2"].fill(np.nan)
+        self.arrays["k3"].fill(np.nan)
+        self.arrays["unew"].fill(np.nan)
 
         # initialize timer
         self.timer = Timer(cats=["!ExplicitODESolver.integrate.body", "current_step"])
@@ -221,7 +231,7 @@ class ExplicitODESolver(ABC):
         self._compute_revised_dt = self.default_compute_revised_dt
 
         # assign stepper signature
-        self.stepper: Callable[[float, ArrayLike, float], ArrayLike]
+        self.stepper: Callable[[float, ArrayLike, float]]
 
     def _get_commit_details(self) -> dict:
         """
@@ -281,29 +291,82 @@ class ExplicitODESolver(ABC):
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             progress_bar: Whether to print a progress bar during integration.
         """
-        # if given n, perform a simple time evolution
-        if n is not None:
+        if (n is None and T is None) or (n is not None and T is not None):
+            raise ValueError("Either 'n' or 'T' must be defined, but not both.")
+        elif n is not None:
+            self._integrate_for_fixed_number_of_steps(
+                n,
+                log_every_step=log_every_step,
+                snapshot_dir=snapshot_dir,
+                overwrite=overwrite,
+                allow_overshoot=allow_overshoot,
+                progress_bar=progress_bar,
+            )
+        else:
+            self._integrate_until_target_time_is_reached(
+                T,
+                log_every_step=log_every_step,
+                snapshot_dir=snapshot_dir,
+                overwrite=overwrite,
+                allow_overshoot=allow_overshoot,
+                progress_bar=progress_bar,
+            )
+
+    def _integrate_for_fixed_number_of_steps(
+        self,
+        n: int,
+        log_every_step: bool = False,
+        snapshot_dir: Optional[str] = None,
+        overwrite: bool = False,
+        allow_overshoot: bool = False,
+        progress_bar: bool = True,
+    ):
+        """
+        Integrate the ODE for a fixed number of steps.
+
+        Args:
+            n: Number of steps to take.
+            log_every_step: Whether to a snapshot at every step.
+            snapshot_dir Directory to save snapshots. If None, does not save.
+            overwrite: Whether to overwrite the snapshot directory if it exists.
+            allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
+            progress_bar: Whether to print a progress bar during integration.
+        """
+        # take initial snapshots
+        if self.t not in self.minisnapshots["t"]:
             self.snapshot()
             self.minisnapshot()
-            self.timer.start("!ExplicitODESolver.integrate.body")
-            for _ in tqdm(range(n)) if progress_bar else range(n):
-                self.take_step()
-                self.minisnapshot()
-            self.timer.stop("!ExplicitODESolver.integrate.body")
-            self.snapshot()
-            return
 
-        # try to read snapshots
-        if snapshot_dir is not None:
-            self.snapshot_dir = os.path.normpath(snapshot_dir)
-            if not overwrite:
-                if self.read_snapshots():
-                    return
+        self.timer.start("!ExplicitODESolver.integrate.body")
+        for _ in tqdm(range(n)) if progress_bar else range(n):
+            self.take_step()
+            self.minisnapshot()
+        self.timer.stop("!ExplicitODESolver.integrate.body")
 
-        # check T
-        if T is None:
-            raise ValueError("T and n cannot both be None.")
+        # closing snapshot
+        self.snapshot()
 
+    def _integrate_until_target_time_is_reached(
+        self,
+        T: Union[float, List[float]] = None,
+        log_every_step: bool = False,
+        snapshot_dir: Optional[str] = None,
+        overwrite: bool = False,
+        allow_overshoot: bool = False,
+        progress_bar: bool = True,
+    ):
+        """
+        Integrate the ODE until a target time is reached.
+
+        Args:
+            T: Times to simulate until. If list, snapshots are taken at each time
+                in the list. If float, a single time is used.
+            log_every_step: Whether to a snapshot at every step.
+            snapshot_dir Directory to save snapshots. If None, does not save.
+            overwrite: Whether to overwrite the snapshot directory if it exists.
+            allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
+            progress_bar: Whether to print a progress bar during integration.
+        """
         # format list of target times
         target_times: List[float]
         if T is None:
@@ -323,8 +386,9 @@ class ExplicitODESolver(ABC):
         self.progress_bar_action("setup", T=T_max, do_nothing=not progress_bar)
 
         # initial snapshot
-        self.snapshot()
-        self.minisnapshot()
+        if self.t not in self.minisnapshots["t"]:
+            self.snapshot()
+            self.minisnapshot()
 
         # simulation loop
         self.timer.start("!ExplicitODESolver.integrate.body")
@@ -347,10 +411,6 @@ class ExplicitODESolver(ABC):
         # clean up progress bar
         self.progress_bar_action("cleanup", do_nothing=not progress_bar)
 
-        # write snapshots
-        if snapshot_dir is not None:
-            self.write_snapshots(overwrite)
-
     @partial(method_timer, cat="ExplicitODESolver.take_step")
     def take_step(self, target_time: Optional[float] = None):
         """
@@ -367,14 +427,14 @@ class ExplicitODESolver(ABC):
         # determine time-step size and next state
         dt = clamp_dt(t, self.compute_dt(t, u), target_time)
         while True:
-            unew = self.stepper(t, u, dt)
-            if self.dt_criterion(t + dt, unew):
+            self.stepper(t, u, dt)  # revises self.arrays["unew"]
+            if self.dt_criterion(t + dt, self.arrays["unew"]):
                 break
             dt = clamp_dt(t, self.compute_revised_dt(t, u, dt), target_time)
             self.dt_revision_count += 1
 
         # update attributes
-        self.arrays["u"][...] = unew
+        self.arrays["u"][...] = self.arrays["unew"]
         self.t += dt
         self.dt = dt
 
@@ -423,89 +483,95 @@ class ExplicitODESolver(ABC):
 
     def euler(self, *args, **kwargs) -> None:
         self.integrator = "euler"
+        unew = self.arrays["unew"]
+        k0 = self.arrays["k0"]
 
         def stepper(t, u, dt):
             self.substep_dt = dt
 
             # stage 1
-            k0 = self.f(t, u)
-            unew = u + dt * k0
+            k0[...] = self.f(t, u)
+            unew[...] = u + dt * k0
             self.substep_count += 1
-
-            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)
 
     def ssprk2(self, *args, **kwargs) -> None:
         self.integrator = "ssprk2"
+        unew = self.arrays["unew"]
+        k0 = self.arrays["k0"]
+        k1 = self.arrays["k1"]
 
         def stepper(t, u, dt):
             self.substep_dt = dt  # constant throughout all SSPRK2 stages
 
             # stage 1
-            k0 = self.f(t, u)
-            u1 = u + dt * k0
+            k0[...] = self.f(t, u)
+            unew[...] = u + dt * k0
             self.substep_count += 1
 
             # stage 2
-            k1 = self.f(t + dt, u1)
-            unew = 0.5 * u + 0.5 * (u1 + dt * k1)
+            k1[...] = self.f(t + dt, unew)
+            unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
             self.substep_count += 1
-
-            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)
 
     def ssprk3(self, *args, **kwargs) -> None:
         self.integrator = "ssprk3"
+        unew = self.arrays["unew"]
+        k0 = self.arrays["k0"]
+        k1 = self.arrays["k1"]
+        k2 = self.arrays["k2"]
 
         def stepper(t, u, dt):
             self.substep_dt = dt  # constant throughout all SSPRK3 stages
 
             # stage 1
-            k0 = self.f(t, u)
+            k0[...] = self.f(t, u)
             self.substep_count += 1
 
             # stage 2
-            k1 = self.f(t + dt, u + dt * k0)
+            k1[...] = self.f(t + dt, u + dt * k0)
             self.substep_count += 1
 
             # stage 3
-            k2 = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
-            unew = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+            k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
+            unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
             self.substep_count += 1
-
-            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)
 
     def rk4(self, *args, **kwargs) -> None:
         self.integrator = "rk4"
+        unew = self.arrays["unew"]
+        k0 = self.arrays["k0"]
+        k1 = self.arrays["k1"]
+        k2 = self.arrays["k2"]
+        k3 = self.arrays["k3"]
 
         def stepper(t, u, dt):
             self.substep_dt = dt  # constant throughout all RK4 stages
 
             # stage 1
-            k0 = self.f(t, u)
+            k0[...] = self.f(t, u)
             self.substep_count += 1
 
             # stage 2
-            k1 = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
+            k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
             self.substep_count += 1
 
             # stage 3
-            k2 = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
+            k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
             self.substep_count += 1
 
             # stage 4
-            k3 = self.f(t + dt, u + dt * k2)
-            unew = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
+            k3[...] = self.f(t + dt, u + dt * k2)
+            unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
             self.substep_count += 1
-
-            return unew
 
         self.stepper = stepper
         self.integrate(*args, **kwargs)

@@ -103,6 +103,18 @@ class Snapshots:
         for t in self.time_values:
             yield t, self.data[t]
 
+    def __contains__(self, t: float) -> bool:
+        """
+        Checks if snapshot data is available for time `t`.
+
+        Args:
+            t: Time to check for snapshot data.
+
+        Returns:
+            True if snapshot data is available for time `t`, False otherwise.
+        """
+        return t in self.data
+
     def times(self) -> List[float]:
         """
         Returns the list of time values for which snapshot data is available.

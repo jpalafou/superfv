@@ -152,6 +152,7 @@ def fv_interpolate(
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
+    debug: bool = False,
 ) -> Tuple[slice, ...]:
     """
     Interpolate a nodal value from an array of finite volume averages.
@@ -171,18 +172,21 @@ def fv_interpolate(
             `out[..., :ninterpolations]`, where `ninterpolations` is the flattened
             number of coordinates across the specified dimensions. The order of the
             coordinates is determined by the order of the keys in `nodes`.
+        debug: If True, enables additional checks and validations for input and output
+            array shapes.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
     return _fv_interpolate_direct(
         xp,
-        conservative_interpolation_weights,
+        lambda p, x: conservative_interpolation_weights(xp, p, x),
         u,
         nodes,
         p,
         buffer,
         out,
+        debug,
     )
 
 
@@ -193,6 +197,7 @@ def fv_integrate(
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
+    debug: bool = False,
 ) -> Tuple[slice, ...]:
     """
     Compute an average from an array of cell-centered or face-centered nodal values.
@@ -208,18 +213,21 @@ def fv_integrate(
             (nvars, nx, ny, nz, nbuffer).
         out: Output array to store the interpolated values. Has shape
             (nvars, nx, ny, nz, nout). Results are written to `out[..., 0]`.
+        debug: If True, enables additional checks and validations for input and output
+            array shapes.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
     return _fv_interpolate_direct(
         xp,
-        lambda p, x: uniform_quadrature_weights(p),
+        lambda p, x: uniform_quadrature_weights(xp, p),
         u,
         {dim: 0 for dim in dims},
         p,
         buffer,
         out,
+        debug,
     )
 
 
@@ -231,6 +239,7 @@ def _fv_interpolate_direct(
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
+    debug: bool = False,
 ) -> Tuple[slice, ...]:
     """
     Interpolate a nodal value from an array of finite volume averages.
@@ -254,30 +263,37 @@ def _fv_interpolate_direct(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    if u.ndim != 4:
-        raise ValueError(
-            f"Input array u must have 4 dimensions, but has {u.ndim} dimensions."
-        )
-    if out.ndim != 5:
-        raise ValueError(
-            f"Output array out must have 5 dimensions, but has {out.ndim} dimensions."
-        )
-    if buffer.ndim != 5:
-        raise ValueError(
-            f"Buffer array must have 5 dimensions, but has {buffer.ndim} dimensions."
-        )
+    if debug:
+        if u.ndim != 4:
+            raise ValueError(
+                f"Input array u must have 4 dimensions, but has {u.ndim} dimensions."
+            )
+        if out.ndim != 5:
+            raise ValueError(
+                f"Output array out must have 5 dimensions, but has {out.ndim}"
+                " dimensions."
+            )
+        if buffer.ndim != 5:
+            raise ValueError(
+                f"Buffer array must have 5 dimensions, but has {buffer.ndim}"
+                " dimensions."
+            )
 
     # one-dimensional interpolation
     if len(nodes) == 1:
-        return _fv_interpolate_1sweep(xp, stencil_func, u, nodes, p, out)
+        return _fv_interpolate_1sweep(xp, stencil_func, u, nodes, p, out, debug)
 
     # two-dimensional interpolation
     if len(nodes) == 2:
-        return _fv_interpolate_2sweeps(xp, stencil_func, u, nodes, p, buffer, out)
+        return _fv_interpolate_2sweeps(
+            xp, stencil_func, u, nodes, p, buffer, out, debug
+        )
 
     # three-dimensional interpolation
     if len(nodes) == 3:
-        return _fv_interpolate_3sweeps(xp, stencil_func, u, nodes, p, buffer, out)
+        return _fv_interpolate_3sweeps(
+            xp, stencil_func, u, nodes, p, buffer, out, debug
+        )
 
     raise ValueError(
         f"Invalid number of dimensions in nodes: {len(nodes)}. Expected 1, 2, or 3."
@@ -291,10 +307,11 @@ def _fv_interpolate_1sweep(
     nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
     out: ArrayLike,
+    debug: bool = False,
 ):
     dim1 = next(iter(nodes))
     coords1 = _to_iter(nodes[dim1])
-    if out.shape[4] < len(coords1):
+    if debug and out.shape[4] < len(coords1):
         raise ValueError(
             f"Output interpolation axis size {out.shape[4]} is smaller than the number"
             f" number of coordinates {len(coords1)} for dimension '{dim1}'."
@@ -318,6 +335,7 @@ def _fv_interpolate_2sweeps(
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
+    debug: bool = False,
 ):
     dim1, dim2 = list(nodes)
     coords1 = _to_iter(nodes[dim1])
@@ -325,17 +343,18 @@ def _fv_interpolate_2sweeps(
     layer1_len = len(coords1)
     layer2_len = len(coords2)
 
-    if out.shape[4] < layer1_len * layer2_len:
-        raise ValueError(
-            f"Output interpolation axis size {out.shape[4]} is smaller than the number"
-            f" of coordinates {layer1_len * layer2_len} for dimensions '{dim1}' and "
-            f"'{dim2}'."
-        )
-    if buffer.shape[4] < layer1_len:
-        raise ValueError(
-            f"Buffer size {buffer.shape[4]} is smaller than the number of "
-            f"coordinates {layer1_len} for dimension '{dim1}'."
-        )
+    if debug:
+        if out.shape[4] < layer1_len * layer2_len:
+            raise ValueError(
+                f"Output interpolation axis size {out.shape[4]} is smaller than the"
+                f" number of coordinates {layer1_len * layer2_len} for dimensions"
+                f"'{dim1}' and '{dim2}'."
+            )
+        if buffer.shape[4] < layer1_len:
+            raise ValueError(
+                f"Buffer size {buffer.shape[4]} is smaller than the number of "
+                f"coordinates {layer1_len} for dimension '{dim1}'."
+            )
 
     # fill buffer
     slices = []
@@ -373,6 +392,7 @@ def _fv_interpolate_3sweeps(
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
+    debug: bool = False,
 ):
     dim1, dim2, dim3 = list(nodes)
     coords1 = _to_iter(nodes[dim1])
@@ -382,18 +402,19 @@ def _fv_interpolate_3sweeps(
     layer2_len = len(coords2)
     layer3_len = len(coords3)
 
-    if out.shape[4] < layer1_len * layer2_len * layer3_len:
-        raise ValueError(
-            f"Output interpolation axis size {out.shape[4]} is smaller than the number"
-            f" of coordinates {layer1_len}, {layer2_len}, and {layer3_len} "
-            f"for dimensions '{dim1}', '{dim2}', and '{dim3}'."
-        )
-    if buffer.shape[4] < layer1_len + layer1_len * layer2_len:
-        raise ValueError(
-            f"Buffer size {buffer.shape[4]} is smaller than the product of "
-            f"the number of coordinates {layer1_len} and {layer2_len} for "
-            f"dimensions '{dim1}' and '{dim2}'."
-        )
+    if debug:
+        if out.shape[4] < layer1_len * layer2_len * layer3_len:
+            raise ValueError(
+                f"Output interpolation axis size {out.shape[4]} is smaller than the"
+                f" number of coordinates {layer1_len}, {layer2_len}, and {layer3_len} "
+                f"for dimensions '{dim1}', '{dim2}', and '{dim3}'."
+            )
+        if buffer.shape[4] < layer1_len + layer1_len * layer2_len:
+            raise ValueError(
+                f"Buffer size {buffer.shape[4]} is smaller than the product of the"
+                f"number of coordinates {layer1_len} and {layer2_len} for dimensions"
+                f" '{dim1}' and '{dim2}'."
+            )
 
     # fill buffer layer 1
     slices = []
