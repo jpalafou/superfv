@@ -5,12 +5,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Uni
 
 import numpy as np
 
-import superfv.fv as fv
-from superfv.fv import gauss_legendre_for_finite_volume
-
+from . import fv
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
 from .explicit_ODE_solver import ExplicitODESolver
-from .fv import fv_average
+from .fv import fv_average, gauss_legendre_for_finite_volume
 from .mesh import UniformFVMesh
 from .slope_limiting import minmod, moncen, muscl
 from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
@@ -1802,3 +1800,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def plot_2d_slice(self, *args, **kwargs):
         return plot_2d_slice(self, *args, **kwargs)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["xp"] = None
+        state["bc"] = None
+        state["_init_ic"] = None
+        state["interpolation_func"] = None
+        state["integration_func"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.xp = __import__("cupy" if self.use_cupy else "numpy")

@@ -276,6 +276,7 @@ class ExplicitODESolver(ABC):
         overwrite: bool = False,
         allow_overshoot: bool = False,
         progress_bar: bool = True,
+        no_snapshots: bool = False,
     ):
         """
         Integrate the ODE.
@@ -290,6 +291,7 @@ class ExplicitODESolver(ABC):
             overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             progress_bar: Whether to print a progress bar during integration.
+            no_snapshots: Whether to skip taking snapshots.
         """
         if (n is None and T is None) or (n is not None and T is not None):
             raise ValueError("Either 'n' or 'T' must be defined, but not both.")
@@ -301,6 +303,7 @@ class ExplicitODESolver(ABC):
                 overwrite=overwrite,
                 allow_overshoot=allow_overshoot,
                 progress_bar=progress_bar,
+                no_snapshots=no_snapshots,
             )
         else:
             self._integrate_until_target_time_is_reached(
@@ -310,6 +313,7 @@ class ExplicitODESolver(ABC):
                 overwrite=overwrite,
                 allow_overshoot=allow_overshoot,
                 progress_bar=progress_bar,
+                no_snapshots=no_snapshots,
             )
 
     def _integrate_for_fixed_number_of_steps(
@@ -320,6 +324,7 @@ class ExplicitODESolver(ABC):
         overwrite: bool = False,
         allow_overshoot: bool = False,
         progress_bar: bool = True,
+        no_snapshots: bool = False,
     ):
         """
         Integrate the ODE for a fixed number of steps.
@@ -331,10 +336,12 @@ class ExplicitODESolver(ABC):
             overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             progress_bar: Whether to print a progress bar during integration.
+            no_snapshots: Whether to skip taking snapshots.
         """
         # take initial snapshots
         if self.t not in self.minisnapshots["t"]:
-            self.snapshot()
+            if not no_snapshots:
+                self.snapshot()
             self.minisnapshot()
 
         self.timer.start("!ExplicitODESolver.integrate.body")
@@ -344,7 +351,8 @@ class ExplicitODESolver(ABC):
         self.timer.stop("!ExplicitODESolver.integrate.body")
 
         # closing snapshot
-        self.snapshot()
+        if not no_snapshots:
+            self.snapshot()
 
     def _integrate_until_target_time_is_reached(
         self,
@@ -354,6 +362,7 @@ class ExplicitODESolver(ABC):
         overwrite: bool = False,
         allow_overshoot: bool = False,
         progress_bar: bool = True,
+        no_snapshots: bool = False,
     ):
         """
         Integrate the ODE until a target time is reached.
@@ -366,6 +375,7 @@ class ExplicitODESolver(ABC):
             overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             progress_bar: Whether to print a progress bar during integration.
+            no_snapshots: Whether to skip taking snapshots.
         """
         # format list of target times
         target_times: List[float]
@@ -387,7 +397,8 @@ class ExplicitODESolver(ABC):
 
         # initial snapshot
         if self.t not in self.minisnapshots["t"]:
-            self.snapshot()
+            if not no_snapshots:
+                self.snapshot()
             self.minisnapshot()
 
         # simulation loop
@@ -400,12 +411,13 @@ class ExplicitODESolver(ABC):
             self.progress_bar_action("update", do_nothing=not progress_bar)
 
             # snapshot decision and target time update
-            if self.t > T_max:
-                self.snapshot()  # trigger closing snapshot
-            elif (not allow_overshoot and self.t == target_time) or log_every_step:
-                self.snapshot()
-                if self.t == target_time and self.t < T_max:
-                    target_time = target_times.pop(0)
+            if not no_snapshots:
+                if self.t > T_max:
+                    self.snapshot()  # trigger closing snapshot
+                elif (not allow_overshoot and self.t == target_time) or log_every_step:
+                    self.snapshot()
+                    if self.t == target_time and self.t < T_max:
+                        target_time = target_times.pop(0)
         self.timer.stop("!ExplicitODESolver.integrate.body")
 
         # clean up progress bar
