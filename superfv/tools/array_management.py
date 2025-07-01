@@ -602,3 +602,13 @@ class ArrayManager:
         Return a dictionary representation of the manager.
         """
         return dict(names=list(self.arrays.keys()), device=self.device)
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """
+        Get the state of the ArrayManager for serialization.
+        """
+        return {
+            "arrays": {k: cp_array_to_numpy_array(v) for k, v in self.arrays.items()},
+            "device": "cpu",
+            "transfer_array": self._dummy_transfer_array,
+        }

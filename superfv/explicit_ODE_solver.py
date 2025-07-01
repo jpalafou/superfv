@@ -1,7 +1,6 @@
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -9,7 +8,7 @@ from tqdm import tqdm
 
 from .tools.array_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
-from .tools.timer import Timer, method_timer
+from .tools.timer import MethodTimer, Timer
 
 
 def clamp_dt(t: float, dt: float, target_time: Optional[float] = None) -> float:
@@ -54,7 +53,6 @@ class ExplicitODESolver(ABC):
     """
 
     @abstractmethod
-    @partial(method_timer, cat="?.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size.
@@ -69,7 +67,6 @@ class ExplicitODESolver(ABC):
         pass
 
     @abstractmethod
-    @partial(method_timer, cat="?.f")
     def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
         """
         Right-hand side of the ODE.
@@ -142,7 +139,6 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("compute_revised_dt method not implemented.")
 
-    @partial(method_timer, cat="ExplicitODESolver.read_snapshots")
     def read_snapshots(self) -> bool:
         """
         Read snapshots from the snapshot directory. Override to load more data.
@@ -152,7 +148,6 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("read_snapshots method not implemented.")
 
-    @partial(method_timer, cat="ExplicitODESolver.write_snapshots")
     def write_snapshots(self, overwrite: bool = False):
         """
         Write snapshots to the snapshot directory. Override to save more data.
@@ -162,14 +157,12 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("write_snapshots method not implemented.")
 
-    @partial(method_timer, cat="ExplicitODESolver.snapshot")
     def snapshot(self):
         """
         Snapshot function. Override to save more data to `self.snapshots`.
         """
         pass
 
-    @partial(method_timer, cat="ExplicitODESolver.minisnapshot")
     def minisnapshot(self):
         """
         Mini snapshot function. Is executed after every step. Override to save more
@@ -266,7 +259,7 @@ class ExplicitODESolver(ABC):
         except subprocess.CalledProcessError as e:
             return {"error": f"An error occurred: {e.stderr.strip()}"}
 
-    @partial(method_timer, cat="ExplicitODESolver.integrate")
+    @MethodTimer(cat="ExplicitODESolver.integrate")
     def integrate(
         self,
         T: Optional[Union[float, List[float]]] = None,
@@ -423,7 +416,7 @@ class ExplicitODESolver(ABC):
         # clean up progress bar
         self.progress_bar_action("cleanup", do_nothing=not progress_bar)
 
-    @partial(method_timer, cat="ExplicitODESolver.take_step")
+    @MethodTimer(cat="ExplicitODESolver.take_step")
     def take_step(self, target_time: Optional[float] = None):
         """
         Take a single step in the integration.
@@ -495,95 +488,94 @@ class ExplicitODESolver(ABC):
 
     def euler(self, *args, **kwargs) -> None:
         self.integrator = "euler"
-        unew = self.arrays["unew"]
-        k0 = self.arrays["k0"]
-
-        def stepper(t, u, dt):
-            self.substep_dt = dt
-
-            # stage 1
-            k0[...] = self.f(t, u)
-            unew[...] = u + dt * k0
-            self.substep_count += 1
-
-        self.stepper = stepper
+        self.stepper = self._euler_step
         self.integrate(*args, **kwargs)
+
+    def _euler_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
+        k0 = self.arrays["k0"]
+        unew = self.arrays["unew"]
+
+        # stage 1
+        k0[...] = self.f(t, u)
+        unew[...] = u + dt * k0
+        self.substep_count += 1
+
+        return unew
 
     def ssprk2(self, *args, **kwargs) -> None:
         self.integrator = "ssprk2"
-        unew = self.arrays["unew"]
+        self.stepper = self._ssprk2_step
+        self.integrate(*args, **kwargs)
+
+    def _ssprk2_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         k0 = self.arrays["k0"]
         k1 = self.arrays["k1"]
+        unew = self.arrays["unew"]
 
-        def stepper(t, u, dt):
-            self.substep_dt = dt  # constant throughout all SSPRK2 stages
+        # stage 1
+        k0[...] = self.f(t, u)
+        unew[...] = u + dt * k0
+        self.substep_count += 1
 
-            # stage 1
-            k0[...] = self.f(t, u)
-            unew[...] = u + dt * k0
-            self.substep_count += 1
+        # stage 2
+        k1[...] = self.f(t + dt, unew)
+        unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
+        self.substep_count += 1
 
-            # stage 2
-            k1[...] = self.f(t + dt, unew)
-            unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
-            self.substep_count += 1
-
-        self.stepper = stepper
-        self.integrate(*args, **kwargs)
+        return unew
 
     def ssprk3(self, *args, **kwargs) -> None:
         self.integrator = "ssprk3"
-        unew = self.arrays["unew"]
+        self.stepper = self._ssprk3_step
+        self.integrate(*args, **kwargs)
+
+    def _ssprk3_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         k0 = self.arrays["k0"]
         k1 = self.arrays["k1"]
         k2 = self.arrays["k2"]
+        unew = self.arrays["unew"]
 
-        def stepper(t, u, dt):
-            self.substep_dt = dt  # constant throughout all SSPRK3 stages
+        # stage 1
+        k0[...] = self.f(t, u)
+        unew[...] = u + dt * k0
+        self.substep_count += 1
 
-            # stage 1
-            k0[...] = self.f(t, u)
-            self.substep_count += 1
+        # stage 2
+        k1[...] = self.f(t + dt, unew)
+        self.substep_count += 1
 
-            # stage 2
-            k1[...] = self.f(t + dt, u + dt * k0)
-            self.substep_count += 1
+        # stage 3
+        k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
+        unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+        self.substep_count += 1
 
-            # stage 3
-            k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
-            unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
-            self.substep_count += 1
-
-        self.stepper = stepper
-        self.integrate(*args, **kwargs)
+        return unew
 
     def rk4(self, *args, **kwargs) -> None:
         self.integrator = "rk4"
+        self.stepper = self._rk4_step
+        self.integrate(*args, **kwargs)
+
+    def _rk4_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
         k1 = self.arrays["k1"]
         k2 = self.arrays["k2"]
         k3 = self.arrays["k3"]
 
-        def stepper(t, u, dt):
-            self.substep_dt = dt  # constant throughout all RK4 stages
+        # stage 1
+        k0[...] = self.f(t, u)
+        self.substep_count += 1
 
-            # stage 1
-            k0[...] = self.f(t, u)
-            self.substep_count += 1
+        # stage 2
+        k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
+        self.substep_count += 1
 
-            # stage 2
-            k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
-            self.substep_count += 1
+        # stage 3
+        k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
+        self.substep_count += 1
 
-            # stage 3
-            k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
-            self.substep_count += 1
-
-            # stage 4
-            k3[...] = self.f(t + dt, u + dt * k2)
-            unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
-            self.substep_count += 1
-
-        self.stepper = stepper
-        self.integrate(*args, **kwargs)
+        # stage 4
+        k3[...] = self.f(t + dt, u + dt * k2)
+        unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
+        self.substep_count += 1

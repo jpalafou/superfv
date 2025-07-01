@@ -1,4 +1,3 @@
-from functools import partial
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -9,7 +8,7 @@ from .finite_volume_solver import FiniteVolumeSolver
 from .hydro import conservatives_from_primitives, primitives_from_conservatives
 from .riemann_solvers import call_riemann_solver
 from .tools.array_management import ArrayLike, VariableIndexMap
-from .tools.timer import method_timer
+from .tools.timer import MethodTimer
 
 
 class EulerSolver(FiniteVolumeSolver):
@@ -255,7 +254,7 @@ class EulerSolver(FiniteVolumeSolver):
             self.hydro, self.variable_index_map, u, self.gamma
         )
 
-    @partial(method_timer, cat="EulerSolver.llf")
+    @MethodTimer(cat="EulerSolver.llf")
     def llf(
         self,
         wl: ArrayLike,
@@ -268,7 +267,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "llf")
 
-    @partial(method_timer, cat="EulerSolver.hllc")
+    @MethodTimer(cat="EulerSolver.hllc")
     def hllc(
         self,
         wl: ArrayLike,
@@ -281,7 +280,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
 
-    @partial(method_timer, cat="EulerSolver.compute_dt")
+    @MethodTimer(cat="EulerSolver.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
@@ -301,7 +300,7 @@ class EulerSolver(FiniteVolumeSolver):
         out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
         return out.item()
 
-    @partial(method_timer, cat="EulerSolver.log_quantity")
+    @MethodTimer(cat="EulerSolver.log_quantity")
     def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, float]:
         idx = self.variable_index_map
         return {

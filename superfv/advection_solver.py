@@ -1,11 +1,10 @@
-from functools import partial
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
 from .tools.array_management import ArrayLike, VariableIndexMap
-from .tools.timer import method_timer
+from .tools.timer import MethodTimer
 
 
 class AdvectionSolver(FiniteVolumeSolver):
@@ -218,7 +217,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return u
 
-    @partial(method_timer, cat="AdvectionSolver.advection_upwind")
+    # @MethodTimer(cat="AdvectionSolver.advection_upwind")
     def advection_upwind(
         self,
         wl: ArrayLike,
@@ -238,7 +237,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         out[idx("vz")] = 0.0
         return out
 
-    @partial(method_timer, cat="AdvectionSolver.compute_dt")
+    @MethodTimer(cat="AdvectionSolver.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
@@ -260,7 +259,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         vz = xp.max(xp.abs(u[idx("vz")])) if self.using["z"] else 0.0
         return (self.CFL * h / (vx + vy + vz)).item()
 
-    @partial(method_timer, cat="AdvectionSolver.log_quantity")
+    @MethodTimer(cat="AdvectionSolver.log_quantity")
     def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, float]:
         idx = self.variable_index_map
         return {

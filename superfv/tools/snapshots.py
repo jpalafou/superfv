@@ -123,3 +123,9 @@ class Snapshots:
             List of time values.
         """
         return self.time_values[:]
+
+    def __getstate__(self):
+        return self.__dict__.copy()
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)

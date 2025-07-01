@@ -23,6 +23,18 @@ def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
     return "".join(dim for dim, size in zip("xyz", x.shape) if size > 1)
 
 
+def _uninitialized(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+) -> ArrayLike:
+    raise NotImplementedError(
+        "`_uninitialized` cannot be called and is meant to be used as a placeholder"
+        " for pickling."
+    )
+
+
 def sinus(
     idx: VariableIndexMap,
     x: ArrayLike,

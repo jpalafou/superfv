@@ -246,3 +246,11 @@ class UniformFVMesh:
         val = Xp, Yp, Zp, w
         self.gauss_legendre_quadrature_cache[key] = val
         return val
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["gauss_legendre_quadrature_cache"] = {}
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)

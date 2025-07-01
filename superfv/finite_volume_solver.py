@@ -1,6 +1,5 @@
 import warnings
 from abc import ABC, abstractmethod
-from functools import partial
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 
 import numpy as np
@@ -9,6 +8,7 @@ from . import fv
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import fv_average, gauss_legendre_for_finite_volume
+from .initial_conditions import _uninitialized
 from .mesh import UniformFVMesh
 from .slope_limiting import minmod, moncen, muscl
 from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
@@ -18,6 +18,7 @@ from .stencil import (
     stencil_sweep,
     uniform_quadrature_weights,
 )
+from .tools import DummyModule
 from .tools.array_management import (
     CUPY_AVAILABLE,
     ArrayLike,
@@ -28,7 +29,7 @@ from .tools.array_management import (
     merge_slices,
     xp,
 )
-from .tools.timer import method_timer
+from .tools.timer import MethodTimer
 from .visualization import plot_1d_slice, plot_2d_slice
 
 
@@ -102,7 +103,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         raise NotImplementedError("Riemann solver not implemented.")
 
     @abstractmethod
-    @partial(method_timer, cat="?.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size.
@@ -269,18 +269,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
         self._init_cupy(cupy)
-        self._init_mesh(
-            xlim,
-            ylim,
-            zlim,
-            nx,
-            ny,
-            nz,
-            p,
-            CFL,
-            interpolation_scheme,
-            flux_recipe,
-            lazy_primitives,
+        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
+        self._init_spatial_discretization(
+            interpolation_scheme, flux_recipe, lazy_primitives
         )
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
@@ -319,9 +310,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         nz: int,
         p: int,
         CFL: float,
-        interpolation_scheme: Literal["gauss-legendre", "transverse"],
-        flux_recipe: Literal[1, 2, 3],
-        lazy_primitives: bool,
     ):
         # determine which dimensions are used
         self.using_xdim = nx > 1
@@ -338,6 +326,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for i, d in enumerate(["x", "y", "z"], start=1)
         }
         self.ndim = len(self.active_dims)
+
+        # assign p and CFL
+        if p < 0:
+            raise ValueError("The polynomial degree must be non-negative.")
+        if CFL <= 0:
+            raise ValueError("The CFL number must be positive.")
+        self.p = p
+        self.px = p if self.using_xdim else 0
+        self.py = p if self.using_ydim else 0
+        self.pz = p if self.using_zdim else 0
+        self.CFL = CFL
 
         # assign slab thickness
         slab_thickness = -(-p // 2) + 1
@@ -384,17 +383,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         assert self.mesh.pad_y == (slab_thickness if self.using_ydim else 0)
         assert self.mesh.pad_z == (slab_thickness if self.using_zdim else 0)
 
-        # assign p and CFL
-        if p < 0:
-            raise ValueError("The polynomial degree must be non-negative.")
-        if CFL <= 0:
-            raise ValueError("The CFL number must be positive.")
-        self.p = p
-        self.px = p if self.using_xdim else 0
-        self.py = p if self.using_ydim else 0
-        self.pz = p if self.using_zdim else 0
-        self.CFL = CFL
-
+    def _init_spatial_discretization(
+        self,
+        interpolation_scheme: Literal["gauss-legendre", "transverse"],
+        flux_recipe: Literal[1, 2, 3],
+        lazy_primitives: bool,
+    ):
         # assign flux recipe and interpolation scheme
         if flux_recipe not in (1, 2, 3):
             raise ValueError(
@@ -406,39 +400,45 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         self.interpolation_scheme = interpolation_scheme
         self.GL = interpolation_scheme == "gauss-legendre"
-        if self.GL:
-
-            def interpolate(u, face_dim, p, buffer, out):
-                return fv.interpolate_GaussLegendre_nodes(
-                    self.xp, u, face_dim, self.active_dims, p, buffer, out
-                )
-
-            def integrate(f, face_dim, p, buffer, out):
-                return fv.integrate_GaussLegendre_nodes(
-                    self.xp, f, face_dim, self.active_dims, p, out[..., 0]
-                )
-
-        else:
-
-            def interpolate(u, face_dim, p, buffer, out):
-                return fv.interpolate_face_centers(
-                    self.xp, u, face_dim, self.active_dims, p, buffer, out
-                )
-
-            def integrate(f, face_dim, p, buffer, out):
-                return fv.transversely_integrate_nodes(
-                    self.xp, f[..., 0], face_dim, self.active_dims, p, buffer, out
-                )
-
-        if self.ndim == 1:
-
-            def integrate(f, face_dim, p, buffer, out):
-                out[...] = f
-
-        self.interpolation_func = interpolate
-        self.integration_func = integrate
+        self.interpolation_func = (
+            self._interpolate_GaussLegendre_nodes
+            if self.GL
+            else self._interpolate_transverse_nodes
+        )
+        self.integration_func = (
+            self._integrate_trivial_nodes
+            if self.ndim == 1
+            else (
+                self._integrate_GaussLegendre_nodes
+                if self.GL
+                else self._integrate_transverse_nodes
+            )
+        )
         self.flux_recipe = flux_recipe
         self.lazy_primitives = lazy_primitives
+
+    def _interpolate_GaussLegendre_nodes(self, u, face_dim, p, buffer, out):
+        fv.interpolate_GaussLegendre_nodes(
+            self.xp, u, face_dim, self.active_dims, p, buffer, out
+        )
+
+    def _integrate_GaussLegendre_nodes(self, f, face_dim, p, buffer, out):
+        fv.integrate_GaussLegendre_nodes(
+            self.xp, f, face_dim, self.active_dims, p, out[..., 0]
+        )
+
+    def _interpolate_transverse_nodes(self, u, face_dim, p, buffer, out):
+        fv.interpolate_face_centers(
+            self.xp, u, face_dim, self.active_dims, p, buffer, out
+        )
+
+    def _integrate_transverse_nodes(self, f, face_dim, p, buffer, out):
+        fv.transversely_integrate_nodes(
+            self.xp, f[..., 0], face_dim, self.active_dims, p, buffer, out
+        )
+
+    def _integrate_trivial_nodes(self, f, face_dim, p, buffer, out):
+        out[...] = f
 
     def _init_ic(
         self,
@@ -453,32 +453,29 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_passive_vars: int
         self.active_vars: Set[str]
         self.passive_vars: Set[str]
-        self.callable_ic: Callable[
-            [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-            ArrayLike,
+        self.ic: Callable[
+            [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike
+        ]
+        self.callable_ic: Optional[
+            Callable[
+                [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+                ArrayLike,
+            ]
         ]
 
         # Define variable index map
         idx = self.define_vars()
 
+        self.ic = ic
         if ic_passives:
             for v in ic_passives.keys():
                 if v not in idx.var_idx_map:
                     idx.add_var(v, idx.nvars)
             idx.add_var_to_group("passives", ic_passives.keys())
-
-            def callable_ic(idx, x, y, z, t=None):
-                out = ic(idx, x, y, z)
-                for v, f in ic_passives.items():
-                    out[idx(v)] = f(x, y, z)
-                return out
-
+            self.ic_passives = ic_passives
+            self.callable_ic = self._callable_ic_with_passives
         else:
-
-            def callable_ic(idx, x, y, z, t=None):
-                return ic(idx, x, y, z)
-
-        self.callable_ic = callable_ic
+            self.callable_ic = self._callable_ic
 
         self.variable_index_map = idx
         self.nvars = idx.nvars
@@ -492,6 +489,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ic_arr, axis=(1, 2, 3), keepdims=True
         )
         super().__init__(ic_arr)
+
+    def _callable_ic(
+        self,
+        idx: VariableIndexMap,
+        x: ArrayLike,
+        y: ArrayLike,
+        z: ArrayLike,
+        t: Optional[float] = None,
+    ) -> ArrayLike:
+        return self.ic(idx, x, y, z)
+
+    def _callable_ic_with_passives(
+        self,
+        idx: VariableIndexMap,
+        x: ArrayLike,
+        y: ArrayLike,
+        z: ArrayLike,
+        t: Optional[float] = None,
+    ) -> ArrayLike:
+        out = self.ic(idx, x, y, z)
+        if hasattr(self, "ic_passives"):
+            for v, f in self.ic_passives.items():
+                out[idx(v)] = f(x, y, z)
+        return out
 
     def conservatives_wrapper(
         self,
@@ -677,10 +698,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
-        self.riemann_solver: Callable[
-            ...,
-            ArrayLike,
-        ] = getattr(self, riemann_solver)
+        self.riemann_func = getattr(self, riemann_solver)
+
+    @MethodTimer(cat="FiniteVolumeSolver.riemann_solver")
+    def riemann_solver(
+        self, wl: ArrayLike, wr: ArrayLike, dim: Literal["x", "y", "z"]
+    ) -> ArrayLike:
+        """
+        Compute the numerical fluxes at the interface using the specified Riemann solver.
+
+        Args:
+            wl: Primitive variables to the left of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            wr: Primitive variables to the right of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
+
+        Returns:
+            Numerical fluxes at the interface. Has shape (nvars, nx, ny, nz, ...).
+        """
+        return self.riemann_func(wl, wr, dim)
 
     def _init_slope_limiting(
         self,
@@ -775,7 +812,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Set NAD
         self.NAD = NAD
 
-    @partial(method_timer, cat="FiniteVolumeSolver.adaptive_dt_criterion")
     def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
         """
         Returns whether PAD violations are present.
@@ -797,7 +833,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         upper_violations = unew_filt > PAD_upper_filt + self.PAD_tol
         return not xp.any(xp.logical_or(lower_violations, upper_violations))
 
-    @partial(method_timer, cat="FiniteVolumeSolver.adaptive_dt_revision")
     def adaptive_dt_revision(self, t, u, dt):
         """
         Returns dt/2 if the maximum number of adaptive timestep revisions hasn't been
@@ -809,7 +844,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             f"Failed to satisfy `dt_criterion` in {self.max_dt_revisions} iterations."
         )
 
-    @partial(method_timer, cat="FiniteVolumeSolver.f")
+    @MethodTimer(cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the ODE:
@@ -833,6 +868,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_updates += self.mesh.size
         return out.copy()
 
+    @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
     def inplace_compute_fluxes(self, u: ArrayLike, p: int):
         """
         Updates the interior of `self.arrays["u_workspace"]` with the provided
@@ -861,6 +897,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for dim in self.active_dims:
             self.inplace_integrate_fluxes(dim, p)
 
+    @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
     def inplace_apply_bc(
         self, u: ArrayLike, primitives: bool = False, pointwise: bool = False
     ):
@@ -877,6 +914,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         self.bc(u, (self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z))
 
+    @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(
         self,
         u: ArrayLike,
@@ -922,6 +960,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.inplace_apply_bc(out, primitives=convert_to_primitives)
 
+    @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
     def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
         """
         Integrate the flux nodes at the face centers using the transverse quadrature or
@@ -1000,7 +1039,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             out=out,
         )
 
-    @partial(method_timer, cat="FiniteVolumeSolver.compute_fluxes")
     def compute_fluxes(
         self,
         t: float,
@@ -1129,7 +1167,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         return fluxes[0], fluxes[1], fluxes[2]
 
-    @partial(method_timer, cat="FiniteVolumeSolver.MOOD_loop")
     def MOOD_loop(
         self,
         t: float,
@@ -1177,7 +1214,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         return fluxes
 
-    @partial(method_timer, cat="FiniteVolumeSolver.apply_bc")
     def apply_bc(
         self,
         u: ArrayLike,
@@ -1237,7 +1273,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=p,
         )
 
-    @partial(method_timer, cat="FiniteVolumeSolver.interpolate")
     def interpolate(
         self,
         u: ArrayLike,
@@ -1332,7 +1367,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         return current_data
 
-    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_cell_centers")
     def interpolate_cell_centers(
         self,
         averages: ArrayLike,
@@ -1363,7 +1397,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             clear_cache=clear_cache,
         )
 
-    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_cell_averages")
     def interpolate_cell_averages(
         self,
         centers: ArrayLike,
@@ -1432,7 +1465,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
         return cell_quantity
 
-    @partial(method_timer, cat="FiniteVolumeSolver.interpolate_face_nodes")
     def interpolate_face_nodes(
         self,
         averages: ArrayLike,
@@ -1614,7 +1646,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 _, _, _, w = gauss_legendre_for_finite_volume(px, py, 0)
         return self.xp.sum(node_values * w, axis=4)
 
-    @partial(method_timer, cat="FiniteVolumeSolver.integrate_fluxes")
     def integrate_fluxes(
         self,
         left_nodes: ArrayLike,
@@ -1700,7 +1731,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
         return dudt
 
-    @partial(method_timer, cat="FiniteVolumeSolver.snapshot")
     def snapshot(self):
         """
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
@@ -1750,7 +1780,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         }
         self.snapshots.log(self.t, data)
 
-    @partial(method_timer, cat="FiniteVolumeSolver.minisnapshot")
     def minisnapshot(self):
         super().minisnapshot()
         self.minisnapshots["n_updates"].append(self.n_updates)
@@ -1771,7 +1800,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.xp.cuda.Device().synchronize()
         super().called_at_end_of_step()
 
-    @partial(method_timer, cat="!FiniteVolumeSolver.run")
+    @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
         """
         Solve the conservation law using a Runge-Kutta method whose order matches the
@@ -1803,13 +1832,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["xp"] = None
-        state["bc"] = None
-        state["_init_ic"] = None
-        state["interpolation_func"] = None
-        state["integration_func"] = None
+        state["xp"] = DummyModule
+        state["ic"] = _uninitialized
+        state["ic_passives"] = {}
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.xp = __import__("cupy" if self.use_cupy else "numpy")
+        self.xp = xp if self.cupy else np

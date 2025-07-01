@@ -105,7 +105,13 @@ def test_interpolate_node_from_uniform_field(
 
     # Perform interpolation
     modified = fv_interpolate(
-        np, conservative_interpolation_weights, u, nodes, p=p, buffer=buffer, out=out
+        np,
+        lambda x, p: conservative_interpolation_weights(np, x, p),
+        u,
+        nodes,
+        p=p,
+        buffer=buffer,
+        out=out,
     )
 
     # Assert output equals the uniform input on the modified region

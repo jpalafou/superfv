@@ -136,6 +136,7 @@ class BoundaryConditions:
         self.conservatives_wrapper = cast(FieldWrapper, conservatives_wrapper)
 
         # assign numpy namespace
+        self.cupy = cupy
         if cupy and CUPY_AVAILABLE:
             self.xp = xp
         else:
@@ -533,3 +534,12 @@ class BoundaryConditions:
             crop_to_center(Z[slab_slice], shape),
         )
         return X, Y, Z, w
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["xp"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.xp = xp if self.cupy else np
