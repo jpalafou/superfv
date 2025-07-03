@@ -1,3 +1,5 @@
+import pickle
+
 import superfv.initial_conditions as ic
 from superfv import AdvectionSolver
 
@@ -14,5 +16,5 @@ sim = AdvectionSolver(
     log_every_step=False,
 )
 
-if __name__ == "__main__":
-    sim.run(n=5, no_snapshots=True)
+with open("out/profiling_solver.pkl", "wb") as f:
+    pickle.dump(sim, f)

@@ -1833,4 +1833,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.xp = xp if self.cupy else np
+        if self.cupy:
+            self.xp = xp
+            self.arrays.transfer_to_device("gpu")
+        else:
+            self.xp = np

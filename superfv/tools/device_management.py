@@ -198,8 +198,5 @@ class ArrayManager:
         """
         Get the state of the ArrayManager for serialization.
         """
-        return {
-            "arrays": {k: cp_array_to_numpy_array(v) for k, v in self.arrays.items()},
-            "device": "cpu",
-            "transfer_array": self._dummy_transfer_array,
-        }
+        self.transfer_to_device("cpu")
+        return self.__dict__.copy()

@@ -12,16 +12,16 @@ from superfv.tools.norms import l1_norm
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"
 DIMS = "xy"
-N_LIST = [16, 32, 64]
+N_LIST = [16, 32, 64, 128, 256]
 P_LIST = [0, 1, 2, 3]
-OTHER_INPUTS = dict(interpolation_scheme="gauss-legendre")
-# OTHER_INPUTS = dict(
-#     interpolation_scheme="transverse",
-#     ZS=True,
-#     adaptive_timestepping=False,
-#     SED=True,
-#     lazy_primitives=False,
-# )
+OTHER_INPUTS = dict(
+    interpolation_scheme="gauss-legendre",
+    cupy=True,
+    # ZS=True,
+    # adaptive_timestepping=False,
+    # SED=True,
+    # lazy_primitives=False,
+)
 
 # remove old output
 if os.path.exists(OUTPUT_NAME):

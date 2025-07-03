@@ -1,16 +1,11 @@
-bin/
-out/
-
-test.ipynb
-
 **/__pycache__
 *.egg-info
 *.ipynb_checkpoints
 *.log
-*.out
 .mypy_cache
 .nox
 .pytest_cache
 .ruff_cache
 .vscode
 build
+test.ipynb
