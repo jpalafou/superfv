@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from superfv.slope_limiting import compute_dmp
-from superfv.tools.array_management import crop_to_center
+from superfv.tools.slicing import crop_to_center
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

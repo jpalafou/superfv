@@ -2,7 +2,8 @@ from typing import Any
 
 import numpy as np
 
-from superfv.tools.array_management import ArrayLike, VariableIndexMap
+from .tools.device_management import ArrayLike
+from .tools.slicing import VariableIndexMap
 
 
 def conservatives_from_primitives(

@@ -4,7 +4,7 @@ from typing import Any, Callable, Literal, Tuple
 import numpy as np
 
 from superfv.stencil import get_symmetric_slices
-from superfv.tools.array_management import ArrayLike
+from superfv.tools.device_management import ArrayLike
 
 
 def minmod(

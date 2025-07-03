@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from superfv import EulerSolver, initial_conditions
-from superfv.tools.array_management import linf_norm
+from superfv.tools.norms import linf_norm
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"

@@ -1,12 +1,12 @@
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 from tqdm import tqdm
 
-from .tools.array_management import ArrayLike, ArrayManager
+from .tools.device_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
 from .tools.timer import MethodTimer, Timer
 
@@ -224,7 +224,7 @@ class ExplicitODESolver(ABC):
         self._compute_revised_dt = self.default_compute_revised_dt
 
         # assign stepper signature
-        self.stepper: Callable[[float, ArrayLike, float]]
+        self.stepper: Callable[[float, ArrayLike, float], None]
 
     def _get_commit_details(self) -> dict:
         """
@@ -300,7 +300,7 @@ class ExplicitODESolver(ABC):
             )
         else:
             self._integrate_until_target_time_is_reached(
-                T,
+                cast(Union[float, List[float]], T),
                 log_every_step=log_every_step,
                 snapshot_dir=snapshot_dir,
                 overwrite=overwrite,
@@ -349,7 +349,7 @@ class ExplicitODESolver(ABC):
 
     def _integrate_until_target_time_is_reached(
         self,
-        T: Union[float, List[float]] = None,
+        T: Union[float, List[float]],
         log_every_step: bool = False,
         snapshot_dir: Optional[str] = None,
         overwrite: bool = False,
@@ -491,26 +491,26 @@ class ExplicitODESolver(ABC):
         self.stepper = self._euler_step
         self.integrate(*args, **kwargs)
 
-    def _euler_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
-        k0 = self.arrays["k0"]
+    def _euler_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
+        k0 = self.arrays["k0"]
+        self.substep_dt = dt
 
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
         self.substep_count += 1
 
-        return unew
-
     def ssprk2(self, *args, **kwargs) -> None:
         self.integrator = "ssprk2"
         self.stepper = self._ssprk2_step
         self.integrate(*args, **kwargs)
 
-    def _ssprk2_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
+    def _ssprk2_step(self, t: float, u: ArrayLike, dt: float):
+        unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
         k1 = self.arrays["k1"]
-        unew = self.arrays["unew"]
+        self.substep_dt = dt
 
         # stage 1
         k0[...] = self.f(t, u)
@@ -522,18 +522,17 @@ class ExplicitODESolver(ABC):
         unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
         self.substep_count += 1
 
-        return unew
-
     def ssprk3(self, *args, **kwargs) -> None:
         self.integrator = "ssprk3"
         self.stepper = self._ssprk3_step
         self.integrate(*args, **kwargs)
 
-    def _ssprk3_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
+    def _ssprk3_step(self, t: float, u: ArrayLike, dt: float):
+        unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
         k1 = self.arrays["k1"]
         k2 = self.arrays["k2"]
-        unew = self.arrays["unew"]
+        self.substep_dt = dt
 
         # stage 1
         k0[...] = self.f(t, u)
@@ -549,19 +548,18 @@ class ExplicitODESolver(ABC):
         unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
         self.substep_count += 1
 
-        return unew
-
-    def rk4(self, *args, **kwargs) -> None:
+    def rk4(self, *args, **kwargs):
         self.integrator = "rk4"
         self.stepper = self._rk4_step
         self.integrate(*args, **kwargs)
 
-    def _rk4_step(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
+    def _rk4_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
         k1 = self.arrays["k1"]
         k2 = self.arrays["k2"]
         k3 = self.arrays["k3"]
+        self.substep_dt = dt
 
         # stage 1
         k0[...] = self.f(t, u)

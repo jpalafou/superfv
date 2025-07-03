@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Optional, Tuple, cast
 
 from superfv.slope_limiting import compute_dmp
-from superfv.tools.array_management import ArrayLike, crop
+from superfv.tools.device_management import ArrayLike
+from superfv.tools.slicing import crop
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
@@ -225,11 +226,11 @@ def revise_fluxes(
         # parse new scheme
         if fallback_scheme[:2] == "fv":
             p = int(fallback_scheme[2:])
-            limiting_scheme = None
+            # limiting_scheme = None
             slope_limiter = None
         elif fallback_scheme == "muscl":
             p = None
-            limiting_scheme = "muscl"
+            # limiting_scheme = "muscl"
             slope_limiter = slope_limiter
         elif fallback_scheme == "half-dt":
             raise NotImplementedError(
@@ -239,9 +240,8 @@ def revise_fluxes(
             raise ValueError(f"Unknown fallback scheme {fallback_scheme}.")
 
         # compute fluxes needed
-        fallback_fluxes = fv_solver.compute_fluxes(
-            t, u, mode, p, limiting_scheme, slope_limiter
-        )
+        fallback_fluxes = fv_solver.xp.empty_like(fluxes)
+        fv_solver.inplace_compute_fluxes(u, p)
         _cache_fluxes(fv_solver, fallback_fluxes, fallback_scheme)
 
     cascade_idx_array = fv_solver.MOOD_cache["cascade_idx_array"]

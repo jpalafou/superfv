@@ -6,20 +6,20 @@ changes:
 - [x] fix: 2DZS + RK4
 - [x] fix: only working tests are pytest --ignore tests/test_SodShockTube1D.py
 - [x] fix: CI pipeline
+- [x] for large p and N, the first step is actually the fastest
+- [x] move interpolation and integration functions to fv or some other modules
+- [x] look into cleaning up interpolation cache
 
 issues:
 - [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
 - [ ] test_ZS and test_MOOD
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
 - [ ] vestigial 'half-dt' option in MOOD
-- [ ] move interpolation and integration functions to fv or some other modules
-- [ ] for large p and N, the first step is actually the fastest
 - [ ] allow FV Solver to be copied for tests/solvers/test_pickle.py
 
 optimizations:
 - [ ] preallocate padded arrays?
 - [ ] timer should pause during snapshot
-- [ ] look into cleaning up interpolation cache
 
 cosmetics:
 - [ ] plot_1d_slice and others should default to x=None, y=0.5, z=0.5

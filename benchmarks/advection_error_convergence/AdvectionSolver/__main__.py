@@ -7,7 +7,7 @@ import pandas as pd
 
 import superfv.initial_conditions as initial_conditions
 from superfv import AdvectionSolver
-from superfv.tools.array_management import l1_norm
+from superfv.tools.norms import l1_norm
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"

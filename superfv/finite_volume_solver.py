@@ -18,19 +18,14 @@ from .stencil import (
     stencil_sweep,
     uniform_quadrature_weights,
 )
-from .tools import DummyModule
-from .tools.array_management import (
-    CUPY_AVAILABLE,
-    ArrayLike,
-    ArrayManager,
-    VariableIndexMap,
-    crop,
-    crop_to_center,
-    merge_slices,
-    xp,
-)
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
+from .tools.dummy_module import DummyModule
+from .tools.slicing import VariableIndexMap, crop, crop_to_center, merge_slices
 from .tools.timer import MethodTimer
 from .visualization import plot_1d_slice, plot_2d_slice
+
+Directions = Literal["x", "y", "z"]
+Faces = Literal["xl", "xr", "yl", "yr", "zl", "zr"]
 
 
 class FiniteVolumeSolver(ExplicitODESolver, ABC):
@@ -456,11 +451,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.ic: Callable[
             [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike
         ]
-        self.callable_ic: Optional[
-            Callable[
-                [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-                ArrayLike,
-            ]
+        self.callable_ic: Callable[
+            [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+            ArrayLike,
         ]
 
         # Define variable index map
@@ -1116,7 +1109,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         u_padded = self.apply_bc(u, -(-p // 2), t=t, p=p)
 
         fluxes: List[Optional[ArrayLike]] = []
-        for axis, dim in zip([1, 2, 3], ["x", "y", "z"]):
+        xyz: Tuple[Directions, ...] = ("x", "y", "z")
+        for axis, dim in enumerate(xyz, start=1):
             # skip unused dimensions
             if not self.using[dim]:
                 fluxes.append(None)
@@ -1142,7 +1136,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 primitives=True,
                 fv_averages=False,
                 t=t,
-                face_quadrature=dim + "l",
+                face_quadrature=cast(Faces, dim + "l"),
                 p=0 if mode == "transverse" else p,
             )
             w_xr = self.apply_bc(
@@ -1151,7 +1145,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 primitives=True,
                 fv_averages=False,
                 t=t,
-                face_quadrature=dim + "r",
+                face_quadrature=cast(Faces, dim + "r"),
                 p=0 if mode == "transverse" else p,
             )
 
@@ -1765,7 +1759,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             w[...] = buffer[self.interior][..., 0]
         else:
             _u_[self.interior] = wcc
-            self.apply_bc(_u_, primitives=True)
+            self.apply_bc(_u_, -(-p // 2), primitives=True)
             fv.integrate_fv_averages(
                 self.xp, _u_, self.active_dims, p, buffer, temp_out
             )

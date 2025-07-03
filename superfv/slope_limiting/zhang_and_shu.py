@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Literal, Optional, Tuple, cast
 import numpy as np
 
 from superfv.slope_limiting import compute_dmp
-from superfv.tools.array_management import ArrayLike, crop_to_center, intersection_shape
+from superfv.tools.device_management import ArrayLike
+from superfv.tools.slicing import crop_to_center, intersection_shape
 
 from .smooth_extrema_detection import compute_smooth_extrema_detector
 

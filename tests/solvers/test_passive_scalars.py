@@ -3,7 +3,7 @@ import pytest
 
 import superfv.initial_conditions as ic
 from superfv import AdvectionSolver, EulerSolver
-from superfv.tools.array_management import l1_norm
+from superfv.tools.norms import l1_norm
 
 
 def test_AdvectionSolver_passive_scalar_invariance():

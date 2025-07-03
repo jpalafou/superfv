@@ -2,7 +2,8 @@ from typing import Any, Tuple, Union
 
 import numpy as np
 
-from superfv.tools.array_management import ArrayLike, crop
+from superfv.tools.device_management import ArrayLike
+from superfv.tools.slicing import crop
 
 
 def central_difference(u: ArrayLike, axis: int) -> ArrayLike:

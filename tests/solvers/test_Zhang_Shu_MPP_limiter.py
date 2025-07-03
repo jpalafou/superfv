@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from superfv import AdvectionSolver, initial_conditions
-from superfv.tools.array_management import CUPY_AVAILABLE
+from superfv.tools.device_management import CUPY_AVAILABLE
 
 p_CFL_map = {
     0: 1 / 2,

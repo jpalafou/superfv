@@ -9,7 +9,7 @@ from superfv.fv import (
     conservative_interpolation_weights,
     inplace_stencil_sweep,
 )
-from superfv.tools.array_management import linf_norm
+from superfv.tools.norms import linf_norm
 
 
 @pytest.mark.parametrize("stencil_size", [1, 3, 5])

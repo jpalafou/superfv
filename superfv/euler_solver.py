@@ -7,7 +7,8 @@ from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .hydro import conservatives_from_primitives, primitives_from_conservatives
 from .riemann_solvers import call_riemann_solver
-from .tools.array_management import ArrayLike, VariableIndexMap
+from .tools.device_management import ArrayLike
+from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
 
 

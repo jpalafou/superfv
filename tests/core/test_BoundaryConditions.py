@@ -3,7 +3,7 @@ import pytest
 
 from superfv.boundary_conditions import BoundaryConditions
 from superfv.mesh import UniformFVMesh
-from superfv.tools.array_management import VariableIndexMap
+from superfv.tools.slicing import VariableIndexMap
 
 
 @pytest.mark.parametrize("bc_type", ["periodic", "free", "symmetric", "zeros", "ones"])

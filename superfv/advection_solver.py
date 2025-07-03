@@ -3,7 +3,8 @@ from typing import Callable, Dict, Literal, Optional, Tuple, Union
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import advection_upwind
-from .tools.array_management import ArrayLike, VariableIndexMap
+from .tools.device_management import ArrayLike
+from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
 
 
@@ -254,9 +255,9 @@ class AdvectionSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
 
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        vx = xp.max(xp.abs(u[idx("vx")])) if self.using["x"] else 0.0
-        vy = xp.max(xp.abs(u[idx("vy")])) if self.using["y"] else 0.0
-        vz = xp.max(xp.abs(u[idx("vz")])) if self.using["z"] else 0.0
+        vx = xp.abs(u[idx("vx")]).max()
+        vy = xp.abs(u[idx("vy")]).max()
+        vz = xp.abs(u[idx("vz")]).max()
         return (self.CFL * h / (vx + vy + vz)).item()
 
     @MethodTimer(cat="AdvectionSolver.log_quantity")

@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 
-from .tools.array_management import ArrayLike, VariableIndexMap
+from .tools.device_management import ArrayLike
+from .tools.slicing import VariableIndexMap
 
 if TYPE_CHECKING:
     from superfv.euler_solver import EulerSolver

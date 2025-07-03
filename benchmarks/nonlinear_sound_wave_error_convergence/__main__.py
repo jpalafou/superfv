@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from superfv import EulerSolver
-from superfv.tools.array_management import l1_norm
+from superfv.tools.norms import l1_norm
 
 gamma = 1.4
 rho0 = 1

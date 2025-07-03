@@ -6,14 +6,8 @@ import numpy as np
 
 from superfv.mesh import UniformFVMesh
 
-from .tools.array_management import (
-    CUPY_AVAILABLE,
-    ArrayLike,
-    VariableIndexMap,
-    crop,
-    crop_to_center,
-    xp,
-)
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike, xp
+from .tools.slicing import VariableIndexMap, crop, crop_to_center
 
 # define custom type annotations
 Field = Callable[

@@ -11,7 +11,8 @@ from .stencil import (
     inplace_stencil_sweep,
     uniform_quadrature_weights,
 )
-from .tools.array_management import ArrayLike, merge_slices
+from .tools.device_management import ArrayLike
+from .tools.slicing import merge_slices
 
 InterpCoord = Union[int, float]
 InterpCoords = Union[Sequence[InterpCoord], np.ndarray]

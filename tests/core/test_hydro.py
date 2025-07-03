@@ -3,7 +3,7 @@ import pytest
 import wtflux.hydro as hydro
 
 from superfv.hydro import conservatives_from_primitives, primitives_from_conservatives
-from superfv.tools.array_management import VariableIndexMap
+from superfv.tools.slicing import VariableIndexMap
 
 
 def l1_norm(a, b):

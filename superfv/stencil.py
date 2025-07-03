@@ -6,7 +6,8 @@ import numpy as np
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
 from stencilpal.stencil import Stencil
 
-from .tools.array_management import ArrayLike, crop
+from .tools.device_management import ArrayLike
+from .tools.slicing import crop
 
 Coordinate = Union[int, float, Literal["l", "c", "r"]]
 
@@ -21,17 +22,35 @@ def canonicalize_interp_coord(
     """
 
     @wraps(func)
-    def wrapper(xp, p: int, x: Coordinate) -> np.ndarray:
+    def wrapper(p: int, x: Coordinate) -> np.ndarray:
         if isinstance(x, float) and x in (-1.0, 0.0, 1.0):
             x = int(x)
-        return func(xp, p, x)
+        return func(p, x)
 
     return wrapper
 
 
+def convert_to_xp_array(func: Callable) -> Callable:
+    """
+    Decorator that wraps any function and returns a new function which takes
+    an additional first argument `xp`, and returns `xp.asarray(original_output)`.
+
+    The decorated function has signature:
+        (xp, *args, **kwargs)
+    """
+
+    @wraps(func)
+    def wrapper(xp: Any, *args: Any, **kwargs: Any) -> Any:
+        result = func(*args, **kwargs)
+        return xp.asarray(result)
+
+    return wrapper
+
+
+@convert_to_xp_array
 @canonicalize_interp_coord
 @lru_cache(maxsize=None)
-def conservative_interpolation_weights(xp, p: int, x: Coordinate) -> np.ndarray:
+def conservative_interpolation_weights(p: int, x: Coordinate) -> np.ndarray:
     """
     Returns the weights of the conservative interpolation stencil for a given
     polynomial degree.
@@ -63,8 +82,8 @@ def conservative_interpolation_weights(xp, p: int, x: Coordinate) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return xp.asarray(numerators / denominator)
-    return xp.asarray(cast(np.ndarray, stencil.w))
+        return numerators / denominator
+    return cast(np.ndarray, stencil.w)
 
 
 @lru_cache(maxsize=None)
@@ -96,8 +115,9 @@ def resize_stencil(stencil: Stencil, target_size: int):
             raise ValueError(f"Failed to find stencil of size {target_size}.")
 
 
+@convert_to_xp_array
 @lru_cache(maxsize=None)
-def uniform_quadrature_weights(xp, p: int) -> np.ndarray:
+def uniform_quadrature_weights(p: int) -> np.ndarray:
     """
     Returns the weights of the uniform quadrature stencil for a given polynomial
     degree.
@@ -117,9 +137,9 @@ def uniform_quadrature_weights(xp, p: int) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return xp.asarray(numerators / denominator)
+        return numerators / denominator
     else:
-        return xp.asarray(cast(np.ndarray, stencil.w))
+        return cast(np.ndarray, stencil.w)
 
 
 def inplace_stencil_sweep(

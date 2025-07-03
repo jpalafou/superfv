@@ -5,7 +5,7 @@ import pytest
 
 import superfv.initial_conditions as ic
 from superfv import AdvectionSolver, EulerSolver
-from superfv.tools.array_management import l1_norm
+from superfv.tools.norms import l1_norm
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])

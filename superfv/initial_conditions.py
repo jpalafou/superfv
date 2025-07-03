@@ -2,7 +2,8 @@ from typing import Literal, Tuple
 
 import numpy as np
 
-from .tools.array_management import ArrayLike, VariableIndexMap
+from .tools.device_management import ArrayLike
+from .tools.slicing import VariableIndexMap
 
 
 def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
