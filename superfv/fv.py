@@ -5,7 +5,6 @@ from types import ModuleType
 from typing import Callable, Dict, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
-from line_profiler import profile
 
 from .stencil import (
     conservative_interpolation_weights,
@@ -302,7 +301,6 @@ def _fv_interpolate_direct(
     )
 
 
-@profile
 def _fv_interpolate_1sweep(
     xp: ModuleType,
     stencil_func: Callable[[int, InterpCoord], StencilWeights],
@@ -330,7 +328,6 @@ def _fv_interpolate_1sweep(
     return merge_slices(*slices, union=True)
 
 
-@profile
 def _fv_interpolate_2sweeps(
     xp: ModuleType,
     stencil_func: Callable[[int, InterpCoord], StencilWeights],
@@ -388,7 +385,6 @@ def _fv_interpolate_2sweeps(
     return merge_slices(*slices)
 
 
-@profile
 def _fv_interpolate_3sweeps(
     xp: ModuleType,
     stencil_func: Callable[[int, InterpCoord], StencilWeights],

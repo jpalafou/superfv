@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 
 import numpy as np
-from line_profiler import profile
 
 from . import fv
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
@@ -837,7 +836,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.f")
-    @profile
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the ODE:
@@ -862,7 +860,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         return out.copy()
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
-    @profile
     def inplace_compute_fluxes(self, u: ArrayLike, p: int):
         """
         Updates the interior of `self.arrays["u_workspace"]` with the provided
@@ -909,7 +906,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.bc(u, (self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z))
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
-    @profile
     def inplace_interpolate_faces(
         self,
         u: ArrayLike,
@@ -956,7 +952,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_apply_bc(out, primitives=convert_to_primitives)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
-    @profile
     def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
         """
         Integrate the flux nodes at the face centers using the transverse quadrature or

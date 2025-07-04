@@ -3,7 +3,6 @@ from types import ModuleType
 from typing import Any, Callable, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
-from line_profiler import profile
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
 from stencilpal.stencil import Stencil
 
@@ -33,7 +32,6 @@ def canonicalize_interp_coord(
 
 @lru_cache(maxsize=None)
 @canonicalize_interp_coord
-@profile
 def conservative_interpolation_weights(xp: Any, p: int, x: Coordinate) -> np.ndarray:
     """
     Returns the weights of the conservative interpolation stencil for a given
@@ -103,7 +101,6 @@ def resize_stencil(stencil: Stencil, target_size: int):
 
 
 @lru_cache(maxsize=None)
-@profile
 def uniform_quadrature_weights(xp: Any, p: int) -> np.ndarray:
     """
     Returns the weights of the uniform quadrature stencil for a given polynomial
@@ -131,7 +128,6 @@ def uniform_quadrature_weights(xp: Any, p: int) -> np.ndarray:
     return xp.asarray(w)
 
 
-@profile
 def inplace_stencil_sweep(
     xp: ModuleType,
     arr: ArrayLike,
