@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 from tqdm import tqdm
 
 from .tools.device_management import ArrayLike, ArrayManager
@@ -260,6 +261,7 @@ class ExplicitODESolver(ABC):
             return {"error": f"An error occurred: {e.stderr.strip()}"}
 
     @MethodTimer(cat="ExplicitODESolver.integrate")
+    @profile
     def integrate(
         self,
         T: Optional[Union[float, List[float]]] = None,
@@ -309,6 +311,7 @@ class ExplicitODESolver(ABC):
                 no_snapshots=no_snapshots,
             )
 
+    @profile
     def _integrate_for_fixed_number_of_steps(
         self,
         n: int,
@@ -417,6 +420,7 @@ class ExplicitODESolver(ABC):
         self.progress_bar_action("cleanup", do_nothing=not progress_bar)
 
     @MethodTimer(cat="ExplicitODESolver.take_step")
+    @profile
     def take_step(self, target_time: Optional[float] = None):
         """
         Take a single step in the integration.
@@ -491,6 +495,7 @@ class ExplicitODESolver(ABC):
         self.stepper = self._euler_step
         self.integrate(*args, **kwargs)
 
+    @profile
     def _euler_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
@@ -506,6 +511,7 @@ class ExplicitODESolver(ABC):
         self.stepper = self._ssprk2_step
         self.integrate(*args, **kwargs)
 
+    @profile
     def _ssprk2_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
@@ -527,6 +533,7 @@ class ExplicitODESolver(ABC):
         self.stepper = self._ssprk3_step
         self.integrate(*args, **kwargs)
 
+    @profile
     def _ssprk3_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
         k0 = self.arrays["k0"]
@@ -553,6 +560,7 @@ class ExplicitODESolver(ABC):
         self.stepper = self._rk4_step
         self.integrate(*args, **kwargs)
 
+    @profile
     def _rk4_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
         k0 = self.arrays["k0"]

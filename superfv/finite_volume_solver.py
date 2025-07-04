@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 
 from . import fv
 from .boundary_conditions import BoundaryConditions, DirichletBC, Field
@@ -80,7 +81,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
+        out: ArrayLike,
+    ):
         """
         Dummy Riemann solver to give an example of the required signature.
 
@@ -90,9 +92,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wr: Array of primitive variables to the right of the interface. Has shape
                 (nvars, nx, ny, nz, ...).
             dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
-
-        Returns:
-            Array of numerical fluxes at the interface. Has shape
+            out: Output array to store the numerical fluxes. Has shape
                 (nvars, nx, ny, nz, ...).
         """
         raise NotImplementedError("Riemann solver not implemented.")
@@ -695,8 +695,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="FiniteVolumeSolver.riemann_solver")
     def riemann_solver(
-        self, wl: ArrayLike, wr: ArrayLike, dim: Literal["x", "y", "z"]
-    ) -> ArrayLike:
+        self, wl: ArrayLike, wr: ArrayLike, dim: Literal["x", "y", "z"], out: ArrayLike
+    ):
         """
         Compute the numerical fluxes at the interface using the specified Riemann solver.
 
@@ -706,11 +706,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wr: Primitive variables to the right of the interface. Has shape
                 (nvars, nx, ny, nz, ...).
             dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
-
-        Returns:
-            Numerical fluxes at the interface. Has shape (nvars, nx, ny, nz, ...).
+            out: Output array to store the numerical fluxes. Has shape
+                (nvars, nx, ny, nz, ...).
         """
-        return self.riemann_func(wl, wr, dim)
+        return self.riemann_func(wl, wr, dim, out)
 
     def _init_slope_limiting(
         self,
@@ -838,6 +837,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.f")
+    @profile
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the ODE:
@@ -862,6 +862,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         return out.copy()
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
+    @profile
     def inplace_compute_fluxes(self, u: ArrayLike, p: int):
         """
         Updates the interior of `self.arrays["u_workspace"]` with the provided
@@ -908,6 +909,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.bc(u, (self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z))
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
+    @profile
     def inplace_interpolate_faces(
         self,
         u: ArrayLike,
@@ -954,6 +956,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_apply_bc(out, primitives=convert_to_primitives)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
+    @profile
     def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
         """
         Integrate the flux nodes at the face centers using the transverse quadrature or
@@ -992,9 +995,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         left_state = wr[crop(axis, (pad - 1, -pad))]
         right_state = wl[crop(axis, (pad, -pad + 1))]
-        flux_nodes = self.riemann_solver(left_state, right_state, dim)
+        self.riemann_solver(left_state, right_state, dim, left_state)  # overwrite wl
 
-        self.integration_func(flux_nodes, dim, p, self.arrays["buffer"], flux_workspace)
+        self.integration_func(left_state, dim, p, self.arrays["buffer"], flux_workspace)
 
         out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 

@@ -3,6 +3,7 @@ from types import ModuleType
 from typing import Any, Callable, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
 from stencilpal.stencil import Stencil
 
@@ -13,8 +14,8 @@ Coordinate = Union[int, float, Literal["l", "c", "r"]]
 
 
 def canonicalize_interp_coord(
-    func: Callable[[int, Coordinate], np.ndarray],
-) -> Callable[[int, Coordinate], np.ndarray]:
+    func: Callable[[Any, int, Coordinate], np.ndarray],
+) -> Callable[[Any, int, Coordinate], ArrayLike]:
     """
     Decorator for `conservative_interpolation_weights` to ensure that the
     interpolation coordinate `x` is always an integer if it is equivalent to an integer
@@ -22,40 +23,24 @@ def canonicalize_interp_coord(
     """
 
     @wraps(func)
-    def wrapper(p: int, x: Coordinate) -> np.ndarray:
+    def wrapper(xp: Any, p: int, x: Coordinate) -> np.ndarray:
         if isinstance(x, float) and x in (-1.0, 0.0, 1.0):
             x = int(x)
-        return func(p, x)
+        return func(xp, p, x)
 
     return wrapper
 
 
-def convert_to_xp_array(func: Callable) -> Callable:
-    """
-    Decorator that wraps any function and returns a new function which takes
-    an additional first argument `xp`, and returns `xp.asarray(original_output)`.
-
-    The decorated function has signature:
-        (xp, *args, **kwargs)
-    """
-
-    @wraps(func)
-    def wrapper(xp: Any, *args: Any, **kwargs: Any) -> Any:
-        result = func(*args, **kwargs)
-        return xp.asarray(result)
-
-    return wrapper
-
-
-@convert_to_xp_array
-@canonicalize_interp_coord
 @lru_cache(maxsize=None)
-def conservative_interpolation_weights(p: int, x: Coordinate) -> np.ndarray:
+@canonicalize_interp_coord
+@profile
+def conservative_interpolation_weights(xp: Any, p: int, x: Coordinate) -> np.ndarray:
     """
     Returns the weights of the conservative interpolation stencil for a given
     polynomial degree.
 
     Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
         p: The polynomial degree.
         x: interpolation point on the interval [-1, 1] as a number or alias:
             - "l": alias for the leftmost point of the cell (-1).
@@ -82,8 +67,10 @@ def conservative_interpolation_weights(p: int, x: Coordinate) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return numerators / denominator
-    return cast(np.ndarray, stencil.w)
+        w = numerators / denominator
+    else:
+        w = cast(np.ndarray, stencil.w)
+    return xp.asarray(w)
 
 
 @lru_cache(maxsize=None)
@@ -115,14 +102,15 @@ def resize_stencil(stencil: Stencil, target_size: int):
             raise ValueError(f"Failed to find stencil of size {target_size}.")
 
 
-@convert_to_xp_array
 @lru_cache(maxsize=None)
-def uniform_quadrature_weights(p: int) -> np.ndarray:
+@profile
+def uniform_quadrature_weights(xp: Any, p: int) -> np.ndarray:
     """
     Returns the weights of the uniform quadrature stencil for a given polynomial
     degree.
 
     Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
         p: The polynomial degree.
 
     Returns:
@@ -137,11 +125,13 @@ def uniform_quadrature_weights(p: int) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return numerators / denominator
+        w = numerators / denominator
     else:
-        return cast(np.ndarray, stencil.w)
+        w = cast(np.ndarray, stencil.w)
+    return xp.asarray(w)
 
 
+@profile
 def inplace_stencil_sweep(
     xp: ModuleType,
     arr: ArrayLike,

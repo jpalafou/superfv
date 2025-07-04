@@ -5,6 +5,7 @@ from types import ModuleType
 from typing import Callable, Dict, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 
 from .stencil import (
     conservative_interpolation_weights,
@@ -247,9 +248,9 @@ def _fv_interpolate_direct(
 
     Args:
         xp: `np` namespace.
-        stencil_func: Function to compute the interpolation stencil weights.
-            It should accept the polynomial degree and a coordinate value, and return
-            an array of stencil weights.
+        stencil_func: Function to compute the interpolation stencil weights. Expected
+            to accept a polynomial degree and a coordinate value, and return an array
+            of stencil weights.
         u: Array of finite volume averages to interpolate, has shape
             (nvars, nx, ny, nz).
         nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.
@@ -301,6 +302,7 @@ def _fv_interpolate_direct(
     )
 
 
+@profile
 def _fv_interpolate_1sweep(
     xp: ModuleType,
     stencil_func: Callable[[int, InterpCoord], StencilWeights],
@@ -328,6 +330,7 @@ def _fv_interpolate_1sweep(
     return merge_slices(*slices, union=True)
 
 
+@profile
 def _fv_interpolate_2sweeps(
     xp: ModuleType,
     stencil_func: Callable[[int, InterpCoord], StencilWeights],
@@ -385,6 +388,7 @@ def _fv_interpolate_2sweeps(
     return merge_slices(*slices)
 
 
+@profile
 def _fv_interpolate_3sweeps(
     xp: ModuleType,
     stencil_func: Callable[[int, InterpCoord], StencilWeights],
@@ -481,9 +485,9 @@ def _fv_interpolate_recursive(
 
     Args:
         xp: `np` namespace.
-        stencil_func: Function to compute the interpolation stencil weights.
-            It should accept the polynomial degree and a coordinate value, and return
-            an array of stencil weights.
+        stencil_func: Function to compute the interpolation stencil weights. Expected
+            to accept a polynomial degree and a coordinate value, and return an array
+            of stencil weights.
         u: Array of finite volume averages to interpolate, has shape
             (nvars, nx, ny, nz).
         nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.

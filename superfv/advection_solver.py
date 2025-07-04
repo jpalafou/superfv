@@ -1,8 +1,9 @@
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
+from line_profiler import profile
+
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
-from .riemann_solvers import advection_upwind
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -219,26 +220,35 @@ class AdvectionSolver(FiniteVolumeSolver):
         return u
 
     # @MethodTimer(cat="AdvectionSolver.advection_upwind")
+    @profile
     def advection_upwind(
         self,
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        primitives: bool = True,
-    ) -> ArrayLike:
+        out: ArrayLike,
+    ):
         """
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
         idx = self.variable_index_map
-        out = advection_upwind(idx, wl, wr, dim)
+        xp = self.xp
 
-        # overwrite the velocity fluxes so that the velocity is not advected
+        vl = wl[idx("v" + dim)]
+        vr = wr[idx("v" + dim)]
+        v = xp.where(xp.abs(vl) > xp.abs(vr), vl, vr)
+
+        out[idx("rho")] = v * xp.where(v > 0, wl[idx("rho")], wr[idx("rho")])
         out[idx("vx")] = 0.0
         out[idx("vy")] = 0.0
         out[idx("vz")] = 0.0
-        return out
+        if "passives" in idx.group_var_map:
+            out[idx("passives")] = v * xp.where(
+                v > 0, wl[idx("passives")], wr[idx("passives")]
+            )
 
     @MethodTimer(cat="AdvectionSolver.compute_dt")
+    @profile
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
@@ -255,9 +265,9 @@ class AdvectionSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
 
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        vx = xp.abs(u[idx("vx")]).max()
-        vy = xp.abs(u[idx("vy")]).max()
-        vz = xp.abs(u[idx("vz")]).max()
+        vx = xp.max(xp.abs(u[idx("vx")]))
+        vy = xp.max(xp.abs(u[idx("vy")]))
+        vz = xp.max(xp.abs(u[idx("vz")]))
         return (self.CFL * h / (vx + vy + vz)).item()
 
     @MethodTimer(cat="AdvectionSolver.log_quantity")
