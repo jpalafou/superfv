@@ -1,5 +1,7 @@
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
+from line_profiler import profile
+
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import FiniteVolumeSolver
 from .tools.device_management import ArrayLike
@@ -217,6 +219,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return u
 
+    @profile
     def advection_upwind(
         self,
         wl: ArrayLike,
@@ -243,6 +246,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                 v > 0, wl[idx("passives")], wr[idx("passives")]
             )
 
+    @profile
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.

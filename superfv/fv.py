@@ -5,6 +5,7 @@ from types import ModuleType
 from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 
 from .stencil import (
     conservative_interpolation_weights,
@@ -181,6 +182,7 @@ def gather_multistencils(
 
 
 @lru_cache(maxsize=None)
+@profile
 def _gather_multistencils(
     xp: ModuleType,
     stencil_type: Literal["conservative-interpolation", "uniform-quadrature"],
@@ -284,6 +286,7 @@ def fv_integrate(
     )
 
 
+@profile
 def _fv_interpolate_direct(
     xp: ModuleType,
     stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
@@ -371,6 +374,7 @@ def _ensure_tuple(x):
         return (x,)
 
 
+@profile
 def _fv_interpolate_1sweep(
     xp: ModuleType,
     stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
@@ -393,6 +397,7 @@ def _fv_interpolate_1sweep(
     return modified
 
 
+@profile
 def _fv_interpolate_2sweeps(
     xp: ModuleType,
     stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
@@ -446,6 +451,7 @@ def _fv_interpolate_2sweeps(
     )
 
 
+@profile
 def _fv_interpolate_3sweeps(
     xp: ModuleType,
     stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],

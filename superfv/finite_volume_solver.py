@@ -16,6 +16,7 @@ from typing import (
 )
 
 import numpy as np
+from line_profiler import profile
 
 from . import fv
 from .boundary_conditions import DirichletBC, Field, apply_bc
@@ -885,6 +886,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.f")
+    @profile
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the ODE:
@@ -909,6 +911,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         return out.copy()
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
+    @profile
     def inplace_compute_fluxes(self, t: float, u: ArrayLike, p: int):
         """
         Updates the interior of `self.arrays["u_workspace"]` with the provided
@@ -968,6 +971,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
+    @profile
     def inplace_interpolate_faces(
         self,
         t: float,
@@ -1035,6 +1039,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
+    @profile
     def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
         """
         Integrate the flux nodes at the face centers using the transverse quadrature or
@@ -1090,6 +1095,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return (-(-(p + 1) // 2)) ** (self.ndim - 1)
         return 1
 
+    @profile
     def _add_flux_divergence(self, dim: Literal["x", "y", "z"], out: ArrayLike):
         """
         Add the flux divergence in the specified dimension to the output array.

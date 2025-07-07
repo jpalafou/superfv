@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 from tqdm import tqdm
 
 from .tools.device_management import ArrayLike, ArrayManager
@@ -418,6 +419,7 @@ class ExplicitODESolver(ABC):
         self.progress_bar_action("cleanup", do_nothing=not progress_bar)
 
     @MethodTimer(cat="ExplicitODESolver.take_step")
+    @profile
     def take_step(self, target_time: Optional[float] = None):
         """
         Take a single step in the integration.

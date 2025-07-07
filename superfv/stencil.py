@@ -3,6 +3,7 @@ from types import ModuleType
 from typing import Any, Callable, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
+from line_profiler import profile
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
 from stencilpal.stencil import Stencil
 
@@ -158,6 +159,7 @@ def inplace_stencil_sweep(
     return modified
 
 
+@profile
 def inplace_multistencil_sweep_add_multiply(
     xp: ModuleType,
     arr: ArrayLike,

@@ -1,7 +1,6 @@
 import pickle
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 import superfv.visualization as vis
 
@@ -10,13 +9,14 @@ with open("out/profiling_solver.pkl", "rb") as f:
 
 sim.euler(n=5, progress_bar=False)
 
-n_cells_updated_per_s = (
-    np.array(sim.minisnapshots["n_updates"])[1:]
-    / np.array(sim.minisnapshots["run_time"])[1:]
-)
 
-for i in range(len(n_cells_updated_per_s)):
-    print(f"Step {i+1}: {n_cells_updated_per_s[i]:.2e} cells updated per second")
+n_updates = sim.minisnapshots["n_updates"]
+run_times = sim.minisnapshots["run_time"]
+for i in range(1, sim.step_count + 1):
+    print(
+        f"Update {i}: {n_updates[i]} cells update in {1000*run_times[i]:.2f} ms, "
+        f"resulting in {n_updates[i]/run_times[i]:.2e} cells/second."
+    )
 
 fig, ax = plt.subplots()
 vis.plot_1d_slice(sim, ax, "rho", x=None)
