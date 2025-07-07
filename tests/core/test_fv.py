@@ -3,10 +3,10 @@ from typing import Callable, Dict
 import numpy as np
 import pytest
 
-from superfv.fv import (
-    _fv_interpolate_direct,
-    _fv_interpolate_recursive,
+from superfv.fv import _fv_interpolate_direct, _fv_interpolate_recursive
+from superfv.stencil import (
     conservative_interpolation_weights,
+    inplace_multistencil_sweep,
     inplace_stencil_sweep,
 )
 from superfv.tools.norms import linf_norm
@@ -122,3 +122,29 @@ def test_interpolate_node_from_uniform_field(
     # assert that the output is unchanged outside the modified region
     out[modified] = out_original[modified]
     np.array_equal(out, out_original)
+
+
+def test_inplace_multistencil_sweep():
+    """
+    Test that inplace_multistencil_sweep produces the expected output.
+    """
+    N = 64
+    stencil1 = np.array([0.0, 1.0, 0.0])
+    stencil2 = np.array([0.1, 0.8, 0.1])
+    multistencil = np.array([stencil1, stencil2])
+
+    # allocate arrays
+    arr = np.random.rand(5, N, N, N)
+    out1 = np.empty((5, N, N, N, 2))
+    out2 = np.empty((5, N, N, N, 2))
+
+    # perform serial stencil sweeps
+    modified1 = inplace_stencil_sweep(np, arr, stencil1, axis=1, out=out1[..., 0])
+    _ = inplace_stencil_sweep(np, arr, stencil2, axis=1, out=out1[..., 1])
+
+    # perform multistencil sweep
+    modified2 = inplace_multistencil_sweep(np, arr, multistencil, axis=1, out=out2)
+
+    # assert that the modified regions are the same
+    l2 = np.sqrt(np.mean(np.square(out1[modified1] - out2[modified2])))
+    assert np.array_equal(out1[modified1], out2[modified2]), f"L2 norm: {l2}"
