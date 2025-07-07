@@ -196,8 +196,8 @@ def inplace_multistencil_sweep(
 
     for i, s in enumerate(arr_slices):
         w = stencils[:, i].reshape(weight_shape)
-        arr_sliced = arr[s][..., xp.newaxis]  # (..., 1)
-        out[out_modified] += arr_sliced * w  # (..., nstencils)
+        arr_sliced = arr[s][..., xp.newaxis]
+        xp.add(out[modified], xp.multiply(arr_sliced, w), out=out[modified])
 
     return modified
 
