@@ -2,12 +2,13 @@ from collections.abc import Iterable
 from functools import lru_cache
 from itertools import product
 from types import ModuleType
-from typing import Callable, Dict, List, Literal, Sequence, Tuple, Union, cast
+from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
 from .stencil import (
     conservative_interpolation_weights,
+    inplace_multistencil_sweep,
     inplace_stencil_sweep,
     uniform_quadrature_weights,
 )
@@ -15,7 +16,7 @@ from .tools.device_management import ArrayLike
 from .tools.slicing import merge_slices
 
 InterpCoord = Union[int, float]
-InterpCoords = Union[Sequence[InterpCoord], np.ndarray]
+InterpCoords = Sequence[InterpCoord]
 StencilWeights = Union[Sequence[float], np.ndarray]
 
 DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
@@ -146,6 +147,24 @@ def fv_average(
 Union[int, float, Sequence[Union[int, float]]]
 
 
+@lru_cache(maxsize=None)
+def gather_multistencils(
+    xp: ModuleType,
+    stencil_type: Literal["conservative-interpolation", "uniform-quadrature"],
+    p: int,
+    x: Optional[Tuple[InterpCoord, ...]] = None,
+) -> ArrayLike:
+    if stencil_type == "conservative-interpolation":
+        if x is None:
+            raise ValueError(
+                "Conservative interpolation requires interpolation points."
+            )
+        return xp.asarray([conservative_interpolation_weights(xp, p, xi) for xi in x])
+    elif stencil_type == "uniform-quadrature":
+        return xp.asarray([uniform_quadrature_weights(xp, p)])
+    raise ValueError("Invalid stencil type.")
+
+
 def fv_interpolate(
     xp: ModuleType,
     u: ArrayLike,
@@ -181,7 +200,7 @@ def fv_interpolate(
     """
     return _fv_interpolate_direct(
         xp,
-        lambda p, x: conservative_interpolation_weights(xp, p, x),
+        lambda p, x: gather_multistencils(xp, "conservative-interpolation", p, x),
         u,
         nodes,
         p,
@@ -222,7 +241,7 @@ def fv_integrate(
     """
     return _fv_interpolate_direct(
         xp,
-        lambda p, x: uniform_quadrature_weights(xp, p),
+        lambda p, x: gather_multistencils(xp, "uniform-quadrature", p),
         u,
         {dim: 0 for dim in dims},
         p,
@@ -234,7 +253,7 @@ def fv_integrate(
 
 def _fv_interpolate_direct(
     xp: ModuleType,
-    stencil_func: Callable[[int, InterpCoord], StencilWeights],
+    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
     u: ArrayLike,
     nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
     p: int,
@@ -280,6 +299,9 @@ def _fv_interpolate_direct(
                 " dimensions."
             )
 
+    # ensure nodes are tuples
+    nodes = {k: _ensure_tuple(v) for k, v in nodes.items()}
+
     # one-dimensional interpolation
     if len(nodes) == 1:
         return _fv_interpolate_1sweep(xp, stencil_func, u, nodes, p, out, debug)
@@ -301,48 +323,47 @@ def _fv_interpolate_direct(
     )
 
 
+def _ensure_tuple(x):
+    try:
+        return tuple(x)
+    except TypeError:
+        return (x,)
+
+
 def _fv_interpolate_1sweep(
     xp: ModuleType,
-    stencil_func: Callable[[int, InterpCoord], StencilWeights],
+    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
+    nodes: Dict[Literal["x", "y", "z"], Tuple[InterpCoord, ...]],
     p: int,
     out: ArrayLike,
     debug: bool = False,
 ):
     dim1 = next(iter(nodes))
-    coords1 = _to_iter(nodes[dim1])
+    coords1 = nodes[dim1]
     if debug and out.shape[4] < len(coords1):
         raise ValueError(
             f"Output interpolation axis size {out.shape[4]} is smaller than the number"
             f" number of coordinates {len(coords1)} for dimension '{dim1}'."
         )
-
-    slices = []
-    for i, coord in enumerate(coords1):
-        stencil = stencil_func(p, coord)
-        slices.append(
-            inplace_stencil_sweep(xp, u, stencil, DIM_TO_AXIS[dim1], out=out[..., i])
-        )
-
-    return merge_slices(*slices, union=True)
+    stencils1 = stencil_func(p, coords1)
+    modified = inplace_multistencil_sweep(xp, u, stencils1, DIM_TO_AXIS[dim1], out=out)
+    return modified
 
 
 def _fv_interpolate_2sweeps(
     xp: ModuleType,
-    stencil_func: Callable[[int, InterpCoord], StencilWeights],
+    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
+    nodes: Dict[Literal["x", "y", "z"], Tuple[InterpCoord, ...]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
     debug: bool = False,
 ):
     dim1, dim2 = list(nodes)
-    coords1 = _to_iter(nodes[dim1])
-    coords2 = _to_iter(nodes[dim2])
-    layer1_len = len(coords1)
-    layer2_len = len(coords2)
+    coords1, coords2 = nodes[dim1], nodes[dim2]
+    layer1_len, layer2_len = len(coords1), len(coords2)
 
     if debug:
         if out.shape[4] < layer1_len * layer2_len:
@@ -358,50 +379,38 @@ def _fv_interpolate_2sweeps(
             )
 
     # fill buffer
-    slices = []
-    slices1 = []
-    for i in range(layer1_len):
-        stencil1 = stencil_func(p, coords1[i])
-        modified = inplace_stencil_sweep(
-            xp, u, stencil1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, i]
-        )
-        slices1.append(modified)
-    slices.append(merge_slices(*slices1, union=True))
+    stencils1 = stencil_func(p, coords1)
+    modified1 = inplace_multistencil_sweep(
+        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, :layer1_len]
+    )
 
     # interpolate nodes from buffer
-    slices2 = []
-    for i, j in product(range(layer1_len), range(layer2_len)):
-        stencil2 = stencil_func(p, coords2[j])
-        modified = inplace_stencil_sweep(
+    stencils2 = stencil_func(p, coords2)
+    for i in range(layer1_len):
+        modified2 = inplace_multistencil_sweep(
             xp,
             buffer[:, :, :, :, i],
-            stencil2,
+            stencils2,
             DIM_TO_AXIS[dim2],
-            out=out[:, :, :, :, layer2_len * i + j],
+            out=out[:, :, :, :, layer2_len * i : layer2_len * (i + 1)],
         )
-        slices2.append(modified)
-    slices.append(merge_slices(*slices2, union=True))
 
-    return merge_slices(*slices)
+    return merge_slices(modified1, modified2)
 
 
 def _fv_interpolate_3sweeps(
     xp: ModuleType,
-    stencil_func: Callable[[int, InterpCoord], StencilWeights],
+    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
+    nodes: Dict[Literal["x", "y", "z"], Tuple[InterpCoord, ...]],
     p: int,
     buffer: ArrayLike,
     out: ArrayLike,
     debug: bool = False,
 ):
     dim1, dim2, dim3 = list(nodes)
-    coords1 = _to_iter(nodes[dim1])
-    coords2 = _to_iter(nodes[dim2])
-    coords3 = _to_iter(nodes[dim3])
-    layer1_len = len(coords1)
-    layer2_len = len(coords2)
-    layer3_len = len(coords3)
+    coords1, coords2, coords3 = nodes[dim1], nodes[dim2], nodes[dim3]
+    layer1_len, layer2_len, layer3_len = len(coords1), len(coords2), len(coords3)
 
     if debug:
         if out.shape[4] < layer1_len * layer2_len * layer3_len:
@@ -418,48 +427,39 @@ def _fv_interpolate_3sweeps(
             )
 
     # fill buffer layer 1
-    slices = []
-    slices1 = []
-    for i in range(layer1_len):
-        stencil1 = stencil_func(p, coords1[i])
-        modified = inplace_stencil_sweep(
-            xp, u, stencil1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, i]
-        )
-        slices1.append(modified)
-    slices.append(merge_slices(*slices1, union=True))
+    stencils1 = stencil_func(p, coords1)
+    modified1 = inplace_multistencil_sweep(
+        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, :layer1_len]
+    )
 
     # fill buffer layer 2
-    slices2 = []
-    for i, j in product(range(layer1_len), range(layer2_len)):
-        stencil2 = stencil_func(p, coords2[j])
-        flat_idx = layer1_len + i * layer2_len + j
-        modified = inplace_stencil_sweep(
+    stencils2 = stencil_func(p, coords2)
+    for i in range(layer1_len):
+        out_slc = slice(layer1_len + i * layer2_len, layer1_len + (i + 1) * layer2_len)
+        modified2 = inplace_multistencil_sweep(
             xp,
             buffer[:, :, :, :, i],
-            stencil2,
+            stencils2,
             DIM_TO_AXIS[dim2],
-            out=buffer[:, :, :, :, flat_idx],
+            out=buffer[:, :, :, :, out_slc],
         )
-        slices2.append(modified)
-    slices.append(merge_slices(*slices2, union=True))
 
     # interpolate nodes from buffer
-    slices3 = []
-    for i, j, k in product(range(layer1_len), range(layer2_len), range(layer3_len)):
-        stencil3 = stencil_func(p, coords3[k])
+    stencil3 = stencil_func(p, coords3)
+    for i, j in product(range(layer1_len), range(layer2_len)):
         in_idx = layer1_len + i * layer2_len + j
-        out_idx = (i * layer2_len + j) * layer3_len + k
-        modified = inplace_stencil_sweep(
+        out_slc = slice(
+            (i * layer2_len + j) * layer3_len, (i * layer2_len + j + 1) * layer3_len
+        )
+        modified3 = inplace_multistencil_sweep(
             xp,
             buffer[:, :, :, :, in_idx],
             stencil3,
             DIM_TO_AXIS[dim3],
-            out=out[:, :, :, :, out_idx],
+            out=out[:, :, :, :, out_slc],
         )
-        slices3.append(modified)
-    slices.append(merge_slices(*slices3))
 
-    return merge_slices(*slices)
+    return merge_slices(modified1, modified2, modified3)
 
 
 def _to_iter(x):
