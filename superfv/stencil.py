@@ -158,7 +158,7 @@ def inplace_stencil_sweep(
     return modified
 
 
-def inplace_multistencil_sweep(
+def inplace_multistencil_sweep_add_multiply(
     xp: ModuleType,
     arr: ArrayLike,
     stencils: ArrayLike,
@@ -168,7 +168,7 @@ def inplace_multistencil_sweep(
 ) -> Tuple[slice, ...]:
     """
     Apply multiple symmetric stencils along a given axis and accumulate the results into
-    the central region.
+    the central region using element-wise multiplication and addition.
 
     Args:
         xp: Array namespace (e.g., `np` or `cupy`).
@@ -205,7 +205,7 @@ def inplace_multistencil_sweep(
     return out_modified
 
 
-def inplace_multistencil_sweep_einsum(
+def inplace_multistencil_sweep(
     xp: ModuleType,
     arr: ArrayLike,
     stencils: ArrayLike,
@@ -214,10 +214,22 @@ def inplace_multistencil_sweep_einsum(
     start_idx: int = 0,
 ) -> Tuple[slice, ...]:
     """
-    Einsum version: Apply multiple symmetric stencils along a given axis and
-    accumulate the results into the central region.
+    Apply multiple symmetric stencils along a given axis and accumulate the results into
+    the central region using einsum.
 
-    This version stacks all stencil-sliced views and applies weights in one fused einsum.
+    Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
+        arr: Input array of field values to apply the stencils to.
+        stencils: Array of stencil weights. Expected to have shape
+            (nstencils, nweights).
+        axis: Axis along which to apply the stencils.
+        out: Array to store the result. Expected to have an additional dimension for
+            the stencils: (*arr.shape, nstencils).
+        start_idx: Starting index to write the results into `out`. This is useful when
+            `out` is a larger array that contains multiple stencil sweeps.
+
+    Returns:
+        A slice object specifying the region of `out` that was modified.
     """
     arr_ndims = arr.ndim
     nstencils, stencil_len = stencils.shape
