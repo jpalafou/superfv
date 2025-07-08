@@ -147,8 +147,35 @@ def fv_average(
 Union[int, float, Sequence[Union[int, float]]]
 
 
-@lru_cache(maxsize=None)
 def gather_multistencils(
+    xp: ModuleType,
+    stencil_type: Literal["conservative-interpolation", "uniform-quadrature"],
+    p: int,
+    x: Optional[Tuple[InterpCoord, ...]] = None,
+) -> ArrayLike:
+    """
+    Gather multistencils for finite volume interpolation or integration.
+
+    Args:
+        xp: `np` namespace.
+        stencil_type: Type of stencil to gather, either "conservative-interpolation"
+            or "uniform-quadrature".
+        p: Polynomial degree of the interpolation stencil.
+        x: Optional tuple of coordinates for conservative interpolation. If None,
+            uniform quadrature weights are returned.
+
+    Returns:
+        ArrayLike: Array of stencil weights with shape (nstencils, stencil_size).
+            For "conservative-interpolation", `nstencils` is the number of coordinates
+            provided in `x` and `stencil_size` is the same for each coordinate. For
+            "uniform-quadrature", `nstencils` is 1 and `stencil_size` is the number of
+            quadrature points.
+    """
+    return _gather_multistencils(xp, stencil_type, p, x)
+
+
+@lru_cache(maxsize=None)
+def _gather_multistencils(
     xp: ModuleType,
     stencil_type: Literal["conservative-interpolation", "uniform-quadrature"],
     p: int,
@@ -275,10 +302,12 @@ def _fv_interpolate_direct(
             Each value may be a float or an array of floats representing the
             coordinates to interpolate along the respective dimension on [-1, 1].
         p: Polynomial degree of the interpolation stencil.
-        buffer: Array to store intermediate results. Has shape
-            (nvars, nx, ny, nz, nbuffer).
+        buffer: Array to store intermediate results for double or triple-sweep
+            interpolations. Has shape (nvars, nx, ny, nz, nbuffer).
         out: Output array to store the interpolated values. Has shape
             (nvars, nx, ny, nz, nout).
+        debug: If True, enables additional checks and validations for input and output
+            array shapes.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -305,6 +334,12 @@ def _fv_interpolate_direct(
     # one-dimensional interpolation
     if len(nodes) == 1:
         return _fv_interpolate_1sweep(xp, stencil_func, u, nodes, p, out, debug)
+
+    # buffer is needed
+    if buffer is None:
+        raise ValueError(
+            "Double or triple-sweep interpolations require a buffer array."
+        )
 
     # two-dimensional interpolation
     if len(nodes) == 2:
@@ -341,10 +376,11 @@ def _fv_interpolate_1sweep(
 ):
     dim1 = next(iter(nodes))
     coords1 = nodes[dim1]
-    if debug and out.shape[4] < len(coords1):
+    layer1_len = len(coords1)
+    if debug and out.shape[4] < layer1_len:
         raise ValueError(
             f"Output interpolation axis size {out.shape[4]} is smaller than the number"
-            f" number of coordinates {len(coords1)} for dimension '{dim1}'."
+            f" number of coordinates {layer1_len} for dimension '{dim1}'."
         )
     stencils1 = stencil_func(p, coords1)
     modified = inplace_multistencil_sweep(xp, u, stencils1, DIM_TO_AXIS[dim1], out=out)
@@ -381,21 +417,27 @@ def _fv_interpolate_2sweeps(
     # fill buffer
     stencils1 = stencil_func(p, coords1)
     modified1 = inplace_multistencil_sweep(
-        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, :layer1_len]
+        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer
     )
 
     # interpolate nodes from buffer
     stencils2 = stencil_func(p, coords2)
     for i in range(layer1_len):
+        start_idx = index_3d_to_1d(i, 0, 0, layer2_len, 1)
+        stop_idx = index_3d_to_1d(i, layer2_len, 0, layer2_len, 1)
+        out_slc = slice(start_idx, stop_idx)
         modified2 = inplace_multistencil_sweep(
             xp,
             buffer[:, :, :, :, i],
             stencils2,
             DIM_TO_AXIS[dim2],
-            out=out[:, :, :, :, layer2_len * i : layer2_len * (i + 1)],
+            out=out[:, :, :, :, out_slc],
         )
 
-    return merge_slices(modified1, modified2)
+    return merge_slices(
+        modified1[:4] + (slice(None),),
+        modified2[:4] + (slice(None, layer1_len * layer2_len),),
+    )
 
 
 def _fv_interpolate_3sweeps(
@@ -429,13 +471,18 @@ def _fv_interpolate_3sweeps(
     # fill buffer layer 1
     stencils1 = stencil_func(p, coords1)
     modified1 = inplace_multistencil_sweep(
-        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer[:, :, :, :, :layer1_len]
+        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer
     )
 
     # fill buffer layer 2
     stencils2 = stencil_func(p, coords2)
     for i in range(layer1_len):
-        out_slc = slice(layer1_len + i * layer2_len, layer1_len + (i + 1) * layer2_len)
+        # slice to write to buffer
+        start_idx = layer1_len + index_3d_to_1d(i, 0, 0, layer2_len, 1)
+        stop_idx = layer1_len + index_3d_to_1d(i, layer2_len, 0, layer2_len, 1)
+        out_slc = slice(start_idx, stop_idx)
+
+        # perform the stencil sweep on the buffer
         modified2 = inplace_multistencil_sweep(
             xp,
             buffer[:, :, :, :, i],
@@ -447,10 +494,15 @@ def _fv_interpolate_3sweeps(
     # interpolate nodes from buffer
     stencil3 = stencil_func(p, coords3)
     for i, j in product(range(layer1_len), range(layer2_len)):
-        in_idx = layer1_len + i * layer2_len + j
-        out_slc = slice(
-            (i * layer2_len + j) * layer3_len, (i * layer2_len + j + 1) * layer3_len
-        )
+        # index from buffer
+        in_idx = layer1_len + index_3d_to_1d(i, j, 0, layer2_len, 1)
+
+        # slice to write to output
+        start_idx = index_3d_to_1d(i, j, 0, layer2_len, layer3_len)
+        stop_idx = index_3d_to_1d(i, j, layer3_len, layer2_len, layer3_len)
+        out_slc = slice(start_idx, stop_idx)
+
+        # perform the stencil sweep
         modified3 = inplace_multistencil_sweep(
             xp,
             buffer[:, :, :, :, in_idx],
@@ -459,7 +511,34 @@ def _fv_interpolate_3sweeps(
             out=out[:, :, :, :, out_slc],
         )
 
-    return merge_slices(modified1, modified2, modified3)
+    return merge_slices(
+        modified1[:4] + (slice(None),),
+        modified2[:4] + (slice(None),),
+        modified3[:4] + (slice(None, layer1_len * layer2_len * layer3_len),),
+    )
+
+
+@lru_cache(maxsize=None)
+def index_3d_to_1d(i: int, j: int, k: int, ny: int, nz: int) -> int:
+    """
+    Convert a 3D index (i, j, k) to a 1D index for a 3D array with dimensions (nx, ny, nz).
+
+    Args:
+        i: Index in the x-dimension.
+        j: Index in the y-dimension.
+        k: Index in the z-dimension.
+        nx: Size of the x-dimension.
+        ny: Size of the y-dimension.
+
+    Returns:
+        int: The corresponding 1D index.
+    """
+    return _index_3d_to_1d(i, j, k, ny, nz)
+
+
+@lru_cache(maxsize=None)
+def _index_3d_to_1d(i: int, j: int, k: int, ny: int, nz: int) -> int:
+    return i * ny * nz + j * nz + k
 
 
 def _to_iter(x):
@@ -498,6 +577,9 @@ def _fv_interpolate_recursive(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    raise NotImplementedError(
+        "This function has not been refactored for `inplace_multistencil_sweep`."
+    )
     coords = [_to_iter(nodes[dim]) for dim in nodes.keys()]
     modified = _fv_interpolate_recursive_helper(
         xp,

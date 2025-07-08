@@ -1,4 +1,4 @@
-from typing import Callable, Dict
+from typing import Dict
 
 import numpy as np
 import pytest
@@ -84,17 +84,15 @@ def test_inplace_multistencil_sweep():
 @pytest.mark.parametrize("x_coord", [{"x": 0}, {"x": [-1, 1]}])
 @pytest.mark.parametrize("y_coord", [{}, {"y": 0}, {"y": np.nan}])
 @pytest.mark.parametrize("z_coord", [{}, {"z": 0}, {"z": [-1.0, -0.5, 0.0, 0.5, 1.0]}])
-@pytest.mark.parametrize("fv_interpolate", [_fv_interpolate_direct])
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5])
-def test_interpolate_node_from_uniform_field(
+def test__fv_interpolate_direct_interpolate_node_from_uniform_field(
     x_coord: Dict[str, float],
     y_coord: Dict[str, float],
     z_coord: Dict[str, float],
-    fv_interpolate: Callable,
     p: int,
 ):
     """
-    Test interpolation of a uniform field at specified coordinates.
+    Test that _fv_interpolate_direct can interpolate a node from a uniform field.
     """
     # Merge coordinate specs
     y_coord_copy = y_coord.copy()
@@ -119,12 +117,14 @@ def test_interpolate_node_from_uniform_field(
     u = np.ones((5, Nx, Ny, Nz))
 
     # Allocate output and buffer
-    out = np.zeros((5, Nx, Ny, Nz, n_nodes))
+    out = np.empty((5, Nx, Ny, Nz, n_nodes))
+    out.fill(np.nan)
     out_original = out.copy()
-    buffer = np.zeros((5, Nx, Ny, Nz, n_buffer)) * np.nan
+    buffer = np.empty((5, Nx, Ny, Nz, n_buffer))
+    buffer.fill(np.nan)
 
     # Perform interpolation
-    modified = fv_interpolate(
+    modified = _fv_interpolate_direct(
         np,
         lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
         u,
@@ -137,8 +137,115 @@ def test_interpolate_node_from_uniform_field(
     # Assert output equals the uniform input on the modified region
     for i in range(n_nodes):
         node = out[..., i]
-        assert linf_norm(node[modified] - u[modified]) < 1e-15
+        assert linf_norm(node[modified[:-1]] - u[modified[:-1]]) < 1e-15
 
     # assert that the output is unchanged outside the modified region
     out[modified] = out_original[modified]
     np.array_equal(out, out_original)
+
+
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize("nodes", [{"x": [0]}, {"x": [-1, 1]}])
+def test__fv_interpolate_direct_1sweep_modified_slice(p: int, nodes: Dict[str, float]):
+    """
+    Test that _fv_interpolate_direct returns the correct modified slice when performing
+    a single-sweep interpolation,
+    """
+    N = 16
+
+    # allocate arrays
+    u = np.zeros((5, N, 1, 1))
+    out = np.empty((5, N, 1, 1, 10))
+    out.fill(np.nan)
+
+    # perform interpolation
+    modified = _fv_interpolate_direct(
+        np,
+        lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
+        u,
+        nodes=nodes,
+        p=p,
+        buffer=np.empty((0,)),
+        out=out,
+    )
+
+    # assert that the modified region is correctly set
+    assert np.all(out[modified] == 0)
+    out[modified].fill(np.nan)
+    assert np.all(np.isnan(out))
+
+
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize(
+    "nodes",
+    [{"x": [0], "y": [-1, 1]}, {"x": [-1, 1], "y": [0]}, {"x": [-1, 1], "y": [-1, 1]}],
+)
+def test__fv_interpolate_direct_2sweep_modified_slice(p: int, nodes: Dict[str, float]):
+    """
+    Test that _fv_interpolate_direct returns the correct modified slice when performing
+    a double-sweep interpolation.
+    """
+    N = 16
+
+    # allocate arrays
+    u = np.zeros((5, N, N, 1))
+    out = np.empty((5, N, N, 1, 10))
+    out.fill(np.nan)
+    buffer = np.empty((5, N, N, 1, 10))
+    buffer.fill(np.nan)
+
+    # perform interpolation
+    modified = _fv_interpolate_direct(
+        np,
+        lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
+        u,
+        nodes=nodes,
+        p=p,
+        buffer=buffer,
+        out=out,
+    )
+
+    # assert that the modified region is correctly set
+    assert np.all(out[modified] == 0)
+    out[modified].fill(np.nan)
+    assert np.all(np.isnan(out))
+
+
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize(
+    "nodes",
+    [
+        {"x": [0], "y": [-1, 1], "z": [-0.5, 0.0, 0.5]},
+        {"x": [-0.5, 0.0, 0.5], "y": [-1, 1], "z": [0]},
+        {"x": [-1, 1], "y": [-1, 1], "z": [-1, 1]},
+    ],
+)
+def test__fv_interpolate_direct_3sweep_modified_slice(p: int, nodes: Dict[str, float]):
+    """
+    Test that _fv_interpolate_direct returns the correct modified slice when performing
+    a triple-sweep interpolation.
+    """
+    N = 16
+
+    # allocate arrays
+    u = np.zeros((5, N, N, N))
+    out = np.empty((5, N, N, N, 10))
+    out.fill(np.nan)
+    buffer = np.empty((5, N, N, N, 10))
+    buffer.fill(np.nan)
+
+    # perform interpolation
+    modified = _fv_interpolate_direct(
+        np,
+        lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
+        u,
+        nodes=nodes,
+        p=p,
+        buffer=buffer,
+        out=out,
+    )
+
+    # assert that the modified region is correctly set
+    assert np.all(out[modified] == 0)
+    # out[modified].fill(np.nan)
+    # assert np.all(np.isnan(out))

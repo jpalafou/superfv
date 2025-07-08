@@ -11,6 +11,7 @@ changes:
 - [x] look into cleaning up interpolation cache
 
 issues:
+- [ ] buffer array size is arbitrary in 3D
 - [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
 - [ ] test_ZS and test_MOOD
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
@@ -22,6 +23,7 @@ optimizations:
 - [ ] timer should pause during snapshot
 
 cosmetics:
+- [ ] buffer fv_interpolate should be optional for the single-sweep case
 - [ ] plot_1d_slice and others should default to x=None, y=0.5, z=0.5
 - [ ] clean up hydro/riemann solver modules
 - [ ] make gauss-legendre a boolean option

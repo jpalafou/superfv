@@ -657,7 +657,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_ninterps = 2 * max_nodes
 
         arrays.add("u_workspace", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, 2 * max_ninterps)))
         arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
@@ -992,7 +992,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         right_state = wl[crop(axis, (pad, -pad + 1))]
         self.riemann_solver(left_state, right_state, dim, left_state)  # overwrite wl
 
-        self.integration_func(left_state, dim, p, self.arrays["buffer"], flux_workspace)
+        self.integration_func(left_state, dim, p, right_state, flux_workspace)
 
         out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 

@@ -164,6 +164,7 @@ def inplace_multistencil_sweep(
     stencils: ArrayLike,
     axis: int,
     out: ArrayLike,
+    start_idx: int = 0,
 ) -> Tuple[slice, ...]:
     """
     Apply multiple symmetric stencils along a given axis and accumulate the results into
@@ -177,6 +178,8 @@ def inplace_multistencil_sweep(
         axis: Axis along which to apply the stencils.
         out: Array to store the result. Expected to have an additional dimension for
             the stencils: (*arr.shape, nstencils).
+        start_idx: Starting index to write the results into `out`. This is useful when
+            `out` is a larger array that contains multiple stencil sweeps.
 
     Returns:
         A slice object specifying the region of `out` that was modified.
@@ -188,7 +191,7 @@ def inplace_multistencil_sweep(
     modified = arr_slices[stencil_len // 2]
 
     # Zero the central region across all stencils
-    out_modified = modified + (slice(None),)  # add slice(None) for stencil axis
+    out_modified = modified + (slice(start_idx, start_idx + nstencils),)
     out[out_modified] = 0.0
 
     # Prepare broadcast shape: (..., 1) * nstencils
@@ -197,9 +200,9 @@ def inplace_multistencil_sweep(
     for i, s in enumerate(arr_slices):
         w = stencils[:, i].reshape(weight_shape)
         arr_sliced = arr[s][..., xp.newaxis]
-        xp.add(out[modified], xp.multiply(arr_sliced, w), out=out[modified])
+        xp.add(out[out_modified], xp.multiply(arr_sliced, w), out=out[out_modified])
 
-    return modified
+    return out_modified
 
 
 def stencil_sweep(
