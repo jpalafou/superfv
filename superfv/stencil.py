@@ -158,7 +158,7 @@ def inplace_stencil_sweep(
     return modified
 
 
-def inplace_multistencil_sweep(
+def inplace_multistencil_sweep_add_multiply(
     xp: ModuleType,
     arr: ArrayLike,
     stencils: ArrayLike,
@@ -168,7 +168,7 @@ def inplace_multistencil_sweep(
 ) -> Tuple[slice, ...]:
     """
     Apply multiple symmetric stencils along a given axis and accumulate the results into
-    the central region.
+    the central region using element-wise multiplication and addition.
 
     Args:
         xp: Array namespace (e.g., `np` or `cupy`).
@@ -201,6 +201,54 @@ def inplace_multistencil_sweep(
         w = w_stack[i]
         arr_sliced = arr[s][..., xp.newaxis]
         xp.add(out_view, xp.multiply(arr_sliced, w), out=out_view)
+
+    return out_modified
+
+
+def inplace_multistencil_sweep(
+    xp: ModuleType,
+    arr: ArrayLike,
+    stencils: ArrayLike,
+    axis: int,
+    out: ArrayLike,
+    start_idx: int = 0,
+) -> Tuple[slice, ...]:
+    """
+    Apply multiple symmetric stencils along a given axis and accumulate the results into
+    the central region using einsum.
+
+    Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
+        arr: Input array of field values to apply the stencils to.
+        stencils: Array of stencil weights. Expected to have shape
+            (nstencils, nweights).
+        axis: Axis along which to apply the stencils.
+        out: Array to store the result. Expected to have an additional dimension for
+            the stencils: (*arr.shape, nstencils).
+        start_idx: Starting index to write the results into `out`. This is useful when
+            `out` is a larger array that contains multiple stencil sweeps.
+
+    Returns:
+        A slice object specifying the region of `out` that was modified.
+    """
+    arr_ndims = arr.ndim
+    nstencils, stencil_len = stencils.shape
+
+    arr_slices = get_symmetric_slices(arr_ndims, stencil_len, axis)
+    modified = arr_slices[stencil_len // 2]
+    out_modified = modified + (slice(start_idx, start_idx + nstencils),)
+
+    # Stack all relevant slices: shape -> (stencil_len, ...arr.shape)
+    arr_stack = xp.stack(
+        [arr[s] for s in arr_slices], axis=0
+    )  # (stencil_len, *arr.shape)
+
+    # Broadcast stencils: (stencil_len, nstencils)
+    # Result shape: (*arr.shape, nstencils)
+    result = xp.einsum("i...,in->...n", arr_stack, stencils.T)
+
+    # Write to output in-place
+    out[out_modified] = result
 
     return out_modified
 
