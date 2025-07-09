@@ -205,6 +205,42 @@ def inplace_multistencil_sweep(
     return out_modified
 
 
+def inplace_multistencil_sweep_einsum(
+    xp: ModuleType,
+    arr: ArrayLike,
+    stencils: ArrayLike,
+    axis: int,
+    out: ArrayLike,
+    start_idx: int = 0,
+) -> Tuple[slice, ...]:
+    """
+    Einsum version: Apply multiple symmetric stencils along a given axis and
+    accumulate the results into the central region.
+
+    This version stacks all stencil-sliced views and applies weights in one fused einsum.
+    """
+    arr_ndims = arr.ndim
+    nstencils, stencil_len = stencils.shape
+
+    arr_slices = get_symmetric_slices(arr_ndims, stencil_len, axis)
+    modified = arr_slices[stencil_len // 2]
+    out_modified = modified + (slice(start_idx, start_idx + nstencils),)
+
+    # Stack all relevant slices: shape -> (stencil_len, ...arr.shape)
+    arr_stack = xp.stack(
+        [arr[s] for s in arr_slices], axis=0
+    )  # (stencil_len, *arr.shape)
+
+    # Broadcast stencils: (stencil_len, nstencils)
+    # Result shape: (*arr.shape, nstencils)
+    result = xp.einsum("i...,in->...n", arr_stack, stencils.T)
+
+    # Write to output in-place
+    out[out_modified] = result
+
+    return out_modified
+
+
 def stencil_sweep(
     xp: Any, arr: ArrayLike, stencil_weights: np.ndarray, axis: int
 ) -> ArrayLike:
