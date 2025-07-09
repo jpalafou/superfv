@@ -17,6 +17,7 @@ issues:
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
 - [ ] vestigial 'half-dt' option in MOOD
 - [ ] allow FV Solver to be copied for tests/solvers/test_pickle.py
+- [ ] adaptive timestep should revise "unew"
 
 optimizations:
 - [ ] preallocate padded arrays?
