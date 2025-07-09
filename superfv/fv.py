@@ -533,11 +533,6 @@ def index_3d_to_1d(i: int, j: int, k: int, ny: int, nz: int) -> int:
     Returns:
         int: The corresponding 1D index.
     """
-    return _index_3d_to_1d(i, j, k, ny, nz)
-
-
-@lru_cache(maxsize=None)
-def _index_3d_to_1d(i: int, j: int, k: int, ny: int, nz: int) -> int:
     return i * ny * nz + j * nz + k
 
 

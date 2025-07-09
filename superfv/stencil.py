@@ -194,13 +194,13 @@ def inplace_multistencil_sweep(
     out_modified = modified + (slice(start_idx, start_idx + nstencils),)
     out[out_modified] = 0.0
 
-    # Prepare broadcast shape: (..., 1) * nstencils
-    weight_shape = [1] * arr_ndims + [nstencils]
-
+    # Prepare the arrays for accumulation
+    out_view = out[out_modified]
+    w_stack = stencils.T.reshape((stencil_len,) + (1,) * arr_ndims + (nstencils,))
     for i, s in enumerate(arr_slices):
-        w = stencils[:, i].reshape(weight_shape)
+        w = w_stack[i]
         arr_sliced = arr[s][..., xp.newaxis]
-        xp.add(out[out_modified], xp.multiply(arr_sliced, w), out=out[out_modified])
+        xp.add(out_view, xp.multiply(arr_sliced, w), out=out_view)
 
     return out_modified
 
