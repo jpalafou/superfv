@@ -126,6 +126,21 @@ class ArrayManager:
         """
         self.arrays.clear()
 
+    def copy_to(self, other: "ArrayManager"):
+        """
+        Copy all arrays to another ArrayManager if there are no name conflicts.
+
+        Args:
+            other: Another ArrayManager instance.
+        """
+        if not isinstance(other, ArrayManager):
+            raise TypeError("other must be an instance of ArrayManager.")
+        if any(name in other.arrays for name in self.arrays):
+            raise KeyError("Some array names already exist in the target ArrayManager.")
+        for name, array in self.arrays.items():
+            other.add(name, array.copy())
+        other.device = self.device
+
     def __getitem__(
         self, name: str, copy: bool = False, asnumpy: bool = False
     ) -> ArrayLike:

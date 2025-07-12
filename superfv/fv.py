@@ -19,6 +19,7 @@ InterpCoord = Union[int, float]
 InterpCoords = Sequence[InterpCoord]
 StencilWeights = Union[Sequence[float], np.ndarray]
 
+AXIS_TO_DIM = {1: "x", 2: "y", 3: "z"}
 DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
 
 
@@ -40,22 +41,27 @@ def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayL
 
 @lru_cache(maxsize=None)
 def _gauss_legendre_for_finite_volume(
-    px: int, py: int, pz: int
+    xp: ModuleType, px: int, py: int, pz: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     x_pts, x_wts = _scaled_gauss_legendre_points_and_weights(px)
     y_pts, y_wts = _scaled_gauss_legendre_points_and_weights(py)
     z_pts, z_wts = _scaled_gauss_legendre_points_and_weights(pz)
-    xp, yp, zp = np.meshgrid(x_pts, y_pts, z_pts, indexing="ij")
-    xw, yw, zw = np.meshgrid(x_wts, y_wts, z_wts, indexing="ij")
-    xp = xp.flatten()
-    yp = yp.flatten()
-    zp = zp.flatten()
-    w = (xw * yw * zw).flatten()
-    return xp, yp, zp, w
+    Xp, Yp, Zp = np.meshgrid(x_pts, y_pts, z_pts, indexing="ij")
+    Xw, Yw, Zw = np.meshgrid(x_wts, y_wts, z_wts, indexing="ij")
+    Xp_flattened = Xp.flatten()
+    Yp_flattened = Yp.flatten()
+    Zp_flattened = Zp.flatten()
+    W_flattened = (Xw * Yw * Zw).flatten()
+    return (
+        xp.asarray(Xp_flattened),
+        xp.asarray(Yp_flattened),
+        xp.asarray(Zp_flattened),
+        xp.asarray(W_flattened),
+    )
 
 
 def gauss_legendre_for_finite_volume(
-    px: int, py: int, pz: int
+    xp: ModuleType, px: int, py: int, pz: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute Gauss-Legendre quadrature points and weights for a finite volume with up to
@@ -63,6 +69,7 @@ def gauss_legendre_for_finite_volume(
     [-0.5, 0.5] x [-0.5, 0.5] x [-0.5, 0.5].
 
     Args:
+        xp: `np` namespace.
         px: Polynomial degree of quadrature rule in x dimension.
         py: Polynomial degree of quadrature rule in y dimension.
         pz: Polynomial degree of quadrature rule in z dimension.
@@ -73,13 +80,14 @@ def gauss_legendre_for_finite_volume(
             points flattened across the three dimensions.
         w: Weights for the quadrature points, has shape (n_quadrature,).
     """
-    return _gauss_legendre_for_finite_volume(px, py, pz)
+    return _gauss_legendre_for_finite_volume(xp, px, py, pz)
 
 
 def gauss_legendre_mesh(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
+    xp: ModuleType,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
     h: Tuple[float, float, float],
     p: Tuple[int, int, int] = (0, 0, 0),
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -87,6 +95,7 @@ def gauss_legendre_mesh(
     Compute Gauss-Legendre quadrature points and weights for a finite volume mesh.
 
     Args:
+        xp: `np` namespace.
         x: x-coordinates, has shape (nx, ny, nz).
         y: y-coordinates, has shape (nx, ny, nz).
         z: z-coordinates, has shape (nx, ny, nz).
@@ -101,7 +110,7 @@ def gauss_legendre_mesh(
     """
     hx, hy, hz = h
     px, py, pz = p
-    xp, yp, zp, w = gauss_legendre_for_finite_volume(px, py, pz)
+    xp, yp, zp, w = gauss_legendre_for_finite_volume(xp, px, py, pz)
 
     # Compute the evaluation points for the quadrature rule
     na = np.newaxis
@@ -142,9 +151,6 @@ def fv_average(
     x_eval, y_eval, z_eval, weights = gauss_legendre_mesh(x, y, z, h, p)
     vals = f(x_eval, y_eval, z_eval)
     return np.sum(weights * vals, axis=4)
-
-
-Union[int, float, Sequence[Union[int, float]]]
 
 
 def gather_multistencils(

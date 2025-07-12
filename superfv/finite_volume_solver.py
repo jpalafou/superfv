@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Uni
 import numpy as np
 
 from . import fv
-from .boundary_conditions import BoundaryConditions, DirichletBC, Field
+from .boundary_conditions import DirichletBC, Field, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import fv_average, gauss_legendre_for_finite_volume
 from .initial_conditions import _uninitialized
@@ -262,7 +262,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cupy: Whether to use CuPy for array operations.
             log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
-        self._init_cupy(cupy)
+        self._init_array_management(cupy)
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, p, CFL)
         self._init_spatial_discretization(
             interpolation_scheme, flux_recipe, lazy_primitives
@@ -286,13 +286,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             SED,
         )
 
-    def _init_cupy(self, cupy: bool):
+    def _init_array_management(self, cupy: bool):
+        # init cupy boolean and numpy namespace
         self.cupy = False
         if cupy and CUPY_AVAILABLE:
             self.cupy = True
         elif cupy:
             warnings.warn("CuPy is not available. Using NumPy instead.")
         self.xp = xp if self.cupy else np
+
+        # init array manager
+        self.arrays = ArrayManager()
+        if self.cupy:
+            self.arrays.transfer_to_device("gpu")
 
     def _init_mesh(
         self,
@@ -372,6 +378,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ignore_y=not self.using_ydim,
             ignore_z=not self.using_zdim,
             slab_depth=slab_thickness,
+            array_manager=self.arrays,
         )
         assert self.mesh.pad_x == (slab_thickness if self.using_xdim else 0)
         assert self.mesh.pad_y == (slab_thickness if self.using_ydim else 0)
@@ -474,13 +481,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_passive_vars = len(np.arange(self.nvars)[idx("passives")])
 
         # Initialize the ODE solver with the initial condition array
-        ic_arr = self.fv_average_wrapper(self.conservatives_wrapper(self.callable_ic))(
-            self.variable_index_map, *self.mesh.coords, 0.0
+        ic_arr = self.mesh.perform_GaussLegendre_quadrature(
+            lambda x, y, z: self.conservative_callable_ic(idx, x, y, z, 0.0),
+            node_axis=4,
+            mesh_region="core",
+            cell_region="interior",
+            p=self.p,
         )
-        self.maximum_principle = np.min(ic_arr, axis=(1, 2, 3), keepdims=True), np.max(
-            ic_arr, axis=(1, 2, 3), keepdims=True
-        )
-        super().__init__(ic_arr)
+
+        lower_bound = self.xp.min(ic_arr, axis=(1, 2, 3), keepdims=True)
+        upper_bound = self.xp.max(ic_arr, axis=(1, 2, 3), keepdims=True)
+        self.maximum_principle = (lower_bound, upper_bound)
+
+        super().__init__(ic_arr, self.arrays)
 
     def _callable_ic(
         self,
@@ -505,6 +518,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for v, f in self.ic_passives.items():
                 out[idx(v)] = f(x, y, z)
         return out
+
+    def conservative_callable_ic(
+        self,
+        idx: VariableIndexMap,
+        x: ArrayLike,
+        y: ArrayLike,
+        z: ArrayLike,
+        t: Optional[float] = None,
+    ) -> ArrayLike:
+        """
+        Callable for initial conditions that returns conservative variables.
+        """
+        return self.conservatives_from_primitives(self.callable_ic(idx, x, y, z, t))
 
     def conservatives_wrapper(
         self,
@@ -561,60 +587,52 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         y_dirichlet: Optional[DirichletBC],
         z_dirichlet: Optional[DirichletBC],
     ):
-        # configure "ic" boundary conditions as "dirichlet" boundary conditions
-        def as_two_list(x):
-            if isinstance(x, list) or isinstance(x, tuple):
+        def as_pair(x: Union[Any, Tuple[Any, Any]]) -> Tuple[Any, Any]:
+            if isinstance(x, tuple):
                 if len(x) != 2:
-                    raise TypeError("Expected a two-element iterable.")
-                return list(x)
-            else:
-                return [x, x]
+                    raise TypeError("Expected a two-element tuple.")
+                return x
+            return (x, x)
 
-        ic_configed_bc = {"x": bcx, "y": bcy, "z": bcz}
-        ic_configed_dirichlet = {"x": x_dirichlet, "y": y_dirichlet, "z": z_dirichlet}
-        for dim in "xyz":
-            bc2 = as_two_list(ic_configed_bc[dim])
-            f2 = as_two_list(ic_configed_dirichlet[dim])
-            for i in range(2):
-                if bc2[i] == "ic":
-                    bc2[i] = "dirichlet"
-                    f2[i] = lambda idx, x, y, z, t: self.callable_ic(idx, x, y, z, 0.0)
-            ic_configed_bc[dim] = (bc2[0], bc2[1])
-            ic_configed_dirichlet[dim] = (f2[0], f2[1])
+        mode_list: List[Tuple[str, str]] = []
+        primitive_dirichlet_list: List[Tuple[Callable, Callable]] = []
 
-        # initialize boundary conditions
-        self.bc = BoundaryConditions(
-            self.variable_index_map,
-            self.mesh,
-            bcx=ic_configed_bc["x"],
-            bcy=ic_configed_bc["y"],
-            bcz=ic_configed_bc["z"],
-            x_dirichlet=ic_configed_dirichlet["x"],
-            y_dirichlet=ic_configed_dirichlet["y"],
-            z_dirichlet=ic_configed_dirichlet["z"],
-            conservatives_wrapper=self.conservatives_wrapper,
-            cupy=self.cupy,
+        for bci, fi in zip((bcx, bcy, bcz), (x_dirichlet, y_dirichlet, z_dirichlet)):
+            mode_list_i: List[str] = []
+            primitive_dirichlet_list_i: List[Callable] = []
+            for j, (bc, f) in enumerate(zip(as_pair(bci), as_pair(fi))):
+                if bc == "ic":
+                    mode_list_i.append("dirichlet")
+                    primitive_dirichlet_list_i.append(
+                        lambda idx, x, y, z, t: self.callable_ic(idx, x, y, z, 0.0)
+                    )
+                else:
+                    mode_list_i.append(bc)
+                    primitive_dirichlet_list_i.append(f)
+
+            mode_list.append(tuple(mode_list_i))
+            primitive_dirichlet_list.append(tuple(primitive_dirichlet_list_i))
+
+        mode = tuple(mode_list)
+        primitive_dirichlet_arg = tuple(primitive_dirichlet_list)
+        conservative_dirichlet_arg = tuple(
+            tuple(self.conservatives_wrapper(f) if f is not None else None for f in f2)
+            for f2 in primitive_dirichlet_arg
         )
 
-        # this is used to apply ghost cells to alpha in the smooth extrema detector
-        periodic = ("periodic", "periodic")
-        self.bc_for_smooth_extrema_detection = BoundaryConditions(
-            self.variable_index_map,
-            self.mesh,
-            bcx="periodic" if self.bc.bcx == periodic else "ones",
-            bcy="periodic" if self.bc.bcy == periodic else "ones",
-            bcz="periodic" if self.bc.bcz == periodic else "ones",
-            cupy=self.cupy,
+        self.primitive_bc_kwargs = dict(
+            pad_width=(self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z),
+            mode=mode,
+            f=primitive_dirichlet_arg,
+            variable_index_map=self.variable_index_map,
+            mesh=self.mesh,
         )
-
-        # this is used to apply ghost cells to the troubled cell mask in MOOD
-        self.bc_for_troubled_cell_mask = BoundaryConditions(
-            self.variable_index_map,
-            self.mesh,
-            bcx="periodic" if self.bc.bcx == periodic else "free",
-            bcy="periodic" if self.bc.bcy == periodic else "free",
-            bcz="periodic" if self.bc.bcz == periodic else "free",
-            cupy=self.cupy,
+        self.conservative_bc_kwargs = dict(
+            pad_width=(self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z),
+            mode=mode,
+            f=conservative_dirichlet_arg,
+            variable_index_map=self.variable_index_map,
+            mesh=self.mesh,
         )
 
     def _init_snapshots(self, log_every_step: bool):
@@ -851,7 +869,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         out = self.arrays["dudt"]
 
-        self.inplace_compute_fluxes(u, self.p)
+        self.inplace_compute_fluxes(t, u, self.p)
 
         out[...] = 0.0
         for dim in self.active_dims:
@@ -860,7 +878,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         return out.copy()
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
-    def inplace_compute_fluxes(self, u: ArrayLike, p: int):
+    def inplace_compute_fluxes(self, t: float, u: ArrayLike, p: int):
         """
         Updates the interior of `self.arrays["u_workspace"]` with the provided
         conservative values `u` and applies boundary conditions in place.
@@ -880,34 +898,48 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         _u_ = self.arrays["u_workspace"]
         _u_[self.interior] = u
-        self.inplace_apply_bc(_u_)
+        self.inplace_apply_bc(t, _u_, p=p)
 
         for dim in self.active_dims:
-            self.inplace_interpolate_faces(_u_, dim, p, convert_to_primitives=False)
+            self.inplace_interpolate_faces(t, _u_, dim, p, convert_to_primitives=False)
 
         for dim in self.active_dims:
             self.inplace_integrate_fluxes(dim, p)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
     def inplace_apply_bc(
-        self, u: ArrayLike, primitives: bool = False, pointwise: bool = False
+        self,
+        t: float,
+        u: ArrayLike,
+        primitives: bool = False,
+        pointwise: bool = False,
+        cell_region: Optional[
+            Literal["xl", "xr", "yl", "yr", "zl", "zr", "center"]
+        ] = None,
+        p: Optional[int] = None,
     ):
         """
         Apply boundary conditions to the provided array `u` in place.
-
-        Args:
-            u: Array of conservative or primitive variables. Has shape
-                (nvars, _nx_, _ny_, _nz_).
-            primitives: Whether to apply primitive boundary conditions instead of
-                conservative boundary conditions.
-            pointwise: Whether to apply pointwise boundary conditions instead of
-                cell-averaged boundary conditions.
         """
-        self.bc(u, (self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z))
+        dirichlet_mode = (
+            "fv-averages"
+            if not pointwise
+            else ("cell-centers" if cell_region == "center" else "face-nodes")
+        )
+        apply_bc(
+            _u_=u,
+            dirichlet_mode=dirichlet_mode,
+            t=t,
+            face_dim=cell_region[0] if dirichlet_mode == "face-nodes" else None,
+            face_pos=cell_region[1] if dirichlet_mode == "face-nodes" else None,
+            p=p if self.GL else 0,
+            **(self.primitive_bc_kwargs if primitives else self.conservative_bc_kwargs),
+        )
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(
         self,
+        t: float,
         u: ArrayLike,
         dim: Literal["x", "y", "z"],
         p: int,
@@ -918,6 +950,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         the interpolated values to primitive variables, then update boundaries.
 
         Args:
+            t: Time value.
             u: Workspace array of conservative, cell-averaged values. Has shape
                 (nvars, nx, ny, nz).
             dim: Dimension in which to interpolate the face nodes. Possible values:
@@ -936,6 +969,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         out = self.arrays[dim + "_nodes"]
         buffer = self.arrays["buffer"]
+        n = self.nodes_per_face(p)
 
         self.interpolation_func(
             u,
@@ -949,7 +983,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.conservatives_to_primitives(out, buffer)
             out[...] = buffer
 
-        self.inplace_apply_bc(out, primitives=convert_to_primitives)
+        ul = out[crop(4, (None, n))]
+        ur = out[crop(4, (n, 2 * n))]
+
+        self.inplace_apply_bc(
+            t,
+            ul,
+            primitives=convert_to_primitives,
+            pointwise=True,
+            cell_region=dim + "l",
+            p=p,
+        )
+        self.inplace_apply_bc(
+            t,
+            ur,
+            primitives=convert_to_primitives,
+            pointwise=True,
+            cell_region=dim + "r",
+            p=p,
+        )
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
     def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
@@ -1020,7 +1072,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
         """
         flux_name = self.flux_names[dim]
-        h = self.mesh.h[dim]
+        h = getattr(self.mesh, "h" + dim)
         axis = self.axis[dim]
 
         F = self.arrays[flux_name]
@@ -1730,7 +1782,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         _u_ = self.arrays["u_workspace"]
         _u_[self.interior] = self.arrays["u"]
-        self.inplace_apply_bc(_u_)
+        self.inplace_apply_bc(self.t, _u_, p=self.p)
 
         ucc = self.arrays["ucc"]
         wcc = self.arrays["wcc"]

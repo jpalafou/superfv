@@ -175,12 +175,13 @@ class ExplicitODESolver(ABC):
         self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
         self.timer.reset("current_step")
 
-    def __init__(self, u0: np.ndarray):
+    def __init__(self, u0: np.ndarray, array_manager: Optional[ArrayManager] = None):
         """
         Initializes the ODE solver.
 
         Args:
             u0: Initial state as an array.
+            array_manager: Optional ArrayManager instance to manage arrays.
         """
         # initialize times
         self.t = 0.0
@@ -190,7 +191,7 @@ class ExplicitODESolver(ABC):
         self.dt_revision_count = 0
 
         # initialize array manager
-        self.arrays = ArrayManager()
+        self.arrays = ArrayManager() if array_manager is None else array_manager
         self.arrays.add("u", u0)
         self.arrays.add("k0", np.empty_like(u0))
         self.arrays.add("k1", np.empty_like(u0))
