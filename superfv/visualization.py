@@ -30,7 +30,8 @@ def _get_nearest_index(
     idx = np.argmin(np.abs(array - coord)).item()
     if coord not in array:
         warnings.warn(
-            f"Coordinate {coord} not found in array. Using nearest: {array[idx]}."
+            f"Cell-centered coordinate {coord} not exactly matched in mesh;"
+            f" using nearest: {array[idx]:.6g}"
         )
     return idx
 
@@ -72,14 +73,21 @@ def _parse_txyz_slices(
 
     # get xyz slices
     slices: Dict[str, Union[int, slice]] = {
-        "x": slice(None),
-        "y": slice(None),
-        "z": slice(None),
+        "x": Union[int, slice],
+        "y": Union[int, slice],
+        "z": Union[int, slice],
     }
     for dim, coord in zip("xyz", [x, y, z]):
         x_array = getattr(fv_solver.mesh, dim + "_centers")
-        if coord is None:
-            continue
+        if dim not in fv_solver.dims:
+            if coord is not None:
+                warnings.warn(
+                    f"Dimension {dim} is not active in the solver. "
+                    f"Ignoring coordinate {coord}."
+                )
+            slices[dim] = 0
+        elif coord is None:
+            slices[dim] = slice(None)
         elif isinstance(coord, float):
             slices[dim] = _get_nearest_index(x_array, coord)
         elif isinstance(coord, tuple):
@@ -141,15 +149,30 @@ def _extract_variable_data(
     return snapshot[key][idx(variable)]
 
 
+def _is_None_or_tuple(
+    value: Optional[Union[float, Tuple[Optional[float], Optional[float]]]]
+) -> bool:
+    """
+    Check if the value is None or a tuple of length 2.
+
+    Args:
+        value: Value to check.
+
+    Returns:
+        True if value is None or a tuple of length 2, False otherwise.
+    """
+    return value is None or (isinstance(value, tuple) and len(value) == 2)
+
+
 def plot_1d_slice(
     fv_solver: FiniteVolumeSolver,
     ax: Axes,
     variable: str,
     cell_averaged: bool = False,
     t: Optional[float] = None,
-    x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
-    y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
-    z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
+    x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     xlabel: bool = False,
     **kwargs,
 ):
@@ -176,14 +199,19 @@ def plot_1d_slice(
     Raises:
         ValueError: If not exactly one of x, y, z is None or a tuple.
     """
-    # find the dimension and slices
-    if sum(coord is None or isinstance(coord, tuple) for coord in (x, y, z)) != 1:
-        raise ValueError("Exactly one of x, y, z must be None or a tuple.")
-    dim = next(
-        dim
-        for dim, val in zip("XYZ", [x, y, z])
-        if val is None or isinstance(val, tuple)
-    )
+    # find the dimension to plot
+    if "x" in fv_solver.dims and _is_None_or_tuple(x):
+        dim = "X"
+    elif "y" in fv_solver.dims and _is_None_or_tuple(y):
+        dim = "Y"
+    elif "z" in fv_solver.dims and _is_None_or_tuple(z):
+        dim = "Z"
+    else:
+        raise ValueError(
+            "Exactly one of x, y, z must be None or a length-two tuple for a 1D slice."
+        )
+
+    # find the nearest slices in time and space
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # gather data
@@ -204,9 +232,9 @@ def plot_2d_slice(
     variable: str,
     cell_averaged: bool = False,
     t: Optional[float] = None,
-    x: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
-    y: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
-    z: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
+    x: Union[float, Tuple[Optional[float], Optional[float]]] = None,
+    y: Union[float, Tuple[Optional[float], Optional[float]]] = None,
+    z: Union[float, Tuple[Optional[float], Optional[float]]] = None,
     levels: Optional[Union[int, np.ndarray]] = None,
     **kwargs,
 ):
@@ -233,14 +261,19 @@ def plot_2d_slice(
     Raises:
         ValueError: If not exactly two of x, y, z is None or a tuple.
     """
-    # find the dimensions and slices
-    if sum(coord is None or isinstance(coord, tuple) for coord in (x, y, z)) != 2:
-        raise ValueError("Exactly two of x, y, z must be None or a tuple.")
-    dim1, dim2 = [
-        dim
-        for dim, val in zip("XYZ", [x, y, z])
-        if val is None or isinstance(val, tuple)
-    ]
+    # find the dimensions to plot
+    if "xy" in fv_solver.dims and _is_None_or_tuple(x) and _is_None_or_tuple(y):
+        dim1, dim2 = "X", "Y"
+    elif "xz" in fv_solver.dims and _is_None_or_tuple(x) and _is_None_or_tuple(y):
+        dim1, dim2 = "X", "Z"
+    elif "yz" in fv_solver.dims and _is_None_or_tuple(x) and _is_None_or_tuple(y):
+        dim1, dim2 = "Y", "Z"
+    else:
+        raise ValueError(
+            "Exactly two of x, y, z must be None or a length-two tuple for a 2D slice."
+        )
+
+    # find the nearest slices in time and space
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # determine plotting mode

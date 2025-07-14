@@ -20,7 +20,7 @@ import numpy as np
 from . import fv
 from .boundary_conditions import DirichletBC, Field, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
-from .fv import fv_average, gauss_legendre_for_finite_volume
+from .fv import DIM_TO_AXIS, fv_average, gauss_legendre_for_finite_volume
 from .initial_conditions import _uninitialized
 from .mesh import UniformFVMesh
 from .slope_limiting import minmod, moncen, muscl
@@ -355,7 +355,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.active_dims = tuple(
             cast(Literal["x", "y", "z"], d) for d in ["x", "y", "z"] if self.using[d]
         )
-        self.axes = tuple("xyz".index(dim) + 1 for dim in self.dims)
+        self.axes = tuple(DIM_TO_AXIS[dim] for dim in self.dims)
         self.axis = {
             cast(Literal["x", "y", "z"], d): i
             for i, d in enumerate(["x", "y", "z"], start=1)
