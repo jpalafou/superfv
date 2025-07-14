@@ -9,19 +9,17 @@ changes:
 - [x] for large p and N, the first step is actually the fastest
 - [x] move interpolation and integration functions to fv or some other modules
 - [x] look into cleaning up interpolation cache
+- [x] adaptive timestep should revise "unew"
+- [x] preallocate padded arrays?
 
 issues:
 - [ ] buffer array size is arbitrary in 3D
-- [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
 - [ ] test_ZS and test_MOOD
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
 - [ ] vestigial 'half-dt' option in MOOD
-- [ ] allow FV Solver to be copied for tests/solvers/test_pickle.py
-- [ ] adaptive timestep should revise "unew"
 
 optimizations:
-- [ ] preallocate padded arrays?
-- [ ] timer should pause during snapshot
+- [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 
 cosmetics:
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
