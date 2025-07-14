@@ -11,6 +11,7 @@ changes:
 - [x] look into cleaning up interpolation cache
 - [x] adaptive timestep should revise "unew"
 - [x] preallocate padded arrays?
+- [x] plot_1d_slice and others should default to x=None, y=0.5, z=0.5
 
 issues:
 - [ ] buffer array size is arbitrary in 3D
@@ -23,7 +24,6 @@ optimizations:
 
 cosmetics:
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
-- [ ] plot_1d_slice and others should default to x=None, y=0.5, z=0.5
 - [ ] clean up hydro/riemann solver modules
 - [ ] make gauss-legendre a boolean option
 - [ ] fix: progress bar for allow_overshoot=True

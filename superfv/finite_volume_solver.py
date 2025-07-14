@@ -346,60 +346,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         CFL: float,
     ):
-        # determine which dimensions are used
-        self.using_xdim = nx > 1
-        self.using_ydim = ny > 1
-        self.using_zdim = nz > 1
-        self.using = {"x": self.using_xdim, "y": self.using_ydim, "z": self.using_zdim}
-        self.dims = "".join(dim for dim, using in self.using.items() if using)
-        self.active_dims = tuple(
-            cast(Literal["x", "y", "z"], d) for d in ["x", "y", "z"] if self.using[d]
-        )
-        self.axes = tuple(DIM_TO_AXIS[dim] for dim in self.dims)
-        self.axis = {
-            cast(Literal["x", "y", "z"], d): i
-            for i, d in enumerate(["x", "y", "z"], start=1)
-        }
-        self.ndim = len(self.active_dims)
-
-        # assign p and CFL
         if p < 0:
             raise ValueError("The polynomial degree must be non-negative.")
         if CFL <= 0:
             raise ValueError("The CFL number must be positive.")
-        self.p = p
-        self.px = p if self.using_xdim else 0
-        self.py = p if self.using_ydim else 0
-        self.pz = p if self.using_zdim else 0
-        self.CFL = CFL
-
-        # assign slab thickness
-        slab_thickness = -(-p // 2) + 1
-        self.slab_thickness = slab_thickness
-
-        # interior workspace view
-        self.interior = merge_slices(
-            *[
-                crop(self.axis[d], (slab_thickness, -slab_thickness))
-                for d in self.active_dims
-            ]
-        )
-
-        # interior workspace view for fluxes
-        self.flux_interior = {
-            dim: (
-                merge_slices(
-                    *[
-                        crop(self.axis[d], (slab_thickness, -slab_thickness))
-                        for d in self.active_dims
-                        if d != dim
-                    ],
-                )
-                if self.ndim > 1
-                else slice(None)
-            )
-            for dim in self.active_dims
-        }
 
         # init mesh object
         self.mesh = UniformFVMesh(
@@ -409,15 +359,40 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             xlim=xlim,
             ylim=ylim,
             zlim=zlim,
-            ignore_x=not self.using_xdim,
-            ignore_y=not self.using_ydim,
-            ignore_z=not self.using_zdim,
-            slab_depth=slab_thickness,
+            slab_depth=-(-p // 2) + 1,
             array_manager=self.arrays,
         )
-        assert self.mesh.pad_x == (slab_thickness if self.using_xdim else 0)
-        assert self.mesh.pad_y == (slab_thickness if self.using_ydim else 0)
-        assert self.mesh.pad_z == (slab_thickness if self.using_zdim else 0)
+
+        # assign attributes
+        self.p: int = p
+        self.CFL: float = CFL
+
+        # interior workspace view
+        self.interior = merge_slices(
+            *[
+                crop(DIM_TO_AXIS[dim], (self.mesh.slab_depth, -self.mesh.slab_depth))
+                for dim in self.mesh.active_dims
+            ]
+        )
+
+        # interior workspace view for fluxes
+        self.flux_interior = {
+            dim: (
+                merge_slices(
+                    *[
+                        crop(
+                            DIM_TO_AXIS[d],
+                            (self.mesh.slab_depth, -self.mesh.slab_depth),
+                        )
+                        for d in self.mesh.active_dims
+                        if d != dim
+                    ],
+                )
+                if self.mesh.ndim > 1
+                else slice(None)
+            )
+            for dim in self.mesh.active_dims
+        }
 
     def _init_spatial_discretization(
         self,
@@ -430,7 +405,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(
                 "flux_recipe must be 1, 2, or 3. See the documentation for details."
             )
-        if interpolation_scheme == "gauss-legendre" and self.ndim == 1:
+        if interpolation_scheme == "gauss-legendre" and self.mesh.ndim == 1:
             raise ValueError(
                 "Gauss-Legendre interpolation scheme is not supported in 1D."
             )
@@ -443,7 +418,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
         self.integration_func = (
             self._integrate_trivial_nodes
-            if self.ndim == 1
+            if self.mesh.ndim == 1
             else (
                 self._integrate_GaussLegendre_nodes
                 if self.GL
@@ -455,22 +430,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _interpolate_GaussLegendre_nodes(self, u, face_dim, p, buffer, out):
         fv.interpolate_GaussLegendre_nodes(
-            self.xp, u, face_dim, self.active_dims, p, buffer, out
+            self.xp, u, face_dim, self.mesh.active_dims, p, buffer, out
         )
 
     def _integrate_GaussLegendre_nodes(self, f, face_dim, p, buffer, out):
         fv.integrate_GaussLegendre_nodes(
-            self.xp, f, face_dim, self.active_dims, p, out[..., 0]
+            self.xp, f, face_dim, self.mesh.active_dims, p, out[..., 0]
         )
 
     def _interpolate_transverse_nodes(self, u, face_dim, p, buffer, out):
         fv.interpolate_face_centers(
-            self.xp, u, face_dim, self.active_dims, p, buffer, out
+            self.xp, u, face_dim, self.mesh.active_dims, p, buffer, out
         )
 
     def _integrate_transverse_nodes(self, f, face_dim, p, buffer, out):
         fv.transversely_integrate_nodes(
-            self.xp, f[..., 0], face_dim, self.active_dims, p, buffer, out
+            self.xp, f[..., 0], face_dim, self.mesh.active_dims, p, buffer, out
         )
 
     def _integrate_trivial_nodes(self, f, face_dim, p, buffer, out):
@@ -651,15 +626,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for f2 in primitive_dirichlet_arg
         )
 
+        mesh = self.mesh
         self.primitive_bc_kwargs = dict(
-            pad_width=(self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z),
+            pad_width=(mesh.x_slab_depth, mesh.y_slab_depth, mesh.z_slab_depth),
             mode=mode,
             f=primitive_dirichlet_arg,
             variable_index_map=self.variable_index_map,
             mesh=self.mesh,
         )
         self.conservative_bc_kwargs = dict(
-            pad_width=(self.mesh.pad_x, self.mesh.pad_y, self.mesh.pad_z),
+            pad_width=(mesh.x_slab_depth, mesh.y_slab_depth, mesh.z_slab_depth),
             mode=mode,
             f=conservative_dirichlet_arg,
             variable_index_map=self.variable_index_map,
@@ -903,7 +879,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_compute_fluxes(t, u, self.p)
 
         out[...] = 0.0
-        for dim in self.active_dims:
+        for dim in self.mesh.active_dims:
             self._add_flux_divergence(dim, out)
         self.n_updates += self.mesh.size
         return out.copy()
@@ -931,10 +907,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _u_[self.interior] = u
         self.inplace_apply_bc(t, _u_, p=p)
 
-        for dim in self.active_dims:
+        for dim in self.mesh.active_dims:
             self.inplace_interpolate_faces(t, _u_, dim, p, convert_to_primitives=False)
 
-        for dim in self.active_dims:
+        for dim in self.mesh.active_dims:
             self.inplace_integrate_fluxes(dim, p)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
@@ -1059,8 +1035,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         """
         n = self.nodes_per_face(p)
-        pad = getattr(self.mesh, f"pad_{dim}")
-        axis = self.axis[dim]
+        pad = getattr(self.mesh, f"{dim}_slab_depth")
+        axis = DIM_TO_AXIS[dim]
         flux_name = self.flux_names[dim]
         flux_workspace_name = flux_name + "_wrkspce"
 
@@ -1087,7 +1063,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p: Polynomial degree of the spatial discretization.
         """
         if self.GL:
-            return (-(-(p + 1) // 2)) ** (self.ndim - 1)
+            return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
         return 1
 
     def _add_flux_divergence(self, dim: Literal["x", "y", "z"], out: ArrayLike):
@@ -1104,7 +1080,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         flux_name = self.flux_names[dim]
         h = getattr(self.mesh, "h" + dim)
-        axis = self.axis[dim]
+        axis = DIM_TO_AXIS[dim]
 
         F = self.arrays[flux_name]
         self.xp.add(
@@ -1190,10 +1166,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         u_padded = self.apply_bc(u, -(-p // 2), t=t, p=p)
 
         fluxes: List[Optional[ArrayLike]] = []
-        xyz: Tuple[Directions, ...] = ("x", "y", "z")
-        for axis, dim in enumerate(xyz, start=1):
+        for dim in ["x", "y", "z"]:
             # skip unused dimensions
-            if not self.using[dim]:
+            if dim not in self.mesh.active_dims:
                 fluxes.append(None)
                 continue
 
@@ -1232,8 +1207,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             # compute fluxes from the primitive variables
             F = self.integrate_fluxes(
-                w_xr[crop(axis, (None, -1))],
-                w_xl[crop(axis, (1, None))],
+                w_xr[crop(DIM_TO_AXIS[dim], (None, -1))],
+                w_xl[crop(DIM_TO_AXIS[dim], (1, None))],
                 dim=dim,
                 quadrature=mode,
                 p=p,
@@ -1633,9 +1608,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 interpolation_scheme in ("gauss-legendre", "transverse")
                 and limiting_scheme is None
             ):
-                px = p if self.using_xdim else 0
-                py = p if self.using_ydim else 0
-                pz = p if self.using_zdim else 0
+                px = p if self.mesh.x_is_active else 0
+                py = p if self.mesh.y_is_active else 0
+                pz = p if self.mesh.z_is_active else 0
                 if interpolation_scheme == "transverse":
                     xp, yp, zp, _ = gauss_legendre_for_finite_volume(0, 0, 0)
                 else:
@@ -1798,12 +1773,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
         """
         dudt = self.xp.zeros_like(u)
-        for axis, dim, _F in zip([1, 2, 3], ["x", "y", "z"], [F, G, H]):
-            if self.using[dim]:
-                dudt += -(1 / getattr(self.mesh, "h" + dim)) * (
-                    cast(ArrayLike, _F)[crop(axis, (1, None))]
-                    - cast(ArrayLike, _F)[crop(axis, (None, -1))]
-                )
+        for dim, _F in zip(["x", "y", "z"], [F, G, H]):
+            if dim not in self.mesh.active_dims:
+                continue
+            dudt += -(1 / getattr(self.mesh, "h" + dim)) * (
+                cast(ArrayLike, _F)[crop(DIM_TO_AXIS[dim], (1, None))]
+                - cast(ArrayLike, _F)[crop(DIM_TO_AXIS[dim], (None, -1))]
+            )
         return dudt
 
     def snapshot(self):
@@ -1822,7 +1798,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         buffer = self.arrays["buffer"]
 
         p = self.p
-        dims = self.active_dims
+        dims = self.mesh.active_dims
 
         # conservative cell centers
         fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer, temp_out)
@@ -1842,7 +1818,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _u_[self.interior] = wcc
             self.apply_bc(_u_, -(-p // 2), primitives=True)
             fv.integrate_fv_averages(
-                self.xp, _u_, self.active_dims, p, buffer, temp_out
+                self.xp, _u_, self.mesh.active_dims, p, buffer, temp_out
             )
             w[...] = temp_out[self.interior][..., 0]
 

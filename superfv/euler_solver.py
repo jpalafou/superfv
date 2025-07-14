@@ -218,12 +218,12 @@ class EulerSolver(FiniteVolumeSolver):
                 "E": 4,
             },
             group_var_map={
-                "v": ["v" + dim for dim in "xyz" if self.using[dim]],
-                "m": ["m" + dim for dim in "xyz" if self.using[dim]],
+                "v": ["v" + dim for dim in self.mesh.active_dims],
+                "m": ["m" + dim for dim in self.mesh.active_dims],
                 "primitives": ["rho", "v", "P"],
                 "conservatives": ["rho", "m", "E"],
-                "passives": ["v" + dim for dim in "xyz" if not self.using[dim]]
-                + ["m" + dim for dim in "xyz" if not self.using[dim]],
+                "passives": ["v" + dim for dim in self.mesh.inactive_dims]
+                + ["m" + dim for dim in self.mesh.inactive_dims],
             },
         )
 

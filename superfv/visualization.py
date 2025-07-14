@@ -79,7 +79,7 @@ def _parse_txyz_slices(
     }
     for dim, coord in zip("xyz", [x, y, z]):
         x_array = getattr(fv_solver.mesh, dim + "_centers")
-        if dim not in fv_solver.dims:
+        if dim not in fv_solver.mesh.active_dims:
             if coord is not None:
                 warnings.warn(
                     f"Dimension {dim} is not active in the solver. "
@@ -199,23 +199,26 @@ def plot_1d_slice(
     Raises:
         ValueError: If not exactly one of x, y, z is None or a tuple.
     """
-    # find the dimension to plot
-    if "x" in fv_solver.dims and _is_None_or_tuple(x):
-        dim = "X"
-    elif "y" in fv_solver.dims and _is_None_or_tuple(y):
-        dim = "Y"
-    elif "z" in fv_solver.dims and _is_None_or_tuple(z):
-        dim = "Z"
-    else:
+
+    # find the dimensions to plot
+    active_dims = fv_solver.mesh.active_dims
+    slicing_dims = [
+        dim
+        for dim, coord in zip("xyz", (x, y, z))
+        if _is_None_or_tuple(coord) and dim in active_dims
+    ]
+    if len(slicing_dims) != 1:
         raise ValueError(
-            "Exactly one of x, y, z must be None or a length-two tuple for a 1D slice."
+            "Exactly one of x, y, z must be None or a length-two tuple for a 1D slice, "
+            "and it must match an active mesh dimension."
         )
+    dim = slicing_dims[0]
 
     # find the nearest slices in time and space
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # gather data
-    x_arr = getattr(fv_solver.mesh, dim)[slices[0], slices[1], slices[2]]
+    x_arr = getattr(fv_solver.mesh, dim.upper())[slices[0], slices[1], slices[2]]
     f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
@@ -223,7 +226,7 @@ def plot_1d_slice(
     # plot
     ax.plot(x_arr, f_arr, **kwargs)
     if xlabel:
-        ax.set_xlabel(rf"${dim.lower()}$")
+        ax.set_xlabel(rf"${dim}$")
 
 
 def plot_2d_slice(
@@ -262,16 +265,19 @@ def plot_2d_slice(
         ValueError: If not exactly two of x, y, z is None or a tuple.
     """
     # find the dimensions to plot
-    if "xy" in fv_solver.dims and _is_None_or_tuple(x) and _is_None_or_tuple(y):
-        dim1, dim2 = "X", "Y"
-    elif "xz" in fv_solver.dims and _is_None_or_tuple(x) and _is_None_or_tuple(y):
-        dim1, dim2 = "X", "Z"
-    elif "yz" in fv_solver.dims and _is_None_or_tuple(x) and _is_None_or_tuple(y):
-        dim1, dim2 = "Y", "Z"
-    else:
+    is_valid = _is_None_or_tuple
+    active_dims = fv_solver.mesh.active_dims
+    slicing_dims = [
+        dim
+        for dim, coord in zip("xyz", (x, y, z))
+        if is_valid(coord) and dim in active_dims
+    ]
+    if len(slicing_dims) != 2:
         raise ValueError(
-            "Exactly two of x, y, z must be None or a length-two tuple for a 2D slice."
+            "Exactly two of x, y, z must be None or a length-two tuple for a 2D slice "
+            "and they must match the active mesh dimensions."
         )
+    dim1, dim2 = slicing_dims
 
     # find the nearest slices in time and space
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
@@ -280,15 +286,11 @@ def plot_2d_slice(
     using = "imshow" if levels is None else "contour"
 
     if using == "contour":
-        x_arr = getattr(fv_solver.mesh, dim1)[slices[0], slices[1], slices[2]]
-        y_arr = getattr(fv_solver.mesh, dim2)[slices[0], slices[1], slices[2]]
+        x_arr = getattr(fv_solver.mesh, dim1.upper())[slices[0], slices[1], slices[2]]
+        y_arr = getattr(fv_solver.mesh, dim2.upper())[slices[0], slices[1], slices[2]]
     else:
-        x_arr = getattr(fv_solver.mesh, dim1.lower() + "_centers")[
-            slices["XYZ".index(dim1)]
-        ]
-        y_arr = getattr(fv_solver.mesh, dim2.lower() + "_centers")[
-            slices["XYZ".index(dim2)]
-        ]
+        x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
+        y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
     f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
