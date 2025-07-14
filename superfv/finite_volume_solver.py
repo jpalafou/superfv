@@ -1,6 +1,19 @@
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast
+from types import ModuleType
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 
 import numpy as np
 
@@ -26,6 +39,30 @@ from .visualization import plot_1d_slice, plot_2d_slice
 
 Directions = Literal["x", "y", "z"]
 Faces = Literal["xl", "xr", "yl", "yr", "zl", "zr"]
+
+
+class FieldFunction(Protocol):
+    def __call__(
+        self,
+        idx: VariableIndexMap,
+        x: ArrayLike,
+        y: ArrayLike,
+        z: ArrayLike,
+        t: Optional[float] = None,
+        *,
+        xp: ModuleType,
+    ) -> ArrayLike: ...
+
+
+class PassiveFieldFunction(Protocol):
+    def __call__(
+        x: ArrayLike,
+        y: ArrayLike,
+        z: ArrayLike,
+        t: Optional[float] = None,
+        *,
+        xp: ModuleType,
+    ) -> ArrayLike: ...
 
 
 class FiniteVolumeSolver(ExplicitODESolver, ABC):
@@ -128,10 +165,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def __init__(
         self,
-        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ] = None,
+        ic: FieldFunction,
+        ic_passives: Optional[Dict[str, PassiveFieldFunction]] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -443,10 +478,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_ic(
         self,
-        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ],
+        ic: FieldFunction,
+        ic_passives: Optional[Dict[str, PassiveFieldFunction]],
     ):
         # Define the following attributes:
         self.variable_index_map: VariableIndexMap
@@ -454,9 +487,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_passive_vars: int
         self.active_vars: Set[str]
         self.passive_vars: Set[str]
-        self.ic: Callable[
-            [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike
-        ]
+        self.ic: FieldFunction
         self.callable_ic: Callable[
             [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
             ArrayLike,
@@ -501,9 +532,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         x: ArrayLike,
         y: ArrayLike,
         z: ArrayLike,
-        t: Optional[float] = None,
+        t: Optional[float],
     ) -> ArrayLike:
-        return self.ic(idx, x, y, z)
+        return self.ic(idx, x, y, z, t, xp=self.xp)
 
     def _callable_ic_with_passives(
         self,
@@ -511,12 +542,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         x: ArrayLike,
         y: ArrayLike,
         z: ArrayLike,
-        t: Optional[float] = None,
+        t: Optional[float],
     ) -> ArrayLike:
-        out = self.ic(idx, x, y, z)
+        out = self.ic(idx, x, y, z, t, xp=self.xp)
         if hasattr(self, "ic_passives"):
             for v, f in self.ic_passives.items():
-                out[idx(v)] = f(x, y, z)
+                out[idx(v)] = f(x, y, z, t, xp=self.xp)
         return out
 
     def conservative_callable_ic(
@@ -525,7 +556,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         x: ArrayLike,
         y: ArrayLike,
         z: ArrayLike,
-        t: Optional[float] = None,
+        t: Optional[float],
     ) -> ArrayLike:
         """
         Callable for initial conditions that returns conservative variables.

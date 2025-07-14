@@ -77,7 +77,7 @@ class ArrayManager:
             device: Device to transfer arrays to ("cpu" or "gpu").
         """
         if self.device == device:
-            raise ValueError(f"ArrayManager is already using {device}.")
+            return
         if not CUPY_AVAILABLE:
             warnings.warn("CuPy is not available. Falling back to NumPy.")
             return

@@ -3,8 +3,8 @@ import pickle
 
 import numpy as np
 
-import superfv.initial_conditions as ic
 from superfv import AdvectionSolver
+from superfv.initial_conditions import square
 
 
 def test_interrupted_simulation():
@@ -16,9 +16,11 @@ def test_interrupted_simulation():
 
     # init solvers
     sim_full = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, vx=2, vy=1),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=2, vy=1, xp=xp),
         ic_passives={
-            "passive1": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1.0, 0.0)
+            "passive1": lambda x, y, z, t, xp: xp.where(
+                xp.abs(x - 0.5) < 0.25, 1.0, 0.0
+            )
         },
         nx=N,
         ny=N,
@@ -27,9 +29,11 @@ def test_interrupted_simulation():
         log_every_step=False,
     )
     sim_part1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, vx=2, vy=1),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=2, vy=1, xp=xp),
         ic_passives={
-            "passive1": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1.0, 0.0)
+            "passive1": lambda x, y, z, t, xp: xp.where(
+                xp.abs(x - 0.5) < 0.25, 1.0, 0.0
+            )
         },
         nx=N,
         ny=N,

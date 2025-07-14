@@ -4,9 +4,8 @@ from typing import Callable, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
 
-from superfv.fv import AXIS_TO_DIM
-from superfv.mesh import UniformFVMesh
-
+from .fv import AXIS_TO_DIM
+from .mesh import UniformFVMesh
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, xp
 from .tools.slicing import VariableIndexMap, crop, crop_to_center
 
@@ -20,6 +19,10 @@ FieldWrapper = Callable[[Field], Field]
 BCs = Literal[
     "none", "periodic", "dirichlet", "free", "symmetric", "reflective", "zeros", "ones"
 ]
+FieldFunction = Callable[
+    [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
+    ArrayLike,
+]
 
 
 def apply_bc(
@@ -30,9 +33,9 @@ def apply_bc(
         Literal["fv-averages", "cell-centers", "face-nodes"]
     ] = None,
     f: Tuple[
-        Tuple[Optional[Field], Optional[Field]],
-        Tuple[Optional[Field], Optional[Field]],
-        Tuple[Optional[Field], Optional[Field]],
+        Tuple[Optional[FieldFunction], Optional[FieldFunction]],
+        Tuple[Optional[FieldFunction], Optional[FieldFunction]],
+        Tuple[Optional[FieldFunction], Optional[FieldFunction]],
     ] = ((None, None), (None, None), (None, None)),
     variable_index_map: Optional[VariableIndexMap] = None,
     mesh: Optional[UniformFVMesh] = None,
