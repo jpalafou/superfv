@@ -150,7 +150,7 @@ def _extract_variable_data(
 
 
 def _is_None_or_tuple(
-    value: Optional[Union[float, Tuple[Optional[float], Optional[float]]]]
+    value: Optional[Union[float, Tuple[Optional[float], Optional[float]]]],
 ) -> bool:
     """
     Check if the value is None or a tuple of length 2.

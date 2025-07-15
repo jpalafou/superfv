@@ -5,6 +5,7 @@ import numpy as np
 
 from superfv.stencil import get_symmetric_slices
 from superfv.tools.device_management import ArrayLike
+from superfv.tools.slicing import crop, merge_slices
 
 
 def minmod(
@@ -46,47 +47,77 @@ def moncen(xp: Any, du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
 
 
 def compute_dmp(
-    xp: Any, arr: ArrayLike, dims: str, include_corners: bool = False
-) -> Tuple[ArrayLike, ArrayLike]:
+    xp: Any,
+    arr: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    include_corners: bool,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
     """
-    Computes the discrete maximum principle (DMP) for an array along the 2nd, 3rd,
-    and/or 4th axes.
+    Compute the minimum and maximum values of each point and its neighbors along
+    specified dimensions.
 
     Args:
         xp (Any): `np` namespace.
         arr (ArrayLike): Array. First axis is assumed to be variable axis. Has shape
-            (nvars, nx, ny, nz, ...).
-        dims (str): Dimension to check. Must be a subset of "xyz".
+            (nvars, nx, ny, nz).
+        active_dims (Tuple[Literal["x", "y", "z"], ...]): Dimensions to check.
         include_corners (bool): Whether to include corners.
+        out (ArrayLike): Output array to store the results. Should have shape
+            (nvars, nx, ny, nz, >=2).
+
     Returns:
-        Tuple[ArrayLike, ArrayLike]: Minimum and maximum values of the array along the
-            specified dimension.
+        Slice objects indicating the modified regions in the output array.
     """
-    dim_map = {"x": 1, "y": 2, "z": 3}
-    active_dims = [dim_map[d] for d in dims]
+    ndim = len(active_dims)
 
-    slices = [slice(None)] * arr.ndim
-    for d in active_dims:
-        slices[d] = slice(1, -1)
-    dmp_min = arr[tuple(slices)].copy()
-    dmp_max = arr[tuple(slices)].copy()
+    # gather slices
+    if include_corners:
+        all_slices = []
+        for offset in product([-1, 0, 1], repeat=ndim):
+            if offset == (0,) * ndim:
+                continue
+            all_slices.append(
+                merge_slices(
+                    *[
+                        crop(i, (1 + shift, -1 + shift), ndim=4)
+                        for i, shift in enumerate(offset, start=1)
+                    ]
+                )
+            )
+    else:
+        all_slices = []
+        for ax in range(1, ndim + 1):
+            for shift in [-1, 1]:
+                all_slices.append(
+                    merge_slices(
+                        *[
+                            crop(
+                                i,
+                                (1 + shift, -1 + shift) if ax == i else (1, -1),
+                                ndim=4,
+                            )
+                            for i in range(1, ndim + 1)
+                        ]
+                    )
+                )
 
-    for offsets in product([-1, 0, 1], repeat=len(active_dims)):
-        if (
-            not include_corners and all(offsets) and len(active_dims) > 1
-        ):  # skip the corners
-            continue
-        if not any(offsets):  # skip the center
-            continue
-        slices = [slice(None)] * arr.ndim
-        for d, offset in zip(active_dims, offsets):
-            slices[d] = {-1: slice(2, None), 0: slice(1, -1), 1: slice(None, -2)}[
-                offset
-            ]
-        dmp_min[...] = xp.minimum(dmp_min, arr[tuple(slices)])
-        dmp_max[...] = xp.maximum(dmp_max, arr[tuple(slices)])
+    # store inner slices first
+    inner_slice = merge_slices(
+        *[crop(ax, (1, -1), ndim=4) for ax in range(1, ndim + 1)]
+    )
+    all_slices.insert(0, inner_slice)
 
-    return dmp_min, dmp_max
+    # stack views of neighbors
+    all_views = [arr[slc] for slc in all_slices]
+    stacked = xp.stack(all_views, axis=0)
+
+    # compute min an max
+    out[inner_slice + (0,)] = xp.min(stacked, axis=0)
+    out[inner_slice + (1,)] = xp.max(stacked, axis=0)
+
+    # return inner slice
+    return inner_slice
 
 
 def muscl(
