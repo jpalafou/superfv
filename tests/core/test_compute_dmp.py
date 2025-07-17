@@ -25,5 +25,5 @@ def test_compute_dmp(dims, include_corners):
     min_vals = out[:, :, :, :, 0]
     max_vals = out[:, :, :, :, 1]
 
-    assert np.all(np.less_equal(min_vals, arr)[modified])
-    assert np.all(np.greater_equal(max_vals, arr)[modified])
+    assert np.all(np.less_equal(min_vals, arr)[modified[:-1]])
+    assert np.all(np.greater_equal(max_vals, arr)[modified[:-1]])

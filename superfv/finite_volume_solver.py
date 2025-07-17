@@ -25,7 +25,11 @@ from .initial_conditions import _uninitialized
 from .mesh import UniformFVMesh
 from .slope_limiting import minmod, moncen, muscl
 from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
-from .slope_limiting.zhang_and_shu import zhang_shu_limiter
+from .slope_limiting.zhang_and_shu import (
+    compute_theta,
+    zhang_shu_limiter,
+    zhang_shu_operator,
+)
 from .stencil import (
     conservative_interpolation_weights,
     stencil_sweep,
@@ -359,7 +363,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             xlim=xlim,
             ylim=ylim,
             zlim=zlim,
-            slab_depth=-(-p // 2) + 1,
+            slab_depth=max(-(-p // 2), 3),
             array_manager=self.arrays,
         )
 
@@ -687,6 +691,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
         arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
         arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
@@ -705,6 +710,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays["y_nodes"].fill(np.nan)
         arrays["z_nodes"].fill(np.nan)
         arrays["centroid"].fill(np.nan)
+        arrays["theta"].fill(np.nan)
         arrays["F_wrkspce"].fill(np.nan)
         arrays["G_wrkspce"].fill(np.nan)
         arrays["H_wrkspce"].fill(np.nan)
@@ -749,6 +755,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_tol: float,
         SED: bool,
     ):
+        self.ZS = ZS
+
         # Initial setup
         self.a_priori_slope_limiter: Optional[str] = None
         self.a_priori_slope_limiting_scheme: Optional[str] = None
@@ -908,9 +916,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_apply_bc(t, _u_, p=p)
 
         for dim in self.mesh.active_dims:
-            self.inplace_interpolate_faces(t, _u_, dim, p, convert_to_primitives=False)
+            self.inplace_interpolate_faces(t, _u_, dim, p, primitives=False)
+
+        if self.ZS:
+            self.zhang_shu_limiter(p)
 
         for dim in self.mesh.active_dims:
+            self.apply_nodal_bc(t, dim, p, primitives=False)
             self.inplace_integrate_fluxes(dim, p)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
@@ -950,7 +962,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         u: ArrayLike,
         dim: Literal["x", "y", "z"],
         p: int,
-        convert_to_primitives: bool = True,
+        primitives: bool = True,
     ):
         """
         Interpolate the face nodes at the opposing face centers and optionally convert
@@ -965,8 +977,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - "y": Interpolate in the y-direction.
                 - "z": Interpolate in the z-direction.
             p: Polynomial degree of the spatial discretization.
-            convert_to_primitives: Whether to convert the interpolated values to
-                primitive variables.
+            primitives: Whether to convert the interpolated values to primitive
+                variables.
 
         Returns:
             None. Modifies `self.arrays[dim + "_nodes"]` in place.
@@ -976,7 +988,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         out = self.arrays[dim + "_nodes"]
         buffer = self.arrays["buffer"]
-        n = self.nodes_per_face(p)
 
         self.interpolation_func(
             u,
@@ -986,17 +997,39 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             out=out,
         )
 
-        if convert_to_primitives:
+        if primitives:
             self.conservatives_to_primitives(out, buffer)
             out[...] = buffer
 
-        ul = out[crop(4, (None, n))]
-        ur = out[crop(4, (n, 2 * n))]
+    def apply_nodal_bc(
+        self, t: float, dim: Literal["x", "y", "z"], p: int, primitives: bool
+    ):
+        """
+        Apply boundary conditions to arrays of nodal variables
+        ("x_nodes", "y_nodes", "z_nodes").
+
+        Args:
+            t: Time value.
+            dim: Dimension in which to interpolate the face nodes. Possible values:
+                - "x": Interpolate in the x-direction.
+                - "y": Interpolate in the y-direction.
+                - "z": Interpolate in the z-direction.
+            p: Polynomial degree of the spatial discretization.
+            primitives: Whether the nodal variables arrays are of primitive variables.
+
+        Returns:
+            None. Modifies `self.arrays[dim + "_nodes"]` in place.
+        """
+        n = self.nodes_per_face(p)
+
+        nodes = self.arrays[dim + "_nodes"]
+        ul = nodes[crop(4, (None, n))]
+        ur = nodes[crop(4, (n, 2 * n))]
 
         self.inplace_apply_bc(
             t,
             ul,
-            primitives=convert_to_primitives,
+            primitives=primitives,
             pointwise=True,
             cell_region=dim + "l",
             p=p,
@@ -1004,11 +1037,44 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_apply_bc(
             t,
             ur,
-            primitives=convert_to_primitives,
+            primitives=primitives,
             pointwise=True,
             cell_region=dim + "r",
             p=p,
         )
+
+    @MethodTimer(cat="FiniteVolumeSolver.zhang_shu_limiter")
+    def zhang_shu_limiter(self, p: int):
+        """
+        Limit the face node arrays.
+
+        Args:
+            p: Polynomial degree for interpolating the cell centroid.
+        """
+
+        xp = self.xp
+        mesh = self.mesh
+
+        # define array references
+        u = self.arrays["u_workspace"]
+        centroid = self.arrays["centroid"]
+        x = self.arrays["x_nodes"] if mesh.x_is_active else None
+        y = self.arrays["y_nodes"] if mesh.y_is_active else None
+        z = self.arrays["z_nodes"] if mesh.z_is_active else None
+        theta = self.arrays["theta"]
+        buffer = self.arrays["buffer"]
+
+        # compute centroid then compute theta
+        fv.interpolate_cell_centers(xp, u, mesh.active_dims, p, buffer, out=centroid)
+        compute_theta(xp, u, centroid, x, y, z, out=theta)
+
+        # limit the face nodes
+        if mesh.x_is_active:
+            x[...] = zhang_shu_operator(x, u[..., np.newaxis], theta)
+        if mesh.y_is_active:
+            y[...] = zhang_shu_operator(y, u[..., np.newaxis], theta)
+        if mesh.z_is_active:
+            z[...] = zhang_shu_operator(z, u[..., np.newaxis], theta)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
     def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):

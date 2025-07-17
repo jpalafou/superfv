@@ -117,7 +117,7 @@ def compute_dmp(
     out[inner_slice + (1,)] = xp.max(stacked, axis=0)
 
     # return inner slice
-    return inner_slice
+    return inner_slice + (slice(None, 2),)
 
 
 def muscl(
