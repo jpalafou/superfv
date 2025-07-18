@@ -223,6 +223,34 @@ def _merge_slices(*args: Tuple[slice, ...], union: bool = False) -> Tuple[slice,
     return tuple(result)
 
 
+def modify_slices(
+    slc: Tuple[Union[int, slice], ...], axis: int, new_slice: Union[int, slice]
+) -> Tuple[Union[int, slice], ...]:
+    """
+    Adjust a slice tuple by replacing the slice at a specific axis with a new slice.
+
+    Args:
+        slc: Tuple of slices.
+        axis: Axis index to adjust.
+        new_slice: New slice/index to replace the existing one at the specified axis.
+
+    Returns:
+        A new tuple of slices with the specified axis replaced by the new slice.
+    """
+    return _modify_slices(slc, axis, new_slice)
+
+
+@lru_cache(maxsize=None)
+def _modify_slices(
+    slc: Tuple[Union[int, slice], ...], axis: int, new_slice: slice
+) -> Tuple[Union[int, slice], ...]:
+    if axis < 0 or axis >= len(slc):
+        raise IndexError(
+            f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
+        )
+    return slc[:axis] + (new_slice,) + slc[axis + 1 :]
+
+
 @dataclass
 class VariableIndexMap:
     """

@@ -199,7 +199,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         NAD: Optional[float] = None,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_tol: float = 1e-15,
-        SED: bool = False,
+        SED: bool = True,
         cupy: bool = False,
         log_every_step: bool = True,
     ):
@@ -684,9 +684,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
         max_nodes = self.nodes_per_face(self.p)
         max_ninterps = 2 * max_nodes
+        SED_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 1
+        buffer_size = max(SED_buffer_size, max_nodes)
 
         arrays.add("u_workspace", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, 2 * max_ninterps)))
+        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
         arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
@@ -755,86 +757,58 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_tol: float,
         SED: bool,
     ):
-        self.ZS = ZS
+        # reset slope limiting state
+        self.a_priori_slope_limiter = None
+        self.a_priori_slope_limiting_scheme = None
+        self.adaptive_dt = False
+        self.max_dt_revisions = 0
+        self.MOOD = False
+        self.MOOD_cascade = []
+        self.MOOD_iter_count = 0
+        self.MOOD_max_iter_count = 0
+        self.NAD = None
+        self.PAD = None
+        self.PAD_tol = np.nan
+        self.SED = False
+        self.ZS = False
 
-        # Initial setup
-        self.a_priori_slope_limiter: Optional[str] = None
-        self.a_priori_slope_limiting_scheme: Optional[str] = None
-        self.adaptive_dt: int = False
-        self.max_dt_revisions: int = 0
-        self.MOOD: bool = False
-        self.MOOD_cascade: List[str] = []
-        self.MOOD_iter_count: int = 0
-        self.MOOD_max_iter_count: int = 0
-        self.NAD: Optional[float] = None
-        self.PAD_tol: float = np.nan
-        self.SED: bool = False
-
-        if self.p < 1:
+        # skip slope limiting for first-order or if nothing is active
+        if self.p == 0 or (not ZS and not MOOD):
             return
-        idx = self.variable_index_map
 
-        # Validate and assign limiting schemes
-        if MUSCL and ZS:
-            raise ValueError("Cannot use both Zhang-Shu and MUSCL slope limiting.")
+        # common settings ---
+        self.PAD = PAD
+        self.PAD_tol = PAD_tol
+        self.SED = SED
 
-        # Set a priori slope limiting schemes
-        if MUSCL:
-            self.a_priori_slope_limiting_scheme = "muscl"
-            self.a_priori_slope_limiter = "minmod"
-        elif ZS:
-            self.a_priori_slope_limiting_scheme = "zhang-shu"
+        # PAD
+        if PAD:
+            idx = self.variable_index_map.idx
+            PAD_arr = np.full((self.nvars, 2), [-np.inf, np.inf])
+            for var, (lb, ub) in PAD.items():
+                PAD_arr[idx(var)] = [
+                    lb if lb is not None else -np.inf,
+                    ub if ub is not None else np.inf,
+                ]
+            PAD_arr = np.expand_dims(
+                PAD_arr, axis=(1, 2, 3)
+            )  # shape (nvars, 1, 1, 1, 2)
+            self.arrays.add("PAD", PAD_arr)
+
+        # Zhang-Shu (a priori limiting)
+        if ZS:
+            self.ZS = True
             self.adaptive_dt = adaptive_dt
-            if self.adaptive_dt:
+            if adaptive_dt:
                 self._dt_criterion = self.adaptive_dt_criterion
                 self._compute_revised_dt = self.adaptive_dt_revision
                 self.max_dt_revisions = max_dt_revisions
 
-        # Determine if MOOD is enabled
-        self.MOOD = MOOD
-
-        if self.MOOD:
-            self.MOOD_cascade = ["fv" + str(self.p), "muscl"]
-            self.MOOD_max_iter_count = max_MOOD_iters or 1
-
-        # Prespare limiting variables
-        if limiting_vars == "actives":
-            idx.add_var_to_group("limiting_vars", "primitives")
-        elif limiting_vars == "all":
-            idx.add_var_to_group("limiting_vars", idx.var_idx_map.keys())
-        elif isinstance(limiting_vars, tuple):
-            idx.add_var_to_group("limiting_vars", limiting_vars)
-        else:
-            raise ValueError(
-                "limiting_vars must be a tuple of variable names, 'actives', or 'all'."
-            )
-
-        # Set SED
-        self.SED = SED
-
-        # Set PAD
-        self.PAD_tol = PAD_tol
-        if PAD is None:
-            if self.adaptive_dt:
-                raise ValueError(
-                    "PAD must be provided if Zhang-Shu timestep revisions are turned on."
-                )
-        else:
-            # Create and register PAD array
-            PAD_arr = np.array([[-np.inf, np.inf]] * self.nvars)
-            for v, (lb, ub) in PAD.items():
-                lb_val = lb if lb is not None else -np.inf
-                ub_val = ub if ub is not None else np.inf
-                PAD_arr[idx(v)] = [lb_val, ub_val]
-            PAD_arr = PAD_arr.reshape(self.nvars, 1, 1, 1, 2)
-            self.arrays.add("PAD", PAD_arr)  # Register PAD array
-
-        # If no MOOD, early return
-        if not self.MOOD:
-            return
-
-        # Set NAD
-        self.NAD = NAD
+        # MOOD (a posteriori limiting)
+        if MOOD:
+            self.MOOD = True
+            self.NAD = NAD
+            self.MOOD_max_iter_count = max_MOOD_iters
 
     def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
         """
@@ -1066,7 +1040,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute centroid then compute theta
         fv.interpolate_cell_centers(xp, u, mesh.active_dims, p, buffer, out=centroid)
-        compute_theta(xp, u, centroid, x, y, z, out=theta)
+        compute_theta(xp, u, centroid, x, y, z, buffer, SED=self.SED, out=theta)
 
         # limit the face nodes
         if mesh.x_is_active:
@@ -1854,39 +1828,44 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         the current time value.
         """
         _u_ = self.arrays["u_workspace"]
-        _u_[self.interior] = self.arrays["u"]
-        self.inplace_apply_bc(self.t, _u_, p=self.p)
-
         ucc = self.arrays["ucc"]
         wcc = self.arrays["wcc"]
         w = self.arrays["w"]
-        temp_out = self.arrays["x_nodes"]
-        buffer = self.arrays["buffer"]
+        buffer1 = self.arrays["buffer"][..., :1]
+        buffer2 = self.arrays["buffer"][..., 1:]
 
         p = self.p
         dims = self.mesh.active_dims
+        interior = self.interior
+
+        # fill workspace interior
+        _u_[interior] = self.arrays["u"]
+        self.inplace_apply_bc(self.t, _u_, p=self.p)
 
         # conservative cell centers
-        fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer, temp_out)
-        ucc[...] = temp_out[self.interior][..., 0]
+        fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer2, buffer1)
+        ucc[...] = buffer1[interior][..., 0]
 
         # primitive cell centers
-        self.conservatives_to_primitives(ucc, buffer[self.interior][..., 0])
-        wcc[...] = buffer[self.interior][..., 0]
+        self.conservatives_to_primitives(ucc, wcc)
 
         # primitive cell averages
         if self.lazy_primitives:
-            self.conservatives_to_primitives(
-                self.arrays["u"], buffer[self.interior][..., 0]
-            )
-            w[...] = buffer[self.interior][..., 0]
+            self.conservatives_to_primitives(self.arrays["u"], w)
         else:
-            _u_[self.interior] = wcc
-            self.apply_bc(_u_, -(-p // 2), primitives=True)
-            fv.integrate_fv_averages(
-                self.xp, _u_, self.mesh.active_dims, p, buffer, temp_out
+            _u_[interior] = wcc
+            self.inplace_apply_bc(
+                self.t,
+                _u_,
+                p=-(-p // 2),
+                primitives=True,
+                pointwise=True,
+                cell_region="center",
             )
-            w[...] = temp_out[self.interior][..., 0]
+            fv.integrate_fv_averages(
+                self.xp, _u_, self.mesh.active_dims, p, buffer2, buffer1
+            )
+            w[...] = buffer1[interior][..., 0]
 
         # store the snapshot
         data = {

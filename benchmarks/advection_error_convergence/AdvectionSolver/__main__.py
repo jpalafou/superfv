@@ -1,8 +1,8 @@
 import os
-from functools import partial
 from itertools import product
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 import superfv.initial_conditions as initial_conditions
@@ -11,16 +11,16 @@ from superfv.tools.norms import l1_norm
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"
-DIMS = "xy"
+DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
 P_LIST = [0, 1, 2, 3]
 OTHER_INPUTS = dict(
-    interpolation_scheme="gauss-legendre",
-    cupy=True,
-    # ZS=True,
-    # adaptive_timestepping=False,
-    # SED=True,
-    # lazy_primitives=False,
+    interpolation_scheme="transverse",
+    cupy=False,
+    ZS=True,
+    adaptive_dt=False,
+    SED=True,
+    lazy_primitives=False,
 )
 
 # remove old output
@@ -33,12 +33,20 @@ for N, p in product(N_LIST, P_LIST):
     # print status
     print(f"Running N={N}, p={p}")
 
+    def analytical_solution(idx, x, y, z, t, xp):
+        return initial_conditions.sinus(
+            idx,
+            x,
+            y,
+            z,
+            t,
+            xp=xp,
+            **{"v" + dim: len(DIMS) - i for i, dim in enumerate(DIMS)},
+        )
+
     # run solver
     solver = AdvectionSolver(
-        ic=partial(
-            initial_conditions.sinus,
-            **{"v" + dim: len(DIMS) - i for i, dim in enumerate(DIMS)},
-        ),
+        ic=analytical_solution,
         nx=N if "x" in DIMS else 1,
         ny=N if "y" in DIMS else 1,
         nz=N if "z" in DIMS else 1,
@@ -50,8 +58,8 @@ for N, p in product(N_LIST, P_LIST):
     # measure error
     idx = solver.variable_index_map
     rho_numerical = solver.snapshots(1.0)["wcc"][idx("rho")]
-    rho_analytical = initial_conditions.sinus(
-        idx, solver.mesh.X, solver.mesh.Y, solver.mesh.Z, P=0
+    rho_analytical = analytical_solution(
+        idx, solver.mesh.X, solver.mesh.Y, solver.mesh.Z, 1.0, xp=np
     )[idx("rho")]
     error = l1_norm(rho_numerical - rho_analytical)
     data.append(dict(N=N, p=p, error=error))
