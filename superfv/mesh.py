@@ -142,9 +142,9 @@ class UniformFVMesh:
         y_centers = 0.5 * (y_interfaces[:-1] + y_interfaces[1:])
         z_centers = 0.5 * (z_interfaces[:-1] + z_interfaces[1:])
 
-        self.array_manager.add("core_x_interfaces", x_centers)
-        self.array_manager.add("core_y_interfaces", y_centers)
-        self.array_manager.add("core_z_interfaces", z_centers)
+        self.array_manager.add("core_x_interfaces", x_interfaces)
+        self.array_manager.add("core_y_interfaces", y_interfaces)
+        self.array_manager.add("core_z_interfaces", z_interfaces)
         self.array_manager.add("core_x_centers", x_centers)
         self.array_manager.add("core_y_centers", y_centers)
         self.array_manager.add("core_z_centers", z_centers)

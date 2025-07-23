@@ -131,6 +131,10 @@ def _extract_variable_data(
     # choose the snapshot with the nearest time
     snapshot = fv_solver.snapshots(nearest_t)
 
+    # plot troubles
+    if variable == "troubles":
+        return snapshot["troubles"][0]
+
     # determine the key for the variable
     if variable in idx.group_var_map["primitives"]:
         key = "w"

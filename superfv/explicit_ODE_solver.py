@@ -170,9 +170,11 @@ class ExplicitODESolver(ABC):
         """
         self.minisnapshots["t"].append(self.t)
         self.minisnapshots["dt"].append(self.dt)
-        self.minisnapshots["n_substeps"].append(self.substep_count)
-        self.minisnapshots["dt_revisions"].append(self.dt_revision_count)
+        self.minisnapshots["n_steps"].append(self.n_steps)
+        self.minisnapshots["n_substeps"].append(self.n_substeps)
+        self.minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
         self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
+
         self.timer.reset("current_step")
 
     def __init__(self, u0: np.ndarray, array_manager: Optional[ArrayManager] = None):
@@ -183,12 +185,13 @@ class ExplicitODESolver(ABC):
             u0: Initial state as an array.
             array_manager: Optional ArrayManager instance to manage arrays.
         """
-        # initialize times
+        # initialize global counters
         self.t = 0.0
-        self.dt = np.nan
-        self.step_count = 0
-        self.substep_count = 0
-        self.dt_revision_count = 0
+        self.dt = 0.0
+        self.n_steps = 0
+
+        # initialize stepwise counters
+        self.reset_stepwise_counters()
 
         # initialize array manager
         self.arrays = ArrayManager() if array_manager is None else array_manager
@@ -211,9 +214,10 @@ class ExplicitODESolver(ABC):
         self.snapshots: Snapshots = Snapshots()
         self.minisnapshots: Dict[str, list] = {
             "t": [],
-            "n_substeps": [],
             "dt": [],
-            "dt_revisions": [],
+            "n_steps": [],
+            "n_substeps": [],
+            "n_dt_revisions": [],
             "run_time": [],
         }
 
@@ -437,7 +441,7 @@ class ExplicitODESolver(ABC):
             if self.dt_criterion(t + dt, self.arrays["unew"]):
                 break
             dt = clamp_dt(t, self.compute_revised_dt(t, u, dt), target_time)
-            self.dt_revision_count += 1
+            self.n_dt_revisions += 1
 
         # update attributes
         self.arrays["u"][...] = self.arrays["unew"]
@@ -448,20 +452,31 @@ class ExplicitODESolver(ABC):
 
     def called_at_beginning_of_step(self):
         """
-        Helper function called at the beginning of each step. Override for additional
-        routines.
+        Helper function called at the beginning of each step starting with a timer
+        start.
         """
         self.timer.start("current_step")
-        self.substep_count = 0
-        self.dt_revision_count = 0
+        self.reset_stepwise_counters()
+
+    def reset_stepwise_counters(self):
+        """
+        Reset stepwise counters.
+        """
+        self.n_substeps = 0
+        self.n_dt_revisions = 0
 
     def called_at_end_of_step(self):
         """
-        Helper function called at the end of each step. Override for additional
-        routines.
+        Helper function called at the end of each step ending with a timer stop.
         """
-        self.step_count += 1
+        self.increment_stepwise_counters()
         self.timer.stop("current_step")
+
+    def increment_stepwise_counters(self):
+        """
+        Increment stepwise counters.
+        """
+        self.n_steps += 1
 
     def progress_bar_action(
         self, action: str, T: Optional[float] = None, do_nothing: bool = False
@@ -500,7 +515,7 @@ class ExplicitODESolver(ABC):
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
-        self.substep_count += 1
+        self.n_substeps += 1
 
     def ssprk2(self, *args, **kwargs) -> None:
         self.integrator = "ssprk2"
@@ -516,12 +531,12 @@ class ExplicitODESolver(ABC):
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
-        self.substep_count += 1
+        self.n_substeps += 1
 
         # stage 2
         k1[...] = self.f(t + dt, unew)
         unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
-        self.substep_count += 1
+        self.n_substeps += 1
 
     def ssprk3(self, *args, **kwargs) -> None:
         self.integrator = "ssprk3"
@@ -538,16 +553,16 @@ class ExplicitODESolver(ABC):
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
-        self.substep_count += 1
+        self.n_substeps += 1
 
         # stage 2
         k1[...] = self.f(t + dt, unew)
-        self.substep_count += 1
+        self.n_substeps += 1
 
         # stage 3
         k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
         unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
-        self.substep_count += 1
+        self.n_substeps += 1
 
     def rk4(self, *args, **kwargs):
         self.integrator = "rk4"
@@ -564,17 +579,17 @@ class ExplicitODESolver(ABC):
 
         # stage 1
         k0[...] = self.f(t, u)
-        self.substep_count += 1
+        self.n_substeps += 1
 
         # stage 2
         k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
-        self.substep_count += 1
+        self.n_substeps += 1
 
         # stage 3
         k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
-        self.substep_count += 1
+        self.n_substeps += 1
 
         # stage 4
         k3[...] = self.f(t + dt, u + dt * k2)
         unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
-        self.substep_count += 1
+        self.n_substeps += 1

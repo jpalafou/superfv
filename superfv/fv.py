@@ -6,6 +6,7 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Uni
 
 import numpy as np
 
+from .slope_limiting import minmod, moncen
 from .stencil import (
     conservative_interpolation_weights,
     inplace_multistencil_sweep,
@@ -13,7 +14,7 @@ from .stencil import (
     uniform_quadrature_weights,
 )
 from .tools.device_management import ArrayLike
-from .tools.slicing import merge_slices
+from .tools.slicing import crop, merge_slices, modify_slices
 
 InterpCoord = Union[int, float]
 InterpCoords = Sequence[InterpCoord]
@@ -965,3 +966,62 @@ def transversely_integrate_nodes(
         buffer,
         out,
     )
+
+
+def interpolate_muscl_faces(
+    xp: ModuleType,
+    u: ArrayLike,
+    face_dim: Literal["x", "y", "z"],
+    limiter: Literal["minmod", "moncen"],
+    buffer: ArrayLike,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Interpolate opposing face-centered nodes from an array of finite volume averages.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to interpolate, has shape
+            (nvars, nx, ny, nz).
+        face_dim: Dimension along which the MUSCL interpolation is performed.
+        limiter: Limiting function to use for the MUSCL interpolation. Can be either
+            "minmod" or "moncen".
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, nbuffer). nbuffer must be at least 3 to store
+            left, right, and limited differences.
+        out: Output array to store the interpolated values. Has shape
+            (nvars, nx, ny, nz, nout). The "left" face-centered node is stored in
+            out[..., 0] and the "right" face-centered node is stored in out[..., 1].
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    # prepare slices
+    slc_l = crop(AXIS_TO_DIM[face_dim], (None, -2), ndim=5)
+    slc_c = crop(AXIS_TO_DIM[face_dim], (1, -1), ndim=5)
+    slc_r = crop(AXIS_TO_DIM[face_dim], (2, None), ndim=5)
+
+    # select limiting function
+    if limiter == "minmod":
+        f = minmod
+    elif limiter == "moncen":
+        f = moncen
+    else:
+        raise ValueError(f"Unknown limiter: {limiter}")
+
+    # allocate arrays
+    left_diff = buffer[modify_slices(slc_c, 4, 0)]
+    right_diff = buffer[modify_slices(slc_c, 4, 1)]
+    limited_diff = buffer[modify_slices(slc_c, 4, 2)]
+
+    # compute differences
+    left_diff[...] = u[slc_c] - u[slc_l]
+    right_diff[...] = u[slc_r] - u[slc_c]
+    limited_diff[...] = f(xp, left_diff, right_diff)
+
+    # update left and right face values
+    out[modify_slices(slc_c, 4, 0)] = u[slc_c] - 0.5 * limited_diff
+    out[modify_slices(slc_c, 4, 1)] = u[slc_c] + 0.5 * limited_diff
+
+    modified = merge_slices(slc_c, crop(4, (None, 2)))
+    return modified

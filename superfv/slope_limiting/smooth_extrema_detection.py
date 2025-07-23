@@ -93,6 +93,23 @@ def inplace_2d_smooth_extrema_detector(
     out: ArrayLike,
     eps: float = 1e-16,
 ):
+    """
+    Compute the 2D smooth extrema detector alpha.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of data used to compute the smooth extrema detector. Has shape
+            (nvars, nx, ny, nz).
+        active_dims: Tuple of two dimensions along which to compute the smooth extrema
+            detector: ("x", "y"), ("x", "z"), or ("y", "z").
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=6).
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        eps: Small tolerance used to avoid dividing by zero.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
     dim1, dim2 = active_dims
 
     alpha_dim1 = buffer[..., 4:5]
@@ -114,12 +131,28 @@ def inplace_2d_smooth_extrema_detector(
 def inplace_3d_smooth_extrema_detector(
     xp: Any,
     u: ArrayLike,
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
     buffer: ArrayLike,
     out: ArrayLike,
     eps: float = 1e-16,
 ):
-    dim1, dim2, dim3 = active_dims
+    """
+    Compute the 3D smooth extrema detector alpha.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of data used to compute the smooth extrema detector. Has shape
+            (nvars, nx, ny, nz).
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=7).
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        eps: Small tolerance used to avoid dividing by zero.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    dim1 = "x"
+    dim2 = "y"
+    dim3 = "z"
 
     alpha_dim1 = buffer[..., 4:5]
     alpha_dim2 = buffer[..., 5:6]
@@ -150,6 +183,26 @@ def inplace_smooth_extrema_detector(
     out: ArrayLike,
     eps: float = 1e-16,
 ):
+    """
+    Compute the smooth extrema detector alpha inplace along specified dimensions.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of data used to compute the smooth extrema detector. Has shape
+            (nvars, nx, ny, nz).
+        active_dims: Tuple of dimensions along which to compute the smooth extrema
+            detector. Has length 1, 2, or 3 with possible values "x", "y", "z".
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=4) for 1D,
+            (nvars, nx, ny, nz, >=6) for 2D,
+            or (nvars, nx, ny, nz, >=7) for 3D
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        eps: Small tolerance used to avoid dividing by zero.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+
+    """
     if len(active_dims) == 1:
         return inplace_1d_smooth_extrema_detector(
             xp, u, active_dims[0], buffer, out, eps
@@ -157,7 +210,7 @@ def inplace_smooth_extrema_detector(
     elif len(active_dims) == 2:
         return inplace_2d_smooth_extrema_detector(xp, u, active_dims, buffer, out, eps)
     elif len(active_dims) == 3:
-        return inplace_3d_smooth_extrema_detector(xp, u, active_dims, buffer, out, eps)
+        return inplace_3d_smooth_extrema_detector(xp, u, buffer, out, eps)
     raise ValueError("active_dims must have length 1, 2, or 3.")
 
 

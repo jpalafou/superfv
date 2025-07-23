@@ -23,8 +23,8 @@ from .explicit_ODE_solver import ExplicitODESolver
 from .fv import DIM_TO_AXIS, fv_average, gauss_legendre_for_finite_volume
 from .initial_conditions import _uninitialized
 from .mesh import UniformFVMesh
-from .slope_limiting import minmod, moncen, muscl
-from .slope_limiting.MOOD import detect_troubles, init_MOOD, revise_fluxes
+from .slope_limiting import MOOD, minmod, moncen, muscl
+from .slope_limiting.MOOD import MOODConfig
 from .slope_limiting.zhang_and_shu import (
     compute_theta,
     zhang_shu_limiter,
@@ -153,14 +153,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pass
 
     @abstractmethod
-    def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, Any]:
+    def log_quantity(self) -> Dict[str, Any]:
         """
         Log a quantity at the end of each time step.
-
-        Args:
-            u: Array of finite volume averaged conservative variables. Has shape
-                (nvars, nx, ny, nz).
-            t: Time value.
 
         Returns:
             Dictionary of logged quantities.
@@ -196,10 +191,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MOOD: bool = False,
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
-        NAD: Optional[float] = None,
+        NAD: bool = False,
+        NAD_rtol: float = 1.0,
+        NAD_atol: float = 0.0,
+        global_dmp: bool = False,
+        include_corners: bool = False,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
-        PAD_tol: float = 1e-15,
-        SED: bool = True,
+        PAD_atol: float = 1e-15,
+        SED: bool = False,
         cupy: bool = False,
         log_every_step: bool = True,
     ):
@@ -290,12 +289,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 For the Zhang-Shu limiter, all variables are always limited, but
                 `limiting_vars` determines which variables are checked for PAD when
                 using adaptive timestepping.
-            NAD: The NAD tolerance. If None, NAD is not checked.
+            NAD: Whether to use nuerical admissibility detection (NAD) when determining
+                if a cell is troubled in the MOOD loop.
+            NAD_rtol: Relative tolerance for the NAD violations.
+            NAD_atol: Absolute tolerance for the NAD violations.
+            global_dmp: Whether to use a global DMP check for NAD violations.
+            include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
-            PAD_tol: Tolerance for the PAD check as an absolute value from the minimum
+            PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
@@ -308,8 +312,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
-        self._init_snapshots(log_every_step)
-        self._init_array_allocation()
         self._init_riemann_solver(riemann_solver)
         self._init_slope_limiting(
             MUSCL,
@@ -320,10 +322,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_MOOD_iters,
             limiting_vars,
             NAD,
+            NAD_atol,
+            NAD_rtol,
+            global_dmp,
+            include_corners,
             PAD,
-            PAD_tol,
+            PAD_atol,
             SED,
         )
+        self._init_array_allocation()
+        self._init_snapshots(log_every_step)
 
     def _init_array_management(self, cupy: bool):
         # init cupy boolean and numpy namespace
@@ -646,79 +654,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mesh=self.mesh,
         )
 
-    def _init_snapshots(self, log_every_step: bool):
-        self.log_every_step = log_every_step
-        self.n_updates = 0
-        self.minisnapshots["n_updates"] = []
-        self.minisnapshots["MOOD_iters"] = []
-        dummy_log = self.log_quantity(self.arrays["u"], 0.0)
-        for key in dummy_log.keys():
-            self.minisnapshots[key] = []
+        def normalize_troubles_bc(
+            bc_tuple: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]],
+        ) -> Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]:
+            def map_bc(bc: str) -> str:
+                if bc == "none":
+                    return "none"
+                elif bc == "periodic":
+                    return "periodic"
+                else:
+                    return "zeros"
 
-    def _init_array_allocation(self):
-        self.interpolation_cache = ArrayManager()
-        self.MOOD_cache = ArrayManager()
-        self.ZS_cache = ArrayManager()
-        if self.cupy:
-            self.arrays.transfer_to_device("gpu")
-            self.interpolation_cache.transfer_to_device("gpu")
-            self.MOOD_cache.transfer_to_device("gpu")
-            self.ZS_cache.transfer_to_device("gpu")
+            return tuple(tuple(map_bc(bc) for bc in dim) for dim in bc_tuple)
 
-        arrays = self.arrays
-
-        # initialize flux arrays
-        nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
-        arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
-        arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
-        arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
-
-        # initialize snapshot arrays
-        assert arrays["u"].shape == (nvars, nx, ny, nz)
-        arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
-        arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
-        arrays.add("w", np.empty((nvars, nx, ny, nz)))
-        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
-
-        # initialize workspace arrays
-        _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
-        max_nodes = self.nodes_per_face(self.p)
-        max_ninterps = 2 * max_nodes
-        SED_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 1
-        buffer_size = max(SED_buffer_size, max_nodes)
-
-        arrays.add("u_workspace", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
-        arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("theta", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
-        arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
-        arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
-
-        # fill arrays with NaNs to sabotage unpermitted use
-        arrays["F"].fill(np.nan)
-        arrays["G"].fill(np.nan)
-        arrays["H"].fill(np.nan)
-        arrays["ucc"].fill(np.nan)
-        arrays["wcc"].fill(np.nan)
-        arrays["w"].fill(np.nan)
-        arrays["dudt"].fill(np.nan)
-        arrays["u_workspace"].fill(np.nan)
-        arrays["buffer"].fill(np.nan)
-        arrays["x_nodes"].fill(np.nan)
-        arrays["y_nodes"].fill(np.nan)
-        arrays["z_nodes"].fill(np.nan)
-        arrays["centroid"].fill(np.nan)
-        arrays["theta"].fill(np.nan)
-        arrays["F_wrkspce"].fill(np.nan)
-        arrays["G_wrkspce"].fill(np.nan)
-        arrays["H_wrkspce"].fill(np.nan)
-
-        # helper attribute
-        self.flux_names = {"x": "F", "y": "G", "z": "H"}
+        self.troubles_bc_kwargs = dict(
+            pad_width=(mesh.x_slab_depth, mesh.y_slab_depth, mesh.z_slab_depth),
+            mode=normalize_troubles_bc(mode),
+            variable_index_map=VariableIndexMap({"troubles": 0}),
+        )
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -752,25 +705,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MOOD: bool,
         max_MOOD_iters: int,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
-        NAD: Optional[float],
+        NAD: bool,
+        NAD_atol: float,
+        NAD_rtol: float,
+        global_dmp: bool,
+        include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
-        PAD_tol: float,
+        PAD_atol: float,
         SED: bool,
     ):
         # reset slope limiting state
-        self.a_priori_slope_limiter = None
-        self.a_priori_slope_limiting_scheme = None
-        self.adaptive_dt = False
-        self.max_dt_revisions = 0
-        self.MOOD = False
-        self.MOOD_cascade = []
-        self.MOOD_iter_count = 0
-        self.MOOD_max_iter_count = 0
-        self.NAD = None
-        self.PAD = None
-        self.PAD_tol = np.nan
+        self.MOOD: bool = False
+        self.MOOD_config: MOODConfig = MOODConfig()
+        self.PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None
         self.SED = False
         self.ZS = False
+
+        idx = self.variable_index_map
 
         # skip slope limiting for first-order or if nothing is active
         if self.p == 0 or (not ZS and not MOOD):
@@ -778,22 +729,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # common settings ---
         self.PAD = PAD
-        self.PAD_tol = PAD_tol
         self.SED = SED
 
         # PAD
         if PAD:
-            idx = self.variable_index_map.idx
-            PAD_arr = np.full((self.nvars, 2), [-np.inf, np.inf])
+            PAD_bounds = np.full((self.nvars, 2), [-np.inf, np.inf])
             for var, (lb, ub) in PAD.items():
-                PAD_arr[idx(var)] = [
+                PAD_bounds[idx(var)] = [
                     lb if lb is not None else -np.inf,
                     ub if ub is not None else np.inf,
                 ]
-            PAD_arr = np.expand_dims(
-                PAD_arr, axis=(1, 2, 3)
+            PAD_bounds = np.expand_dims(
+                PAD_bounds, axis=(1, 2, 3)
             )  # shape (nvars, 1, 1, 1, 2)
-            self.arrays.add("PAD", PAD_arr)
+            self.arrays.add("PAD_bounds", PAD_bounds)
 
         # Zhang-Shu (a priori limiting)
         if ZS:
@@ -807,8 +756,118 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # MOOD (a posteriori limiting)
         if MOOD:
             self.MOOD = True
-            self.NAD = NAD
-            self.MOOD_max_iter_count = max_MOOD_iters
+            self.MOOD_config = MOODConfig(
+                max_iters=max_MOOD_iters,
+                cascade=["fv" + str(self.p)] + ["fv0"],
+                NAD=NAD,
+                NAD_rtol=NAD_rtol,
+                NAD_atol=NAD_atol,
+                global_dmp=global_dmp,
+                include_corners=include_corners,
+                PAD=PAD is not None,
+                PAD_atol=PAD_atol,
+                SED=SED,
+            )
+            self.reset_MOOD_state()
+
+        # create limiting group
+        if limiting_vars == "all":
+            limiting_vars = tuple(idx.var_idx_map.keys())
+        elif limiting_vars == "actives":
+            limiting_vars = tuple(idx.group_var_map["primitives"])
+        idx.add_var_to_group("limiting", limiting_vars)
+
+    def _init_array_allocation(self):
+        self.interpolation_cache = ArrayManager()
+        self.MOOD_cache = ArrayManager()
+        self.ZS_cache = ArrayManager()
+        if self.cupy:
+            self.arrays.transfer_to_device("gpu")
+            self.interpolation_cache.transfer_to_device("gpu")
+            self.MOOD_cache.transfer_to_device("gpu")
+            self.ZS_cache.transfer_to_device("gpu")
+
+        arrays = self.arrays
+
+        # initialize flux arrays
+        nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
+        arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
+        arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
+        arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
+
+        # initialize snapshot arrays
+        assert arrays["u"].shape == (nvars, nx, ny, nz)
+        arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
+        arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
+        arrays.add("w", np.empty((nvars, nx, ny, nz)))
+        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+
+        # initialize workspace arrays
+        _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
+        max_nodes = self.nodes_per_face(self.p)
+        max_ninterps = 2 * max_nodes
+        SED_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 1
+        MOOD_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 4
+        buffer_size = max(SED_buffer_size, max_nodes)
+        if self.MOOD:
+            buffer_size = max(buffer_size, MOOD_buffer_size)
+
+        arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
+        arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta_log", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("troubles", np.zeros((1, nx, ny, nz), dtype=bool))
+        arrays.add("troubles_log", np.zeros((1, nx, ny, nz), dtype=int))
+        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
+        arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
+        arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
+
+        # MOOD arrays
+        if self.MOOD:
+            for scheme in self.MOOD_config.cascade:
+                arrays.add("F_" + scheme, np.empty((nvars, nx + 1, ny, nz)))
+                arrays.add("G_" + scheme, np.empty((nvars, nx, ny + 1, nz)))
+                arrays.add("H_" + scheme, np.empty((nvars, nx, ny, nz + 1)))
+            arrays.add(
+                "_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int)
+            )
+            arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
+
+        # fill arrays with NaNs to sabotage unpermitted use
+        arrays["F"].fill(np.nan)
+        arrays["G"].fill(np.nan)
+        arrays["H"].fill(np.nan)
+        arrays["ucc"].fill(np.nan)
+        arrays["wcc"].fill(np.nan)
+        arrays["w"].fill(np.nan)
+        arrays["dudt"].fill(np.nan)
+        arrays["_u_"].fill(np.nan)
+        arrays["buffer"].fill(np.nan)
+        arrays["x_nodes"].fill(np.nan)
+        arrays["y_nodes"].fill(np.nan)
+        arrays["z_nodes"].fill(np.nan)
+        arrays["centroid"].fill(np.nan)
+        arrays["theta"].fill(np.nan)
+        arrays["F_wrkspce"].fill(np.nan)
+        arrays["G_wrkspce"].fill(np.nan)
+        arrays["H_wrkspce"].fill(np.nan)
+
+        # helper attribute
+        self.flux_names = {"x": "F", "y": "G", "z": "H"}
+
+    def _init_snapshots(self, log_every_step: bool):
+        self.log_every_step = log_every_step
+        self.reset_substepwise_counters()
+
+        # allocate keys from collect_minisnapshot_data
+        keys = self.collect_minisnapshot_data().keys()
+        for key in keys:
+            self.minisnapshots[key] = []
 
     def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
         """
@@ -854,23 +913,40 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             u: Array of conservative, cell-averaged values. Shape: (nvars, nx, ny, nz).
 
         Returns:
-            dudt: Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
+            Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
         """
-        out = self.arrays["dudt"]
+        self.update_workspace(t, u, self.p)
+        self.inplace_compute_fluxes(t, self.p)
 
-        self.inplace_compute_fluxes(t, u, self.p)
+        if self.MOOD:
+            self.MOOD_loop(t)
 
-        out[...] = 0.0
-        for dim in self.mesh.active_dims:
-            self._add_flux_divergence(dim, out)
-        self.n_updates += self.mesh.size
-        return out.copy()
+        out = self.compute_RHS().copy()
+
+        self.increment_substepwise_counters()
+        self.accumulate_substepwise_logarrays()
+
+        return out
+
+    def update_workspace(self, t: float, u: ArrayLike, p: int):
+        """
+        Update the workspace array with the provided state u and apply boundary
+        conditions in place.
+
+        Args:
+            t: Time value.
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            p: Polynomial degree of the spatial discretization.
+        """
+        _u_ = self.arrays["_u_"]
+        _u_[self.interior] = u
+        self.inplace_apply_bc(t, _u_, p=p)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
-    def inplace_compute_fluxes(self, t: float, u: ArrayLike, p: int):
+    def inplace_compute_fluxes(self, t: float, p: int):
         """
-        Updates the interior of `self.arrays["u_workspace"]` with the provided
-        conservative values `u` and applies boundary conditions in place.
+        Compute the fluxes at the cell faces from the workspace array `u_workspace`.
 
         Interpolates the face nodes in each active dimension with polynomial degree `p`
         and writes the results to `self.arrays["x_nodes"]`, `self.arrays["y_nodes"]`,
@@ -885,9 +961,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
             p: Polynomial degree of the spatial discretization.
         """
-        _u_ = self.arrays["u_workspace"]
-        _u_[self.interior] = u
-        self.inplace_apply_bc(t, _u_, p=p)
+        _u_ = self.arrays["_u_"]
 
         for dim in self.mesh.active_dims:
             self.inplace_interpolate_faces(t, _u_, dim, p, primitives=False)
@@ -928,6 +1002,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=p if self.GL else 0,
             **(self.primitive_bc_kwargs if primitives else self.conservative_bc_kwargs),
         )
+
+    def inplace_troubles_bc(self, troubles: ArrayLike):
+        """
+        Apply boundary conditions to the troubles array in place.
+        """
+        apply_bc(_u_=troubles, **self.troubles_bc_kwargs)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(
@@ -1030,7 +1110,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         mesh = self.mesh
 
         # define array references
-        u = self.arrays["u_workspace"]
+        u = self.arrays["_u_"]
         centroid = self.arrays["centroid"]
         x = self.arrays["x_nodes"] if mesh.x_is_active else None
         y = self.arrays["y_nodes"] if mesh.y_is_active else None
@@ -1105,6 +1185,36 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.GL:
             return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
         return 1
+
+    def MOOD_loop(self, t: float):
+        """
+        Perform the MOOD loop to detect and revise troubled cells.
+
+        Args:
+            t: Time value.
+        """
+        self.reset_MOOD_state()
+        while True:
+            if MOOD.detect_troubled_cells(self, t):
+                MOOD.inplace_revise_fluxes(self, t)
+                self.increment_MOOD_state()
+            else:
+                return
+
+    def compute_RHS(self) -> ArrayLike:
+        """
+        Compute the right-hand side of the ODE .
+
+        Returns:
+            ArrayLike: The right-hand side of the ODE.
+        """
+        out = self.arrays["dudt"]
+        out[...] = 0.0
+
+        for dim in self.mesh.active_dims:
+            self._add_flux_divergence(dim, out)
+
+        return out
 
     def _add_flux_divergence(self, dim: Literal["x", "y", "z"], out: ArrayLike):
         """
@@ -1256,53 +1366,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             fluxes.append(F)
 
         return fluxes[0], fluxes[1], fluxes[2]
-
-    def MOOD_loop(
-        self,
-        t: float,
-        u: ArrayLike,
-        fluxes: Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
-    ) -> Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]:
-        """
-        Revise fluxes using MOOD.
-
-        Args:
-            t: Time value.
-            u: Array of conservative, cell-averaged values. Has shape
-                (nvars, nx, ny, nz).
-            fluxes: Tuple of flux arrays (F, G, H). None if the corresponding dimension
-                is unused. Otherwise, is an array with shape:
-                - F: (nvars, nx+1, ny, nz)
-                - G: (nvars, nx, ny+1, nz)
-                - H: (nvars, nx, ny, nz+1)
-
-        Returns:
-            fluxes: Tuple of revised flux arrays (F, G, H). None if the corresponding
-                dimension is unused. Otherwise, is an array with shape:
-                - F: (nvars, nx+1, ny, nz)
-                - G: (nvars, nx, ny+1, nz)
-                - H: (nvars, nx, ny, nz+1)
-        """
-        init_MOOD(self, u, fluxes)
-        while detect_troubles(
-            self,
-            t=t,
-            u=u,
-            fluxes=fluxes,
-            NAD=self.NAD,
-            PAD=self.arrays["PAD"] if "PAD" in self.arrays else None,
-            PAD_tol=self.PAD_tol,
-            SED=self.SED,
-        ):
-            fluxes = revise_fluxes(
-                self,
-                t,
-                u,
-                fluxes,
-                mode=self.interpolation_scheme,
-                slope_limiter="minmod",
-            )
-        return fluxes
 
     def apply_bc(
         self,
@@ -1827,7 +1890,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        _u_ = self.arrays["u_workspace"]
+        u = self.arrays["u"]
+        _u_ = self.arrays["_u_"]
         ucc = self.arrays["ucc"]
         wcc = self.arrays["wcc"]
         w = self.arrays["w"]
@@ -1838,9 +1902,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         dims = self.mesh.active_dims
         interior = self.interior
 
-        # fill workspace interior
-        _u_[interior] = self.arrays["u"]
-        self.inplace_apply_bc(self.t, _u_, p=self.p)
+        # update workspace interior
+        self.update_workspace(self.t, u, self.p)
 
         # conservative cell centers
         fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer2, buffer1)
@@ -1873,28 +1936,119 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "w": self.arrays.get_numpy_copy("w"),
             "ucc": self.arrays.get_numpy_copy("ucc"),
             "wcc": self.arrays.get_numpy_copy("wcc"),
+            "theta": self.arrays.get_numpy_copy("theta_log"),
+            "troubles": self.arrays.get_numpy_copy("troubles_log"),
         }
         self.snapshots.log(self.t, data)
 
     def minisnapshot(self):
+        """
+        Overwrite the `minisnapshot` method to collect additional data.
+        """
         super().minisnapshot()
-        self.minisnapshots["n_updates"].append(self.n_updates)
-        self.minisnapshots["MOOD_iters"].append(self.MOOD_iter_count)
+
+        data = self.collect_minisnapshot_data()
+        for key, value in data.items():
+            self.minisnapshots[key].append(value)
+
+    def collect_minisnapshot_data(self) -> Dict[str, Any]:
+        """
+        Collect additional data for a minisnapshot.
+
+        Returns:
+            Dictionary mapping minisnapshot keys to their values.
+        """
+        n_updates = self.n_updates
+        run_time = (
+            self.minisnapshots["run_time"][-1]
+            if len(self.minisnapshots["run_time"]) > 0
+            and self.minisnapshots["run_time"][-1] > 0
+            else np.nan
+        )
+        data = {"n_updates": n_updates, "update_rate": n_updates / run_time}
+
+        if self.MOOD:
+            data["MOOD_iters"] = self.MOOD_config.iter_count
+
         if self.log_every_step:
-            log = self.log_quantity(self.arrays["u"], self.t)
-            for key, value in log.items():
-                self.minisnapshots[key].append(value)
+            data.update(self.log_quantity())
+
+        return data
+
+    def reset_substepwise_counters(self):
+        """
+        Reset the counters that increment in each substep of the integration.
+        """
         self.n_updates = 0
+
+    def increment_substepwise_counters(self):
+        """
+        Increment counters at the end of each substep of the integration.
+        """
+        self.n_updates += self.mesh.size
+
+    def reset_substepwise_logarrays(self):
+        """
+        Reset the log arrays that accumulate data over substeps.
+        """
+        if self.MOOD:
+            troubles = self.arrays["troubles_log"]
+            troubles[...] = 0
+
+        if self.ZS:
+            theta = self.arrays["theta_log"]
+            theta[...] = 0
+
+    def accumulate_substepwise_logarrays(self):
+        """
+        Accumulate the log arrays over substeps.
+        """
+        xp = self.xp
+
+        if self.ZS:
+            theta = self.arrays["theta"]
+            theta_log = self.arrays["theta_log"]
+            xp.add(theta_log, theta, out=theta_log)
+
+        if self.MOOD:
+            troubles = self.arrays["troubles"]
+            troubles_log = self.arrays["troubles_log"]
+            xp.add(troubles_log, troubles, out=troubles_log)
+
+    def called_at_beginning_of_step(self):
+        """
+        Overwrite `called_at_beginning_of_step` of the ODE solver to reset various
+        internal state variables.
+        """
+        super().called_at_beginning_of_step()
+        self.reset_substepwise_counters()
+        self.reset_substepwise_logarrays()
 
     def called_at_end_of_step(self):
         """
-        Called at the end of each time step to synchronize the GPU if using CuPy and to
-        perform any additional end-of-step operations.
-
+        Overwrite `called_at_end_of_step` of the ODE solver to synchronize the GPU if
+        using CuPy, and to perform any additional cleanup or logging.
         """
         if self.cupy:
             self.xp.cuda.Device().synchronize()
         super().called_at_end_of_step()
+
+    def reset_MOOD_state(self):
+        """
+        Reset the state of the MOOD configuration.
+        """
+        MOOD_config = self.MOOD_config
+
+        MOOD_config.iter_idx = 0
+        MOOD_config.iter_count = 0
+        MOOD_config.cascade_status = [False] * len(MOOD_config.cascade)
+
+    def increment_MOOD_state(self):
+        """
+        Increment the MOOD state over MOOD iterations.
+        """
+        self.MOOD_config.iter_idx += 1
+        self.MOOD_config.iter_count += 1
 
     @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):

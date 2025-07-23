@@ -43,9 +43,13 @@ class AdvectionSolver(FiniteVolumeSolver):
         MOOD: bool = False,
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
-        NAD: Optional[float] = None,
+        NAD: bool = False,
+        NAD_rtol: float = 1.0,
+        NAD_atol: float = 0.0,
+        global_dmp: bool = False,
+        include_corners: bool = False,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
-        PAD_tol: float = 1e-15,
+        PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
         log_every_step: bool = True,
@@ -137,12 +141,17 @@ class AdvectionSolver(FiniteVolumeSolver):
                 For the Zhang-Shu limiter, all variables are always limited, but
                 `limiting_vars` determines which variables are checked for PAD when
                 using adaptive timestepping.
-            NAD: The NAD tolerance. If None, NAD is not checked.
+            NAD: Whether to use nuerical admissibility detection (NAD) when determining
+                if a cell is troubled in the MOOD loop.
+            NAD_rtol: Relative tolerance for the NAD violations.
+            NAD_atol: Absolute tolerance for the NAD violations.
+            global_dmp: Whether to use a global DMP check for NAD violations.
+            include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
-            PAD_tol: Tolerance for the PAD check as an absolute value from the minimum
+            PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
@@ -177,8 +186,12 @@ class AdvectionSolver(FiniteVolumeSolver):
             max_MOOD_iters=max_MOOD_iters,
             limiting_vars=limiting_vars,
             NAD=NAD,
+            NAD_rtol=NAD_rtol,
+            NAD_atol=NAD_atol,
+            global_dmp=global_dmp,
+            include_corners=include_corners,
             PAD=PAD,
-            PAD_tol=PAD_tol,
+            PAD_atol=PAD_atol,
             SED=SED,
             cupy=cupy,
             log_every_step=log_every_step,
@@ -265,7 +278,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         return (self.CFL * h / (vx + vy + vz)).item()
 
     @MethodTimer(cat="AdvectionSolver.log_quantity")
-    def log_quantity(self, u: ArrayLike, t: float) -> Dict[str, float]:
+    def log_quantity(self) -> Dict[str, float]:
         idx = self.variable_index_map
         return {
             "min_rho": self.arrays["u"][idx("rho")].min().item(),
