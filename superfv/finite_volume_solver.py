@@ -24,7 +24,11 @@ from .initial_conditions import _uninitialized
 from .mesh import UniformFVMesh
 from .slope_limiting import MOOD
 from .slope_limiting.MOOD import MOODConfig
-from .slope_limiting.zhang_and_shu import compute_theta, zhang_shu_operator
+from .slope_limiting.zhang_and_shu import (
+    ZhangShuConfig,
+    compute_theta,
+    zhang_shu_operator,
+)
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.dummy_module import DummyModule
 from .tools.slicing import VariableIndexMap, crop, merge_slices
@@ -664,20 +668,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # reset slope limiting state
         self.MOOD: bool = False
         self.MOOD_config: MOODConfig = MOODConfig()
-        self.PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None
-        self.SED = False
         self.ZS = False
+        self.ZhangShu_config = ZhangShuConfig()
 
+        # configure variable indices
         idx = self.variable_index_map
+        idx.add_var_to_group("limiting", [])
 
         # skip slope limiting for first-order or if nothing is active
         if self.p == 0 or (not ZS and not MOOD):
             return
-
-        # common settings ---
-        self.PAD = PAD
-        self.PAD_atol = PAD_atol
-        self.SED = SED
 
         # PAD
         if PAD:
@@ -695,13 +695,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Zhang-Shu (a priori limiting)
         if ZS:
             self.ZS = True
-            self.adaptive_dt = adaptive_dt
+            self.ZhangShu_config = ZhangShuConfig(
+                include_corners=include_corners,
+                SED=SED,
+                adaptive_dt=adaptive_dt,
+                max_dt_revisions=max_dt_revisions,
+                PAD_bounds=self.arrays["PAD_bounds"],
+                PAD_atol=PAD_atol,
+            )
             if adaptive_dt:
-                if not PAD:
-                    raise ValueError("Adaptive time-stepping requires PAD to be set.")
                 self._dt_criterion = self.adaptive_dt_criterion
                 self._compute_revised_dt = self.adaptive_dt_revision
-                self.max_dt_revisions = max_dt_revisions
 
         # MOOD (a posteriori limiting)
         if MOOD:
@@ -720,7 +724,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
             self.reset_MOOD_state()
 
-        # create limiting group
+        # add limiing variables to the index map
         if limiting_vars == "all":
             limiting_vars = tuple(idx.var_idx_map.keys())
         elif limiting_vars == "actives":
@@ -824,12 +828,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns whether unew is free of PAD violations.
         """
         xp = self.xp
-        PAD_violations = self.arrays["buffer"][self.interior][..., 0]
-        PAD_bounds = self.arrays["PAD_bounds"]
+        PAD_bounds = self.ZhangShu_config.PAD_bounds
+        PAD_atol = self.ZhangShu_config.PAD_atol
 
-        MOOD.inplace_PAD_violations(
-            xp, unew, PAD_bounds, self.PAD_atol, out=PAD_violations
-        )
+        PAD_violations = self.arrays["buffer"][self.interior][..., 0]
+        MOOD.inplace_PAD_violations(xp, unew, PAD_bounds, PAD_atol, out=PAD_violations)
 
         return not xp.any(PAD_violations < 0)
 
@@ -838,10 +841,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns dt/2 if the maximum number of adaptive timestep revisions hasn't been
         exceeded.
         """
-        if self.n_dt_revisions < self.max_dt_revisions:
+        n_dt_revisions = self.n_dt_revisions
+        max_dt_revisions = self.ZhangShu_config.max_dt_revisions
+
+        if n_dt_revisions < max_dt_revisions:
             return dt / 2
         raise ValueError(
-            f"Failed to satisfy `dt_criterion` in {self.max_dt_revisions} iterations."
+            f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations."
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.f")
@@ -1051,6 +1057,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         xp = self.xp
         mesh = self.mesh
+        ZhangShu_config = self.ZhangShu_config
 
         # define array references
         u = self.arrays["_u_"]
@@ -1063,7 +1070,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute centroid then compute theta
         fv.interpolate_cell_centers(xp, u, mesh.active_dims, p, buffer, out=centroid)
-        compute_theta(xp, u, centroid, x, y, z, buffer, SED=self.SED, out=theta)
+        compute_theta(
+            xp,
+            u,
+            centroid,
+            x,
+            y,
+            z,
+            buffer,
+            SED=ZhangShu_config.SED,
+            include_corners=ZhangShu_config.include_corners,
+            tol=ZhangShu_config.tol,
+            out=theta,
+        )
 
         # limit the face nodes
         if mesh.x_is_active:

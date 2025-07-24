@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import ModuleType
 from typing import TYPE_CHECKING, Optional
 
@@ -12,6 +13,42 @@ from superfv.tools.slicing import modify_slices
 
 if TYPE_CHECKING:
     pass
+
+
+@dataclass
+class ZhangShuConfig:
+    """
+    Configuration for Zhang and Shu slope limiting.
+
+    Attributes:
+        include_corners: Whether to include corners when computing the discrete maximum
+            principle.
+        tol: Small tolerance value for division in the expression for theta:
+            min(abs(M - u) / (abs(Mj - u) + tol), abs(m - u) / (abs(mj - u) + tol))
+        SED: Whether to use the smooth extrema detector to relax theta.
+        adaptive_dt: Whether to adapt the time step based on a PAD condition.
+        max_dt_revisions: Maximum number of revisions for the adaptive time step.
+        PAD_bounds: Optional bounds for the PAD condition. Has shape
+            (nvars, 1, 1, 1, 2), where the minimum and maximum values are stored
+            in the first and second elements of the last axis, respectively, for each
+            variable. If None, the PAD condition is not used.
+        PAD_atol: Absolute tolerance for the PAD condition.
+    """
+
+    include_corners: bool = False
+    tol: float = 1e-16
+    SED: bool = False
+    adaptive_dt: bool = False
+    max_dt_revisions: int = 0
+    PAD_bounds: Optional[ArrayLike] = None
+    PAD_atol: float = 0.0
+
+    def __post_init__(self):
+        if self.adaptive_dt and self.PAD_bounds is None:
+            raise ValueError(
+                "Adaptive time stepping requires PAD_bounds to be set. "
+                "Set adaptive_dt=False if you do not want to use PAD."
+            )
 
 
 def compute_theta(
