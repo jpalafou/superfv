@@ -36,12 +36,14 @@ class MOODConfig:
         include_corners (bool): Whether to include corner values in the DMP
             computation.
         PAD (bool): Whether to enable Physical Admissibility Detection.
+        PAD_bounds: Optional bounds for the PAD condition. Has shape
+            (nvars, 1, 1, 1, 2), where the minimum and maximum values are stored
+            in the first and second elements of the last axis, respectively, for each
+            variable. If None, the PAD condition is not used.
         PAD_atol (float): Absolute tolerance for PAD violations.
         SED (bool): Whether to enable Smooth Extrema Detection.
     """
 
-    iter_idx: int = 0
-    iter_count: int = 0
     max_iters: int = 0
     cascade: List[str] = field(default_factory=list)
     cascade_status: List[bool] = field(default_factory=list)
@@ -51,8 +53,45 @@ class MOODConfig:
     global_dmp: bool = False
     include_corners: bool = False
     PAD: bool = False
+    PAD_bounds: Optional[ArrayLike] = None
     PAD_atol: float = 0.0
     SED: bool = False
+
+    def __post_init__(self):
+        self.reset_iter_count()
+        self.reset_MOOD_loop()
+
+        if self.PAD and self.PAD_bounds is None:
+            raise ValueError(
+                "PAD requires PAD_bounds to be set. "
+                "Set PAD=False if you do not want to use PAD."
+            )
+        if self.SED and not self.NAD:
+            raise ValueError(
+                "SED requires NAD to be enabled. Please set NAD to a non-None value."
+            )
+
+    def reset_iter_count(self):
+        """
+        Reset the iteration count which accumulates the total number of iterations
+        in a step across all MOOD loops in a step.
+        """
+        self.iter_count = 0
+
+    def reset_MOOD_loop(self):
+        """
+        Reset the iteration index and cascade status for the first MOOD iteration in a
+        MOOD loop.
+        """
+        self.iter_idx = 0
+        self.cascade_status: List[bool] = [False] * len(self.cascade)
+
+    def increment_MOOD_iteration(self):
+        """
+        Increment the iteration index and count for a single MOOD iteration.
+        """
+        self.iter_idx += 1
+        self.iter_count += 1
 
 
 def detect_troubled_cells(
@@ -90,6 +129,7 @@ def detect_troubled_cells(
     global_dmp = MOOD_config.global_dmp
     include_corners = MOOD_config.include_corners
     PAD = MOOD_config.PAD
+    PAD_bounds = MOOD_config.PAD_bounds
     PAD_atol = MOOD_config.PAD_atol
     SED = MOOD_config.SED
 
@@ -135,10 +175,6 @@ def detect_troubled_cells(
 
     # compute smooth extrema
     if SED:
-        if not NAD:
-            raise ValueError(
-                "SED requires NAD to be enabled. Please set NAD to a non-None value."
-            )
         inplace_smooth_extrema_detector(
             xp, u_new[lim_slc], fv_solver.mesh.active_dims, buffer, alpha
         )
@@ -155,7 +191,7 @@ def detect_troubled_cells(
         inplace_PAD_violations(
             xp,
             u_new_interior[lim_slc],
-            fv_solver.arrays["PAD_bounds"][lim_slc],
+            PAD_bounds[lim_slc],
             physical_tols=PAD_atol,
             out=PAD_violations,
         )

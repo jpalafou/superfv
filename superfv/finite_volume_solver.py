@@ -700,7 +700,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 SED=SED,
                 adaptive_dt=adaptive_dt,
                 max_dt_revisions=max_dt_revisions,
-                PAD_bounds=self.arrays["PAD_bounds"],
+                PAD_bounds=self.arrays["PAD_bounds"] if PAD else None,
                 PAD_atol=PAD_atol,
             )
             if adaptive_dt:
@@ -719,10 +719,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 global_dmp=global_dmp,
                 include_corners=include_corners,
                 PAD=PAD is not None,
+                PAD_bounds=self.arrays["PAD_bounds"] if PAD else None,
                 PAD_atol=PAD_atol,
                 SED=SED,
             )
-            self.reset_MOOD_state()
 
         # add limiing variables to the index map
         if limiting_vars == "all":
@@ -1155,11 +1155,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             t: Time value.
         """
-        self.reset_MOOD_state()
+        self.MOOD_config.reset_MOOD_loop()
         while True:
             if MOOD.detect_troubled_cells(self, t):
                 MOOD.inplace_revise_fluxes(self, t)
-                self.increment_MOOD_state()
+                self.MOOD_config.increment_MOOD_iteration()
             else:
                 return
 
@@ -1339,6 +1339,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         super().called_at_beginning_of_step()
         self.reset_substepwise_counters()
         self.reset_substepwise_logarrays()
+        if self.MOOD:
+            self.MOOD_config.reset_iter_count()
 
     def called_at_end_of_step(self):
         """
@@ -1348,23 +1350,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.cupy:
             self.xp.cuda.Device().synchronize()
         super().called_at_end_of_step()
-
-    def reset_MOOD_state(self):
-        """
-        Reset the state of the MOOD configuration.
-        """
-        MOOD_config = self.MOOD_config
-
-        MOOD_config.iter_idx = 0
-        MOOD_config.iter_count = 0
-        MOOD_config.cascade_status = [False] * len(MOOD_config.cascade)
-
-    def increment_MOOD_state(self):
-        """
-        Increment the MOOD state over MOOD iterations.
-        """
-        self.MOOD_config.iter_idx += 1
-        self.MOOD_config.iter_count += 1
 
     @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
