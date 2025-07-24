@@ -764,7 +764,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize workspace arrays
         _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
-        max_nodes = self.nodes_per_face(self.p)
+        max_nodes = self.nodes_per_face(self.base_scheme)
         max_ninterps = 2 * max_nodes
         SED_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 1
         MOOD_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 4
@@ -1175,8 +1175,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     dim,
                     self.mesh.active_dims,
                     scheme.p,
+                    right_state,
                     flux_workspace,
-                    out,
                 )
             else:
                 raise ValueError(

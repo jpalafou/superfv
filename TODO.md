@@ -26,6 +26,7 @@ optimizations:
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 
 cosmetics:
+- [ ] plot n_MOOD_iters over substeps (increment of dt/4 for rk4, etc)
 - [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
 - [ ] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
