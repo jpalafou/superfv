@@ -253,38 +253,6 @@ def inplace_multistencil_sweep(
     return out_modified
 
 
-def stencil_sweep(
-    xp: Any, arr: ArrayLike, stencil_weights: np.ndarray, axis: int
-) -> ArrayLike:
-    """
-    Perform a stencil sweep on a field.
-
-    Args:
-        xp: `np` namespace.
-        y: Array of field values to sweep. Must have shape (nvars, nx, ny, nz, ...).
-        stencil_weights: Array of stencil weights to apply. Has shape (nweights,).
-        axis: The axis along which to sweep.
-
-    Returns:
-        Array of field values after the stencil sweep. Has shape
-            (nvars, <= nx, <= ny, <= nz, ...).
-    """
-    # reshape weights to broadcast with y
-    weights = stencil_weights.T.reshape((len(stencil_weights),) + (1,) * arr.ndim)
-
-    # get slices
-    slices = get_symmetric_slices(arr.ndim, len(stencil_weights), axis)
-
-    # initialize output array
-    out = xp.zeros_like(arr[slices[0]])
-
-    # sweep
-    for w, s in zip(weights, slices):
-        xp.add(out, xp.multiply(arr[s], w), out)
-
-    return out
-
-
 @lru_cache(maxsize=None)
 def get_symmetric_slices(ndim: int, nslices: int, axis: int) -> List[Tuple[slice, ...]]:
     """
