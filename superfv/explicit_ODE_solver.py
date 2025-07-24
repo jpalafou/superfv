@@ -185,13 +185,14 @@ class ExplicitODESolver(ABC):
             u0: Initial state as an array.
             array_manager: Optional ArrayManager instance to manage arrays.
         """
-        # initialize global counters
+        # initialize time values
         self.t = 0.0
         self.dt = 0.0
-        self.n_steps = 0
 
-        # initialize stepwise counters
-        self.reset_stepwise_counters()
+        # initialize logs
+        self.reset_global_logs()
+        self.reset_stepwise_logs()
+        self.reset_substepwise_logs()
 
         # initialize array manager
         self.arrays = ArrayManager() if array_manager is None else array_manager
@@ -431,12 +432,11 @@ class ExplicitODESolver(ABC):
         """
         self.called_at_beginning_of_step()
 
-        # define current time and state
         t, u = self.t, self.arrays["u"]
-
-        # determine time-step size and next state
         dt = clamp_dt(t, self.compute_dt(t, u), target_time)
+
         while True:
+            self.reset_substepwise_logs()
             self.stepper(t, u, dt)  # revises self.arrays["unew"]
             if self.dt_criterion(t + dt, self.arrays["unew"]):
                 break
@@ -456,27 +456,50 @@ class ExplicitODESolver(ABC):
         start.
         """
         self.timer.start("current_step")
-        self.reset_stepwise_counters()
-
-    def reset_stepwise_counters(self):
-        """
-        Reset stepwise counters.
-        """
-        self.n_substeps = 0
-        self.n_dt_revisions = 0
+        self.reset_stepwise_logs()
 
     def called_at_end_of_step(self):
         """
         Helper function called at the end of each step ending with a timer stop.
         """
-        self.increment_stepwise_counters()
+        self.increment_stepwise_logs()
         self.timer.stop("current_step")
 
-    def increment_stepwise_counters(self):
+    def reset_global_logs(self):
         """
-        Increment stepwise counters.
+        Reset global logs that are incremented throughout the simulation.
+        """
+        self.n_steps = 0
+
+    def increment_global_logs(self):
+        """
+        Increment global logs throughout the simulation.
         """
         self.n_steps += 1
+
+    def reset_stepwise_logs(self):
+        """
+        Reset logs that are incremented at the end of each step.
+        """
+        self.n_dt_revisions = 0
+
+    def increment_stepwise_logs(self):
+        """
+        Increment logs at the end of each step.
+        """
+        pass
+
+    def reset_substepwise_logs(self):
+        """
+        Reset logs that are incremented at the end of each substep.
+        """
+        self.n_substeps = 0
+
+    def increment_substepwise_logs(self):
+        """
+        Increment logs at the end of each substep.
+        """
+        self.n_substeps += 1
 
     def progress_bar_action(
         self, action: str, T: Optional[float] = None, do_nothing: bool = False
@@ -515,7 +538,7 @@ class ExplicitODESolver(ABC):
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
     def ssprk2(self, *args, **kwargs) -> None:
         self.integrator = "ssprk2"
@@ -531,12 +554,12 @@ class ExplicitODESolver(ABC):
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
         # stage 2
         k1[...] = self.f(t + dt, unew)
         unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
     def ssprk3(self, *args, **kwargs) -> None:
         self.integrator = "ssprk3"
@@ -553,16 +576,16 @@ class ExplicitODESolver(ABC):
         # stage 1
         k0[...] = self.f(t, u)
         unew[...] = u + dt * k0
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
         # stage 2
         k1[...] = self.f(t + dt, unew)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
         # stage 3
         k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1)
         unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
     def rk4(self, *args, **kwargs):
         self.integrator = "rk4"
@@ -579,17 +602,17 @@ class ExplicitODESolver(ABC):
 
         # stage 1
         k0[...] = self.f(t, u)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
         # stage 2
         k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
         # stage 3
         k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()
 
         # stage 4
         k3[...] = self.f(t + dt, u + dt * k2)
         unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
-        self.n_substeps += 1
+        self.increment_substepwise_logs()

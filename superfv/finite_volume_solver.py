@@ -822,7 +822,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_snapshots(self, log_every_step: bool):
         self.log_every_step = log_every_step
-        self.reset_substepwise_counters()
 
         # allocate keys from collect_minisnapshot_data
         keys = self.collect_minisnapshot_data().keys()
@@ -877,10 +876,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.MOOD_loop(t)
 
         out = self.compute_RHS().copy()
-
-        self.increment_substepwise_counters()
-        self.accumulate_substepwise_logarrays()
-
         return out
 
     def update_workspace(self, t: float, u: ArrayLike, scheme: InterpolationScheme):
@@ -1336,35 +1331,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         return data
 
-    def reset_substepwise_counters(self):
+    def reset_substepwise_logs(self):
         """
-        Reset the counters that increment in each substep of the integration.
+        Reset logs that are incremented at the end of each substep.
         """
+        super().reset_substepwise_logs()
+
         self.n_updates = 0
 
-    def increment_substepwise_counters(self):
-        """
-        Increment counters at the end of each substep of the integration.
-        """
-        self.n_updates += self.mesh.size
+        if hasattr(self, "ZS") and self.ZS:
+            self.arrays["theta_log"].fill(0.0)
 
-    def reset_substepwise_logarrays(self):
-        """
-        Reset the log arrays that accumulate data over substeps.
-        """
-        if self.MOOD:
-            troubles = self.arrays["troubles_log"]
-            troubles[...] = 0
+        if hasattr(self, "MOOD") and self.MOOD:
+            self.arrays["troubles_log"].fill(0)
+            self.MOOD_config.reset_iter_count()
 
-        if self.ZS:
-            theta = self.arrays["theta_log"]
-            theta[...] = 0
+    def increment_substepwise_logs(self):
+        """
+        Increment logs at the end of each substep.
+        """
+        super().increment_substepwise_logs()
 
-    def accumulate_substepwise_logarrays(self):
-        """
-        Accumulate the log arrays over substeps.
-        """
         xp = self.xp
+
+        self.n_updates += self.mesh.size
 
         if self.ZS:
             theta = self.arrays["theta"]
@@ -1375,17 +1365,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             troubles = self.arrays["troubles"]
             troubles_log = self.arrays["troubles_log"]
             xp.add(troubles_log, troubles, out=troubles_log)
-
-    def called_at_beginning_of_step(self):
-        """
-        Overwrite `called_at_beginning_of_step` of the ODE solver to reset various
-        internal state variables.
-        """
-        super().called_at_beginning_of_step()
-        self.reset_substepwise_counters()
-        self.reset_substepwise_logarrays()
-        if self.MOOD:
-            self.MOOD_config.reset_iter_count()
 
     def called_at_end_of_step(self):
         """
