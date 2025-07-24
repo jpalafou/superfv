@@ -676,6 +676,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # common settings ---
         self.PAD = PAD
+        self.PAD_atol = PAD_atol
         self.SED = SED
 
         # PAD
@@ -696,6 +697,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.ZS = True
             self.adaptive_dt = adaptive_dt
             if adaptive_dt:
+                if not PAD:
+                    raise ValueError("Adaptive time-stepping requires PAD to be set.")
                 self._dt_criterion = self.adaptive_dt_criterion
                 self._compute_revised_dt = self.adaptive_dt_revision
                 self.max_dt_revisions = max_dt_revisions
@@ -818,31 +821,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
         """
-        Returns whether PAD violations are present.
+        Returns whether unew is free of PAD violations.
         """
         xp = self.xp
+        PAD_violations = self.arrays["buffer"][self.interior][..., 0]
+        PAD_bounds = self.arrays["PAD_bounds"]
 
-        PAD_lower = self.arrays["PAD_bounds"][..., 0]
-        PAD_upper = self.arrays["PAD_bounds"][..., 1]
+        MOOD.inplace_PAD_violations(
+            xp, unew, PAD_bounds, self.PAD_atol, out=PAD_violations
+        )
 
-        nontrivial_mask = xp.logical_or(
-            PAD_lower > -np.inf, PAD_upper < np.inf
-        ).flatten()
-        unew_filt = unew[nontrivial_mask]
-
-        PAD_lower_filt = PAD_lower[nontrivial_mask]
-        PAD_upper_filt = PAD_upper[nontrivial_mask]
-
-        lower_violations = unew_filt < PAD_lower_filt - self.PAD_tol
-        upper_violations = unew_filt > PAD_upper_filt + self.PAD_tol
-        return not xp.any(xp.logical_or(lower_violations, upper_violations))
+        return not xp.any(PAD_violations < 0)
 
     def adaptive_dt_revision(self, t, u, dt):
         """
         Returns dt/2 if the maximum number of adaptive timestep revisions hasn't been
         exceeded.
         """
-        if self.dt_revision_count < self.max_dt_revisions:
+        if self.n_dt_revisions < self.max_dt_revisions:
             return dt / 2
         raise ValueError(
             f"Failed to satisfy `dt_criterion` in {self.max_dt_revisions} iterations."
