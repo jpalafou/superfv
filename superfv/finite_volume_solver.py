@@ -21,6 +21,11 @@ from .boundary_conditions import DirichletBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import DIM_TO_AXIS
 from .initial_conditions import _uninitialized
+from .interpolation_schemes import (
+    InterpolationScheme,
+    musclInterpolationScheme,
+    polyInterpolationScheme,
+)
 from .mesh import UniformFVMesh
 from .slope_limiting import MOOD
 from .slope_limiting.MOOD import MOODConfig
@@ -183,6 +188,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
         MOOD: bool = False,
+        cascade: Literal["first-order", "muscl", "full"] = "first-order",
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = False,
@@ -273,6 +279,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 if `adaptive_dt=True`. Defaults to 8.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
+            cascade: A string indicating which type of MOOD cascade to use:
+                - "first-order": Fall back directly to a first-order scheme.
+                - "muscl": Fall back directly to a MUSCL scheme.
+                - "full": Fall back to a full cascade of scheme in descending order.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
             limiting_vars: Specifies which variables are subject to slope limiting.
@@ -313,6 +323,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             adaptive_dt,
             max_dt_revisions,
             MOOD,
+            cascade,
             max_MOOD_iters,
             limiting_vars,
             NAD,
@@ -419,46 +430,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(
                 "interpolation_scheme must be 'gauss-legendre' or 'transverse'."
             )
-        self.GL = interpolation_scheme == "gauss-legendre"
-        self.interpolation_func = (
-            self._interpolate_GaussLegendre_nodes
-            if self.GL
-            else self._interpolate_transverse_nodes
-        )
-        self.integration_func = (
-            self._integrate_trivial_nodes
-            if self.mesh.ndim == 1
-            else (
-                self._integrate_GaussLegendre_nodes
-                if self.GL
-                else self._integrate_transverse_nodes
-            )
-        )
-        self.flux_recipe = flux_recipe
-        self.lazy_primitives = lazy_primitives
 
-    def _interpolate_GaussLegendre_nodes(self, u, face_dim, p, buffer, out):
-        fv.interpolate_GaussLegendre_nodes(
-            self.xp, u, face_dim, self.mesh.active_dims, p, buffer, out
+        self.base_scheme = polyInterpolationScheme(
+            name="poly",
+            limiter=None,
+            p=self.p,
+            mode=flux_recipe,
+            lazy_primitives=lazy_primitives,
+            gauss_legendre=interpolation_scheme == "gauss-legendre",
         )
-
-    def _integrate_GaussLegendre_nodes(self, f, face_dim, p, buffer, out):
-        fv.integrate_GaussLegendre_nodes(
-            self.xp, f, face_dim, self.mesh.active_dims, p, out[..., 0]
-        )
-
-    def _interpolate_transverse_nodes(self, u, face_dim, p, buffer, out):
-        fv.interpolate_face_centers(
-            self.xp, u, face_dim, self.mesh.active_dims, p, buffer, out
-        )
-
-    def _integrate_transverse_nodes(self, f, face_dim, p, buffer, out):
-        fv.transversely_integrate_nodes(
-            self.xp, f[..., 0], face_dim, self.mesh.active_dims, p, buffer, out
-        )
-
-    def _integrate_trivial_nodes(self, f, face_dim, p, buffer, out):
-        out[...] = f
 
     def _init_ic(
         self,
@@ -654,6 +634,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         adaptive_dt: bool,
         max_dt_revisions: int,
         MOOD: bool,
+        cascade: Literal["first-order", "muscl", "full"],
         max_MOOD_iters: int,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
@@ -695,6 +676,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Zhang-Shu (a priori limiting)
         if ZS:
             self.ZS = True
+            self.base_scheme.limiter = "zhang-shu"
             self.ZhangShu_config = ZhangShuConfig(
                 include_corners=include_corners,
                 SED=SED,
@@ -710,9 +692,39 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # MOOD (a posteriori limiting)
         if MOOD:
             self.MOOD = True
+
+            # define MOOD cascade
+            if cascade == "first-order":
+                fallback_schemes = [
+                    polyInterpolationScheme(
+                        name="poly",
+                        limiter=None,
+                        p=0,
+                        mode=self.base_scheme.mode,
+                        gauss_legendre=self.base_scheme.gauss_legendre,
+                    )
+                ]
+            elif cascade == "muscl":
+                fallback_schemes = [
+                    musclInterpolationScheme(name="muscl", limiter="minmod")
+                ]
+            elif cascade == "full":
+                fallback_schemes = [
+                    polyInterpolationScheme(
+                        name="poly",
+                        limiter=None,
+                        p=pi,
+                        mode=self.base_scheme.mode,
+                        gauss_legendre=self.base_scheme.gauss_legendre,
+                    )
+                    for pi in range(self.p - 1, -1, -1)
+                ]
+            cascade = [self.base_scheme] + fallback_schemes
+
+            # initialize MOOD configuration
             self.MOOD_config = MOODConfig(
                 max_iters=max_MOOD_iters,
-                cascade=["fv" + str(self.p)] + ["fv0"],
+                cascade=cascade,
                 NAD=NAD,
                 NAD_rtol=NAD_rtol,
                 NAD_atol=NAD_atol,
@@ -732,14 +744,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         idx.add_var_to_group("limiting", limiting_vars)
 
     def _init_array_allocation(self):
-        self.interpolation_cache = ArrayManager()
-        self.MOOD_cache = ArrayManager()
-        self.ZS_cache = ArrayManager()
         if self.cupy:
             self.arrays.transfer_to_device("gpu")
-            self.interpolation_cache.transfer_to_device("gpu")
-            self.MOOD_cache.transfer_to_device("gpu")
-            self.ZS_cache.transfer_to_device("gpu")
 
         arrays = self.arrays
 
@@ -784,9 +790,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # MOOD arrays
         if self.MOOD:
             for scheme in self.MOOD_config.cascade:
-                arrays.add("F_" + scheme, np.empty((nvars, nx + 1, ny, nz)))
-                arrays.add("G_" + scheme, np.empty((nvars, nx, ny + 1, nz)))
-                arrays.add("H_" + scheme, np.empty((nvars, nx, ny, nz + 1)))
+                arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
+                arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
+                arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
             arrays.add(
                 "_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int)
             )
@@ -864,8 +870,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
         """
-        self.update_workspace(t, u, self.p)
-        self.inplace_compute_fluxes(t, self.p)
+        self.update_workspace(t, u, self.base_scheme)
+        self.inplace_compute_fluxes(t, self.base_scheme)
 
         if self.MOOD:
             self.MOOD_loop(t)
@@ -877,7 +883,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         return out
 
-    def update_workspace(self, t: float, u: ArrayLike, p: int):
+    def update_workspace(self, t: float, u: ArrayLike, scheme: InterpolationScheme):
         """
         Update the workspace array with the provided state u and apply boundary
         conditions in place.
@@ -886,14 +892,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             t: Time value.
             u: Array of conservative, cell-averaged values. Has shape
                 (nvars, nx, ny, nz).
-            p: Polynomial degree of the spatial discretization.
+
         """
         _u_ = self.arrays["_u_"]
         _u_[self.interior] = u
-        self.inplace_apply_bc(t, _u_, p=p)
+        self.inplace_apply_bc(t, _u_, scheme=scheme)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
-    def inplace_compute_fluxes(self, t: float, p: int):
+    def inplace_compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """
         Compute the fluxes at the cell faces from the workspace array `u_workspace`.
 
@@ -906,49 +912,58 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         `self.arrays["H"]`.
 
         Args:
-            u: Array of conservative, cell-averaged values. Has shape
-                (nvars, nx, ny, nz).
-            p: Polynomial degree of the spatial discretization.
+
+
         """
         _u_ = self.arrays["_u_"]
 
         for dim in self.mesh.active_dims:
-            self.inplace_interpolate_faces(t, _u_, dim, p, primitives=False)
+            self.inplace_interpolate_faces(_u_, dim, scheme)
 
-        if self.ZS:
-            self.zhang_shu_limiter(p)
+        if isinstance(scheme, polyInterpolationScheme):
+            if scheme.limiter == "zhang-shu":
+                self.zhang_shu_limiter(scheme.p)
 
         for dim in self.mesh.active_dims:
-            self.apply_nodal_bc(t, dim, p, primitives=False)
-            self.inplace_integrate_fluxes(dim, p)
+            self.apply_nodal_bc(t, dim, scheme, primitives=False)
+            self.inplace_integrate_fluxes(dim, scheme)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
     def inplace_apply_bc(
         self,
         t: float,
         u: ArrayLike,
+        scheme: InterpolationScheme,
         primitives: bool = False,
         pointwise: bool = False,
         cell_region: Optional[
             Literal["xl", "xr", "yl", "yr", "zl", "zr", "center"]
         ] = None,
-        p: Optional[int] = None,
     ):
         """
         Apply boundary conditions to the provided array `u` in place.
         """
+        # determine polynomial degree
+        if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
+            p = scheme.p
+        else:
+            p = 0
+
+        # determine Dirichlet mode
         dirichlet_mode = (
             "fv-averages"
             if not pointwise
             else ("cell-centers" if cell_region == "center" else "face-nodes")
         )
+
+        # apply boundary conditions
         apply_bc(
             _u_=u,
             dirichlet_mode=dirichlet_mode,
             t=t,
             face_dim=cell_region[0] if dirichlet_mode == "face-nodes" else None,
             face_pos=cell_region[1] if dirichlet_mode == "face-nodes" else None,
-            p=p if self.GL else 0,
+            p=p,
             **(self.primitive_bc_kwargs if primitives else self.conservative_bc_kwargs),
         )
 
@@ -961,11 +976,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(
         self,
-        t: float,
         u: ArrayLike,
         dim: Literal["x", "y", "z"],
-        p: int,
-        primitives: bool = True,
+        scheme: InterpolationScheme,
     ):
         """
         Interpolate the face nodes at the opposing face centers and optionally convert
@@ -979,9 +992,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - "x": Interpolate in the x-direction.
                 - "y": Interpolate in the y-direction.
                 - "z": Interpolate in the z-direction.
-            p: Polynomial degree of the spatial discretization.
-            primitives: Whether to convert the interpolated values to primitive
-                variables.
+
 
         Returns:
             None. Modifies `self.arrays[dim + "_nodes"]` in place.
@@ -989,23 +1000,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Notes:
             - `self.arrays["buffer"]` is used as a temporary buffer for sweeps.
         """
+        xp = self.xp
+        adims = self.mesh.active_dims
+
         out = self.arrays[dim + "_nodes"]
         buffer = self.arrays["buffer"]
 
-        self.interpolation_func(
-            u,
-            face_dim=dim,
-            p=p,
-            buffer=buffer,
-            out=out,
-        )
-
-        if primitives:
-            self.conservatives_to_primitives(out, buffer)
-            out[...] = buffer
+        # perform interpolation
+        if isinstance(scheme, polyInterpolationScheme):
+            p = scheme.p
+            if scheme.gauss_legendre:
+                fv.interpolate_GaussLegendre_nodes(xp, u, dim, adims, p, buffer, out)
+            else:
+                fv.interpolate_face_centers(xp, u, dim, adims, p, buffer, out)
+        elif isinstance(scheme, musclInterpolationScheme):
+            fv.interpolate_muscl_faces(xp, u, dim, scheme.limiter, buffer, out)
+        else:
+            raise ValueError(f"Unknown interpolation scheme: {scheme}")
 
     def apply_nodal_bc(
-        self, t: float, dim: Literal["x", "y", "z"], p: int, primitives: bool
+        self,
+        t: float,
+        dim: Literal["x", "y", "z"],
+        scheme: InterpolationScheme,
+        primitives: bool,
     ):
         """
         Apply boundary conditions to arrays of nodal variables
@@ -1023,7 +1041,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             None. Modifies `self.arrays[dim + "_nodes"]` in place.
         """
-        n = self.nodes_per_face(p)
+        n = self.nodes_per_face(scheme)
 
         nodes = self.arrays[dim + "_nodes"]
         ul = nodes[crop(4, (None, n))]
@@ -1032,18 +1050,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_apply_bc(
             t,
             ul,
+            scheme=scheme,
             primitives=primitives,
             pointwise=True,
             cell_region=dim + "l",
-            p=p,
         )
         self.inplace_apply_bc(
             t,
             ur,
+            scheme=scheme,
             primitives=primitives,
             pointwise=True,
             cell_region=dim + "r",
-            p=p,
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.zhang_shu_limiter")
@@ -1052,7 +1070,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Limit the face node arrays.
 
         Args:
-            p: Polynomial degree for interpolating the cell centroid.
+
         """
 
         xp = self.xp
@@ -1093,7 +1111,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             z[...] = zhang_shu_operator(z, u[..., np.newaxis], theta)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
-    def inplace_integrate_fluxes(self, dim: Literal["x", "y", "z"], p: int):
+    def inplace_integrate_fluxes(
+        self, dim: Literal["x", "y", "z"], scheme: InterpolationScheme
+    ):
         """
         Integrate the flux nodes at the face centers using the transverse quadrature or
         Gauss-Legendre quadrature.
@@ -1103,7 +1123,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - "x": Integrate in the x-direction.
                 - "y": Integrate in the y-direction.
                 - "z": Integrate in the z-direction.
-            p: Polynomial degree of the spatial discretization.
+
 
         Returns:
             None. Modifies `self.arrays[{"x": "F", ...}[dim]]` in place.
@@ -1116,7 +1136,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 variables at the face nodes.
 
         """
-        n = self.nodes_per_face(p)
+        n = self.nodes_per_face(scheme)
         pad = getattr(self.mesh, f"{dim}_slab_depth")
         axis = DIM_TO_AXIS[dim]
         flux_name = self.flux_names[dim]
@@ -1133,18 +1153,43 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         right_state = wl[crop(axis, (pad, -pad + 1))]
         self.riemann_solver(left_state, right_state, dim, left_state)  # overwrite wl
 
-        self.integration_func(left_state, dim, p, right_state, flux_workspace)
+        # perform the integration
+        if self.mesh.ndim == 1:
+            flux_workspace[...] = left_state
+        else:
+            if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
+                fv.integrate_GaussLegendre_nodes(
+                    xp,
+                    left_state,
+                    dim,
+                    self.mesh.active_dims,
+                    scheme.p,
+                    flux_workspace[..., 0],
+                )
+            elif isinstance(
+                scheme, (polyInterpolationScheme, musclInterpolationScheme)
+            ):
+                fv.transversely_integrate_nodes(
+                    self.xp,
+                    left_state[..., 0],
+                    dim,
+                    self.mesh.active_dims,
+                    scheme.p,
+                    flux_workspace,
+                    out,
+                )
+            else:
+                raise ValueError(
+                    f"Unknown interpolation scheme: {scheme}. "
+                    "Expected polyInterpolationScheme or musclInterpolationScheme."
+                )
 
         out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 
-    def nodes_per_face(self, p: int) -> int:
-        """
-        Returns the number of nodes per face for a given polynomial degree `p`.
-
-        Args:
-            p: Polynomial degree of the spatial discretization.
-        """
-        if self.GL:
+    def nodes_per_face(self, scheme: InterpolationScheme) -> int:
+        """ """
+        if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
+            p = scheme.p
             return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
         return 1
 
@@ -1229,14 +1274,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.conservatives_to_primitives(ucc, wcc)
 
         # primitive cell averages
-        if self.lazy_primitives:
+        if self.base_scheme.lazy_primitives:
             self.conservatives_to_primitives(self.arrays["u"], w)
         else:
             _u_[interior] = wcc
             self.inplace_apply_bc(
                 self.t,
                 _u_,
-                p=-(-p // 2),
+                scheme=self.base_scheme,
                 primitives=True,
                 pointwise=True,
                 cell_region="center",

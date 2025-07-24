@@ -41,6 +41,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
         MOOD: bool = False,
+        cascade: Literal["first-order", "muscl", "full"] = "first-order",
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
         NAD: bool = False,
@@ -131,6 +132,10 @@ class AdvectionSolver(FiniteVolumeSolver):
                 if `adaptive_dt=True`. Defaults to 8.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
+            cascade: A string indicating which type of MOOD cascade to use:
+                - "first-order": Fall back directly to a first-order scheme.
+                - "muscl": Fall back directly to a MUSCL scheme.
+                - "full": Fall back to a full cascade of scheme in descending order.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
             limiting_vars: Specifies which variables are subject to slope limiting.
@@ -183,6 +188,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             adaptive_dt=adaptive_dt,
             max_dt_revisions=max_dt_revisions,
             MOOD=MOOD,
+            cascade=cascade,
             max_MOOD_iters=max_MOOD_iters,
             limiting_vars=limiting_vars,
             NAD=NAD,

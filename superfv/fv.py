@@ -997,9 +997,12 @@ def interpolate_muscl_faces(
         Slice objects indicating the modified regions in the output array.
     """
     # prepare slices
-    slc_l = crop(AXIS_TO_DIM[face_dim], (None, -2), ndim=5)
-    slc_c = crop(AXIS_TO_DIM[face_dim], (1, -1), ndim=5)
-    slc_r = crop(AXIS_TO_DIM[face_dim], (2, None), ndim=5)
+    slc_l = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
+    slc_c = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
+    slc_r = crop(DIM_TO_AXIS[face_dim], (2, None), ndim=4)
+    buff_slc0 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 0)
+    buff_slc1 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 1)
+    buff_slc2 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 2)
 
     # select limiting function
     if limiter == "minmod":
@@ -1010,9 +1013,9 @@ def interpolate_muscl_faces(
         raise ValueError(f"Unknown limiter: {limiter}")
 
     # allocate arrays
-    left_diff = buffer[modify_slices(slc_c, 4, 0)]
-    right_diff = buffer[modify_slices(slc_c, 4, 1)]
-    limited_diff = buffer[modify_slices(slc_c, 4, 2)]
+    left_diff = buffer[buff_slc0]
+    right_diff = buffer[buff_slc1]
+    limited_diff = buffer[buff_slc2]
 
     # compute differences
     left_diff[...] = u[slc_c] - u[slc_l]
@@ -1020,8 +1023,8 @@ def interpolate_muscl_faces(
     limited_diff[...] = f(xp, left_diff, right_diff)
 
     # update left and right face values
-    out[modify_slices(slc_c, 4, 0)] = u[slc_c] - 0.5 * limited_diff
-    out[modify_slices(slc_c, 4, 1)] = u[slc_c] + 0.5 * limited_diff
+    out[buff_slc0] = u[slc_c] - 0.5 * limited_diff
+    out[buff_slc1] = u[slc_c] + 0.5 * limited_diff
 
     modified = merge_slices(slc_c, crop(4, (None, 2)))
     return modified

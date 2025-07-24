@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 from dataclasses import dataclass, field
 from types import ModuleType
 
+from superfv.interpolation_schemes import InterpolationScheme
+
 # custom type for fluxes
 Fluxes = Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
 
@@ -25,28 +27,30 @@ class MOODConfig:
     algorithm.
 
     Attributes:
-        iter_idx (int): Current iteration index.
-        iter_count (int): Total number of iterations performed.
-        max_iters (int): Maximum number of iterations for the MOOD algorithm.
-        cascade (List[str]): List of schemes in the cascade.
-        NAD (bool): Whether to enable Numerical Admissibility Detection.
-        NAD_rtol (float): Relative tolerance for the NAD violations.
-        NAD_atol (float): Absolute tolerance for the NAD violations.
-        global_dmp (bool): Whether to use global DMP (Discrete Maximum Principle).
-        include_corners (bool): Whether to include corner values in the DMP
-            computation.
-        PAD (bool): Whether to enable Physical Admissibility Detection.
-        PAD_bounds: Optional bounds for the PAD condition. Has shape
-            (nvars, 1, 1, 1, 2), where the minimum and maximum values are stored
-            in the first and second elements of the last axis, respectively, for each
-            variable. If None, the PAD condition is not used.
-        PAD_atol (float): Absolute tolerance for PAD violations.
-        SED (bool): Whether to enable Smooth Extrema Detection.
+        max_iters: Maximum number of iterations for the MOOD algorithm.
+        cascade: List of InterpolationScheme objects defining the MOOD cascade.
+        NAD: Whether to enable Numerical Admissibility Detection (NAD).
+        NAD_rtol: Relative tolerance for NAD violations.
+        NAD_atol: Absolute tolerance for NAD violations.
+        global_dmp: Whether to use global DMP (Dynamic Maximum Principle) for NAD.
+        include_corners: Whether to include corner values in the DMP computation.
+        global_dmp: Whether to use global DMP (Dynamic Maximum Principle) for NAD.
+        PAD: Whether to enable Physical Admissibility Detection (PAD).
+        PAD_bounds: Physical bounds for each variable used in PAD. Has shape
+            (nvars, 1, 1, 1, 2) with the minimum and maximum values for each variable
+            stored in the first and second element of the last dimension, respectively.
+        PAD_atol: Absolute tolerance for PAD violations.
+        SED: Whether to enable Smooth Extrema Detection (SED) for NAD.
+
+    Attributes defined in __post_init__:
+        iter_idx: Current iteration index in the MOOD loop.
+        iter_count: Total number of iterations across all MOOD loops in a step.
+        cascade_status: List of boolean flags indicating the status of each
+            interpolation scheme in the cascade.
     """
 
     max_iters: int = 0
-    cascade: List[str] = field(default_factory=list)
-    cascade_status: List[bool] = field(default_factory=list)
+    cascade: List[InterpolationScheme] = field(default_factory=list)
     NAD: bool = False
     NAD_rtol: float = 1.0
     NAD_atol: float = 0.0
@@ -58,8 +62,8 @@ class MOODConfig:
     SED: bool = False
 
     def __post_init__(self):
-        self.reset_iter_count()
         self.reset_MOOD_loop()
+        self.reset_iter_count()
 
         if self.PAD and self.PAD_bounds is None:
             raise ValueError(
@@ -156,7 +160,7 @@ def detect_troubled_cells(
     # compute candidate solution
     u_new_interior = u_old_interior + dt * fv_solver.compute_RHS()
     u_new[interior] = u_new_interior
-    fv_solver.inplace_apply_bc(t, u_new, p=fv_solver.p)
+    fv_solver.inplace_apply_bc(t, u_new, scheme=fv_solver.base_scheme)
 
     # compute NAD violations
     if NAD:
@@ -209,12 +213,13 @@ def detect_troubled_cells(
     # reset some arrays
     if has_troubles and iter_idx == 0:
         # store high-order fluxes
+        scheme_key = cascade[0].key()
         if "x" in mesh.active_dims:
-            arrays["F_" + cascade[0]][...] = arrays["F"].copy()
+            arrays["F_" + scheme_key][...] = arrays["F"].copy()
         if "y" in mesh.active_dims:
-            arrays["G_" + cascade[0]][...] = arrays["G"].copy()
+            arrays["G_" + scheme_key][...] = arrays["G"].copy()
         if "z" in mesh.active_dims:
-            arrays["H_" + cascade[0]][...] = arrays["H"].copy()
+            arrays["H_" + scheme_key][...] = arrays["H"].copy()
         cascade_status[0] = True
 
         # reset cascade index array
@@ -314,15 +319,15 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     # update the cascade scheme fluxes
     if not cascade_status[current_max_idx]:
         scheme = cascade[current_max_idx]
-        fv_solver.inplace_compute_fluxes(t, **compute_fluxes_kwargs(scheme))
+        fv_solver.inplace_compute_fluxes(t, scheme)
         cascade_status[current_max_idx] = True
 
         if "x" in mesh.active_dims:
-            arrays["F_" + scheme] = F.copy()
+            arrays["F_" + scheme.key()] = F.copy()
         if "y" in mesh.active_dims:
-            arrays["G_" + scheme] = G.copy()
+            arrays["G_" + scheme.key()] = G.copy()
         if "z" in mesh.active_dims:
-            arrays["H_" + scheme] = H.copy()
+            arrays["H_" + scheme.key()] = H.copy()
 
     # broadcast cascade index to each face
     if "x" in mesh.active_dims:
@@ -330,28 +335,21 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, F_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = F_mask[fv_solver.interior] == i
-            xp.add(F, mask * arrays["F_" + scheme], out=F)
+            xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
     if "y" in mesh.active_dims:
         G[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, G_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = G_mask[fv_solver.interior] == i
-            xp.add(G, mask * arrays["G_" + scheme], out=G)
+            xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
     if "z" in mesh.active_dims:
         H[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, H_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = H_mask[fv_solver.interior] == i
-            xp.add(H, mask * arrays["H_" + scheme], out=H)
-
-
-def compute_fluxes_kwargs(scheme: str) -> dict:
-    if scheme.startswith("fv"):
-        p = int(scheme[2:])
-        return {"p": p}
-    raise ValueError(f"Unknown scheme {scheme}")
+            xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 
 def inplace_map_cells_values_to_face_values(
