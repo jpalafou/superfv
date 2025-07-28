@@ -357,3 +357,27 @@ def plot_power_law_fit(ax: Axes, x: np.ndarray, f: np.ndarray, **kwargs):
     """
     p_law = power_law(x[0], f[0], x[-1], f[-1])
     ax.plot(x, p_law(x), **kwargs)
+
+
+def plot_timeseries(fv_solver: FiniteVolumeSolver, ax: Axes, variable: str, **kwargs):
+    """
+    Plot a timeseries logged in `fv_solver.minisnapshots`.
+
+    Args:
+        fv_solver: FiniteVolumeSolver object.
+        ax: Matplotlib axes object.
+        variable: Name of the variable to plot.
+        **kwargs: Keyword arguments for the plot.
+
+    Raises:
+        ValueError: `variable` is not in `fv_solver.minisnapshots`.
+    """
+    if variable not in fv_solver.minisnapshots:
+        raise ValueError(
+            f"Variable {variable} not found in `FiniteVolumeSolver.minisnapshots`."
+        )
+
+    t = fv_solver.minisnapshots["t"]
+    f = fv_solver.minisnapshots[variable]
+
+    ax.plot(t, f, **kwargs)
