@@ -380,4 +380,17 @@ def plot_timeseries(fv_solver: FiniteVolumeSolver, ax: Axes, variable: str, **kw
     t = fv_solver.minisnapshots["t"]
     f = fv_solver.minisnapshots[variable]
 
+    # unpack the data and plot along substeps if it is a list of lists
+    if isinstance(f[0], list):
+        t_big = []
+        f_big = []
+
+        for t, dt, f_packet in zip(t, fv_solver.minisnapshots["dt"], f):
+            n = len(f_packet)
+            t_big.extend([t - (i / n) * dt for i in range(n - 1, -1, -1)])
+            f_big.extend(f_packet)
+
+        t = t_big
+        f = f_big
+
     ax.plot(t, f, **kwargs)

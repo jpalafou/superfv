@@ -62,8 +62,9 @@ class MOODConfig:
     SED: bool = False
 
     def __post_init__(self):
-        self.reset_MOOD_loop()
         self.reset_iter_count()
+        self.reset_iter_count_hist()
+        self.reset_MOOD_loop()
 
         if self.PAD and self.PAD_bounds is None:
             raise ValueError(
@@ -82,12 +83,26 @@ class MOODConfig:
         """
         self.iter_count = 0
 
+    def reset_iter_count_hist(self):
+        """
+        Reset the iter count history which accumulates the total number of iterations
+        for each substep.
+        """
+        self.iter_count_hist = []
+
+    def increment_iter_count_hist(self):
+        """
+        Increment the iter count history at the end of each substep.
+        """
+        self.iter_count_hist.append(self.fine_iter_count)
+
     def reset_MOOD_loop(self):
         """
         Reset the iteration index and cascade status for the first MOOD iteration in a
         MOOD loop.
         """
         self.iter_idx = 0
+        self.fine_iter_count = 0
         self.cascade_status: List[bool] = [False] * len(self.cascade)
 
     def increment_MOOD_iteration(self):
@@ -96,6 +111,7 @@ class MOODConfig:
         """
         self.iter_idx += 1
         self.iter_count += 1
+        self.fine_iter_count += 1
 
 
 def detect_troubled_cells(

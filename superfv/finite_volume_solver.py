@@ -1324,12 +1324,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         data = {"n_updates": n_updates, "update_rate": n_updates / run_time}
 
         if self.MOOD:
-            data["MOOD_iters"] = self.MOOD_config.iter_count
+            data["n_MOOD_iters"] = self.MOOD_config.iter_count
+            data["nfine_MOOD_iters"] = self.MOOD_config.iter_count_hist
 
         if self.log_every_step:
             data.update(self.log_quantity())
 
         return data
+
+    def reset_stepwise_logs(self):
+        """
+        Reset logs that are incremented at the end of each step.
+        """
+        super().reset_stepwise_logs()
+
+        if hasattr(self, "MOOD") and self.MOOD:
+            self.MOOD_config.reset_iter_count_hist()
 
     def reset_substepwise_logs(self):
         """
@@ -1365,6 +1375,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             troubles = self.arrays["troubles"]
             troubles_log = self.arrays["troubles_log"]
             xp.add(troubles_log, troubles, out=troubles_log)
+
+            self.MOOD_config.increment_iter_count_hist()
 
     def called_at_end_of_step(self):
         """
