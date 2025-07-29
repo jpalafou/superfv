@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Callable, Literal, Tuple
+from typing import Callable, Literal, Tuple, cast
 
 import numpy as np
 
@@ -115,11 +115,15 @@ class UniformFVMesh:
         self.hx: float = (self.xlim[1] - self.xlim[0]) / self.nx
         self.hy: float = (self.ylim[1] - self.ylim[0]) / self.ny
         self.hz: float = (self.zlim[1] - self.zlim[0]) / self.nz
-        self.active_dims: Tuple[int, ...] = tuple(
-            dim for dim, n in zip(["x", "y", "z"], (self.nx, self.ny, self.nz)) if n > 1
+        self.active_dims: Tuple[Literal["x", "y", "z"], ...] = tuple(
+            cast(Literal["x", "y", "z"], dim)
+            for dim, n in zip(["x", "y", "z"], (self.nx, self.ny, self.nz))
+            if n > 1
         )
-        self.inactive_dims: Tuple[int, ...] = tuple(
-            dim for dim in ["x", "y", "z"] if dim not in self.active_dims
+        self.inactive_dims: Tuple[Literal["x", "y", "z"], ...] = tuple(
+            cast(Literal["x", "y", "z"], dim)
+            for dim in ["x", "y", "z"]
+            if dim not in self.active_dims
         )
         self.ndim = len(self.active_dims)
         self.x_is_active: bool = "x" in self.active_dims
@@ -240,7 +244,8 @@ class UniformFVMesh:
         return self.get_slab_cell_centers(region)
 
     def get_slab_cell_centers(
-        self, region: Literal["xl", "xr", "yl", "yr", "zl", "zr"] = "core"
+        self,
+        region: Literal["xl", "xr", "yl", "yr", "zl", "zr"],
     ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
         """
         Get the cell centers of a specific slab.
@@ -254,7 +259,10 @@ class UniformFVMesh:
         """
         if any(f"{region}_slab_{dim}" not in self.array_manager for dim in "XYZ"):
             raise ValueError(f"{region}_slab not found in arrays.")
-        return tuple(self.array_manager[f"{region}_slab_{dim}"] for dim in "XYZ")
+        X = self.array_manager[f"{region}_slab_X"]
+        Y = self.array_manager[f"{region}_slab_Y"]
+        Z = self.array_manager[f"{region}_slab_Z"]
+        return X, Y, Z
 
     def get_GaussLegendre_quadrature(
         self,
@@ -289,7 +297,11 @@ class UniformFVMesh:
         keys = [f"{key}_{ax}" for ax in "XYZ"] + [f"{key}_w"]
 
         if all(key in self.array_manager for key in keys):
-            return tuple(self.array_manager[key] for key in keys)
+            X = self.array_manager[keys[0]]
+            Y = self.array_manager[keys[1]]
+            Z = self.array_manager[keys[2]]
+            w = self.array_manager[keys[3]]
+            return X, Y, Z, w
 
         _xp = xp if self.array_manager.device == "gpu" else np
         px = p if self.x_is_active else 0
@@ -323,7 +335,7 @@ class UniformFVMesh:
 
     def perform_GaussLegendre_quadrature(
         self,
-        f: Callable[[ArrayLike, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
         node_axis: int,
         mesh_region: Literal["core", "xl", "xr", "yl", "yr", "zl", "zr"],
         cell_region: Literal["interior", "xl", "xr", "yl", "yr", "zl", "zr"],

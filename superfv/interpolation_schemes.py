@@ -34,7 +34,7 @@ class polyInterpolationScheme(InterpolationScheme):
 @dataclass
 class musclInterpolationScheme(InterpolationScheme):
     name: Literal["muscl"] = "muscl"
-    limiter: Literal["minmod", "moncen"] = None
+    limiter: Optional[Literal["minmod", "moncen"]] = None
     p: int = 1
 
     def key(self) -> str:
@@ -43,6 +43,8 @@ class musclInterpolationScheme(InterpolationScheme):
     def __post_init__(self):
         if self.name != "muscl":
             raise ValueError("musclInterpolationScheme must have name 'muscl'")
+        if self.limiter is None:
+            raise ValueError("musclInterpolationScheme requires a limiter.")
         if self.limiter not in ["minmod", "moncen"]:
             raise ValueError(
                 "musclInterpolationScheme only supports 'minmod' or 'moncen' limiters."
