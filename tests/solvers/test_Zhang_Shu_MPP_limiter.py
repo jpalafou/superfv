@@ -72,9 +72,9 @@ def test_3D_advection_mpp(p):
     solver = AdvectionSolver(
         p=p,
         ic=partial(initial_conditions.square, vx=1.0, vy=1.0, vz=1.0),
-        nx=32,
-        ny=32,
-        nz=32,
+        nx=16,
+        ny=16,
+        nz=16,
         interpolation_scheme="gauss-legendre",
         ZS=True,
         PAD={"rho": (0, 1)},

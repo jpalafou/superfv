@@ -3,6 +3,7 @@ from typing import Any, Callable, Literal, Tuple
 
 import numpy as np
 
+from superfv.fv import DIM_TO_AXIS
 from superfv.stencil import get_symmetric_slices
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices
@@ -70,6 +71,7 @@ def compute_dmp(
         Slice objects indicating the modified regions in the output array.
     """
     ndim = len(active_dims)
+    axes = tuple(DIM_TO_AXIS[dim] for dim in active_dims)
 
     # gather slices
     if include_corners:
@@ -81,13 +83,13 @@ def compute_dmp(
                 merge_slices(
                     *[
                         crop(i, (1 + shift, -1 + shift), ndim=4)
-                        for i, shift in enumerate(offset, start=1)
+                        for i, shift in zip(axes, offset)
                     ]
                 )
             )
     else:
         all_slices = []
-        for ax in range(1, ndim + 1):
+        for ax in axes:
             for shift in [-1, 1]:
                 all_slices.append(
                     merge_slices(
@@ -97,15 +99,13 @@ def compute_dmp(
                                 (1 + shift, -1 + shift) if ax == i else (1, -1),
                                 ndim=4,
                             )
-                            for i in range(1, ndim + 1)
+                            for i in axes
                         ]
                     )
                 )
 
     # store inner slices first
-    inner_slice = merge_slices(
-        *[crop(ax, (1, -1), ndim=4) for ax in range(1, ndim + 1)]
-    )
+    inner_slice = merge_slices(*[crop(i, (1, -1), ndim=4) for i in axes])
     all_slices.insert(0, inner_slice)
 
     # stack views of neighbors

@@ -6,7 +6,6 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Uni
 
 import numpy as np
 
-from .slope_limiting import minmod, moncen
 from .stencil import (
     conservative_interpolation_weights,
     inplace_multistencil_sweep,
@@ -970,9 +969,9 @@ def transversely_integrate_nodes(
 
 def interpolate_muscl_faces(
     xp: ModuleType,
+    limiter: Callable[[ModuleType, ArrayLike, ArrayLike], ArrayLike],
     u: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    limiter: Literal["minmod", "moncen"],
     buffer: ArrayLike,
     out: ArrayLike,
 ) -> Tuple[slice, ...]:
@@ -981,11 +980,15 @@ def interpolate_muscl_faces(
 
     Args:
         xp: `np` namespace.
+        limiter : Limiting function to apply to the differences. Should accept
+            - xp: `np` namespace.
+            - left_diff: Array of left differences, has shape (nvars, nx, ny, nz, ...).
+            - right_diff: Array of right differences, has shape
+                (nvars, nx, ny, nz, ...).
+            Returns an array of limited differences with the same shape.
         u: Array of finite volume averages to interpolate, has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the MUSCL interpolation is performed.
-        limiter: Limiting function to use for the MUSCL interpolation. Can be either
-            "minmod" or "moncen".
         buffer: Array to store intermediate results. Has shape
             (nvars, nx, ny, nz, nbuffer). nbuffer must be at least 3 to store
             left, right, and limited differences.
@@ -1004,14 +1007,6 @@ def interpolate_muscl_faces(
     buff_slc1 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 1)
     buff_slc2 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 2)
 
-    # select limiting function
-    if limiter == "minmod":
-        f = minmod
-    elif limiter == "moncen":
-        f = moncen
-    else:
-        raise ValueError(f"Unknown limiter: {limiter}")
-
     # allocate arrays
     left_diff = buffer[buff_slc0]
     right_diff = buffer[buff_slc1]
@@ -1020,7 +1015,7 @@ def interpolate_muscl_faces(
     # compute differences
     left_diff[...] = u[slc_c] - u[slc_l]
     right_diff[...] = u[slc_r] - u[slc_c]
-    limited_diff[...] = f(xp, left_diff, right_diff)
+    limited_diff[...] = limiter(xp, left_diff, right_diff)
 
     # update left and right face values
     out[buff_slc0] = u[slc_c] - 0.5 * limited_diff

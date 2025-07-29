@@ -27,7 +27,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh
-from .slope_limiting import MOOD
+from .slope_limiting import MOOD, minmod, moncen
 from .slope_limiting.MOOD import MOODConfig
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
@@ -1009,7 +1009,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             else:
                 fv.interpolate_face_centers(xp, u, dim, adims, p, buffer, out)
         elif isinstance(scheme, musclInterpolationScheme):
-            fv.interpolate_muscl_faces(xp, u, dim, scheme.limiter, buffer, out)
+            limiter = {"minmod": minmod, "moncen": moncen}[scheme.limiter]
+            fv.interpolate_muscl_faces(xp, limiter, u, dim, buffer, out)
         else:
             raise ValueError(f"Unknown interpolation scheme: {scheme}")
 
