@@ -1,10 +1,13 @@
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Dict, Literal, Optional, Tuple, Union
 
-import numpy as np
 import wtflux
 
 from .boundary_conditions import DirichletBC
-from .finite_volume_solver import FiniteVolumeSolver
+from .finite_volume_solver import (
+    FieldFunction,
+    FiniteVolumeSolver,
+    PassiveFieldFunction,
+)
 from .hydro import conservatives_from_primitives, primitives_from_conservatives
 from .riemann_solvers import call_riemann_solver
 from .tools.device_management import ArrayLike
@@ -19,10 +22,8 @@ class EulerSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ] = None,
+        ic: FieldFunction,
+        ic_passives: Optional[Dict[str, PassiveFieldFunction]] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -62,10 +63,9 @@ class EulerSolver(FiniteVolumeSolver):
         gamma: float = 1.4,
     ):
         """
-        Initialize the finite volume solverf or the Euler equations.
+        Initialize the finite volume solver for the Euler equations.
 
         Args:
-            Args:
             ic: Initial condition function of pointwise, primitive variables. The
                 function must accept the following arguments:
                 - idx: VariableIndexMap object.
@@ -313,11 +313,14 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Time-step size.
         """
+        xp = self.xp
         idx = self.variable_index_map
+        ndim = self.mesh.ndim
+
         w = self.primitives_from_conservatives(u)
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
         c = self.hydro.sound_speed(rho=w[idx("rho")], P=w[idx("P")], gamma=self.gamma)
-        out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
+        out = self.CFL * h / xp.max(xp.sum(xp.abs(w[idx("v")]), axis=0) + ndim * c)
         return out.item()
 
     @MethodTimer(cat="EulerSolver.log_quantity")

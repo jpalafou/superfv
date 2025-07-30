@@ -1,7 +1,11 @@
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Dict, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import DirichletBC
-from .finite_volume_solver import FiniteVolumeSolver
+from .finite_volume_solver import (
+    FieldFunction,
+    FiniteVolumeSolver,
+    PassiveFieldFunction,
+)
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -14,10 +18,8 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ] = None,
+        ic: FieldFunction,
+        ic_passives: Optional[Dict[str, PassiveFieldFunction]] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -34,7 +36,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
         flux_recipe: Literal[1, 2, 3] = 1,
-        lazy_primitives: bool = True,
+        lazy_primitives: bool = False,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
         MUSCL: bool = False,
         ZS: bool = False,
