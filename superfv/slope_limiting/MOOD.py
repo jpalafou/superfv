@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
 
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.device_management import ArrayLike
@@ -211,7 +211,7 @@ def detect_troubled_cells(
         inplace_PAD_violations(
             xp,
             u_new_interior[lim_slc],
-            PAD_bounds[lim_slc],
+            cast(ArrayLike, PAD_bounds)[lim_slc],
             physical_tols=PAD_atol,
             out=PAD_violations,
         )
@@ -289,7 +289,7 @@ def inplace_PAD_violations(
     xp: ModuleType,
     u_new: ArrayLike,
     physical_ranges: ArrayLike,
-    physical_tols: ArrayLike,
+    physical_tols: float,
     out: ArrayLike,
 ):
     """
@@ -299,7 +299,7 @@ def inplace_PAD_violations(
         xp: `np` namespace or equivalent.
         u_new: New solution array. Has shape (nvars, nx, ny, nz).
         physical_ranges: Physical ranges for each variable. Has shape (nvars, 2).
-        physical_tols: Physical tolerances for each variable. Has shape (nvars, 2).
+        physical_tols: Physical tolerances for all variables as a single float.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
     """
     physical_mins = physical_ranges[..., 0]
