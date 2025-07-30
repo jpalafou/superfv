@@ -17,7 +17,7 @@ from typing import (
 import numpy as np
 
 from . import fv
-from .boundary_conditions import DirichletBC, apply_bc
+from .boundary_conditions import BCs, DirichletBC, Field, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import DIM_TO_AXIS
 from .initial_conditions import _uninitialized
@@ -59,6 +59,7 @@ class FieldFunction(Protocol):
 
 class PassiveFieldFunction(Protocol):
     def __call__(
+        self,
         x: ArrayLike,
         y: ArrayLike,
         z: ArrayLike,
@@ -543,52 +544,92 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 return x
             return (x, x)
 
-        mode_list: List[Tuple[str, str]] = []
-        primitive_dirichlet_list: List[Tuple[Callable, Callable]] = []
+        mode_list: List[Tuple[BCs, BCs]] = []
+        primitive_dirichlet_list: List[Tuple[Optional[Field], Optional[Field]]] = []
+
+        def f0(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float],
+        ) -> ArrayLike:
+            return self.callable_ic(idx, x, y, z, 0.0)
 
         for bci, fi in zip((bcx, bcy, bcz), (x_dirichlet, y_dirichlet, z_dirichlet)):
-            mode_list_i: List[str] = []
-            primitive_dirichlet_list_i: List[Callable] = []
+            mode_list_i: List[BCs] = []
+            prim_drch_list_i: List[Optional[Field]] = []
             for j, (bc, f) in enumerate(zip(as_pair(bci), as_pair(fi))):
                 if bc == "ic":
                     mode_list_i.append("dirichlet")
-                    primitive_dirichlet_list_i.append(
-                        lambda idx, x, y, z, t: self.callable_ic(idx, x, y, z, 0.0)
-                    )
+                    prim_drch_list_i.append(f0)
                 else:
                     mode_list_i.append(bc)
-                    primitive_dirichlet_list_i.append(f)
+                    prim_drch_list_i.append(f)
 
-            mode_list.append(tuple(mode_list_i))
-            primitive_dirichlet_list.append(tuple(primitive_dirichlet_list_i))
+            mode_list.append((mode_list_i[0], mode_list_i[1]))
+            primitive_dirichlet_list.append((prim_drch_list_i[0], prim_drch_list_i[1]))
 
-        mode = tuple(mode_list)
-        primitive_dirichlet_arg = tuple(primitive_dirichlet_list)
-        conservative_dirichlet_arg = tuple(
-            tuple(self.conservative_callable_ic if f is not None else None for f in f2)
-            for f2 in primitive_dirichlet_arg
+        def normalize_conservative_dirichlet(f: Optional[Field]) -> Optional[Field]:
+            if f is None:
+                return None
+
+            def f_conservative(
+                idx: VariableIndexMap,
+                x: ArrayLike,
+                y: ArrayLike,
+                z: ArrayLike,
+                t: Optional[float],
+            ):
+                return self.conservatives_from_primitives(f(idx, x, y, z, t))
+
+            return f_conservative
+
+        mode = (mode_list[0], mode_list[1], mode_list[2])
+        primitive_dirichlet_arg = (
+            primitive_dirichlet_list[0],
+            primitive_dirichlet_list[1],
+            primitive_dirichlet_list[2],
+        )
+        conservative_dirichlet_arg = (
+            (
+                normalize_conservative_dirichlet(primitive_dirichlet_arg[0][0]),
+                normalize_conservative_dirichlet(primitive_dirichlet_arg[0][1]),
+            ),
+            (
+                normalize_conservative_dirichlet(primitive_dirichlet_arg[1][0]),
+                normalize_conservative_dirichlet(primitive_dirichlet_arg[1][1]),
+            ),
+            (
+                normalize_conservative_dirichlet(primitive_dirichlet_arg[2][0]),
+                normalize_conservative_dirichlet(primitive_dirichlet_arg[2][1]),
+            ),
         )
 
         mesh = self.mesh
-        self.primitive_bc_kwargs = dict(
-            pad_width=(mesh.x_slab_depth, mesh.y_slab_depth, mesh.z_slab_depth),
-            mode=mode,
-            f=primitive_dirichlet_arg,
-            variable_index_map=self.variable_index_map,
-            mesh=self.mesh,
+
+        self.bc_pad_width: Tuple[int, int, int] = (
+            mesh.x_slab_depth,
+            mesh.y_slab_depth,
+            mesh.z_slab_depth,
         )
-        self.conservative_bc_kwargs = dict(
-            pad_width=(mesh.x_slab_depth, mesh.y_slab_depth, mesh.z_slab_depth),
-            mode=mode,
-            f=conservative_dirichlet_arg,
-            variable_index_map=self.variable_index_map,
-            mesh=self.mesh,
-        )
+        self.bc_mode: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]] = mode
+        self.bc_f: Dict[
+            str,
+            Tuple[
+                Tuple[Optional[Field], Optional[Field]],
+                Tuple[Optional[Field], Optional[Field]],
+                Tuple[Optional[Field], Optional[Field]],
+            ],
+        ] = {
+            "primitive": primitive_dirichlet_arg,
+            "conservative": conservative_dirichlet_arg,
+        }
 
         def normalize_troubles_bc(
-            bc_tuple: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]],
-        ) -> Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]:
-            def map_bc(bc: str) -> str:
+            bc_tuple: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
+        ) -> Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]]:
+            def map_bc(bc: BCs) -> BCs:
                 if bc == "none":
                     return "none"
                 elif bc == "periodic":
@@ -596,13 +637,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 else:
                     return "zeros"
 
-            return tuple(tuple(map_bc(bc) for bc in dim) for dim in bc_tuple)
+            return (
+                (map_bc(bc_tuple[0][0]), map_bc(bc_tuple[0][1])),
+                (map_bc(bc_tuple[1][0]), map_bc(bc_tuple[1][1])),
+                (map_bc(bc_tuple[2][0]), map_bc(bc_tuple[2][1])),
+            )
 
-        self.troubles_bc_kwargs = dict(
-            pad_width=(mesh.x_slab_depth, mesh.y_slab_depth, mesh.z_slab_depth),
-            mode=normalize_troubles_bc(mode),
-            variable_index_map=VariableIndexMap({"troubles": 0}),
-        )
+        self.bc_troubles_mode = normalize_troubles_bc(mode)
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -662,12 +703,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # PAD
         if PAD:
-            PAD_bounds = np.full((self.nvars, 2), [-np.inf, np.inf])
+            PAD_bounds = np.array([[-np.inf, np.inf] for _ in range(self.nvars)])
             for var, (lb, ub) in PAD.items():
-                PAD_bounds[idx(var)] = [
-                    lb if lb is not None else -np.inf,
-                    ub if ub is not None else np.inf,
-                ]
+                PAD_bounds[idx(var), 0] = lb if lb is not None else -np.inf
+                PAD_bounds[idx(var), 1] = ub if ub is not None else np.inf
             PAD_bounds = np.expand_dims(
                 PAD_bounds, axis=(1, 2, 3)
             )  # shape (nvars, 1, 1, 1, 2)
@@ -694,6 +733,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.MOOD = True
 
             # define MOOD cascade
+            fallback_schemes: List[InterpolationScheme]
             if cascade == "first-order":
                 fallback_schemes = [
                     polyInterpolationScheme(
@@ -719,12 +759,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     )
                     for pi in range(self.p - 1, -1, -1)
                 ]
-            cascade = [self.base_scheme] + fallback_schemes
+            cascade_list = [self.base_scheme] + fallback_schemes
 
             # initialize MOOD configuration
             self.MOOD_config = MOODConfig(
                 max_iters=max_MOOD_iters,
-                cascade=cascade,
+                cascade=cascade_list,
                 NAD=NAD,
                 NAD_rtol=NAD_rtol,
                 NAD_atol=NAD_atol,
@@ -836,6 +876,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_bounds = self.ZhangShu_config.PAD_bounds
         PAD_atol = self.ZhangShu_config.PAD_atol
 
+        if PAD_bounds is None:
+            raise ValueError(
+                "PAD bounds are not set. Please provide PAD bounds in the "
+                "ZhangShuConfig."
+            )
+
         PAD_violations = self.arrays["buffer"][self.interior][..., 0]
         MOOD.inplace_PAD_violations(xp, unew, PAD_bounds, PAD_atol, out=PAD_violations)
 
@@ -945,28 +991,55 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p = 0
 
         # determine Dirichlet mode
-        dirichlet_mode = (
+        dirichlet_mode: Literal["fv-averages", "cell-centers", "face-nodes"] = (
             "fv-averages"
             if not pointwise
             else ("cell-centers" if cell_region == "center" else "face-nodes")
         )
 
+        region_to_face_dim: dict[str, Literal["x", "y", "z"]] = {
+            "xl": "x",
+            "xr": "x",
+            "yl": "y",
+            "yr": "y",
+            "zl": "z",
+            "zr": "z",
+        }
+
+        region_to_face_pos: dict[str, Literal["l", "r"]] = {
+            "xl": "l",
+            "yl": "l",
+            "zl": "l",
+            "xr": "r",
+            "yr": "r",
+            "zr": "r",
+        }
+
+        region = str(cell_region) if cell_region is not None else ""
+
+        face_dim = region_to_face_dim.get(region, None)
+        face_pos = region_to_face_pos.get(region, None)
+
         # apply boundary conditions
         apply_bc(
             _u_=u,
+            pad_width=self.bc_pad_width,
+            mode=self.bc_mode,
             dirichlet_mode=dirichlet_mode,
+            f=self.bc_f["primitive" if primitives else "conservative"],
+            variable_index_map=self.variable_index_map,
+            mesh=self.mesh,
             t=t,
-            face_dim=cell_region[0] if dirichlet_mode == "face-nodes" else None,
-            face_pos=cell_region[1] if dirichlet_mode == "face-nodes" else None,
+            face_dim=face_dim,
+            face_pos=face_pos,
             p=p,
-            **(self.primitive_bc_kwargs if primitives else self.conservative_bc_kwargs),
         )
 
     def inplace_troubles_bc(self, troubles: ArrayLike):
         """
         Apply boundary conditions to the troubles array in place.
         """
-        apply_bc(_u_=troubles, **self.troubles_bc_kwargs)
+        apply_bc(_u_=troubles, pad_width=self.bc_pad_width, mode=self.bc_troubles_mode)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(
@@ -1009,7 +1082,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             else:
                 fv.interpolate_face_centers(xp, u, dim, adims, p, buffer, out)
         elif isinstance(scheme, musclInterpolationScheme):
-            limiter = {"minmod": minmod, "moncen": moncen}[scheme.limiter]
+            limiter: Callable[[ModuleType, ArrayLike, ArrayLike], ArrayLike]
+            if scheme.limiter == "minmod":
+                limiter = minmod
+            elif scheme.limiter == "moncen":
+                limiter = moncen
+            else:
+                raise ValueError(f"Unknown MUSCL limiter: {scheme.limiter}")
             fv.interpolate_muscl_faces(xp, limiter, u, dim, buffer, out)
         else:
             raise ValueError(f"Unknown interpolation scheme: {scheme}")
@@ -1099,11 +1178,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         # limit the face nodes
-        if mesh.x_is_active:
+        if x is not None:
             x[...] = zhang_shu_operator(x, u[..., np.newaxis], theta)
-        if mesh.y_is_active:
+        if y is not None:
             y[...] = zhang_shu_operator(y, u[..., np.newaxis], theta)
-        if mesh.z_is_active:
+        if z is not None:
             z[...] = zhang_shu_operator(z, u[..., np.newaxis], theta)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
@@ -1260,7 +1339,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         interior = self.interior
 
         # update workspace interior
-        self.update_workspace(self.t, u, self.p)
+        self.update_workspace(self.t, u, self.base_scheme)
 
         # conservative cell centers
         fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer2, buffer1)
