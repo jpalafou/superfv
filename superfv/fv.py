@@ -42,7 +42,7 @@ def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayL
 @lru_cache(maxsize=None)
 def _gauss_legendre_for_finite_volume(
     xp: ModuleType, px: int, py: int, pz: int
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     x_pts, x_wts = _scaled_gauss_legendre_points_and_weights(px)
     y_pts, y_wts = _scaled_gauss_legendre_points_and_weights(py)
     z_pts, z_wts = _scaled_gauss_legendre_points_and_weights(pz)
@@ -62,7 +62,7 @@ def _gauss_legendre_for_finite_volume(
 
 def gauss_legendre_for_finite_volume(
     xp: ModuleType, px: int, py: int, pz: int
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
     Compute Gauss-Legendre quadrature points and weights for a finite volume with up to
     three dimensions, where the quadrature points are scaled to the 3D unit cube
@@ -90,7 +90,7 @@ def gauss_legendre_mesh(
     z: ArrayLike,
     h: Tuple[float, float, float],
     p: Tuple[int, int, int] = (0, 0, 0),
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
     Compute Gauss-Legendre quadrature points and weights for a finite volume mesh.
 
@@ -110,47 +110,15 @@ def gauss_legendre_mesh(
     """
     hx, hy, hz = h
     px, py, pz = p
-    xp, yp, zp, w = gauss_legendre_for_finite_volume(xp, px, py, pz)
+    xgl, ygl, zgl, wgl = gauss_legendre_for_finite_volume(xp, px, py, pz)
 
     # Compute the evaluation points for the quadrature rule
     na = np.newaxis
-    x_eval = x[..., na] + xp[na, na, na, :] * hx
-    y_eval = y[..., na] + yp[na, na, na, :] * hy
-    z_eval = z[..., na] + zp[na, na, na, :] * hz
+    xgl_mesh = x[..., na] + xgl[na, na, na, :] * hx
+    ygl_mesh = y[..., na] + ygl[na, na, na, :] * hy
+    zgl_mesh = z[..., na] + zgl[na, na, na, :] * hz
 
-    return x_eval, y_eval, z_eval, w
-
-
-def fv_average(
-    f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-    x: ArrayLike,
-    y: ArrayLike,
-    z: ArrayLike,
-    h: Tuple[float, float, float],
-    p: Tuple[int, int, int] = (0, 0, 0),
-) -> ArrayLike:
-    """
-    Compute finite volume average of f over 3D domain.
-
-    Args:
-        f: Function at which to evaluate quadrature points. It should accept the
-            following arguments:
-            - x: x-coordinate array. Has shape (nx, ny, nz).
-            - y: y-coordinate array. Has shape (nx, ny, nz).
-            - z: z-coordinate array. Has shape (nx, ny, nz).
-            and return an array of shape (nvar, nx, ny, nz).
-        x: x-coordinates, has shape (nx, ny, nz).
-        y: y-coordinates, has shape (nx, ny, nz).
-        z: z-coordinates, has shape (nx, ny, nz).
-        h: Mesh spacings (hx, hy, hz).
-        p: Polynomial degree of quadrature rule in each dimension.
-
-    Returns:
-        ArrayLike: Finite volume average.
-    """
-    x_eval, y_eval, z_eval, weights = gauss_legendre_mesh(x, y, z, h, p)
-    vals = f(x_eval, y_eval, z_eval)
-    return np.sum(weights * vals, axis=4)
+    return xgl_mesh, ygl_mesh, zgl_mesh, wgl
 
 
 def gather_multistencils(
@@ -335,11 +303,11 @@ def _fv_interpolate_direct(
             )
 
     # ensure nodes are tuples
-    nodes = {k: _ensure_tuple(v) for k, v in nodes.items()}
+    _nodes = {k: _ensure_tuple(v) for k, v in nodes.items()}
 
     # one-dimensional interpolation
-    if len(nodes) == 1:
-        return _fv_interpolate_1sweep(xp, stencil_func, u, nodes, p, out, debug)
+    if len(_nodes) == 1:
+        return _fv_interpolate_1sweep(xp, stencil_func, u, _nodes, p, out, debug)
 
     # buffer is needed
     if buffer is None:
@@ -350,13 +318,13 @@ def _fv_interpolate_direct(
     # two-dimensional interpolation
     if len(nodes) == 2:
         return _fv_interpolate_2sweeps(
-            xp, stencil_func, u, nodes, p, buffer, out, debug
+            xp, stencil_func, u, _nodes, p, buffer, out, debug
         )
 
     # three-dimensional interpolation
     if len(nodes) == 3:
         return _fv_interpolate_3sweeps(
-            xp, stencil_func, u, nodes, p, buffer, out, debug
+            xp, stencil_func, u, _nodes, p, buffer, out, debug
         )
 
     raise ValueError(
