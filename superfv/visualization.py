@@ -72,11 +72,7 @@ def _parse_txyz_slices(
     nearest_t = t_array[n]
 
     # get xyz slices
-    slices: Dict[str, Union[int, slice]] = {
-        "x": Union[int, slice],
-        "y": Union[int, slice],
-        "z": Union[int, slice],
-    }
+    slices: Dict[str, Union[int, slice]] = {}
     for dim, coord in zip("xyz", [x, y, z]):
         x_array = getattr(fv_solver.mesh, dim + "_centers")
         if dim not in fv_solver.mesh.active_dims:
@@ -239,9 +235,9 @@ def plot_2d_slice(
     variable: str,
     cell_averaged: bool = False,
     t: Optional[float] = None,
-    x: Union[float, Tuple[Optional[float], Optional[float]]] = None,
-    y: Union[float, Tuple[Optional[float], Optional[float]]] = None,
-    z: Union[float, Tuple[Optional[float], Optional[float]]] = None,
+    x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     levels: Optional[Union[int, np.ndarray]] = None,
     **kwargs,
 ):
