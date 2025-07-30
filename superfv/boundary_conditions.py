@@ -234,18 +234,20 @@ def apply_dirichlet_bc(
     st = slab_thickness
     slab_dim = AXIS_TO_DIM[axis]
     slab_pos = "l" if left else "r"
-    slab_region = slab_dim + slab_pos
+    slab_region = f"{slab_dim}{slab_pos}"
     outer_slice = crop(axis, (None, st) if left else (-st, None), ndim=4)
 
+    # Validate quadrature degree
     if dirichlet_mode in {"fv-averages", "face-nodes"} and p is None:
         raise ValueError(
-            f"Quadrature degree `p` must be provided for mode '{dirichlet_mode}'."
+            f"Quadrature degree `p` must be provided for '{dirichlet_mode}' mode."
         )
 
+    # Apply BC based on mode
     if dirichlet_mode == "fv-averages":
         if _u_.ndim != 4:
             raise ValueError(
-                "For 'fv-averages' mode, _u_ must be 4D (nvars, nx, ny, nz)."
+                "In 'fv-averages' mode, _u_ must be 4D (nvars, nx, ny, nz)."
             )
         f_eval = mesh.perform_GaussLegendre_quadrature(
             lambda X, Y, Z: f(variable_index_map, X, Y, Z, t),
@@ -256,28 +258,31 @@ def apply_dirichlet_bc(
         )
         _u_[outer_slice] = f_eval
         return
+
     elif dirichlet_mode == "cell-centers":
         if _u_.ndim != 5 or _u_.shape[-1] != 1:
             raise ValueError(
-                "For 'cell-centers' mode, _u_ must be 5D (nvars, nx, ny, nz, 1)."
+                "In 'cell-centers' mode, _u_ must be 5D with shape (..., 1)."
             )
+
         X, Y, Z = mesh.get_cell_centers(
             cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region)
         )
         f_eval = f(variable_index_map, X, Y, Z, t)
         _u_[outer_slice + (0,)] = f_eval
         return
+
     elif dirichlet_mode == "face-nodes":
         if _u_.ndim != 5:
             raise ValueError(
-                "For 'face-nodes' mode, _u_ must be 5D "
-                "(nvars, nx, ny, nz, n_quadrature_points)."
+                "In 'face-nodes' mode, _u_ must be 5D (nvars, nx, ny, nz, n_qp)."
             )
         if face_dim is None or face_pos is None:
             raise ValueError(
-                "For 'face-nodes' mode, face_dim and face_pos must be provided."
+                "In 'face-nodes' mode, `face_dim` and `face_pos` must be provided."
             )
-        cell_region = face_dim + face_pos
+
+        cell_region = f"{face_dim}{face_pos}"
         X, Y, Z, _ = mesh.get_GaussLegendre_quadrature(
             mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
             cell_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], cell_region),
@@ -286,9 +291,10 @@ def apply_dirichlet_bc(
         f_eval = f(variable_index_map, X, Y, Z, t)
         _u_[outer_slice + (slice(None),)] = f_eval
         return
+
     raise ValueError(
-        f"Unsupported Dirichlet mode: {dirichlet_mode}. Supported modes are "
-        "'fv-averages', 'cell-centers', and 'face-nodes'."
+        f"Unsupported dirichlet_mode '{dirichlet_mode}'. "
+        "Supported modes: 'fv-averages', 'cell-centers', 'face-nodes'."
     )
 
 
