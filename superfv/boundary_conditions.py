@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Optional, Tuple, Union
+from typing import Callable, Literal, Optional, Tuple, Union, cast
 
 from .fv import AXIS_TO_DIM
 from .mesh import UniformFVMesh
@@ -102,13 +102,34 @@ def apply_bc(
                 case "periodic":
                     apply_periodic_bc(_u_, pad_i, ip, left)
                 case "dirichlet":
+                    fij = f[i][j]
+                    if dirichlet_mode is None:
+                        raise ValueError(
+                            "dirichlet_mode must be provided when applying Dirichlet BCs."
+                        )
+                    if fij is None:
+                        raise ValueError(
+                            "Function for Dirichlet condition must be provided."
+                        )
+                    if variable_index_map is None:
+                        raise ValueError(
+                            "VariableIndexMap must be provided for Dirichlet BCs."
+                        )
+                    if mesh is None:
+                        raise ValueError(
+                            "UniformFVMesh must be provided for Dirichlet BCs."
+                        )
+                    if dirichlet_mode in {"fv-averages", "face-nodes"} and p is None:
+                        raise ValueError(
+                            "Quadrature degree `p` must be provided for 'fv-averages' or 'face-nodes' mode."
+                        )
                     apply_dirichlet_bc(
                         _u_,
                         pad_i,
                         ip,
                         left,
                         dirichlet_mode,
-                        f[i][j],
+                        fij,
                         variable_index_map,
                         mesh,
                         t,
@@ -121,6 +142,10 @@ def apply_bc(
                 case "symmetric":
                     apply_symmetric_bc(_u_, pad_i, ip, left)
                 case "reflective":
+                    if variable_index_map is None:
+                        raise ValueError(
+                            "VariableIndexMap must be provided for reflective BCs."
+                        )
                     apply_reflective_bc(_u_, pad_i, ip, left, variable_index_map)
                 case "zeros":
                     apply_uniform_bc(_u_, pad_i, ip, left, 0.0)
@@ -225,9 +250,9 @@ def apply_dirichlet_bc(
         f_eval = mesh.perform_GaussLegendre_quadrature(
             lambda X, Y, Z: f(variable_index_map, X, Y, Z, t),
             node_axis=4,
-            mesh_region=slab_region,
+            mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
             cell_region="interior",
-            p=p,
+            p=cast(int, p),
         )
         _u_[outer_slice] = f_eval
         return
@@ -236,7 +261,9 @@ def apply_dirichlet_bc(
             raise ValueError(
                 "For 'cell-centers' mode, _u_ must be 5D (nvars, nx, ny, nz, 1)."
             )
-        X, Y, Z = mesh.get_cell_centers(slab_region)
+        X, Y, Z = mesh.get_cell_centers(
+            cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region)
+        )
         f_eval = f(variable_index_map, X, Y, Z, t)
         _u_[outer_slice + (0,)] = f_eval
         return
@@ -246,8 +273,15 @@ def apply_dirichlet_bc(
                 "For 'face-nodes' mode, _u_ must be 5D "
                 "(nvars, nx, ny, nz, n_quadrature_points)."
             )
+        if face_dim is None or face_pos is None:
+            raise ValueError(
+                "For 'face-nodes' mode, face_dim and face_pos must be provided."
+            )
+        cell_region = face_dim + face_pos
         X, Y, Z, _ = mesh.get_GaussLegendre_quadrature(
-            mesh_region=slab_region, cell_region=face_dim + face_pos, p=p
+            mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
+            cell_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], cell_region),
+            p=cast(int, p),
         )
         f_eval = f(variable_index_map, X, Y, Z, t)
         _u_[outer_slice + (slice(None),)] = f_eval

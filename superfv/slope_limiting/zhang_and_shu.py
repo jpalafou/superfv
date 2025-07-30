@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import ModuleType
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional, cast
 
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import (
@@ -90,7 +90,7 @@ def compute_theta(
 
     # compute discrete maximum principle
     active_dims = tuple(
-        dim
+        cast(Literal["x", "y", "z"], dim)
         for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
         if arr is not None
     )

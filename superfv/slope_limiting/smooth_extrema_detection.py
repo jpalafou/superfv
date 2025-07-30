@@ -150,9 +150,9 @@ def inplace_3d_smooth_extrema_detector(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    dim1 = "x"
-    dim2 = "y"
-    dim3 = "z"
+    dim1: Literal["x"] = "x"
+    dim2: Literal["y"] = "y"
+    dim3: Literal["z"] = "z"
 
     alpha_dim1 = buffer[..., 4:5]
     alpha_dim2 = buffer[..., 5:6]
