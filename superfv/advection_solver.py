@@ -1,5 +1,6 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
+from . import riemann_solvers
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import (
     FieldFunction,
@@ -223,9 +224,6 @@ class AdvectionSolver(FiniteVolumeSolver):
             },
         )
 
-    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
-        w[...] = u
-
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
         Trivial transformation for linear avection.
@@ -243,26 +241,17 @@ class AdvectionSolver(FiniteVolumeSolver):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        out: ArrayLike,
-    ):
+    ) -> ArrayLike:
         """
         Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
         """
-        idx = self.variable_index_map
-        xp = self.xp
-
-        vl = wl[idx("v" + dim)]
-        vr = wr[idx("v" + dim)]
-        v = xp.where(xp.abs(vl) > xp.abs(vr), vl, vr)
-
-        out[idx("rho")] = v * xp.where(v > 0, wl[idx("rho")], wr[idx("rho")])
-        out[idx("vx")] = 0.0
-        out[idx("vy")] = 0.0
-        out[idx("vz")] = 0.0
-        if "passives" in idx.group_var_map:
-            out[idx("passives")] = v * xp.where(
-                v > 0, wl[idx("passives")], wr[idx("passives")]
-            )
+        return riemann_solvers.advection_upwind(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+        )
 
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """

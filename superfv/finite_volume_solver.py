@@ -85,13 +85,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
-    @abstractmethod
-    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
-        """
-        Convert conservative variables to primitive variables and write them to `w`.
-        """
-        pass
-
     def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
         Convert primitive variables to conservative variables.
@@ -121,8 +114,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        out: ArrayLike,
-    ):
+    ) -> ArrayLike:
         """
         Dummy Riemann solver to give an example of the required signature.
 
@@ -132,8 +124,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wr: Array of primitive variables to the right of the interface. Has shape
                 (nvars, nx, ny, nz, ...).
             dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
-            out: Output array to store the numerical fluxes. Has shape
-                (nvars, nx, ny, nz, ...).
         """
         raise NotImplementedError("Riemann solver not implemented.")
 
@@ -666,7 +656,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             out: Output array to store the numerical fluxes. Has shape
                 (nvars, nx, ny, nz, ...).
         """
-        return self.riemann_func(wl, wr, dim, out)
+        out[...] = self.riemann_func(wl, wr, dim)
 
     def _init_slope_limiting(
         self,
@@ -1093,6 +1083,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         else:
             raise ValueError(f"Unknown interpolation scheme: {scheme}")
 
+        # convert to primitive variables
+        out[...] = self.primitives_from_conservatives(out)
+
     def apply_nodal_bc(
         self,
         t: float,
@@ -1346,11 +1339,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ucc[...] = buffer1[interior][..., 0]
 
         # primitive cell centers
-        self.conservatives_to_primitives(ucc, wcc)
+        wcc[...] = self.primitives_from_conservatives(ucc)
 
         # primitive cell averages
         if self.base_scheme.lazy_primitives:
-            self.conservatives_to_primitives(self.arrays["u"], w)
+            w[...] = self.conservatives_from_primitives(self.arrays["u"])
         else:
             _u_[interior] = wcc
             self.inplace_apply_bc(

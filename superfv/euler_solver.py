@@ -2,14 +2,13 @@ from typing import Dict, Literal, Optional, Tuple, Union
 
 import wtflux
 
+from . import hydro, riemann_solvers
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import (
     FieldFunction,
     FiniteVolumeSolver,
     PassiveFieldFunction,
 )
-from .hydro import conservatives_from_primitives, primitives_from_conservatives
-from .riemann_solvers import call_riemann_solver
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -256,8 +255,8 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of conservative variables.
         """
-        return conservatives_from_primitives(
-            self.hydro, self.variable_index_map, w, self.gamma
+        return hydro.prim_to_cons(
+            self.xp, self.variable_index_map, w, self.mesh.active_dims, self.gamma
         )
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
@@ -270,8 +269,8 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of primitive variables.
         """
-        return primitives_from_conservatives(
-            self.hydro, self.variable_index_map, u, self.gamma
+        return hydro.cons_to_prim(
+            self.xp, self.variable_index_map, u, self.mesh.active_dims, self.gamma
         )
 
     @MethodTimer(cat="EulerSolver.llf")
@@ -280,12 +279,19 @@ class EulerSolver(FiniteVolumeSolver):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        primitives: bool = True,
     ) -> ArrayLike:
         """
         LLF implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
-        return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "llf")
+        return riemann_solvers.llf(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+            self.mesh.active_dims,
+            self.gamma,
+        )
 
     @MethodTimer(cat="EulerSolver.hllc")
     def hllc(
@@ -293,12 +299,11 @@ class EulerSolver(FiniteVolumeSolver):
         wl: ArrayLike,
         wr: ArrayLike,
         dim: Literal["x", "y", "z"],
-        primitives: bool = True,
     ) -> ArrayLike:
         """
         HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
-        return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
+        return  # call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
 
     @MethodTimer(cat="EulerSolver.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
@@ -319,8 +324,13 @@ class EulerSolver(FiniteVolumeSolver):
 
         w = self.primitives_from_conservatives(u)
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        c = self.hydro.sound_speed(rho=w[idx("rho")], P=w[idx("P")], gamma=self.gamma)
-        out = self.CFL * h / xp.max(xp.sum(xp.abs(w[idx("v")]), axis=0) + ndim * c)
+        c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
+
+        out = (
+            self.CFL
+            * h
+            / xp.max(xp.sum(xp.abs(w[idx("v", keepdims=True)]), axis=0) + ndim * c)
+        )
         return out.item()
 
     @MethodTimer(cat="EulerSolver.log_quantity")

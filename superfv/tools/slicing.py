@@ -409,3 +409,15 @@ class VariableIndexMap:
 
         self._cache[key] = out
         return out
+
+    def __contains__(self, name: str) -> bool:
+        """
+        Check if a variable or group exists in the variable index map or group variable map.
+
+        Args:
+            name: Name of the variable or group.
+
+        Returns:
+            True if the variable or group exists, False otherwise.
+        """
+        return name in self.var_idx_map or name in self.group_var_map

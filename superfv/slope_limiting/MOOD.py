@@ -114,10 +114,7 @@ class MOODConfig:
         self.fine_iter_count += 1
 
 
-def detect_troubled_cells(
-    fv_solver: FiniteVolumeSolver,
-    t: float,
-) -> bool:
+def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
     """
     Detect troubled cells in the finite volume solver.
 
@@ -313,6 +310,7 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     xp = fv_solver.xp
     arrays = fv_solver.arrays
     mesh = fv_solver.mesh
+    interior = fv_solver.interior
     MOOD_config = fv_solver.MOOD_config
     cascade = MOOD_config.cascade
     cascade_status = MOOD_config.cascade_status
@@ -350,21 +348,21 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
         F[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, F_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
-            mask = F_mask[fv_solver.interior] == i
+            mask = F_mask[interior] == i
             xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
     if "y" in mesh.active_dims:
         G[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, G_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
-            mask = G_mask[fv_solver.interior] == i
+            mask = G_mask[interior] == i
             xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
     if "z" in mesh.active_dims:
         H[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, H_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
-            mask = H_mask[fv_solver.interior] == i
+            mask = H_mask[interior] == i
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 

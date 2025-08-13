@@ -17,6 +17,10 @@ changes:
 - [x] plot n_MOOD_iters over substeps (increment of dt/4 for rk4, etc)
 
 issues:
+- [ ] troubled cell detection uses the same u_old for each sunstep. is this correct?
+- [ ] flux recipe 3 has issue logging fine MOOD iters
+- [ ] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
+- [ ] add HLLC riemann solver
 - [ ] PAD asymmetry for 2D square
 - [ ] buffer array size is arbitrary in 3D
 - [ ] test_ZS and test_MOOD

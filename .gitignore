@@ -8,4 +8,5 @@
 .ruff_cache
 .vscode
 build
+debug.py
 test.ipynb

@@ -1,131 +1,151 @@
-from __future__ import annotations
+from types import ModuleType
+from typing import Literal, Tuple
 
-from typing import TYPE_CHECKING, Literal, cast
-
-import numpy as np
-
+from .hydro import fluxes, prim_to_cons, sound_speed
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 
-if TYPE_CHECKING:
-    from superfv.euler_solver import EulerSolver
-
-
-def _upwind(wl: ArrayLike, wr: ArrayLike, v: ArrayLike) -> ArrayLike:
-    """
-    Upwinding operator for states yl and yr with velocity v.
-
-    Args:
-        wl: Left state array.
-        wr: Right state array.
-        v: Velocity array. Should be positive in the direction of the flux.
-
-    Returns:
-        Upwinded state array. Has the same shape as wl and wr.
-    """
-    return v * np.where(v > 0, wl, wr)
-
 
 def advection_upwind(
+    xp: ModuleType,
     idx: VariableIndexMap,
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
 ) -> ArrayLike:
     """
-    Upwinding Riemann solver for the advection equation.
+    Compute the upwind advection flux for a given dimension.
 
     Args:
+        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
-        wl: Left state array of primitive variables.Has shape
+        wl: Array of the left state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
-        wr: Right state array of primitive variables.Has shape
+        wr: Array of the right state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
-        dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
+        dim: Dimension for the advection flux ("x", "y", or "z").
 
     Returns:
-        Flux array. Has shape (nvars, nx, ny, nz, ...).
+        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
     """
-    # get the velocity
-    vl, vr = wl[idx("v" + dim, keepdims=True)], wr[idx("v" + dim, keepdims=True)]
-    v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
+    vl = wl[idx("v" + dim)]
+    vr = wr[idx("v" + dim)]
+    v = xp.where(xp.abs(vl) > xp.abs(vr), vl, vr)
 
-    # compute the density flux
-    out = np.zeros_like(wl)
-    out[idx("rho")] = _upwind(wl[idx("rho")], wr[idx("rho")], v[0])
+    F = xp.empty_like(wl)
 
-    # handle passives
+    F[idx("rho")] = v * xp.where(v > 0, wl[idx("rho")], wr[idx("rho")])
+    F[idx("vx")] = 0.0
+    F[idx("vy")] = 0.0
+    F[idx("vz")] = 0.0
     if "passives" in idx.group_var_map:
-        out[idx("passives")] = _upwind(wl[idx("passives")], wr[idx("passives")], v)
-    return out
+        F[idx("passives")] = v * xp.where(
+            v > 0, wl[idx("passives")], wr[idx("passives")]
+        )
+
+    return F
 
 
-def call_riemann_solver(
-    euler_solver: EulerSolver,
+def llf(
+    xp: ModuleType,
+    idx: VariableIndexMap,
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
     gamma: float,
-    primitives: bool,
-    name: Literal["llf", "hllc"],
 ) -> ArrayLike:
     """
-    Call the Riemann solver for the given dimension.
+    Compute the LLF flux for the Euler equations in the specified dimension.
 
     Args:
-        euler_solver: Euler solver object.
-        wl: Left state array. Has shape (nvars, nx, ny, nz, ...).
-        wr: Right state array. Has shape (nvars, nx, ny, nz, ...).
+        xp: ModuleType for the array operations (e.g., numpy or cupy).
+        idx: VariableIndexMap object with indices for hydro variables.
+        wl: Array of the left state as primitive variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        wr: Array of the right state as primitive variables. Has shape
+            (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
-        gamma: Ratio of specific heats.
-        primitives: Whether the input states are in primitive variables. If False, the
-            input states are in conservative variables.
-        name: Name of the Riemann solver to use. Can be "llf" or "hllc".
+        active_dims: Tuple of active dimensions (e.g., ("x", "y", "z")).
+        gamma: Adiabatic index.
 
     Returns:
-        Flux array. Has shape (nvars, nx, ny, nz, ...).
+        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
     """
-    # Get relevant variables
-    idx = euler_solver.variable_index_map
-    hydro = euler_solver.hydro
-    HAS_PASSIVES = "user_defined_passives" in idx.group_var_map
+    ul = prim_to_cons(xp, idx, wl, active_dims, gamma)
+    ur = prim_to_cons(xp, idx, wr, active_dims, gamma)
 
-    # Get the principal dimension and the other two transverse dimensions
-    dim1, (dim2, dim3) = dim, {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
+    cl = sound_speed(xp, idx, wl, gamma) + xp.abs(wl[idx("v" + dim)])
+    cr = sound_speed(xp, idx, wr, gamma) + xp.abs(wr[idx("v" + dim)])
+    cmax = xp.maximum(cl, cr)
 
-    # Preallocate the flux array
-    F = np.empty_like(wl)
+    Fl = fluxes(xp, idx, wl, dim, active_dims, gamma)
+    Fr = fluxes(xp, idx, wr, dim, active_dims, gamma)
 
-    # Call the Riemann solver
-    (
-        F[idx("rho")],
-        F[idx("m" + dim1)],
-        F[idx("m" + dim2)],
-        F[idx("m" + dim3)],
-        F[idx("E")],
-        F_passives,
-    ) = getattr(hydro, name)(
-        rho_L=wl[idx("rho")],
-        v1_L=wl[idx("v" + dim1)],
-        v2_L=wl[idx("v" + dim2)],
-        v3_L=wl[idx("v" + dim3)],
-        P_L=wl[idx("P")],
-        rho_R=wr[idx("rho")],
-        v1_R=wr[idx("v" + dim1)],
-        v2_R=wr[idx("v" + dim2)],
-        v3_R=wr[idx("v" + dim3)],
-        P_R=wr[idx("P")],
-        gamma=gamma,
-        passives_L=(
-            cast(ArrayLike, wl)[idx("user_defined_passives")] if HAS_PASSIVES else None
-        ),
-        passives_R=(
-            cast(ArrayLike, wr)[idx("user_defined_passives")] if HAS_PASSIVES else None
-        ),
-        primitives=primitives,
-    )
+    F = 0.5 * (Fl + Fr - cmax * (ur - ul))
 
-    # Handle passives
-    if HAS_PASSIVES:
-        F[idx("user_defined_passives")] = F_passives
     return F
+
+
+def hllc(
+    xp: ModuleType,
+    idx: VariableIndexMap,
+    wl: ArrayLike,
+    wr: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    gamma: float,
+) -> ArrayLike:
+    """
+    Compute the HLLC flux for the Euler equations in the specified dimension.
+
+    Args:
+        xp: ModuleType for the array operations (e.g., numpy or cupy).
+        idx: VariableIndexMap object with indices for hydro variables.
+        wl: Array of the left state as primitive variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        wr: Array of the right state as primitive variables. Has shape
+            (nvars, nx, ny, nz, ...).
+        dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
+        active_dims: Tuple of active dimensions (e.g., ("x", "y", "z")).
+        gamma: Adiabatic index.
+
+    Returns:
+        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
+    """
+    return
+
+    # d1 = dim
+    # d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
+
+    # rhol = wl[idx("rho")]
+    # v1l = wl[idx("v" + d1)]
+    # v2l = wl[idx("v" + d2)] if "y" in active_dims else 0.0
+    # v3l = wl[idx("v" + d3)] if "z" in active_dims else 0.0
+    # Pl = wl[idx("P")]
+    # rhor = wr[idx("rho")]
+    # v1r = wr[idx("v" + d1)]
+    # v2r = wr[idx("v" + d2)] if "y" in active_dims else 0.0
+    # v3r = wr[idx("v" + d3)] if "z" in active_dims else 0.0
+    # Pr = wr[idx("P")]
+
+    # cl = sound_speed(xp, idx, wl, gamma)
+    # cr = sound_speed(xp, idx, wr, gamma)
+    # cmax = xp.maximum(cl, cr)
+
+    # sl = xp.minimum(v1l, v1r) - cmax
+    # sr = xp.maximum(v1l, v1r) + cmax
+
+    # rcl = rhol * (v1l - sl)
+    # rcr = rhor * (sr - v1r)
+
+    # star_denom = rcl + rcr
+    # vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / star_denom
+    # Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / star_denom
+
+    # rhostarl_denom = sl - v1l
+    # rhostarr_denom = sr - v1r
+    # Estarl_denom = sl - vstar
+    # Estarr_denom = sr - vstar
+    # rhostarl = rhol * (sl - v1l) / rhostarl_denom
+    # rhostarr = rhor * (sr - v1r) / rhostarr_denom
