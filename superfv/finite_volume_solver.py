@@ -819,9 +819,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize snapshot arrays
         assert arrays["u"].shape == (nvars, nx, ny, nz)
-        arrays.add("ucc", np.empty((nvars, nx, ny, nz)))
-        arrays.add("wcc", np.empty((nvars, nx, ny, nz)))
-        arrays.add("w", np.empty((nvars, nx, ny, nz)))
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
 
         # initialize workspace arrays
@@ -835,6 +832,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             buffer_size = max(buffer_size, MOOD_buffer_size)
 
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
         arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
@@ -865,11 +864,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays["F"].fill(np.nan)
         arrays["G"].fill(np.nan)
         arrays["H"].fill(np.nan)
-        arrays["ucc"].fill(np.nan)
-        arrays["wcc"].fill(np.nan)
-        arrays["w"].fill(np.nan)
         arrays["dudt"].fill(np.nan)
         arrays["_u_"].fill(np.nan)
+        arrays["_ucc_"].fill(np.nan)
+        arrays["_wcc_"].fill(np.nan)
         arrays["_w_"].fill(np.nan)
         arrays["buffer"].fill(np.nan)
         arrays["x_nodes"].fill(np.nan)
@@ -956,7 +954,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
         """
-        self.update_workspace(t, u, self.base_scheme)
+        self.update_workspaces(t, u, self.base_scheme)
         self.inplace_compute_fluxes(t, self.base_scheme)
 
         if self.MOOD:
@@ -965,63 +963,55 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         out = self.compute_RHS().copy()
         return out
 
-    def update_workspace(
+    def update_workspaces(
         self,
         t: float,
         u: ArrayLike,
         scheme: InterpolationScheme,
-        force_primitives: bool = False,
     ):
         """
-        Update the workspace arrays `_u_` and maybe `_w_` with the provided
-        conservative values `u`.
+        Update the workspace arrays `_u_`, '_ucc_', '_wcc_', and `_w_` based on the
+        provided conservative variables `u` and the interpolation scheme.
 
         Args:
             t: Time value.
             u: Array of conservative, cell-averaged values. Has shape
                 (nvars, nx, ny, nz).
             scheme: Interpolation scheme to use.
-            force_primitives: Whether to force the update of primitive variables.
 
         Returns:
             None. The workspace arrays `_u_` and maybe `_w_` are updated in place.
         """
-        update_primitive_workspace = (
-            (scheme.mode == 2 and scheme.limiter == "zhang-shu")
-            or scheme.mode == 3
-            or force_primitives
-        )
+        active_dims = self.mesh.active_dims
+        interior = self.interior
+        interior0 = interior + (0,)
+        p = scheme.p
+        xp = self.xp
 
-        # update conservative workspace array
         _u_ = self.arrays["_u_"]
-        _u_[self.interior] = u
+        _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
+        _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
+        _w_ = self.arrays["_w_"]  # shape (..., 1)
+        _wbf_ = self.arrays["buffer"][..., :1]
+        buffer = self.arrays["buffer"][..., 1:]
+
+        # 0) conservatives + BC
+        _u_[interior] = u
         self.inplace_apply_bc(t, _u_, scheme=scheme)
 
-        # if needed, update primitive workspace array
-        if update_primitive_workspace:
-            _w_ = self.arrays["_w_"]
+        # 1) centroids
+        fv.interpolate_cell_centers(xp, _u_, active_dims, p, buffer, _ucc_)
+        _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
-            if scheme.lazy_primitives:
-                _w_[self.interior] = self.primitives_from_conservatives(
-                    _u_[self.interior]
-                )
-                self.inplace_apply_bc(t, _w_, scheme=scheme, primitives=True)
-                return
+        # 3) primitive FV averages
+        if scheme.lazy_primitives:
+            _wbf_[...] = self.primitives_from_conservatives(_u_[...])
+        else:
+            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, buffer, _wbf_)
 
-            wcc = self.arrays["buffer"][..., :1]
-            ucc = self.arrays["buffer"][..., 1:2]
-            w = self.arrays["buffer"][..., 2:3]
-            buffer = self.arrays["buffer"][..., 3:]
-
-            fv.interpolate_cell_centers(
-                self.xp, _u_, self.mesh.active_dims, scheme.p, buffer, ucc
-            )
-            wcc[...] = self.primitives_from_conservatives(ucc)
-            fv.integrate_fv_averages(
-                self.xp, wcc[..., 0], self.mesh.active_dims, scheme.p, buffer, w
-            )
-            _w_[self.interior] = w[..., 0][self.interior]
-            self.inplace_apply_bc(t, _w_, scheme=scheme, primitives=True)
+        # 4) write interior, then primitive BCs
+        _w_[interior] = _wbf_[interior0]
+        self.inplace_apply_bc(t, _w_, scheme=scheme, primitives=True)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
     def inplace_compute_fluxes(self, t: float, scheme: InterpolationScheme):
@@ -1053,10 +1043,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # Zhang-Shu limiter
         if scheme.limiter == "zhang-shu":
-            if primitive_nodes:
-                self.zhang_shu_limiter(_w_, scheme.p)
-            else:
-                self.zhang_shu_limiter(_u_, scheme.p)
+            self.zhang_shu_limiter(scheme.p, primitive_nodes)
 
         # integrate the fluxes at the cell faces
         for dim in self.mesh.active_dims:
@@ -1259,14 +1246,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     @MethodTimer(cat="FiniteVolumeSolver.zhang_shu_limiter")
-    def zhang_shu_limiter(self, u: ArrayLike, p: int):
+    def zhang_shu_limiter(self, p: int, primitives: bool = False):
         """
         Limit the face node arrays.
 
         Args:
-            u: Workspace array of conservative or primitive cell-averaged values. Has
-                shape (nvars, nx, ny, nz).
             p: Polynomial degree of the spatial discretization.
+            primitives: Whether the face nodes are in primitive variables.
 
         Returns:
             None. Modifies `self.arrays["x_nodes"]`, `self.arrays["y_nodes"]`, and
@@ -1277,7 +1263,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ZhangShu_config = self.ZhangShu_config
 
         # define array references
-        centroid = self.arrays["centroid"]
+        u = self.arrays["_w_"] if primitives else self.arrays["_u_"]
+        centroid = self.arrays["_wcc_"] if primitives else self.arrays["_ucc_"]
         x = self.arrays["x_nodes"] if mesh.x_is_active else None
         y = self.arrays["y_nodes"] if mesh.y_is_active else None
         z = self.arrays["z_nodes"] if mesh.z_is_active else None
@@ -1450,52 +1437,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Simple snapshot method that writes the solution to `self.snapshots` keyed by
         the current time value.
         """
-        u = self.arrays["u"]
-        _u_ = self.arrays["_u_"]
-        ucc = self.arrays["ucc"]
-        wcc = self.arrays["wcc"]
-        w = self.arrays["w"]
-        buffer1 = self.arrays["buffer"][..., :1]
-        buffer2 = self.arrays["buffer"][..., 1:]
-
-        p = self.p
-        dims = self.mesh.active_dims
         interior = self.interior
+        interior0 = interior + (0,)
 
-        # update workspace interior
-        self.update_workspace(self.t, u, self.base_scheme)
-
-        # conservative cell centers
-        fv.interpolate_cell_centers(self.xp, _u_, dims, p, buffer2, buffer1)
-        ucc[...] = buffer1[interior][..., 0]
-
-        # primitive cell centers
-        wcc[...] = self.primitives_from_conservatives(ucc)
-
-        # primitive cell averages
-        if self.base_scheme.lazy_primitives:
-            w[...] = self.conservatives_from_primitives(self.arrays["u"])
-        else:
-            _u_[interior] = wcc
-            self.inplace_apply_bc(
-                self.t,
-                _u_,
-                scheme=self.base_scheme,
-                primitives=True,
-                pointwise=True,
-                cell_region="center",
-            )
-            fv.integrate_fv_averages(
-                self.xp, _u_, self.mesh.active_dims, p, buffer2, buffer1
-            )
-            w[...] = buffer1[interior][..., 0]
+        self.update_workspaces(self.t, self.arrays["u"], self.base_scheme)
 
         # store the snapshot
         data = {
             "u": self.arrays.get_numpy_copy("u"),
-            "w": self.arrays.get_numpy_copy("w"),
-            "ucc": self.arrays.get_numpy_copy("ucc"),
-            "wcc": self.arrays.get_numpy_copy("wcc"),
+            "ucc": self.arrays.get_numpy_copy("_ucc_")[interior0],
+            "wcc": self.arrays.get_numpy_copy("_wcc_")[interior0],
+            "w": self.arrays.get_numpy_copy("_w_")[interior],
             "theta": self.arrays.get_numpy_copy("theta_log"),
             "troubles": self.arrays.get_numpy_copy("troubles_log"),
         }

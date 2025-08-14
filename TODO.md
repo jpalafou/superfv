@@ -17,9 +17,9 @@ changes:
 - [x] plot n_MOOD_iters over substeps (increment of dt/4 for rk4, etc)
 - [x] flux recipe 3 has issue logging fine MOOD iters
 - [x] move `inplace_troubles_bc` to the MOOD module
+- [x] remove redundant interpolation code in snapshot
 
 issues:
-- [ ] remove redundant interpolation code in snapshot
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
 - [ ] add HLLC riemann solver

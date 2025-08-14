@@ -707,7 +707,7 @@ def integrate_fv_averages(
     Args:
         xp: `np` namespace.
         u: Array of cell-centered nodal values to integrate, has shape
-            (nvars, nx, ny, nz).
+            (nvars, nx, ny, nz, 1).
         active_dims: Tuple indicating the active dimensions for integration. Can be
             some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
             integration of a cell in a two-dimensional grid.
@@ -722,7 +722,7 @@ def integrate_fv_averages(
     """
     return fv_integrate(
         xp,
-        u,
+        u[..., 0],
         active_dims,
         p,
         buffer,
