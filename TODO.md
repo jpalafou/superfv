@@ -18,10 +18,10 @@ changes:
 - [x] flux recipe 3 has issue logging fine MOOD iters
 - [x] move `inplace_troubles_bc` to the MOOD module
 - [x] remove redundant interpolation code in snapshot
+- [x] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
 
 issues:
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
-- [ ] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
 - [ ] add HLLC riemann solver
 - [ ] PAD asymmetry for 2D square
 - [ ] buffer array size is arbitrary in 3D

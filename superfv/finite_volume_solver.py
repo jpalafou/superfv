@@ -374,12 +374,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("The polynomial degree must be non-negative.")
         self.p = p
 
-        # assign schemes
+        # assign base scheme
         self.base_scheme = polyInterpolationScheme(
-            name="poly",
+            flux_recipe=flux_recipe,
             limiter=None,
             p=p,
-            mode=flux_recipe,
             lazy_primitives=lazy_primitives,
             gauss_legendre=interpolation_scheme == "gauss-legendre",
         )
@@ -398,8 +397,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("The CFL number must be positive.")
 
         # determine slab depth
-        p = self.p
-        stencil_depth = -2 * (-p // 2) if self.base_scheme.mode == 3 else -(-p // 2)
+        p = self.base_scheme.p
+        flux_recipe = self.base_scheme.flux_recipe
+        stencil_depth = -2 * (-p // 2) if flux_recipe == 3 else -(-p // 2)
         SED_depth = 3
         slab_depth = max(stencil_depth, SED_depth)
 
@@ -759,24 +759,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             if cascade == "first-order":
                 fallback_schemes = [
                     polyInterpolationScheme(
-                        name="poly",
-                        limiter=None,
                         p=0,
-                        mode=self.base_scheme.mode,
+                        flux_recipe=self.base_scheme.flux_recipe,
                         gauss_legendre=self.base_scheme.gauss_legendre,
                     )
                 ]
             elif cascade == "muscl":
                 fallback_schemes = [
-                    musclInterpolationScheme(name="muscl", limiter="minmod")
+                    musclInterpolationScheme(
+                        flux_recipe=self.base_scheme.flux_recipe,
+                        limiter="minmod",
+                    )
                 ]
             elif cascade == "full":
                 fallback_schemes = [
                     polyInterpolationScheme(
-                        name="poly",
-                        limiter=None,
                         p=pi,
-                        mode=self.base_scheme.mode,
+                        flux_recipe=self.base_scheme.flux_recipe,
                         gauss_legendre=self.base_scheme.gauss_legendre,
                     )
                     for pi in range(self.p - 1, -1, -1)
@@ -1030,16 +1029,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _w_ = self.arrays["_w_"]
 
         # update the '_nodes' arrays with the interpolated face nodes
-        primitive_nodes = scheme.mode in (2, 3)
+        primitive_nodes = scheme.flux_recipe in (2, 3)
         for dim in self.mesh.active_dims:
-            if scheme.mode == 1:
+            if scheme.flux_recipe == 1:
                 self.inplace_interpolate_faces(_u_, dim, scheme)
-            elif scheme.mode == 2:
+            elif scheme.flux_recipe == 2:
                 self.inplace_interpolate_faces(_u_, dim, scheme, conv_to_prim=True)
-            elif scheme.mode == 3:
+            elif scheme.flux_recipe == 3:
                 self.inplace_interpolate_faces(_w_, dim, scheme)
             else:
-                raise ValueError(f"Unknown scheme mode: {scheme.mode}")
+                raise ValueError(f"Unknown scheme flux_recipe: {scheme.flux_recipe}")
 
         # Zhang-Shu limiter
         if scheme.limiter == "zhang-shu":
@@ -1218,7 +1217,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             None. Modifies `self.arrays[dim + "_nodes"]` in place.
         """
         n = self.nodes_per_face(scheme)
-        conv_to_prim = scheme.mode == 1
+        conv_to_prim = scheme.flux_recipe == 1
 
         nodes = self.arrays[dim + "_nodes"]
 
