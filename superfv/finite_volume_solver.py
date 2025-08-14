@@ -1004,7 +1004,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # 3) primitive FV averages
         if scheme.lazy_primitives:
-            _wbf_[...] = self.primitives_from_conservatives(_u_[...])
+            _wbf_[..., 0] = self.primitives_from_conservatives(_u_)
         else:
             fv.integrate_fv_averages(xp, _wcc_, active_dims, p, buffer, _wbf_)
 

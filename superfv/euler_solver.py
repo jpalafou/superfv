@@ -303,7 +303,34 @@ class EulerSolver(FiniteVolumeSolver):
         """
         HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
-        return  # call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
+        return riemann_solvers.hllc(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+            self.mesh.active_dims,
+            self.gamma,
+        )
+
+    def hllct(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike:
+        """
+        HLLC Teyssier implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
+        """
+        return riemann_solvers.hllct(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+            self.mesh.active_dims,
+            self.gamma,
+        )
 
     @MethodTimer(cat="EulerSolver.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:

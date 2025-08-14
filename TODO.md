@@ -19,10 +19,11 @@ changes:
 - [x] move `inplace_troubles_bc` to the MOOD module
 - [x] remove redundant interpolation code in snapshot
 - [x] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
+- [x] add HLLC riemann solver
 
 issues:
+- [ ] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
-- [ ] add HLLC riemann solver
 - [ ] PAD asymmetry for 2D square
 - [ ] buffer array size is arbitrary in 3D
 - [ ] test_ZS and test_MOOD
