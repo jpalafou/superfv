@@ -113,39 +113,95 @@ def hllc(
     Returns:
         F: Flux array. Has shape (nvars, nx, ny, nz, ...).
     """
-    return
+    d1 = dim
+    d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
 
-    # d1 = dim
-    # d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
+    ul = prim_to_cons(xp, idx, wl, active_dims, gamma)
+    ur = prim_to_cons(xp, idx, wr, active_dims, gamma)
 
-    # rhol = wl[idx("rho")]
-    # v1l = wl[idx("v" + d1)]
-    # v2l = wl[idx("v" + d2)] if "y" in active_dims else 0.0
-    # v3l = wl[idx("v" + d3)] if "z" in active_dims else 0.0
-    # Pl = wl[idx("P")]
-    # rhor = wr[idx("rho")]
-    # v1r = wr[idx("v" + d1)]
-    # v2r = wr[idx("v" + d2)] if "y" in active_dims else 0.0
-    # v3r = wr[idx("v" + d3)] if "z" in active_dims else 0.0
-    # Pr = wr[idx("P")]
+    rhol = wl[idx("rho")]
+    v1l = wl[idx("v" + d1)]
+    v2l = wl[idx("v" + d2)] if "y" in active_dims else 0.0
+    v3l = wl[idx("v" + d3)] if "z" in active_dims else 0.0
+    Pl = wl[idx("P")]
+    El = ul[idx("E")]
+    rhor = wr[idx("rho")]
+    v1r = wr[idx("v" + d1)]
+    v2r = wr[idx("v" + d2)] if "y" in active_dims else 0.0
+    v3r = wr[idx("v" + d3)] if "z" in active_dims else 0.0
+    Pr = wr[idx("P")]
+    Er = ur[idx("E")]
 
-    # cl = sound_speed(xp, idx, wl, gamma)
-    # cr = sound_speed(xp, idx, wr, gamma)
-    # cmax = xp.maximum(cl, cr)
+    cl = sound_speed(xp, idx, wl, gamma) + xp.abs(v1l)
+    cr = sound_speed(xp, idx, wr, gamma) + xp.abs(v1r)
+    cmax = xp.maximum(cl, cr)
 
-    # sl = xp.minimum(v1l, v1r) - cmax
-    # sr = xp.maximum(v1l, v1r) + cmax
+    sl = xp.minimum(v1l, v1r) - cmax
+    sr = xp.maximum(v1l, v1r) + cmax
 
-    # rcl = rhol * (v1l - sl)
-    # rcr = rhor * (sr - v1r)
+    rcl = rhol * (v1l - sl)
+    rcr = rhor * (sr - v1r)
 
-    # star_denom = rcl + rcr
-    # vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / star_denom
-    # Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / star_denom
+    star_denom = rcl + rcr
+    vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / star_denom
+    Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / star_denom
 
-    # rhostarl_denom = sl - v1l
-    # rhostarr_denom = sr - v1r
-    # Estarl_denom = sl - vstar
-    # Estarr_denom = sr - vstar
-    # rhostarl = rhol * (sl - v1l) / rhostarl_denom
-    # rhostarr = rhor * (sr - v1r) / rhostarr_denom
+    rhostarl_denom = sl - v1l
+    rhostarr_denom = sr - v1r
+    Estarl_denom = sl - vstar
+    Estarr_denom = sr - vstar
+    rhostarl = rhol * (sl - v1l) / rhostarl_denom
+    rhostarr = rhor * (sr - v1r) / rhostarr_denom
+    Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / Estarl_denom
+    Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / Estarr_denom
+
+    rhogdv = hllc_operator(sl, sr, vstar, rhol, rhor, rhostarl, rhostarr)
+    v1gdv = hllc_operator(sl, sr, vstar, v1l, v1r, vstar, vstar)
+    Pgdv = hllc_operator(sl, sr, vstar, Pl, Pr, Pstar, Pstar)
+    Egdv = hllc_operator(sl, sr, vstar, El, Er, Estarl, Estarr)
+
+    F = xp.empty_like(wl)
+    F[idx("rho")] = rhogdv * v1gdv
+    F[idx("m" + d1)] = F[idx("rho")] * v1gdv + Pgdv
+    F[idx("E")] = v1gdv * (Egdv + Pgdv)
+    F[idx("m" + d2)] = (
+        F[idx("rho")] * xp.where(vstar > 0, v2l, v2r) if "d2" in active_dims else 0.0
+    )
+    F[idx("m" + d3)] = (
+        F[idx("rho")] * xp.where(vstar > 0, v3l, v3r) if "d3" in active_dims else 0.0
+    )
+    if "passives" in idx.group_var_map:
+        F[idx("passives")] = F[idx("rho")] * xp.where(
+            vstar > 0, wl[idx("passives")], wr[idx("passives")]
+        )
+
+
+def hllc_operator(
+    xp: ModuleType,
+    sl: ArrayLike,
+    sr: ArrayLike,
+    vstar: ArrayLike,
+    ql: ArrayLike,
+    qr: ArrayLike,
+    qstarl: ArrayLike,
+    qstarr: ArrayLike,
+) -> ArrayLike:
+    """
+    Helper function for HLLC flux calculation.
+
+    Args:
+        xp: ModuleType for the array operations (e.g., numpy or cupy).
+        sl: Left wave speed.
+        sr: Right wave speed.
+        vstar: Star state velocity.
+        ql: Left state variable.
+        qr: Right state variable.
+        qstarl: Left star state variable.
+        qstarr: Right star state variable.
+
+    Returns:
+        Array with the HLLC operator applied.
+    """
+    return xp.where(
+        sl > 0, ql, xp.where(vstar > 0, qstarl, xp.where(sr > 0, qstarr, qr))
+    )
