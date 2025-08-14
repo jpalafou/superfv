@@ -667,25 +667,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "conservative": conservative_dirichlet_arg,
         }
 
-        def normalize_troubles_bc(
-            bc_tuple: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
-        ) -> Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]]:
-            def map_bc(bc: BCs) -> BCs:
-                if bc == "none":
-                    return "none"
-                elif bc == "periodic":
-                    return "periodic"
-                else:
-                    return "zeros"
-
-            return (
-                (map_bc(bc_tuple[0][0]), map_bc(bc_tuple[0][1])),
-                (map_bc(bc_tuple[1][0]), map_bc(bc_tuple[1][1])),
-                (map_bc(bc_tuple[2][0]), map_bc(bc_tuple[2][1])),
-            )
-
-        self.bc_troubles_mode = normalize_troubles_bc(mode)
-
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
@@ -1168,19 +1149,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             face_pos=face_pos,
             p=p,
         )
-
-    def inplace_troubles_bc(self, troubles: ArrayLike):
-        """
-        Apply boundary conditions to the troubles array in place.
-
-        Args:
-            troubles: Array of troubles. Has shape (1, nx, ny, nz).
-
-        Returns:
-            None. The troubles array is modified in place with the boundary conditions
-                applied.
-        """
-        apply_bc(_u_=troubles, pad_width=self.bc_pad_width, mode=self.bc_troubles_mode)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(

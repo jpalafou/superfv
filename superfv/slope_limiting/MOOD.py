@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
 
+from superfv.boundary_conditions import BCs, apply_bc
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from types import ModuleType
 
 from superfv.interpolation_schemes import InterpolationScheme
@@ -218,7 +220,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
 
     # update troubles workspace
     _troubles_[interior] = troubles
-    fv_solver.inplace_troubles_bc(_troubles_)
+    apply_bc(
+        troubles,
+        pad_width=fv_solver.bc_pad_width,
+        mode=normalize_troubles_bc(fv_solver.bc_mode),
+    )
 
     # check for troubles
     has_troubles = xp.any(troubles)
@@ -304,8 +310,47 @@ def inplace_PAD_violations(
     out[...] = xp.minimum(u_new - physical_mins, physical_maxs - u_new) + physical_tols
 
 
+@lru_cache(maxsize=None)
+def normalize_troubles_bc(
+    bc_tuple: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
+) -> Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]]:
+    """
+    Normalize the boundary conditions for the trouble detection.
+
+    Args:
+        bc_tuple: A tuple of boundary conditions for each dimension, where each
+            boundary condition is a tuple of (left, right) BCs.
+
+    Returns:
+        A normalized tuple of boundary conditions for each dimension.
+        - "none" for no boundary condition
+        - "periodic" for periodic boundary condition
+        - "zeros" for no-trouble boundary condition
+    """
+
+    def map_bc(bc: BCs) -> BCs:
+        if bc == "none":
+            return "none"
+        elif bc == "periodic":
+            return "periodic"
+        else:
+            return "zeros"
+
+    return (
+        (map_bc(bc_tuple[0][0]), map_bc(bc_tuple[0][1])),
+        (map_bc(bc_tuple[1][0]), map_bc(bc_tuple[1][1])),
+        (map_bc(bc_tuple[2][0]), map_bc(bc_tuple[2][1])),
+    )
+
+
 def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
-    """ """
+    """
+    In-place revision of fluxes based on the current time step.
+
+    Args:
+        fv_solver: FiniteVolumeSolver object.
+        t: Current time value.
+    """
     # gather solver parameters
     xp = fv_solver.xp
     arrays = fv_solver.arrays

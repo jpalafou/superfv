@@ -16,10 +16,11 @@ changes:
 - [x] ZhangShuConfig
 - [x] plot n_MOOD_iters over substeps (increment of dt/4 for rk4, etc)
 - [x] flux recipe 3 has issue logging fine MOOD iters
+- [x] move `inplace_troubles_bc` to the MOOD module
 
 issues:
 - [ ] remove redundant interpolation code in snapshot
-- [ ] troubled cell detection uses the same u_old for each sunstep. is this correct?
+- [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
 - [ ] add HLLC riemann solver
 - [ ] PAD asymmetry for 2D square
@@ -32,7 +33,6 @@ optimizations:
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 
 cosmetics:
-- [ ] move `inplace_troubles_bc` to the MOOD module
 - [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
 - [ ] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
