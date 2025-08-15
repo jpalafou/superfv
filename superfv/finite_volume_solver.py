@@ -397,9 +397,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("The CFL number must be positive.")
 
         # determine slab depth
-        p = self.base_scheme.p
-        flux_recipe = self.base_scheme.flux_recipe
-        stencil_depth = -2 * (-p // 2) if flux_recipe == 3 else -(-p // 2)
+        stencil_depth = -(-self.p // 2)
         SED_depth = 3
         slab_depth = max(stencil_depth, SED_depth)
 

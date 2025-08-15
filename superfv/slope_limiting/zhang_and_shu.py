@@ -128,7 +128,7 @@ def compute_theta(
         modified = inplace_smooth_extrema_detector(
             xp, u, active_dims, buffer[..., 1:], alpha
         )
-        out[modified] = xp.where(alpha[modified] == 1, 1, out[modified])
+        out[modified] = xp.where(alpha[modified] < 1, out[modified], 1)
     else:
         modified = modify_slices(out_modified, axis=4, new_slice=slice(None, 1))
 
