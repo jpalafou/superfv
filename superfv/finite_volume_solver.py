@@ -354,11 +354,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: bool,
     ):
         # validate interpolation scheme
-        if interpolation_scheme == "gauss-legendre" and self.mesh.ndim == 1:
-            raise ValueError(
-                "Gauss-Legendre interpolation scheme is not supported in 1D."
-            )
-        elif interpolation_scheme not in ("gauss-legendre", "transverse"):
+        if interpolation_scheme not in ("gauss-legendre", "transverse"):
             raise ValueError(
                 "interpolation_scheme must be 'gauss-legendre' or 'transverse'."
             )

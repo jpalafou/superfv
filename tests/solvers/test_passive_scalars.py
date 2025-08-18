@@ -65,7 +65,9 @@ def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: st
         p=p,
         **limiting_config,
         ic_passives={
-            "passive_square": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1, -1)
+            "passive_square": lambda x, y, z, t, xp: xp.where(
+                xp.abs(x - 0.5) < 0.25, 1, -1
+            )
         },
     )
 

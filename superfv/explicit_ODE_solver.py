@@ -338,7 +338,7 @@ class ExplicitODESolver(ABC):
                 snapshot_dir=snapshot_dir,
                 overwrite=overwrite,
                 allow_overshoot=allow_overshoot,
-                progress_bar=verbose,
+                verbose=verbose,
                 log_freq=log_freq,
                 no_snapshots=no_snapshots,
             )
