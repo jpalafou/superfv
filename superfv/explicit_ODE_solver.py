@@ -210,8 +210,6 @@ class ExplicitODESolver(ABC):
         self.minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
         self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
 
-        self.timer.reset("current_step")
-
     def __init__(self, u0: np.ndarray, array_manager: Optional[ArrayManager] = None):
         """
         Initializes the ODE solver.
@@ -511,16 +509,16 @@ class ExplicitODESolver(ABC):
         Helper function called at the beginning of each step starting with a timer
         start.
         """
-        self.timer.start("current_step")
         self.reset_stepwise_logs()
+        self.timer.start("current_step", reset=True)
 
     def called_at_end_of_step(self):
         """
         Helper function called at the end of each step ending with a timer stop.
         """
+        self.timer.stop("current_step")
         self.increment_stepwise_logs()
         self.increment_global_logs()
-        self.timer.stop("current_step")
 
     def reset_global_logs(self):
         """

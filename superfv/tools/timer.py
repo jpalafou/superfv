@@ -49,12 +49,13 @@ class Timer:
         if cat not in self.cats:
             raise ValueError(f"Category '{cat}' not found in timer categories.")
 
-    def start(self, cat: str):
+    def start(self, cat: str, reset: bool = False):
         """
         Start timer of a category.
 
         Args:
             cat: Category name.
+            reset: If True, reset the timer for this category.
         """
         self._check_cat_existence(cat)
         if self._running[cat]:
@@ -62,6 +63,10 @@ class Timer:
                 f"Cannot start '{cat}' timer since it is already in progress."
             )
         else:
+            if reset:
+                self.n_calls[cat] = 0
+                self.cum_time[cat] = 0.0
+
             self._running[cat] = True
             self._start_time[cat] = time.time()
             self.n_calls[cat] += 1
@@ -82,19 +87,6 @@ class Timer:
             raise RuntimeError(
                 f"Cannot stop '{cat}' timer since it is not in progress."
             )
-
-    def reset(self, cat: str):
-        """
-        Reset the timer for a specific category.
-
-        Args:
-            cat: Category name.
-        """
-        self._check_cat_existence(cat)
-        self.cum_time[cat] = 0.0
-        self.n_calls[cat] = 0
-        self._running[cat] = False
-        self._start_time[cat] = None
 
     def to_dict(self, decimals: int = 2) -> dict:
         """

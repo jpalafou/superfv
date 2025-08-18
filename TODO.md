@@ -26,6 +26,7 @@ changes:
 - [x] fix: progress bar for allow_overshoot=True
 - [x] make gauss-legendre a boolean option
 - [x] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
+- [x] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 
 issues:
 - [ ] buffer size is not well understood
@@ -38,5 +39,4 @@ optimizations:
 
 cosmetics:
 - [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
-- [ ] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
