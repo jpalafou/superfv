@@ -983,14 +983,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_apply_bc(t, _u_, scheme=scheme)
 
         # 1) centroids
-        fv.interpolate_cell_centers(xp, _u_, active_dims, p, buffer, _ucc_)
+        fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=buffer)
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
         # 3) primitive FV averages
         if scheme.lazy_primitives:
             _wbf_[..., 0] = self.primitives_from_conservatives(_u_)
         else:
-            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, buffer, _wbf_)
+            fv.integrate_fv_averages(
+                xp, _wcc_, active_dims, p, out=_wbf_, buffer=buffer
+            )
 
         # 4) write interior, then primitive BCs
         _w_[interior] = _wbf_[interior0]
@@ -1160,9 +1162,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if isinstance(scheme, polyInterpolationScheme):
             p = scheme.p
             if scheme.gauss_legendre:
-                fv.interpolate_GaussLegendre_nodes(xp, u, dim, adims, p, buffer, out)
+                fv.interpolate_GaussLegendre_nodes(
+                    xp, u, dim, adims, p, out=out, buffer=buffer
+                )
             else:
-                fv.interpolate_face_centers(xp, u, dim, adims, p, buffer, out)
+                fv.interpolate_face_centers(
+                    xp, u, dim, adims, p, out=out, buffer=buffer
+                )
         elif isinstance(scheme, musclInterpolationScheme):
             limiter: Callable[[ModuleType, ArrayLike, ArrayLike], ArrayLike]
             if scheme.limiter == "minmod":
@@ -1171,7 +1177,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 limiter = moncen
             else:
                 raise ValueError(f"Unknown MUSCL limiter: {scheme.limiter}")
-            fv.interpolate_muscl_faces(xp, limiter, u, dim, buffer, out)
+            fv.interpolate_muscl_faces(xp, limiter, u, dim, out=out, buffer=buffer)
         else:
             raise ValueError(f"Unknown interpolation scheme: {scheme}")
 
@@ -1255,7 +1261,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         buffer = self.arrays["buffer"]
 
         # compute centroid then compute theta
-        fv.interpolate_cell_centers(xp, u, mesh.active_dims, p, buffer, out=centroid)
+        fv.interpolate_cell_centers(
+            xp, u, mesh.active_dims, p, out=centroid, buffer=buffer
+        )
         compute_theta(
             xp,
             u,
@@ -1333,7 +1341,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     dim,
                     self.mesh.active_dims,
                     scheme.p,
-                    flux_workspace[..., 0],
+                    out=flux_workspace[..., 0],
                 )
             elif isinstance(
                 scheme, (polyInterpolationScheme, musclInterpolationScheme)
@@ -1344,8 +1352,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     dim,
                     self.mesh.active_dims,
                     scheme.p,
-                    right_state,
-                    flux_workspace,
+                    out=flux_workspace,
+                    buffer=right_state,
                 )
             else:
                 raise ValueError(

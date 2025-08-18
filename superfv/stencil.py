@@ -133,6 +133,7 @@ def inplace_stencil_sweep(
     arr: ArrayLike,
     stencil_weights: Union[Sequence[float], ArrayLike],
     axis: int,
+    *,
     out: ArrayLike,
 ) -> Tuple[slice, ...]:
     """
@@ -163,6 +164,7 @@ def inplace_multistencil_sweep_add_multiply(
     arr: ArrayLike,
     stencils: ArrayLike,
     axis: int,
+    *,
     out: ArrayLike,
     start_idx: int = 0,
 ) -> Tuple[slice, ...]:
@@ -210,6 +212,7 @@ def inplace_multistencil_sweep(
     arr: ArrayLike,
     stencils: ArrayLike,
     axis: int,
+    *,
     out: ArrayLike,
     start_idx: int = 0,
 ) -> Tuple[slice, ...]:

@@ -21,7 +21,7 @@ def test_trivial_stencil(stencil_size: int, axis: int):
 
     trivial_stencil = np.zeros(stencil_size)
     trivial_stencil[stencil_size // 2] = 1.0
-    modified = inplace_stencil_sweep(np, u, trivial_stencil, axis, out)
+    modified = inplace_stencil_sweep(np, u, trivial_stencil, axis, out=out)
 
     # assert that the output is identical to the input
     assert np.array_equal(out[modified], u[modified])
@@ -44,7 +44,7 @@ def test_ones_stencil(stencil_size: int, axis: int):
     out_original = out.copy()
 
     ones_stencil = np.ones(stencil_size) / stencil_size
-    slc = inplace_stencil_sweep(np, u, ones_stencil, axis, out)
+    slc = inplace_stencil_sweep(np, u, ones_stencil, axis, out=out)
 
     # assert that the output is the average of the input over the stencil size
     assert np.all(out[slc] == 1)
@@ -129,9 +129,9 @@ def test__fv_interpolate_direct_interpolate_node_from_uniform_field(
         lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
         u,
         nodes,
-        p=p,
-        buffer=buffer,
+        p,
         out=out,
+        buffer=buffer,
     )
 
     # Assert output equals the uniform input on the modified region
@@ -163,10 +163,10 @@ def test__fv_interpolate_direct_1sweep_modified_slice(p: int, nodes: Dict[str, f
         np,
         lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
         u,
-        nodes=nodes,
-        p=p,
-        buffer=np.empty((0,)),
+        nodes,
+        p,
         out=out,
+        buffer=np.empty((0,)),
     )
 
     # assert that the modified region is correctly set
@@ -199,10 +199,10 @@ def test__fv_interpolate_direct_2sweep_modified_slice(p: int, nodes: Dict[str, f
         np,
         lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
         u,
-        nodes=nodes,
-        p=p,
-        buffer=buffer,
+        nodes,
+        p,
         out=out,
+        buffer=buffer,
     )
 
     # assert that the modified region is correctly set
@@ -239,10 +239,10 @@ def test__fv_interpolate_direct_3sweep_modified_slice(p: int, nodes: Dict[str, f
         np,
         lambda p, x: gather_multistencils(np, "conservative-interpolation", p, x),
         u,
-        nodes=nodes,
-        p=p,
-        buffer=buffer,
+        nodes,
+        p,
         out=out,
+        buffer=buffer,
     )
 
     # assert that the modified region is correctly set
