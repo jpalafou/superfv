@@ -22,10 +22,10 @@ changes:
 - [x] add HLLC riemann solver
 
 issues:
+- [ ] buffer size is not well understood
 - [ ] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
-- [ ] buffer array size is arbitrary in 3D
 - [ ] test_ZS and test_MOOD
 - [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
 - [ ] vestigial 'half-dt' option in MOOD

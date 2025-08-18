@@ -397,7 +397,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("The CFL number must be positive.")
 
         # determine slab depth
-        stencil_depth = -(-self.p // 2)
+        stencil_depth = -2 * (-self.p // 2)
         SED_depth = 3
         slab_depth = max(stencil_depth, SED_depth)
 
@@ -1566,6 +1566,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)
+
+    def build_opening_message(self) -> str:
+        """
+        Build the opening message for the FV solver.
+        """
+        return ""
+
+    def build_update_message(self) -> str:
+        """
+        Build the update message for the FV solver.
+        """
+        return f"Step #{self.n_steps} @ t={self.t:<.2e} | dt={self.dt:<.2e}"
+
+    def build_closing_message(self) -> str:
+        """
+        Build the closing message for the FV solver.
+        """
+        return self.build_update_message() + " | (done)"
 
     def plot_2d_slice(self, *args, **kwargs):
         return plot_2d_slice(self, *args, **kwargs)

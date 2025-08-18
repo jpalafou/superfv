@@ -360,12 +360,47 @@ class EulerSolver(FiniteVolumeSolver):
         )
         return out.item()
 
+    def get_physical_mins(self) -> Tuple[float, float]:
+        """
+        Helper function for logging and printing the minimum density and pressure.
+
+        Returns:
+            Tuple of minimum density and minimum pressure from the primitive workspace
+                array `self.arrays["_wcc_"]`.
+        """
+        idx = self.variable_index_map
+        interior = self.interior
+
+        min_rho = self.arrays["_wcc_"][interior][idx("rho")].min().item()
+        min_P = self.arrays["_wcc_"][interior][idx("P")].min().item()
+
+        return min_rho, min_P
+
     @MethodTimer(cat="EulerSolver.log_quantity")
     def log_quantity(self) -> Dict[str, float]:
-        idx = self.variable_index_map
+        """
+        Log the minimum density and pressure.
+
+        Returns:
+            Dictionary with the following keys:
+            - "min_rho": Minimum density.
+            - "min_P": Minimum pressure.
+        """
+        min_rho, min_P = self.get_physical_mins()
+
         return {
-            "min_rho": self.arrays["u"][idx("rho")].min().item(),
-            "max_rho": self.arrays["u"][idx("rho")].max().item(),
-            "min_E": self.arrays["u"][idx("E")].min().item(),
-            "max_E": self.arrays["u"][idx("E")].min().item(),
+            "min_rho": min_rho,
+            "min_P": min_P,
         }
+
+    def build_update_message(self) -> str:
+        """
+        Build the update message for the FV solver, including the minimum density and
+        pressure.
+        """
+        min_rho, min_P = self.get_physical_mins()
+
+        message = super().build_update_message()
+        message += f" | min(rho)={min_rho:.2e}, min(P)={min_P:.2e}"
+
+        return message

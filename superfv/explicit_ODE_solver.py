@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
-from tqdm import tqdm
 
 from .tools.device_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
@@ -24,6 +23,19 @@ def clamp_dt(t: float, dt: float, target_time: Optional[float] = None) -> float:
         Clamped time-step size if target_time is provided, otherwise returns dt.
     """
     return dt if target_time is None else min(target_time - t, dt)
+
+
+def status_print(msg: str, closing: bool = False, width: int = 100):
+    """
+    Print a status message with a fixed width.
+
+    Args:
+        msg: Message to print.
+        closing: Whether this is the closing message to print. If False, it will print the
+            message without a trailing newline.
+        width: Width of the printed message.
+    """
+    print(f"\r{msg:<{width}}", end="\n" if closing else "")
 
 
 class ExplicitODESolver(ABC):
@@ -77,6 +89,29 @@ class ExplicitODESolver(ABC):
 
         Returns:
             dudt: Right-hand side of the ODE at (t, u) as an array.
+        """
+        pass
+
+    @abstractmethod
+    def build_opening_message(self) -> str:
+        """
+        Returns a string message for the printed opening message before integration
+        starts.
+        """
+        pass
+
+    @abstractmethod
+    def build_update_message(self) -> str:
+        """
+        Returns a string message for the printed update during integration.
+        """
+        pass
+
+    @abstractmethod
+    def build_closing_message(self) -> str:
+        """
+        Returns a string message for the printed closing message after integration
+        ends.
         """
         pass
 
@@ -274,7 +309,8 @@ class ExplicitODESolver(ABC):
         snapshot_dir: Optional[str] = None,
         overwrite: bool = False,
         allow_overshoot: bool = False,
-        progress_bar: bool = True,
+        verbose: bool = True,
+        log_freq: int = 100,
         no_snapshots: bool = False,
     ):
         """
@@ -289,7 +325,8 @@ class ExplicitODESolver(ABC):
             snapshot_dir Directory to save snapshots. If None, does not save.
             overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
-            progress_bar: Whether to print a progress bar during integration.
+            verbose: Whether to print verbose output during integration.
+            log_freq: Step frequency of logging updates to the progress bar.
             no_snapshots: Whether to skip taking snapshots.
         """
         if (n is None and T is None) or (n is not None and T is not None):
@@ -301,7 +338,8 @@ class ExplicitODESolver(ABC):
                 snapshot_dir=snapshot_dir,
                 overwrite=overwrite,
                 allow_overshoot=allow_overshoot,
-                progress_bar=progress_bar,
+                progress_bar=verbose,
+                log_freq=log_freq,
                 no_snapshots=no_snapshots,
             )
         else:
@@ -311,7 +349,8 @@ class ExplicitODESolver(ABC):
                 snapshot_dir=snapshot_dir,
                 overwrite=overwrite,
                 allow_overshoot=allow_overshoot,
-                progress_bar=progress_bar,
+                verbose=verbose,
+                log_freq=log_freq,
                 no_snapshots=no_snapshots,
             )
 
@@ -322,7 +361,8 @@ class ExplicitODESolver(ABC):
         snapshot_dir: Optional[str] = None,
         overwrite: bool = False,
         allow_overshoot: bool = False,
-        progress_bar: bool = True,
+        verbose: bool = True,
+        log_freq: int = 100,
         no_snapshots: bool = False,
     ):
         """
@@ -334,9 +374,13 @@ class ExplicitODESolver(ABC):
             snapshot_dir Directory to save snapshots. If None, does not save.
             overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
-            progress_bar: Whether to print a progress bar during integration.
+            verbose: Whether to print a progress bar during integration.
+            log_freq: Step frequency of logging updates to the progress bar.
             no_snapshots: Whether to skip taking snapshots.
         """
+        if verbose:
+            status_print(self.build_opening_message())
+
         # take initial snapshots
         if self.t not in self.minisnapshots["t"]:
             if not no_snapshots:
@@ -344,14 +388,20 @@ class ExplicitODESolver(ABC):
             self.minisnapshot()
 
         self.timer.start("!ExplicitODESolver.integrate.body")
-        for _ in tqdm(range(n)) if progress_bar else range(n):
+        for _ in range(n):
             self.take_step()
             self.minisnapshot()
+
+            if verbose:
+                if self.n_steps % log_freq == 0 or self.n_steps >= n:
+                    status_print(self.build_update_message())
         self.timer.stop("!ExplicitODESolver.integrate.body")
 
-        # closing snapshot
+        # closing actions
         if not no_snapshots:
             self.snapshot()
+        if verbose:
+            status_print(self.build_closing_message(), closing=True)
 
     def _integrate_until_target_time_is_reached(
         self,
@@ -360,7 +410,8 @@ class ExplicitODESolver(ABC):
         snapshot_dir: Optional[str] = None,
         overwrite: bool = False,
         allow_overshoot: bool = False,
-        progress_bar: bool = True,
+        verbose: bool = True,
+        log_freq: int = 100,
         no_snapshots: bool = False,
     ):
         """
@@ -373,7 +424,8 @@ class ExplicitODESolver(ABC):
             snapshot_dir Directory to save snapshots. If None, does not save.
             overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
-            progress_bar: Whether to print a progress bar during integration.
+            verbose: Whether to print a progress bar during integration.
+            log_freq: Step frequency of logging updates to the progress bar.
             no_snapshots: Whether to skip taking snapshots.
         """
         # format list of target times
@@ -392,7 +444,8 @@ class ExplicitODESolver(ABC):
         target_time = None if allow_overshoot else target_times.pop(0)
 
         # setup progress bar
-        self.progress_bar_action("setup", T=T_max, do_nothing=not progress_bar)
+        if verbose:
+            status_print(self.build_opening_message())
 
         # initial snapshot
         if self.t not in self.minisnapshots["t"]:
@@ -406,9 +459,6 @@ class ExplicitODESolver(ABC):
             self.take_step(target_time=target_time)
             self.minisnapshot()
 
-            # update progress bar
-            self.progress_bar_action("update", do_nothing=not progress_bar)
-
             # snapshot decision and target time update
             if not no_snapshots:
                 if self.t > T_max:
@@ -417,10 +467,16 @@ class ExplicitODESolver(ABC):
                     self.snapshot()
                     if self.t == target_time and self.t < T_max:
                         target_time = target_times.pop(0)
+
+            # update progress bar
+            if verbose:
+                if self.n_steps % log_freq == 0 or self.t >= T_max:
+                    status_print(self.build_update_message())
         self.timer.stop("!ExplicitODESolver.integrate.body")
 
-        # clean up progress bar
-        self.progress_bar_action("cleanup", do_nothing=not progress_bar)
+        # closing actions
+        if verbose:
+            status_print(self.build_closing_message(), closing=True)
 
     @MethodTimer(cat="ExplicitODESolver.take_step")
     def take_step(self, target_time: Optional[float] = None):
@@ -463,6 +519,7 @@ class ExplicitODESolver(ABC):
         Helper function called at the end of each step ending with a timer stop.
         """
         self.increment_stepwise_logs()
+        self.increment_global_logs()
         self.timer.stop("current_step")
 
     def reset_global_logs(self):
@@ -500,30 +557,6 @@ class ExplicitODESolver(ABC):
         Increment logs at the end of each substep.
         """
         self.n_substeps += 1
-
-    def progress_bar_action(
-        self, action: str, T: Optional[float] = None, do_nothing: bool = False
-    ):
-        """
-        Setup, update, or cleanup the progress bar.
-
-        Args:
-            action: Name of action to take: "setup", "update", or "cleanup".
-            T: Time to simulate until. If None, no progress bar is set up.
-            do_nothing: Whether to do nothing, e.g., if progress bar is disabled.
-        """
-        if do_nothing:
-            return
-        if action == "setup":
-            bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]"
-            if T is None:
-                raise ValueError("T must be defined.")
-            self.progress_bar = tqdm(total=T, bar_format=bar_format)
-        elif action == "update":
-            self.progress_bar.n = self.t
-            self.progress_bar.refresh()
-        elif action == "cleanup":
-            self.progress_bar.close()
 
     def euler(self, *args, **kwargs) -> None:
         self.integrator = "euler"
