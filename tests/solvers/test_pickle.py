@@ -25,7 +25,6 @@ def test_interrupted_simulation():
         nx=N,
         ny=N,
         p=p,
-        interpolation_scheme="transverse",
         log_every_step=False,
     )
     sim_part1 = AdvectionSolver(
@@ -38,7 +37,6 @@ def test_interrupted_simulation():
         nx=N,
         ny=N,
         p=p,
-        interpolation_scheme="transverse",
         log_every_step=False,
     )
 

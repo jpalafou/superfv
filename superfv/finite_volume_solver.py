@@ -170,7 +170,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         nz: int = 1,
         p: int = 0,
         CFL: float = 0.8,
-        interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
+        GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = False,
         riemann_solver: str = "dummy_riemann_solver",
@@ -233,12 +233,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
             CFL: CFL number.
-            interpolation_scheme: Scheme to use for the interpolation of face nodes.
-                Possible values:
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points. Compute the flux integral using Gauss-Legendre quadrature.
-                - "transverse": Interpolate nodes at the cell face centers. Compute the
-                    flux integral using a transverse quadrature.
+            GL: Whether to use Gauss-Legendre quadrature for flux integration. If
+                `False`, the transverse quadrature is used.
             flux_recipe: Recipe for interpolating flux nodes. Possible values:
                 - 1: Interpolate conservative nodes from conservative cell averages.
                     Apply slope limiting to the conservative nodes. Transform to
@@ -302,7 +298,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         self._init_array_management(cupy)
         self._init_spatial_discretization(
-            interpolation_scheme,
+            GL,
             p,
             flux_recipe,
             lazy_primitives,
@@ -348,17 +344,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_spatial_discretization(
         self,
-        interpolation_scheme: Literal["gauss-legendre", "transverse"],
+        GL: bool,
         p: int,
         flux_recipe: Literal[1, 2, 3],
         lazy_primitives: bool,
     ):
-        # validate interpolation scheme
-        if interpolation_scheme not in ("gauss-legendre", "transverse"):
-            raise ValueError(
-                "interpolation_scheme must be 'gauss-legendre' or 'transverse'."
-            )
-
         # validate flux recipe
         if flux_recipe not in (1, 2, 3):
             raise ValueError(
@@ -376,7 +366,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter=None,
             p=p,
             lazy_primitives=lazy_primitives,
-            gauss_legendre=interpolation_scheme == "gauss-legendre",
+            gauss_legendre=GL,
         )
 
     def _init_mesh(

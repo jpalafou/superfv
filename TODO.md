@@ -24,6 +24,7 @@ changes:
 - [x] vestigial 'half-dt' option in MOOD
 - [x] clean up hydro/riemann solver modules
 - [x] fix: progress bar for allow_overshoot=True
+- [x] make gauss-legendre a boolean option
 
 issues:
 - [ ] buffer size is not well understood
@@ -39,4 +40,3 @@ cosmetics:
 - [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
 - [ ] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
-- [ ] make gauss-legendre a boolean option

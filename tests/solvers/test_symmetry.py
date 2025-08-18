@@ -44,11 +44,9 @@ def test_AdvectionSolver_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+@pytest.mark.parametrize("GL", [True, False])
 @pytest.mark.parametrize("dims1_dims2", [("xy", "yz"), ("yz", "xz")])
-def test_AdvectionSolver_symmetry_2D(
-    p: int, interpolation_scheme: str, dims1_dims2: Tuple[str, str]
-):
+def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, str]):
     """
     Assert that the solution is the same along each solver plane in 2D.
     """
@@ -62,7 +60,7 @@ def test_AdvectionSolver_symmetry_2D(
             idx, x, y, z, **{f"v{d1x}": 1, f"v{d1y}": 1}, xp=xp
         ),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         **{f"n{d1x}": N, f"n{d1y}": N},
     )
     solver2 = AdvectionSolver(
@@ -70,7 +68,7 @@ def test_AdvectionSolver_symmetry_2D(
             idx, x, y, z, **{f"v{d2x}": 1, f"v{d2y}": 1}, xp=xp
         ),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         **{f"n{d2x}": N, f"n{d2y}": N},
     )
 
@@ -88,8 +86,8 @@ def test_AdvectionSolver_symmetry_2D(
 
 
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: str):
+@pytest.mark.parametrize("GL", [True, False])
+def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
     """
     Assert that the result of a counter-clockwise rotation of a slotted disk is the
     same as the mirror of the result of a clockwise rotation.
@@ -105,7 +103,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: st
         p=p,
         nx=N,
         ny=N,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: slotted_disk(idx, x, y, z, rotation="cw", xp=xp),
@@ -114,7 +112,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: st
         p=p,
         nx=N,
         ny=N,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
     )
 
     # run solvers
@@ -130,8 +128,8 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: st
     assert l1_error < 1e-15
 
 
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
+@pytest.mark.parametrize("GL", [True, False])
+def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
     """
     Assert that the solution is equivariant under translation in 3D.
     """
@@ -143,7 +141,7 @@ def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
     solver1 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=1, vy=1, vz=1, xp=xp),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         nx=N,
         ny=N,
         nz=N,
@@ -151,7 +149,7 @@ def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=-1, vy=-1, vz=-1, xp=xp),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         nx=N,
         ny=N,
         nz=N,

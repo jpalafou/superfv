@@ -35,7 +35,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         nz: int = 1,
         p: int = 0,
         CFL: float = 0.8,
-        interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
+        GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = False,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
@@ -98,12 +98,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
             CFL: CFL number.
-            interpolation_scheme: Scheme to use for the interpolation of face nodes.
-                Possible values:
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points. Compute the flux integral using Gauss-Legendre quadrature.
-                - "transverse": Interpolate nodes at the cell face centers. Compute the
-                    flux integral using a transverse quadrature.
+            GL: Whether to use Gauss-Legendre quadrature for flux integration. If
+                `False`, the transverse quadrature is used.
             flux_recipe: Recipe for interpolating flux nodes. Possible values:
                 - 1: Interpolate conservative nodes from conservative cell averages.
                     Apply slope limiting to the conservative nodes. Transform to
@@ -182,7 +178,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             nz=nz,
             p=p,
             CFL=CFL,
-            interpolation_scheme=interpolation_scheme,
+            GL=GL,
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
             riemann_solver=riemann_solver,
