@@ -4,6 +4,7 @@ from typing import Literal, Tuple
 from .hydro import fluxes, prim_to_cons, sound_speed
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
+from .tools.stability import avoid0
 
 
 def advection_upwind(
@@ -174,18 +175,6 @@ def hllc(
         )
 
     return F
-
-
-def avoid0(xp: ModuleType, x: ArrayLike, eps: float = 1e-15) -> ArrayLike:
-    """
-    Robust small-denominator guard: clamp magnitude to at least eps, preserving sign.
-
-    Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
-        x: Array to be clamped.
-        eps: Small value to avoid division by zero.
-    """
-    return xp.where(x >= 0, xp.maximum(x, eps), xp.minimum(x, -eps))
 
 
 def hllc_operator(

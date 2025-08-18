@@ -1,10 +1,9 @@
 from typing import Any, Literal, Tuple
 
-import numpy as np
-
 from superfv.fv import DIM_TO_AXIS
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices, modify_slices
+from superfv.tools.stability import avoid0
 
 
 def inplace_central_difference(u: ArrayLike, axis: int, out: ArrayLike):
@@ -57,10 +56,7 @@ def inplace_1d_smooth_extrema_detector(
     # compute derivatives
     inplace_central_difference(u, axis, du)
     inplace_central_difference(du, axis, dv)
-    dv[...] = 0.5 * dv
-    dv[...] = xp.where(
-        np.logical_and(dv > -eps, dv < eps), np.where(dv < 0, -eps, eps), dv
-    )
+    dv[...] = avoid0(xp, 0.5 * dv, eps)
 
     # left detector
     vl[crop(axis, (1, -1))] = du[crop(axis, (0, -2))] - du[crop(axis, (1, -1))]

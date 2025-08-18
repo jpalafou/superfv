@@ -25,10 +25,10 @@ changes:
 - [x] clean up hydro/riemann solver modules
 - [x] fix: progress bar for allow_overshoot=True
 - [x] make gauss-legendre a boolean option
+- [x] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
 
 issues:
 - [ ] buffer size is not well understood
-- [ ] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
 - [ ] test_ZS and test_MOOD
