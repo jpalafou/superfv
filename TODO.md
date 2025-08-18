@@ -27,16 +27,15 @@ changes:
 - [x] make gauss-legendre a boolean option
 - [x] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
 - [x] move `self.timer.reset("current_step")` to called_at_beginning_of_step
+- [x] buffer fv_interpolate should be optional for the single-sweep case
 
 issues:
 - [ ] buffer size is not well understood
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
-- [ ] test_ZS and test_MOOD
 
 optimizations:
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 
 cosmetics:
 - [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
-- [ ] buffer fv_interpolate should be optional for the single-sweep case

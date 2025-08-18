@@ -21,7 +21,9 @@ def test_compute_dmp(dims, include_corners):
     arr = np.random.rand(*shape)
     out = np.empty(shape + (2,))
 
-    modified = compute_dmp(np, arr, tuple(dims), include_corners, out=out)
+    modified = compute_dmp(
+        np, arr, tuple(dims), out=out, include_corners=include_corners
+    )
     min_vals = out[:, :, :, :, 0]
     max_vals = out[:, :, :, :, 1]
 

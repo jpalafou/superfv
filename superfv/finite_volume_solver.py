@@ -658,7 +658,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="FiniteVolumeSolver.riemann_solver")
     def riemann_solver(
-        self, wl: ArrayLike, wr: ArrayLike, dim: Literal["x", "y", "z"], out: ArrayLike
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        out: ArrayLike,
     ):
         """
         Compute the numerical fluxes at the interface using the specified Riemann solver.
@@ -1271,11 +1276,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             x,
             y,
             z,
-            buffer,
-            SED=ZhangShu_config.SED,
-            include_corners=ZhangShu_config.include_corners,
-            tol=ZhangShu_config.tol,
             out=theta,
+            buffer=buffer,
+            tol=ZhangShu_config.tol,
+            include_corners=ZhangShu_config.include_corners,
+            SED=ZhangShu_config.SED,
         )
 
         # limit the face nodes
@@ -1328,7 +1333,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         left_state = wr[crop(axis, (pad - 1, -pad))]
         right_state = wl[crop(axis, (pad, -pad + 1))]
-        self.riemann_solver(left_state, right_state, dim, left_state)  # overwrite wl
+        self.riemann_solver(left_state, right_state, dim, out=left_state)
 
         # perform the integration
         if self.mesh.ndim == 1:
@@ -1396,11 +1401,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         out[...] = 0.0
 
         for dim in self.mesh.active_dims:
-            self._add_flux_divergence(dim, out)
+            self._add_flux_divergence(dim, out=out)
 
         return out
 
-    def _add_flux_divergence(self, dim: Literal["x", "y", "z"], out: ArrayLike):
+    def _add_flux_divergence(self, dim: Literal["x", "y", "z"], *, out: ArrayLike):
         """
         Add the flux divergence in the specified dimension to the output array.
 

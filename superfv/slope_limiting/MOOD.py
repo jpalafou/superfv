@@ -184,8 +184,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
             u_new[lim_slc],
             u_old[lim_slc],
             fv_solver.mesh.active_dims,
-            buffer,
-            NAD_violations,
+            out=NAD_violations,
+            buffer=buffer,
             rtol=NAD_rtol,
             atol=NAD_atol,
             global_dmp=global_dmp,
@@ -195,7 +195,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
     # compute smooth extrema
     if SED:
         inplace_smooth_extrema_detector(
-            xp, u_new[lim_slc], fv_solver.mesh.active_dims, buffer, alpha
+            xp,
+            u_new[lim_slc],
+            fv_solver.mesh.active_dims,
+            out=alpha,
+            buffer=buffer,
         )
         troubles[...] = xp.any(
             xp.logical_and(NAD_violations[interior] < 0, alpha[..., 0][interior] < 1),
@@ -252,8 +256,9 @@ def inplace_NAD_violations(
     u_new: ArrayLike,
     u_old: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    buffer: ArrayLike,
+    *,
     out: ArrayLike,
+    buffer: Optional[ArrayLike] = None,
     rtol: float = 1.0,
     atol: float = 0.0,
     global_dmp: bool = False,
@@ -267,8 +272,9 @@ def inplace_NAD_violations(
         u_new: New solution array. Has shape (nvars, nx, ny, nz).
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
-        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2).
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
+        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2) if `global_dmp` is
+            False. If `global_dmp` is True, this parameter is ignored.
         rtol: Relative tolerance for the NAD violations.
         atol: Absolute tolerance for the NAD violations.
         global_dmp: Whether to use global DMP.
@@ -278,10 +284,12 @@ def inplace_NAD_violations(
     if global_dmp:
         dmp_min = xp.min(u_old, axis=(1, 2, 3), keepdims=True)
         dmp_max = xp.max(u_old, axis=(1, 2, 3), keepdims=True)
+    elif buffer is None:
+        raise ValueError("Buffer must be provided if global_dmp is False.")
     else:
         dmp = buffer[..., :2]
         dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
-        compute_dmp(xp, u_old, active_dims, include_corners, dmp)
+        compute_dmp(xp, u_old, active_dims, out=dmp, include_corners=include_corners)
     dmp_range = dmp_max - dmp_min
     violations = xp.minimum(u_new - dmp_min, dmp_max - u_new) + rtol * dmp_range + atol
 
@@ -293,6 +301,7 @@ def inplace_PAD_violations(
     u_new: ArrayLike,
     physical_ranges: ArrayLike,
     physical_tols: float,
+    *,
     out: ArrayLike,
 ):
     """
@@ -391,28 +400,28 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     # broadcast cascade index to each face
     if "x" in mesh.active_dims:
         F[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, F_mask)
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = F_mask[interior] == i
             xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
     if "y" in mesh.active_dims:
         G[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, G_mask)
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = G_mask[interior] == i
             xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
     if "z" in mesh.active_dims:
         H[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, H_mask)
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = H_mask[interior] == i
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 
 def inplace_map_cells_values_to_face_values(
-    xp: ModuleType, cv: ArrayLike, axis: int, out: ArrayLike
+    xp: ModuleType, cv: ArrayLike, axis: int, *, out: ArrayLike
 ):
     """
     Map cell values to face values by taking the maximum of adjacent cell values.

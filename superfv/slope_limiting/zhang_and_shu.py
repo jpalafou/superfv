@@ -58,11 +58,12 @@ def compute_theta(
     x_nodes: Optional[ArrayLike],
     y_nodes: Optional[ArrayLike],
     z_nodes: Optional[ArrayLike],
-    buffer: ArrayLike,
+    *,
     out: ArrayLike,
+    buffer: ArrayLike,
+    tol: float = 1e-16,
     include_corners: bool = False,
     SED: bool = False,
-    tol: float = 1e-16,
 ):
     """
     Compute Zhang and Shu's a priori slope limiting parameter theta based on arrays of
@@ -74,11 +75,12 @@ def compute_theta(
         center_nodes: Array of central node values. Has shape (nvars, nx, ny, nz, 1).
         x_nodes, y_nodes, z_nodes: Optional array of x,y,z-face node values. Has shape
             (nvars, nx, ny, nz, 2*n_nodes). If None, the x,y,z face is not considered.
-        buffer: Array to which intermediate values are written.
         out: Array to which theta is written. Has shape (nvars, nx, ny, nz, 1).
+        tol: Small tolerance value for division.
+        buffer: Array to which intermediate values are written.
         include_corners: Whether to include corners when computing the discrete maximum
             principle. Defaults to False.
-        tol: Small tolerance value for division.
+        SED: Whether to use the smooth extrema detector to relax theta.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -94,7 +96,9 @@ def compute_theta(
         for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
         if arr is not None
     )
-    dmp_modified = compute_dmp(xp, u, active_dims, include_corners, dmp)
+    dmp_modified = compute_dmp(
+        xp, u, active_dims, out=dmp, include_corners=include_corners
+    )
 
     # compute nodal maximum principle
     node_mp[..., 0] = center_nodes[..., 0]
@@ -126,7 +130,11 @@ def compute_theta(
     if SED:
         alpha = buffer[..., :1]
         modified = inplace_smooth_extrema_detector(
-            xp, u, active_dims, buffer[..., 1:], alpha
+            xp,
+            u,
+            active_dims,
+            out=alpha,
+            buffer=buffer[..., 1:],
         )
         out[modified] = xp.where(alpha[modified] < 1, out[modified], 1)
     else:

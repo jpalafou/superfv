@@ -51,8 +51,9 @@ def compute_dmp(
     xp: Any,
     arr: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    include_corners: bool,
+    *,
     out: ArrayLike,
+    include_corners: bool,
 ) -> Tuple[slice, ...]:
     """
     Compute the minimum and maximum values of each point and its neighbors along
@@ -63,9 +64,9 @@ def compute_dmp(
         arr (ArrayLike): Array. First axis is assumed to be variable axis. Has shape
             (nvars, nx, ny, nz).
         active_dims (Tuple[Literal["x", "y", "z"], ...]): Dimensions to check.
-        include_corners (bool): Whether to include corners.
         out (ArrayLike): Output array to store the results. Should have shape
             (nvars, nx, ny, nz, >=2).
+        include_corners (bool): Whether to include corners.
 
     Returns:
         Slice objects indicating the modified regions in the output array.

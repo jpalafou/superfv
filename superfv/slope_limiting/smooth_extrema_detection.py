@@ -6,7 +6,7 @@ from superfv.tools.slicing import crop, merge_slices, modify_slices
 from superfv.tools.stability import avoid0
 
 
-def inplace_central_difference(u: ArrayLike, axis: int, out: ArrayLike):
+def inplace_central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
     """
     Compute 1D central difference, ignoring mesh size.
 
@@ -23,6 +23,7 @@ def inplace_1d_smooth_extrema_detector(
     u: ArrayLike,
     dim: Literal["x", "y", "z"],
     buffer: ArrayLike,
+    *,
     out: ArrayLike,
     eps: float = 1e-16,
 ):
@@ -86,6 +87,7 @@ def inplace_2d_smooth_extrema_detector(
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     buffer: ArrayLike,
+    *,
     out: ArrayLike,
     eps: float = 1e-16,
 ):
@@ -128,6 +130,7 @@ def inplace_3d_smooth_extrema_detector(
     xp: Any,
     u: ArrayLike,
     buffer: ArrayLike,
+    *,
     out: ArrayLike,
     eps: float = 1e-16,
 ):
@@ -175,8 +178,9 @@ def inplace_smooth_extrema_detector(
     xp: Any,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    buffer: ArrayLike,
+    *,
     out: ArrayLike,
+    buffer: ArrayLike,
     eps: float = 1e-16,
 ):
     """
@@ -188,11 +192,11 @@ def inplace_smooth_extrema_detector(
             (nvars, nx, ny, nz).
         active_dims: Tuple of dimensions along which to compute the smooth extrema
             detector. Has length 1, 2, or 3 with possible values "x", "y", "z".
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
         buffer: Array to which temporary values are assigned. Has shape
             (nvars, nx, ny, nz, >=4) for 1D,
             (nvars, nx, ny, nz, >=6) for 2D,
             or (nvars, nx, ny, nz, >=7) for 3D
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
