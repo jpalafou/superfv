@@ -20,6 +20,10 @@ changes:
 - [x] remove redundant interpolation code in snapshot
 - [x] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
 - [x] add HLLC riemann solver
+- [x] redundant PAD checks in ZS_adaptive_dt and detect_troubles
+- [x] vestigial 'half-dt' option in MOOD
+- [x] clean up hydro/riemann solver modules
+- [x] fix: progress bar for allow_overshoot=True
 
 issues:
 - [ ] buffer size is not well understood
@@ -27,8 +31,6 @@ issues:
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
 - [ ] test_ZS and test_MOOD
-- [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
-- [ ] vestigial 'half-dt' option in MOOD
 
 optimizations:
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
@@ -37,12 +39,4 @@ cosmetics:
 - [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
 - [ ] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 - [ ] buffer fv_interpolate should be optional for the single-sweep case
-- [ ] clean up hydro/riemann solver modules
 - [ ] make gauss-legendre a boolean option
-- [ ] fix: progress bar for allow_overshoot=True
-- [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
-- [ ] expand README.md
-
-very ambitious changes:
-- [ ] multi-core support
-- [ ] coverage
