@@ -64,6 +64,61 @@ class ExplicitODESolver(ABC):
           routines at the end of each step.
     """
 
+    def __init__(self, u0: np.ndarray, array_manager: Optional[ArrayManager] = None):
+        """
+        Initializes the ODE solver.
+
+        Args:
+            u0: Initial state as an array.
+            array_manager: Optional ArrayManager instance to manage arrays.
+        """
+        # initialize time values
+        self.t = 0.0
+        self.dt = 0.0
+
+        # initialize logs
+        self.reset_global_logs()
+        self.reset_stepwise_logs()
+        self.reset_substepwise_logs()
+
+        # initialize array manager
+        self.arrays = ArrayManager() if array_manager is None else array_manager
+        self.arrays.add("u", u0)
+        self.arrays.add("k0", np.empty_like(u0))
+        self.arrays.add("k1", np.empty_like(u0))
+        self.arrays.add("k2", np.empty_like(u0))
+        self.arrays.add("k3", np.empty_like(u0))
+        self.arrays.add("unew", np.empty_like(u0))
+        self.arrays["k0"].fill(np.nan)
+        self.arrays["k1"].fill(np.nan)
+        self.arrays["k2"].fill(np.nan)
+        self.arrays["k3"].fill(np.nan)
+        self.arrays["unew"].fill(np.nan)
+
+        # initialize timer
+        self.timer = Timer(cats=["!ExplicitODESolver.integrate.body", "current_step"])
+
+        # initialize snapshots
+        self.snapshots: Snapshots = Snapshots()
+        self.minisnapshots: Dict[str, list] = {
+            "t": [],
+            "dt": [],
+            "n_steps": [],
+            "n_substeps": [],
+            "n_dt_revisions": [],
+            "run_time": [],
+        }
+
+        # initialize commit details
+        self.commit_details = self._get_commit_details()
+
+        # assign default timestep revision and dt criterion
+        self._dt_criterion = self.default_dt_criterion
+        self._compute_revised_dt = self.default_compute_revised_dt
+
+        # assign stepper signature
+        self.stepper: Callable[[float, ArrayLike, float], None]
+
     @abstractmethod
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
@@ -174,129 +229,49 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("compute_revised_dt method not implemented.")
 
-    def read_snapshots(self) -> bool:
+    @MethodTimer(cat="ExplicitODESolver.take_step")
+    def take_step(self, target_time: Optional[float] = None):
         """
-        Read snapshots from the snapshot directory. Override to load more data.
-
-        Returns:
-            True if snapshots were read successfully, False otherwise.
-        """
-        raise NotImplementedError("read_snapshots method not implemented.")
-
-    def write_snapshots(self, overwrite: bool = False):
-        """
-        Write snapshots to the snapshot directory. Override to save more data.
+        Take a single step in the integration.
 
         Args:
-            overwrite: Whether to overwrite the snapshot directory if it exists.
+            target_time (Optional[float]): Time to avoid overshooting.
         """
-        raise NotImplementedError("write_snapshots method not implemented.")
+        self.called_at_beginning_of_step()
 
-    def snapshot(self):
-        """
-        Snapshot function. Override to save more data to `self.snapshots`.
-        """
-        pass
+        t, u = self.t, self.arrays["u"]
+        dt = clamp_dt(t, self.compute_dt(t, u), target_time)
 
-    def minisnapshot(self):
-        """
-        Mini snapshot function. Is executed after every step. Override to save more
-        data to `self.minisnapshots`.
-        """
-        self.minisnapshots["t"].append(self.t)
-        self.minisnapshots["dt"].append(self.dt)
-        self.minisnapshots["n_steps"].append(self.n_steps)
-        self.minisnapshots["n_substeps"].append(self.n_substeps)
-        self.minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
-        self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
+        while True:
+            self.reset_substepwise_logs()
+            self.stepper(t, u, dt)  # revises self.arrays["unew"]
+            if self.dt_criterion(t + dt, self.arrays["unew"]):
+                break
+            dt = clamp_dt(t, self.compute_revised_dt(t, u, dt), target_time)
+            self.n_dt_revisions += 1
 
-    def __init__(self, u0: np.ndarray, array_manager: Optional[ArrayManager] = None):
-        """
-        Initializes the ODE solver.
+        # update attributes
+        self.arrays["u"][...] = self.arrays["unew"]
+        self.t += dt
+        self.dt = dt
 
-        Args:
-            u0: Initial state as an array.
-            array_manager: Optional ArrayManager instance to manage arrays.
-        """
-        # initialize time values
-        self.t = 0.0
-        self.dt = 0.0
+        self.called_at_end_of_step()
 
-        # initialize logs
-        self.reset_global_logs()
+    def called_at_beginning_of_step(self):
+        """
+        Helper function called at the beginning of each step starting with a timer
+        start.
+        """
         self.reset_stepwise_logs()
-        self.reset_substepwise_logs()
+        self.timer.start("current_step", reset=True)
 
-        # initialize array manager
-        self.arrays = ArrayManager() if array_manager is None else array_manager
-        self.arrays.add("u", u0)
-        self.arrays.add("k0", np.empty_like(u0))
-        self.arrays.add("k1", np.empty_like(u0))
-        self.arrays.add("k2", np.empty_like(u0))
-        self.arrays.add("k3", np.empty_like(u0))
-        self.arrays.add("unew", np.empty_like(u0))
-        self.arrays["k0"].fill(np.nan)
-        self.arrays["k1"].fill(np.nan)
-        self.arrays["k2"].fill(np.nan)
-        self.arrays["k3"].fill(np.nan)
-        self.arrays["unew"].fill(np.nan)
-
-        # initialize timer
-        self.timer = Timer(cats=["!ExplicitODESolver.integrate.body", "current_step"])
-
-        # initialize snapshots
-        self.snapshots: Snapshots = Snapshots()
-        self.minisnapshots: Dict[str, list] = {
-            "t": [],
-            "dt": [],
-            "n_steps": [],
-            "n_substeps": [],
-            "n_dt_revisions": [],
-            "run_time": [],
-        }
-
-        # initialize commit details
-        self.commit_details = self._get_commit_details()
-
-        # assign default timestep revision and dt criterion
-        self._dt_criterion = self.default_dt_criterion
-        self._compute_revised_dt = self.default_compute_revised_dt
-
-        # assign stepper signature
-        self.stepper: Callable[[float, ArrayLike, float], None]
-
-    def _get_commit_details(self) -> dict:
+    def called_at_end_of_step(self):
         """
-        Returns a dict summary of the commit details of the repository.
+        Helper function called at the end of each step ending with a timer stop.
         """
-        repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        try:
-            # Navigate to the repository path and get commit details
-            result = subprocess.run(
-                ["git", "-C", repo_path, "log", "-1", "--pretty=format:%H|%an|%ai|%D"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
-            commit_info = result.stdout.strip().split("|")
-            commit_hash = commit_info[0]
-            author_name = commit_info[1]
-            commit_date = commit_info[2]
-            branch_name = (
-                commit_info[3].split(",")[0].strip().split()[-1]
-                if len(commit_info) > 3
-                else None
-            )
-
-            return {
-                "commit_hash": commit_hash,
-                "author_name": author_name,
-                "commit_date": commit_date,
-                "branch_name": branch_name,
-            }
-        except subprocess.CalledProcessError as e:
-            return {"error": f"An error occurred: {e.stderr.strip()}"}
+        self.timer.stop("current_step")
+        self.increment_stepwise_logs()
+        self.increment_global_logs()
 
     @MethodTimer(cat="ExplicitODESolver.integrate")
     def integrate(
@@ -476,49 +451,41 @@ class ExplicitODESolver(ABC):
         if verbose:
             status_print(self.build_closing_message(), closing=True)
 
-    @MethodTimer(cat="ExplicitODESolver.take_step")
-    def take_step(self, target_time: Optional[float] = None):
+    def snapshot(self):
         """
-        Take a single step in the integration.
+        Snapshot function. Override to save more data to `self.snapshots`.
+        """
+        pass
+
+    def minisnapshot(self):
+        """
+        Mini snapshot function. Is executed after every step. Override to save more
+        data to `self.minisnapshots`.
+        """
+        self.minisnapshots["t"].append(self.t)
+        self.minisnapshots["dt"].append(self.dt)
+        self.minisnapshots["n_steps"].append(self.n_steps)
+        self.minisnapshots["n_substeps"].append(self.n_substeps)
+        self.minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
+        self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
+
+    def read_snapshots(self) -> bool:
+        """
+        Read snapshots from the snapshot directory. Override to load more data.
+
+        Returns:
+            True if snapshots were read successfully, False otherwise.
+        """
+        raise NotImplementedError("read_snapshots method not implemented.")
+
+    def write_snapshots(self, overwrite: bool = False):
+        """
+        Write snapshots to the snapshot directory. Override to save more data.
 
         Args:
-            target_time (Optional[float]): Time to avoid overshooting.
+            overwrite: Whether to overwrite the snapshot directory if it exists.
         """
-        self.called_at_beginning_of_step()
-
-        t, u = self.t, self.arrays["u"]
-        dt = clamp_dt(t, self.compute_dt(t, u), target_time)
-
-        while True:
-            self.reset_substepwise_logs()
-            self.stepper(t, u, dt)  # revises self.arrays["unew"]
-            if self.dt_criterion(t + dt, self.arrays["unew"]):
-                break
-            dt = clamp_dt(t, self.compute_revised_dt(t, u, dt), target_time)
-            self.n_dt_revisions += 1
-
-        # update attributes
-        self.arrays["u"][...] = self.arrays["unew"]
-        self.t += dt
-        self.dt = dt
-
-        self.called_at_end_of_step()
-
-    def called_at_beginning_of_step(self):
-        """
-        Helper function called at the beginning of each step starting with a timer
-        start.
-        """
-        self.reset_stepwise_logs()
-        self.timer.start("current_step", reset=True)
-
-    def called_at_end_of_step(self):
-        """
-        Helper function called at the end of each step ending with a timer stop.
-        """
-        self.timer.stop("current_step")
-        self.increment_stepwise_logs()
-        self.increment_global_logs()
+        raise NotImplementedError("write_snapshots method not implemented.")
 
     def reset_global_logs(self):
         """
@@ -647,3 +614,36 @@ class ExplicitODESolver(ABC):
         k3[...] = self.f(t + dt, u + dt * k2)
         unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
         self.increment_substepwise_logs()
+
+    def _get_commit_details(self) -> dict:
+        """
+        Returns a dict summary of the commit details of the repository.
+        """
+        repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            # Navigate to the repository path and get commit details
+            result = subprocess.run(
+                ["git", "-C", repo_path, "log", "-1", "--pretty=format:%H|%an|%ai|%D"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            commit_info = result.stdout.strip().split("|")
+            commit_hash = commit_info[0]
+            author_name = commit_info[1]
+            commit_date = commit_info[2]
+            branch_name = (
+                commit_info[3].split(",")[0].strip().split()[-1]
+                if len(commit_info) > 3
+                else None
+            )
+
+            return {
+                "commit_hash": commit_hash,
+                "author_name": author_name,
+                "commit_date": commit_date,
+                "branch_name": branch_name,
+            }
+        except subprocess.CalledProcessError as e:
+            return {"error": f"An error occurred: {e.stderr.strip()}"}
