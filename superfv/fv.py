@@ -554,7 +554,16 @@ def _fv_interpolate_recursive_helper(
             child_slices.append(modified)
         else:
             downstream = _fv_interpolate_recursive_helper(
-                xp, stencil_func, u, dims, coords, p, buffer, out, layers, next_path
+                xp,
+                stencil_func,
+                u,
+                dims,
+                coords,
+                p,
+                layers,
+                next_path,
+                out=out,
+                buffer=buffer,
             )
             effective = merge_slices(modified, downstream)
             child_slices.append(effective)

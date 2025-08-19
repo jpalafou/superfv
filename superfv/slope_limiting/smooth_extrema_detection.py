@@ -55,8 +55,8 @@ def inplace_1d_smooth_extrema_detector(
     vr = buffer[..., 3]
 
     # compute derivatives
-    inplace_central_difference(u, axis, du)
-    inplace_central_difference(du, axis, dv)
+    inplace_central_difference(u, axis, out=du)
+    inplace_central_difference(du, axis, out=dv)
     dv[...] = avoid0(xp, 0.5 * dv, eps)
 
     # left detector
@@ -114,10 +114,10 @@ def inplace_2d_smooth_extrema_detector(
     alpha_dim2 = buffer[..., 5:6]
 
     modified1 = inplace_1d_smooth_extrema_detector(
-        xp, u, dim1, buffer[..., :4], alpha_dim1, eps
+        xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
     )
     modified2 = inplace_1d_smooth_extrema_detector(
-        xp, u, dim2, buffer[..., :4], alpha_dim2, eps
+        xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
     )
 
     modified = merge_slices(modified1, modified2)
@@ -158,13 +158,13 @@ def inplace_3d_smooth_extrema_detector(
     alpha_dim3 = buffer[..., 6:7]
 
     modified1 = inplace_1d_smooth_extrema_detector(
-        xp, u, dim1, buffer[..., :4], alpha_dim1, eps
+        xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
     )
     modified2 = inplace_1d_smooth_extrema_detector(
-        xp, u, dim2, buffer[..., :4], alpha_dim2, eps
+        xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
     )
     modified3 = inplace_1d_smooth_extrema_detector(
-        xp, u, dim3, buffer[..., :4], alpha_dim3, eps
+        xp, u, dim3, buffer[..., :4], out=alpha_dim3, eps=eps
     )
 
     modified = merge_slices(modified1, modified2, modified3)
@@ -205,10 +205,12 @@ def inplace_smooth_extrema_detector(
     """
     if len(active_dims) == 1:
         return inplace_1d_smooth_extrema_detector(
-            xp, u, active_dims[0], buffer, out, eps
+            xp, u, active_dims[0], buffer, out=out, eps=eps
         )
     elif len(active_dims) == 2:
-        return inplace_2d_smooth_extrema_detector(xp, u, active_dims, buffer, out, eps)
+        return inplace_2d_smooth_extrema_detector(
+            xp, u, active_dims, buffer, out=out, eps=eps
+        )
     elif len(active_dims) == 3:
-        return inplace_3d_smooth_extrema_detector(xp, u, buffer, out, eps)
+        return inplace_3d_smooth_extrema_detector(xp, u, buffer, out=out, eps=eps)
     raise ValueError("active_dims must have length 1, 2, or 3.")

@@ -6,7 +6,10 @@ from typing import Literal, Optional
 @dataclass
 class InterpolationScheme(ABC):
     name: str
+    p: int
+    gauss_legendre: bool = False
     flux_recipe: Optional[Literal[1, 2, 3]] = None
+    lazy_primitives: bool = False
     limiter: Optional[str] = None
 
     @abstractmethod
@@ -22,11 +25,11 @@ class InterpolationScheme(ABC):
 @dataclass
 class polyInterpolationScheme(InterpolationScheme):
     name: Literal["poly"] = "poly"
-    flux_recipe: Optional[Literal[1, 2, 3]] = None
-    limiter: Optional[Literal["zhang-shu"]] = None
     p: int = 0
-    lazy_primitives: bool = False
     gauss_legendre: bool = False
+    flux_recipe: Optional[Literal[1, 2, 3]] = None
+    lazy_primitives: bool = False
+    limiter: Optional[Literal["zhang-shu"]] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -40,9 +43,11 @@ class polyInterpolationScheme(InterpolationScheme):
 @dataclass
 class musclInterpolationScheme(InterpolationScheme):
     name: Literal["muscl"] = "muscl"
-    flux_recipe: Optional[Literal[1, 2, 3]] = None
-    limiter: Optional[Literal["minmod", "moncen"]] = None
     p: int = 1
+    gauss_legendre: bool = False
+    flux_recipe: Optional[Literal[1, 2, 3]] = None
+    lazy_primitives: bool = False  # meaningless for MUSCL, a second-order scheme
+    limiter: Optional[Literal["minmod", "moncen"]] = None
 
     def key(self) -> str:
         return f"{self.name}_{self.limiter}"
