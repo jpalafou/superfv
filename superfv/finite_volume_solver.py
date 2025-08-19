@@ -75,83 +75,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     dimensions.
     """
 
-    @abstractmethod
-    def define_vars(self) -> VariableIndexMap:
-        """
-        Define the names of the solver variables.
-
-        Returns:
-            VariableIndexMap object.
-        """
-        pass
-
-    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
-        """
-        Convert primitive variables to conservative variables.
-
-        Args:
-            w: Array of primitive variables.
-
-        Returns:
-            Array of conservative variables.
-        """
-        raise NotImplementedError("Conservative variables not implemented.")
-
-    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
-        """
-        Convert conservative variables to primitive variables.
-
-        Args:
-            u: Array of conservative variables.
-
-        Returns:
-            Array of primitive variables.
-        """
-        raise NotImplementedError("Primitive variables not implemented.")
-
-    def dummy_riemann_solver(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
-        """
-        Dummy Riemann solver to give an example of the required signature.
-
-        Args:
-            wl: Array of primitive variables to the left of the interface. Has shape
-                (nvars, nx, ny, nz, ...).
-            wr: Array of primitive variables to the right of the interface. Has shape
-                (nvars, nx, ny, nz, ...).
-            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
-        """
-        raise NotImplementedError("Riemann solver not implemented.")
-
-    @abstractmethod
-    def compute_dt(self, t: float, u: ArrayLike) -> float:
-        """
-        Compute the time-step size.
-
-        Args:
-            t: Time value.
-            u: Array of finite volume averaged conservative variables. Has shape
-                (nvars, nx, ny, nz).
-
-        Returns:
-            Time-step size.
-        """
-        pass
-
-    @abstractmethod
-    def log_quantity(self) -> Dict[str, Any]:
-        """
-        Log a quantity at the end of each time step.
-
-        Returns:
-            Dictionary of logged quantities.
-        """
-        pass
-
     def __init__(
         self,
         ic: FieldFunction,
@@ -870,6 +793,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # helper attribute
         self.flux_names = {"x": "F", "y": "G", "z": "H"}
 
+    def nodes_per_face(self, scheme: InterpolationScheme) -> int:
+        """ """
+        if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
+            p = scheme.p
+            return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
+        return 1
+
     def _init_snapshots(self, log_every_step: bool):
         self.log_every_step = log_every_step
 
@@ -878,78 +808,84 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for key in keys:
             self.minisnapshots[key] = []
 
-    def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
+    @abstractmethod
+    def define_vars(self) -> VariableIndexMap:
         """
-        Returns whether unew is free of PAD violations.
-
-        Args:
-            tnew: Unused time value for the new state.
-            unew: Array of conservative, cell-averaged values. Shape:
-                (nvars, nx, ny, nz).
+        Define the names of the solver variables.
 
         Returns:
-            True if unew satisfies the PAD criterion, False otherwise.
+            VariableIndexMap object.
         """
-        xp = self.xp
-        PAD_bounds = self.ZhangShu_config.PAD_bounds
-        PAD_atol = self.ZhangShu_config.PAD_atol
+        pass
 
-        if PAD_bounds is None:
-            raise ValueError(
-                "PAD bounds are not set. Please provide PAD bounds in the "
-                "ZhangShuConfig."
-            )
-
-        PAD_violations = self.arrays["buffer"][self.interior][..., 0]
-        MOOD.inplace_PAD_violations(xp, unew, PAD_bounds, PAD_atol, out=PAD_violations)
-
-        return not xp.any(PAD_violations < 0)
-
-    def adaptive_dt_revision(self, t, u, dt):
+    @abstractmethod
+    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
         """
-        Returns dt/2 if the maximum number of adaptive timestep revisions hasn't been
-        exceeded.
+        Convert primitive variables to conservative variables.
 
         Args:
-            t: Unused time value.
-            u: Unused array of conservative, cell-averaged values.
-            dt: Proposed timestep size.
+            w: Array of primitive variables.
 
         Returns:
-            Half the proposed timestep size if the maximum number of revisions hasn't
-            been exceeded, otherwise raises a ValueError.
+            Array of conservative variables.
         """
-        n_dt_revisions = self.n_dt_revisions
-        max_dt_revisions = self.ZhangShu_config.max_dt_revisions
+        pass
 
-        if n_dt_revisions < max_dt_revisions:
-            return dt / 2
-        raise ValueError(
-            f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations."
-        )
-
-    @MethodTimer(cat="FiniteVolumeSolver.f")
-    def f(self, t: float, u: ArrayLike) -> ArrayLike:
+    @abstractmethod
+    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
         """
-        Compute the right-hand side of the ODE:
+        Convert conservative variables to primitive variables.
 
-            du/dt = -∇·F(u)
+        Args:
+            u: Array of conservative variables.
+
+        Returns:
+            Array of primitive variables.
+        """
+        pass
+
+    @abstractmethod
+    def compute_dt(self, t: float, u: ArrayLike) -> float:
+        """
+        Compute the time-step size.
 
         Args:
             t: Time value.
-            u: Array of conservative, cell-averaged values. Shape: (nvars, nx, ny, nz).
+            u: Array of finite volume averaged conservative variables. Has shape
+                (nvars, nx, ny, nz).
 
         Returns:
-            Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
+            Time-step size.
         """
-        self.update_workspaces(t, u, self.base_scheme)
-        self.inplace_compute_fluxes(t, self.base_scheme)
+        pass
 
-        if self.MOOD:
-            self.MOOD_loop(t)
+    def dummy_riemann_solver(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike:
+        """
+        Dummy Riemann solver to give an example of the required signature.
 
-        out = self.compute_RHS().copy()
-        return out
+        Args:
+            wl: Array of primitive variables to the left of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            wr: Array of primitive variables to the right of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
+        """
+        raise NotImplementedError("Riemann solver not implemented.")
+
+    @abstractmethod
+    def log_quantity(self) -> Dict[str, Any]:
+        """
+        Log a quantity at the end of each time step.
+
+        Returns:
+            Dictionary of logged quantities.
+        """
+        pass
 
     def update_workspaces(
         self,
@@ -1002,43 +938,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # 4) write interior, then primitive BCs
         _w_[interior] = _wbf_[interior0]
         self.inplace_apply_bc(t, _w_, scheme=scheme, primitives=True)
-
-    @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
-    def inplace_compute_fluxes(self, t: float, scheme: InterpolationScheme):
-        """
-        Write fluxes based on the current workspaces `_u_` and maybe `_w_` to the flux
-            arrays `F`, `G`, and `H`.
-
-        Args:
-            t: Time value.
-            scheme: Interpolation scheme to use for the flux computation.
-
-        Returns:
-            None. The flux arrays `F`, `G`, and `H` are updated in place.
-        """
-        _u_ = self.arrays["_u_"]
-        _w_ = self.arrays["_w_"]
-
-        # update the '_nodes' arrays with the interpolated face nodes
-        primitive_nodes = scheme.flux_recipe in (2, 3)
-        for dim in self.mesh.active_dims:
-            if scheme.flux_recipe == 1:
-                self.inplace_interpolate_faces(_u_, dim, scheme)
-            elif scheme.flux_recipe == 2:
-                self.inplace_interpolate_faces(_u_, dim, scheme, conv_to_prim=True)
-            elif scheme.flux_recipe == 3:
-                self.inplace_interpolate_faces(_w_, dim, scheme)
-            else:
-                raise ValueError(f"Unknown scheme flux_recipe: {scheme.flux_recipe}")
-
-        # Zhang-Shu limiter
-        if scheme.limiter == "zhang-shu":
-            self.zhang_shu_limiter(scheme.p, primitive_nodes)
-
-        # integrate the fluxes at the cell faces
-        for dim in self.mesh.active_dims:
-            self.validate_nodal_bc(t, dim, scheme)
-            self.inplace_integrate_fluxes(dim, scheme)
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
     def inplace_apply_bc(
@@ -1190,55 +1089,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # convert to primitive variables if requested
             out[...] = self.primitives_from_conservatives(out)
 
-    def validate_nodal_bc(
-        self,
-        t: float,
-        dim: Literal["x", "y", "z"],
-        scheme: InterpolationScheme,
-    ):
-        """
-        Ensure cell face nodes are primitive variables and apply boundary conditions.
-
-        Args:
-            t: Time value.
-            dim: Dimension in which to interpolate the face nodes. Possible values:
-                - "x": Interpolate in the x-direction.
-                - "y": Interpolate in the y-direction.
-                - "z": Interpolate in the z-direction.
-            p: Polynomial degree of the spatial discretization.
-            scheme: Interpolation scheme to use for the interpolation.
-
-        Returns:
-            None. Modifies `self.arrays[dim + "_nodes"]` in place.
-        """
-        n = self.nodes_per_face(scheme)
-        conv_to_prim = scheme.flux_recipe == 1
-
-        nodes = self.arrays[dim + "_nodes"]
-
-        if conv_to_prim:
-            nodes[...] = self.primitives_from_conservatives(nodes)
-
-        ul = nodes[crop(4, (None, n))]
-        ur = nodes[crop(4, (n, 2 * n))]
-
-        self.inplace_apply_bc(
-            t,
-            ul,
-            scheme=scheme,
-            primitives=True,
-            pointwise=True,
-            cell_region=dim + "l",
-        )
-        self.inplace_apply_bc(
-            t,
-            ur,
-            scheme=scheme,
-            primitives=True,
-            pointwise=True,
-            cell_region=dim + "r",
-        )
-
     @MethodTimer(cat="FiniteVolumeSolver.zhang_shu_limiter")
     def zhang_shu_limiter(self, p: int, primitives: bool = False):
         """
@@ -1290,6 +1140,55 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             y[...] = zhang_shu_operator(y, u[..., np.newaxis], theta)
         if z is not None:
             z[...] = zhang_shu_operator(z, u[..., np.newaxis], theta)
+
+    def validate_nodal_bc(
+        self,
+        t: float,
+        dim: Literal["x", "y", "z"],
+        scheme: InterpolationScheme,
+    ):
+        """
+        Ensure cell face nodes are primitive variables and apply boundary conditions.
+
+        Args:
+            t: Time value.
+            dim: Dimension in which to interpolate the face nodes. Possible values:
+                - "x": Interpolate in the x-direction.
+                - "y": Interpolate in the y-direction.
+                - "z": Interpolate in the z-direction.
+            p: Polynomial degree of the spatial discretization.
+            scheme: Interpolation scheme to use for the interpolation.
+
+        Returns:
+            None. Modifies `self.arrays[dim + "_nodes"]` in place.
+        """
+        n = self.nodes_per_face(scheme)
+        conv_to_prim = scheme.flux_recipe == 1
+
+        nodes = self.arrays[dim + "_nodes"]
+
+        if conv_to_prim:
+            nodes[...] = self.primitives_from_conservatives(nodes)
+
+        ul = nodes[crop(4, (None, n))]
+        ur = nodes[crop(4, (n, 2 * n))]
+
+        self.inplace_apply_bc(
+            t,
+            ul,
+            scheme=scheme,
+            primitives=True,
+            pointwise=True,
+            cell_region=dim + "l",
+        )
+        self.inplace_apply_bc(
+            t,
+            ur,
+            scheme=scheme,
+            primitives=True,
+            pointwise=True,
+            cell_region=dim + "r",
+        )
 
     @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
     def inplace_integrate_fluxes(
@@ -1368,12 +1267,42 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 
-    def nodes_per_face(self, scheme: InterpolationScheme) -> int:
-        """ """
-        if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
-            p = scheme.p
-            return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
-        return 1
+    @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
+    def inplace_compute_fluxes(self, t: float, scheme: InterpolationScheme):
+        """
+        Write fluxes based on the current workspaces `_u_` and maybe `_w_` to the flux
+            arrays `F`, `G`, and `H`.
+
+        Args:
+            t: Time value.
+            scheme: Interpolation scheme to use for the flux computation.
+
+        Returns:
+            None. The flux arrays `F`, `G`, and `H` are updated in place.
+        """
+        _u_ = self.arrays["_u_"]
+        _w_ = self.arrays["_w_"]
+
+        # update the '_nodes' arrays with the interpolated face nodes
+        primitive_nodes = scheme.flux_recipe in (2, 3)
+        for dim in self.mesh.active_dims:
+            if scheme.flux_recipe == 1:
+                self.inplace_interpolate_faces(_u_, dim, scheme)
+            elif scheme.flux_recipe == 2:
+                self.inplace_interpolate_faces(_u_, dim, scheme, conv_to_prim=True)
+            elif scheme.flux_recipe == 3:
+                self.inplace_interpolate_faces(_w_, dim, scheme)
+            else:
+                raise ValueError(f"Unknown scheme flux_recipe: {scheme.flux_recipe}")
+
+        # Zhang-Shu limiter
+        if scheme.limiter == "zhang-shu":
+            self.zhang_shu_limiter(scheme.p, primitive_nodes)
+
+        # integrate the fluxes at the cell faces
+        for dim in self.mesh.active_dims:
+            self.validate_nodal_bc(t, dim, scheme)
+            self.inplace_integrate_fluxes(dim, scheme)
 
     def MOOD_loop(self, t: float):
         """
@@ -1427,6 +1356,106 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             -(1 / h) * (F[crop(axis, (1, None))] - F[crop(axis, (None, -1))]),
             out=out,
         )
+
+    @MethodTimer(cat="FiniteVolumeSolver.f")
+    def f(self, t: float, u: ArrayLike) -> ArrayLike:
+        """
+        Compute the right-hand side of the ODE:
+
+            du/dt = -∇·F(u)
+
+        Args:
+            t: Time value.
+            u: Array of conservative, cell-averaged values. Shape: (nvars, nx, ny, nz).
+
+        Returns:
+            Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
+        """
+        self.update_workspaces(t, u, self.base_scheme)
+        self.inplace_compute_fluxes(t, self.base_scheme)
+
+        if self.MOOD:
+            self.MOOD_loop(t)
+
+        out = self.compute_RHS().copy()
+        return out
+
+    def build_opening_message(self) -> str:
+        """
+        Build the opening message for the FV solver.
+        """
+        return ""
+
+    def build_update_message(self) -> str:
+        """
+        Build the update message for the FV solver.
+        """
+        return f"Step #{self.n_steps} @ t={self.t:<.2e} | dt={self.dt:<.2e}"
+
+    def build_closing_message(self) -> str:
+        """
+        Build the closing message for the FV solver.
+        """
+        return self.build_update_message() + " | (done)"
+
+    def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
+        """
+        Returns whether unew is free of PAD violations.
+
+        Args:
+            tnew: Unused time value for the new state.
+            unew: Array of conservative, cell-averaged values. Shape:
+                (nvars, nx, ny, nz).
+
+        Returns:
+            True if unew satisfies the PAD criterion, False otherwise.
+        """
+        xp = self.xp
+        PAD_bounds = self.ZhangShu_config.PAD_bounds
+        PAD_atol = self.ZhangShu_config.PAD_atol
+
+        if PAD_bounds is None:
+            raise ValueError(
+                "PAD bounds are not set. Please provide PAD bounds in the "
+                "ZhangShuConfig."
+            )
+
+        PAD_violations = self.arrays["buffer"][self.interior][..., 0]
+        MOOD.inplace_PAD_violations(xp, unew, PAD_bounds, PAD_atol, out=PAD_violations)
+
+        return not xp.any(PAD_violations < 0)
+
+    def adaptive_dt_revision(self, t, u, dt):
+        """
+        Returns dt/2 if the maximum number of adaptive timestep revisions hasn't been
+        exceeded.
+
+        Args:
+            t: Unused time value.
+            u: Unused array of conservative, cell-averaged values.
+            dt: Proposed timestep size.
+
+        Returns:
+            Half the proposed timestep size if the maximum number of revisions hasn't
+            been exceeded, otherwise raises a ValueError.
+        """
+        n_dt_revisions = self.n_dt_revisions
+        max_dt_revisions = self.ZhangShu_config.max_dt_revisions
+
+        if n_dt_revisions < max_dt_revisions:
+            return dt / 2
+        raise ValueError(
+            f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations."
+        )
+
+    def called_at_end_of_step(self):
+        """
+        Overwrite `called_at_end_of_step` of the ODE solver to synchronize the GPU if
+        using CuPy, and to perform any additional cleanup or logging.
+        """
+        if self.cupy:
+            self.xp.cuda.Device().synchronize()
+        super().called_at_end_of_step()
 
     def snapshot(self):
         """
@@ -1530,15 +1559,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             self.MOOD_config.increment_iter_count_hist()
 
-    def called_at_end_of_step(self):
-        """
-        Overwrite `called_at_end_of_step` of the ODE solver to synchronize the GPU if
-        using CuPy, and to perform any additional cleanup or logging.
-        """
-        if self.cupy:
-            self.xp.cuda.Device().synchronize()
-        super().called_at_end_of_step()
-
     @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
         """
@@ -1565,24 +1585,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)
-
-    def build_opening_message(self) -> str:
-        """
-        Build the opening message for the FV solver.
-        """
-        return ""
-
-    def build_update_message(self) -> str:
-        """
-        Build the update message for the FV solver.
-        """
-        return f"Step #{self.n_steps} @ t={self.t:<.2e} | dt={self.dt:<.2e}"
-
-    def build_closing_message(self) -> str:
-        """
-        Build the closing message for the FV solver.
-        """
-        return self.build_update_message() + " | (done)"
 
     def plot_2d_slice(self, *args, **kwargs):
         return plot_2d_slice(self, *args, **kwargs)
