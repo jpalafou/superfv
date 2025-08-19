@@ -30,12 +30,10 @@ changes:
 - [x] buffer fv_interpolate should be optional for the single-sweep case
 - [x] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
 
-issues:
+to-do list:
+- [ ] add MUSCL-Hancock option
 - [ ] buffer size is not well understood
+- [ ] hydro tests should cover flux recipes
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
-
-optimizations:
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
-
-cosmetics:
