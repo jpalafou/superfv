@@ -269,6 +269,67 @@ class EulerSolver(FiniteVolumeSolver):
             self.xp, self.variable_index_map, u, self.mesh.active_dims, self.gamma
         )
 
+    @MethodTimer(cat="EulerSolver.log_quantity")
+    def log_quantity(self) -> Dict[str, float]:
+        """
+        Log the minimum density and pressure.
+
+        Returns:
+            Dictionary with the following keys:
+            - "min_rho": Minimum density.
+            - "min_P": Minimum pressure.
+        """
+        min_rho, min_P = self.get_physical_mins()
+
+        return {
+            "min_rho": min_rho,
+            "min_P": min_P,
+        }
+
+    def get_physical_mins(self) -> Tuple[float, float]:
+        """
+        Helper function for logging and printing the minimum density and pressure.
+
+        Returns:
+            Tuple of minimum density and minimum pressure from the primitive workspace
+                array `self.arrays["_wcc_"]`.
+        """
+        idx = self.variable_index_map
+        interior = self.interior
+
+        min_rho = self.arrays["_wcc_"][interior][idx("rho")].min().item()
+        min_P = self.arrays["_wcc_"][interior][idx("P")].min().item()
+
+        return min_rho, min_P
+
+    @MethodTimer(cat="EulerSolver.compute_dt")
+    def compute_dt(self, t: float, u: ArrayLike) -> float:
+        """
+        Compute the time-step size based on the CFL condition.
+
+        Args:
+            t: Current time (not used in this implementation, but included for
+                compatibility with the base class).
+            u: Array of finite volume averaged conservative variables.
+
+        Returns:
+            Time-step size.
+        """
+        xp = self.xp
+        idx = self.variable_index_map
+        ndim = self.mesh.ndim
+
+        w = self.primitives_from_conservatives(u)
+        h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
+        c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
+
+        out = (
+            self.CFL
+            * h
+            / xp.max(xp.sum(xp.abs(w[idx("v", keepdims=True)]), axis=0) + ndim * c)
+        )
+        return out.item()
+
     @MethodTimer(cat="EulerSolver.llf")
     def llf(
         self,
@@ -327,67 +388,6 @@ class EulerSolver(FiniteVolumeSolver):
             self.mesh.active_dims,
             self.gamma,
         )
-
-    @MethodTimer(cat="EulerSolver.compute_dt")
-    def compute_dt(self, t: float, u: ArrayLike) -> float:
-        """
-        Compute the time-step size based on the CFL condition.
-
-        Args:
-            t: Current time (not used in this implementation, but included for
-                compatibility with the base class).
-            u: Array of finite volume averaged conservative variables.
-
-        Returns:
-            Time-step size.
-        """
-        xp = self.xp
-        idx = self.variable_index_map
-        ndim = self.mesh.ndim
-
-        w = self.primitives_from_conservatives(u)
-        h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
-
-        out = (
-            self.CFL
-            * h
-            / xp.max(xp.sum(xp.abs(w[idx("v", keepdims=True)]), axis=0) + ndim * c)
-        )
-        return out.item()
-
-    def get_physical_mins(self) -> Tuple[float, float]:
-        """
-        Helper function for logging and printing the minimum density and pressure.
-
-        Returns:
-            Tuple of minimum density and minimum pressure from the primitive workspace
-                array `self.arrays["_wcc_"]`.
-        """
-        idx = self.variable_index_map
-        interior = self.interior
-
-        min_rho = self.arrays["_wcc_"][interior][idx("rho")].min().item()
-        min_P = self.arrays["_wcc_"][interior][idx("P")].min().item()
-
-        return min_rho, min_P
-
-    @MethodTimer(cat="EulerSolver.log_quantity")
-    def log_quantity(self) -> Dict[str, float]:
-        """
-        Log the minimum density and pressure.
-
-        Returns:
-            Dictionary with the following keys:
-            - "min_rho": Minimum density.
-            - "min_P": Minimum pressure.
-        """
-        min_rho, min_P = self.get_physical_mins()
-
-        return {
-            "min_rho": min_rho,
-            "min_P": min_P,
-        }
 
     def build_update_message(self) -> str:
         """

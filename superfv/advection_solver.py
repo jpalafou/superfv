@@ -232,22 +232,13 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return u
 
-    def advection_upwind(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
-        """
-        Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
-        """
-        return riemann_solvers.advection_upwind(
-            self.xp,
-            self.variable_index_map,
-            wl,
-            wr,
-            dim,
-        )
+    @MethodTimer(cat="AdvectionSolver.log_quantity")
+    def log_quantity(self) -> Dict[str, float]:
+        idx = self.variable_index_map
+        return {
+            "min_rho": self.arrays["u"][idx("rho")].min().item(),
+            "max_rho": self.arrays["u"][idx("rho")].max().item(),
+        }
 
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
@@ -270,10 +261,19 @@ class AdvectionSolver(FiniteVolumeSolver):
         vz = xp.max(xp.abs(u[idx("vz")]))
         return (self.CFL * h / (vx + vy + vz)).item()
 
-    @MethodTimer(cat="AdvectionSolver.log_quantity")
-    def log_quantity(self) -> Dict[str, float]:
-        idx = self.variable_index_map
-        return {
-            "min_rho": self.arrays["u"][idx("rho")].min().item(),
-            "max_rho": self.arrays["u"][idx("rho")].max().item(),
-        }
+    def advection_upwind(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike:
+        """
+        Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
+        """
+        return riemann_solvers.advection_upwind(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+        )

@@ -28,6 +28,7 @@ changes:
 - [x] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
 - [x] move `self.timer.reset("current_step")` to called_at_beginning_of_step
 - [x] buffer fv_interpolate should be optional for the single-sweep case
+- [x] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
 
 issues:
 - [ ] buffer size is not well understood
@@ -38,4 +39,3 @@ optimizations:
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 
 cosmetics:
-- [ ] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods

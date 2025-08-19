@@ -845,6 +845,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pass
 
     @abstractmethod
+    def log_quantity(self) -> Dict[str, Any]:
+        """
+        Log a quantity at the end of each time step.
+
+        Returns:
+            Dictionary of logged quantities.
+        """
+        pass
+
+    @abstractmethod
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size.
@@ -876,16 +886,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
         """
         raise NotImplementedError("Riemann solver not implemented.")
-
-    @abstractmethod
-    def log_quantity(self) -> Dict[str, Any]:
-        """
-        Log a quantity at the end of each time step.
-
-        Returns:
-            Dictionary of logged quantities.
-        """
-        pass
 
     def update_workspaces(
         self,
