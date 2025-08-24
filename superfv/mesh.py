@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Callable, Literal, Tuple, cast
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 
 from .fv import gauss_legendre_mesh
 from .tools.device_management import ArrayLike, ArrayManager, xp
+
+xyz_tup: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
 
 
 def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -116,14 +118,10 @@ class UniformFVMesh:
         self.hy: float = (self.ylim[1] - self.ylim[0]) / self.ny
         self.hz: float = (self.zlim[1] - self.zlim[0]) / self.nz
         self.active_dims: Tuple[Literal["x", "y", "z"], ...] = tuple(
-            cast(Literal["x", "y", "z"], dim)
-            for dim, n in zip(["x", "y", "z"], (self.nx, self.ny, self.nz))
-            if n > 1
+            dim for dim, n in zip(xyz_tup, (self.nx, self.ny, self.nz)) if n > 1
         )
         self.inactive_dims: Tuple[Literal["x", "y", "z"], ...] = tuple(
-            cast(Literal["x", "y", "z"], dim)
-            for dim in ["x", "y", "z"]
-            if dim not in self.active_dims
+            dim for dim in xyz_tup if dim not in self.active_dims
         )
         self.ndim = len(self.active_dims)
         self.x_is_active: bool = "x" in self.active_dims

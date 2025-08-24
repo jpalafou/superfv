@@ -46,8 +46,8 @@ class musclInterpolationScheme(InterpolationScheme):
     p: int = 1
     gauss_legendre: bool = False
     flux_recipe: Optional[Literal[1, 2, 3]] = None
-    lazy_primitives: bool = False  # meaningless for MUSCL, a second-order scheme
-    limiter: Optional[Literal["minmod", "moncen"]] = None
+    lazy_primitives: bool = True
+    limiter: Optional[Literal["minmod", "moncen", "ppmd"]] = None
 
     def key(self) -> str:
         return f"{self.name}_{self.limiter}"
@@ -58,9 +58,5 @@ class musclInterpolationScheme(InterpolationScheme):
             raise ValueError("musclInterpolationScheme must have name 'muscl'")
         if self.limiter is None:
             raise ValueError("musclInterpolationScheme requires a limiter.")
-        if self.limiter not in ["minmod", "moncen"]:
-            raise ValueError(
-                "musclInterpolationScheme only supports 'minmod' or 'moncen' limiters."
-            )
         if self.p != 1:
             raise ValueError("musclInterpolationScheme only supports p=1")

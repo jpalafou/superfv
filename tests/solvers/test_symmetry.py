@@ -169,9 +169,17 @@ def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
 
 
 @pytest.mark.parametrize("p", [0, 3, 7])
+@pytest.mark.parametrize("flux_recipe", [1, 2, 3])
+@pytest.mark.parametrize("lazy_primitives", [False, True])
 @pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z")])
-def test_Sod_shock_tube_symmetry_1D(p: int, limiting: str, dim1_dim2: Tuple[str, str]):
+def test_Sod_shock_tube_symmetry_1D(
+    p: int,
+    flux_recipe: int,
+    lazy_primitives: bool,
+    limiting: str,
+    dim1_dim2: Tuple[str, str],
+):
     """
     Assert that the 1D Sod shock tube solution is the same along each solver dimension.
     """
@@ -185,10 +193,20 @@ def test_Sod_shock_tube_symmetry_1D(p: int, limiting: str, dim1_dim2: Tuple[str,
         else {"MOOD": True, "NAD": 1e-5}
     )
     solver1 = EulerSolver(
-        ic=sod_shock_tube_1d, **{f"n{dim1}": N}, p=p, **limiting_config
+        ic=sod_shock_tube_1d,
+        **{f"n{dim1}": N},
+        p=p,
+        flux_recipe=flux_recipe,
+        lazy_primitives=lazy_primitives,
+        **limiting_config,
     )
     solver2 = EulerSolver(
-        ic=sod_shock_tube_1d, **{f"n{dim2}": N}, p=p, **limiting_config
+        ic=sod_shock_tube_1d,
+        **{f"n{dim2}": N},
+        p=p,
+        flux_recipe=flux_recipe,
+        lazy_primitives=lazy_primitives,
+        **limiting_config,
     )
 
     # run solvers

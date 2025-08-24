@@ -38,7 +38,7 @@ def inplace_1d_smooth_extrema_detector(
             "z".
         buffer: Array to which temporary values are assigned. Has shape
             (nvars, nx, ny, nz, >=4).
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:

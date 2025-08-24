@@ -1,5 +1,6 @@
+from functools import lru_cache
 from itertools import product
-from typing import Any, Callable, Literal, Tuple
+from typing import Any, Callable, List, Literal, Tuple
 
 import numpy as np
 
@@ -47,6 +48,68 @@ def moncen(xp: Any, du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
     return xp.where(du_left * du_right >= 0, slope, 0)
 
 
+def gather_neighbor_slices(
+    active_dims: Tuple[Literal["x", "y", "z"], ...], include_corners: bool
+) -> List[Tuple[slice, ...]]:
+    """
+    Returns a list of slice objects for gathering neighbors in up to 3 dimensions with
+    the center slice as the first element.
+
+    Args:
+        active_dims (Tuple[Literal["x", "y", "z"], ...]): Active dimensions for
+        interpolation.
+        include_corners (bool): Whether to include corner neighbors.
+
+    Returns:
+        List[Tuple[slice, ...]]: List of slice objects for gathering neighbors.
+    """
+    return _gather_neighbor_slices(active_dims, include_corners)
+
+
+@lru_cache(maxsize=None)
+def _gather_neighbor_slices(
+    active_dims: Tuple[Literal["x", "y", "z"], ...], include_corners: bool
+) -> List[Tuple[slice, ...]]:
+    ndim = len(active_dims)
+    axes = tuple(DIM_TO_AXIS[dim] for dim in active_dims)
+
+    # gather all slices excluding the center
+    all_slices: List[Tuple[slice, ...]] = []
+    if include_corners:
+        for offset in product([-1, 0, 1], repeat=ndim):
+            if offset == (0,) * ndim:
+                continue
+            all_slices.append(
+                merge_slices(
+                    *[
+                        crop(i, (1 + shift, -1 + shift), ndim=4)
+                        for i, shift in zip(axes, offset)
+                    ]
+                )
+            )
+    else:
+        for ax in axes:
+            for shift in [-1, 1]:
+                all_slices.append(
+                    merge_slices(
+                        *[
+                            crop(
+                                i,
+                                (1 + shift, -1 + shift) if ax == i else (1, -1),
+                                ndim=4,
+                            )
+                            for i in axes
+                        ]
+                    )
+                )
+
+    # insert inner slices in beginning
+    inner_slice = merge_slices(*[crop(i, (1, -1), ndim=4) for i in axes])
+    all_slices.insert(0, inner_slice)
+
+    return all_slices
+
+
 def compute_dmp(
     xp: Any,
     arr: ArrayLike,
@@ -71,43 +134,8 @@ def compute_dmp(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    ndim = len(active_dims)
-    axes = tuple(DIM_TO_AXIS[dim] for dim in active_dims)
-
-    # gather slices
-    if include_corners:
-        all_slices = []
-        for offset in product([-1, 0, 1], repeat=ndim):
-            if offset == (0,) * ndim:
-                continue
-            all_slices.append(
-                merge_slices(
-                    *[
-                        crop(i, (1 + shift, -1 + shift), ndim=4)
-                        for i, shift in zip(axes, offset)
-                    ]
-                )
-            )
-    else:
-        all_slices = []
-        for ax in axes:
-            for shift in [-1, 1]:
-                all_slices.append(
-                    merge_slices(
-                        *[
-                            crop(
-                                i,
-                                (1 + shift, -1 + shift) if ax == i else (1, -1),
-                                ndim=4,
-                            )
-                            for i in axes
-                        ]
-                    )
-                )
-
-    # store inner slices first
-    inner_slice = merge_slices(*[crop(i, (1, -1), ndim=4) for i in axes])
-    all_slices.insert(0, inner_slice)
+    all_slices = gather_neighbor_slices(active_dims, include_corners)
+    inner_slice = all_slices[0]
 
     # stack views of neighbors
     all_views = [arr[slc] for slc in all_slices]

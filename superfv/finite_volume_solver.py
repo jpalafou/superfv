@@ -12,6 +12,7 @@ from typing import (
     Set,
     Tuple,
     Union,
+    cast,
 )
 
 import numpy as np
@@ -26,9 +27,10 @@ from .interpolation_schemes import (
     musclInterpolationScheme,
     polyInterpolationScheme,
 )
-from .mesh import UniformFVMesh
-from .slope_limiting import MOOD, minmod, moncen
+from .mesh import UniformFVMesh, xyz_tup
+from .slope_limiting import MOOD, gather_neighbor_slices, minmod, moncen
 from .slope_limiting.MOOD import MOODConfig
+from .slope_limiting.muscl import compute_limited_slopes
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     compute_theta,
@@ -98,6 +100,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: bool = False,
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
+        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
@@ -179,7 +182,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     primitive flux nodes.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
-            MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
+            MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
+                `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
+                - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
+                - `flux_recipe=2`: Slope limiting is performed on primitive slopes.
+                - `flux_recipe=3`: `flux_recipe=2` is used.
+            MUSCL_limiter: Slope limiter used for the MUSCL scheme, either for the base
+                scheme or the MOOD cascade. Options include:
+                - "minmod"
+                - "moncen"
+                - "ppmd"
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
@@ -225,18 +237,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p,
             flux_recipe,
             lazy_primitives,
+            MUSCL,
+            MUSCL_limiter,
         )
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
         self._init_ic(ic, ic_passives)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_riemann_solver(riemann_solver)
         self._init_slope_limiting(
-            MUSCL,
             ZS,
             adaptive_dt,
             max_dt_revisions,
             MOOD,
             cascade,
+            MUSCL_limiter,
             max_MOOD_iters,
             limiting_vars,
             NAD,
@@ -271,12 +285,33 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         flux_recipe: Literal[1, 2, 3],
         lazy_primitives: bool,
+        MUSCL: bool,
+        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"],
     ):
+        self.base_scheme: InterpolationScheme
+        self.p: int
+
         # validate flux recipe
         if flux_recipe not in (1, 2, 3):
             raise ValueError(
                 "flux_recipe must be 1, 2, or 3. See the documentation for details."
             )
+
+        # MUSCL early escape
+        if MUSCL:
+            if p != 1:
+                warnings.warn("MUSCL overrides p to be 1.")
+            if flux_recipe == 3:
+                warnings.warn(
+                    "MUSCL overrides flux_recipe to be 2 when flux_recipe=3 is given."
+                )
+                flux_recipe = 2
+            self.p = 1
+            self.base_scheme = musclInterpolationScheme(
+                flux_recipe=flux_recipe,
+                limiter=MUSCL_limiter,
+            )
+            return
 
         # assign polynomial degree
         if p < 0:
@@ -604,12 +639,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_slope_limiting(
         self,
-        MUSCL: bool,
         ZS: bool,
         adaptive_dt: bool,
         max_dt_revisions: int,
         MOOD: bool,
         cascade: Literal["first-order", "muscl", "full"],
+        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"],
         max_MOOD_iters: int,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
@@ -632,7 +667,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         idx.add_var_to_group("limiting", [])
 
         # skip slope limiting for first-order or if nothing is active
-        if self.p == 0 or (not ZS and not MOOD):
+        if (
+            self.p == 0
+            or (not ZS and not MOOD)
+            or isinstance(self.base_scheme, musclInterpolationScheme)
+        ):
             return
 
         # PAD
@@ -680,7 +719,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 fallback_schemes = [
                     musclInterpolationScheme(
                         flux_recipe=self.base_scheme.flux_recipe,
-                        limiter="minmod",
+                        limiter=MUSCL_limiter,
                     )
                 ]
             elif cascade == "full":
@@ -720,6 +759,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.cupy:
             self.arrays.transfer_to_device("gpu")
 
+        scheme = self.base_scheme
         arrays = self.arrays
 
         # initialize flux arrays
@@ -734,13 +774,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize workspace arrays
         _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
-        max_nodes = self.nodes_per_face(self.base_scheme)
+        max_nodes = self.nodes_per_face(scheme)
         max_ninterps = 2 * max_nodes
-        SED_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 1
-        MOOD_buffer_size = {1: 4, 2: 6, 3: 7}[self.mesh.ndim] + 4
-        buffer_size = max(SED_buffer_size, max_nodes)
-        if self.MOOD:
-            buffer_size = max(buffer_size, MOOD_buffer_size)
+        SED_buffer_cost = {1: 4, 2: 6, 3: 7}[self.mesh.ndim]
+        base_buffer_size = SED_buffer_cost + 1
+        MOOD_buffer_size = SED_buffer_cost + 4
+        MUSCL_buffer_size = SED_buffer_cost + 6
+        buffer_size = max(base_buffer_size, max_nodes)
+        if self.MOOD or isinstance(scheme, musclInterpolationScheme):
+            buffer_size = max(buffer_size, MOOD_buffer_size, MUSCL_buffer_size)
 
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
@@ -868,6 +910,36 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Time-step size.
         """
         pass
+
+    def flux_jvp(
+        self,
+        w: ArrayLike,
+        vec: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        primitives: bool = True,
+    ) -> ArrayLike:
+        """
+        Jacobian-vector product for the primitive-variable quasilinear,
+        dimensionally-split system
+            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[primitive_var1, ...]
+        if `primitives=True`, or the conservative-variable quasilinear system
+            dU/dt + A(U; [dim]) dU/d[dim] = 0,  U=[conservative_var1, ...]
+        if `primitives=False`.
+
+        Args:
+            w: State array with shape (nvars, nx, ny, nz).
+            vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
+            dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
+                or "z".
+            primitives: Whether the state array `w` contains primitive variables.
+
+        Returns:
+            ArrayLike: The flux Jacobian-vector product A @ vec.
+        """
+        raise NotImplementedError(
+            f"No `flux_jvp` method has been implemented in class {self.__class__.__name__}."
+        )
 
     def dummy_riemann_solver(
         self,
@@ -1321,7 +1393,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def compute_RHS(self) -> ArrayLike:
         """
-        Compute the right-hand side of the ODE .
+        Compute the right-hand side of the ODE and write it to `self.arrays["dudt"]`.
 
         Returns:
             ArrayLike: The right-hand side of the ODE.
@@ -1582,6 +1654,115 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 self.rk4(*args, **kwargs)
             case _:
                 raise ValueError(f"Runge-Kutta method not implemented for {q=}")
+
+    def musclhancock(self, *args, **kwargs):
+        if not isinstance(self.base_scheme, musclInterpolationScheme):
+            raise ValueError(
+                "The base scheme must be a MUSCL interpolation scheme to use "
+                "the MUSCL-Hancock method."
+            )
+
+        self.integrator = "musclhancock"
+        self.stepper = self._musclhancock_step
+        self.integrate(*args, **kwargs)
+
+    def _musclhancock_step(self, t: float, u: ArrayLike, dt: float):
+        xp = self.xp
+        scheme = self.base_scheme
+        mesh = self.mesh
+        arrays = self.arrays
+        self.substep_dt = dt
+
+        limit_primitives = scheme.flux_recipe in (2, 3)
+
+        # allocate arrays
+        unew = arrays["unew"]
+        x_nodes = arrays["x_nodes"]
+        y_nodes = arrays["y_nodes"]
+        z_nodes = arrays["z_nodes"]
+        v = arrays["theta"]
+        _w_ = arrays["_w_"] if limit_primitives else arrays["_u_"]
+        ds = arrays["buffer"][..., 0]
+        dw = arrays["buffer"][..., 1:2]
+        w_t_half = arrays["buffer"][..., 2]
+        buffer = arrays["buffer"][..., 3:]
+
+        # update workspaces
+        self.update_workspaces(t, u, scheme)
+
+        if scheme.limiter == "ppmd":
+            # compute central slopes in each direction and store them in the respective nodes array
+            for dim, node_arr in zip(xyz_tup, [x_nodes, y_nodes, z_nodes]):
+                if dim not in mesh.active_dims:
+                    continue
+                node_arr[..., 0][crop(DIM_TO_AXIS[dim], (1, -1))] = 0.5 * (
+                    _w_[crop(DIM_TO_AXIS[dim], (2, None))]
+                    - _w_[crop(DIM_TO_AXIS[dim], (None, -2))]
+                )
+
+            # compute min and max over kernel of neighboring cells
+            all_slices = gather_neighbor_slices(mesh.active_dims, True)
+            inner_slice = all_slices[0]
+
+            # compute slope limiter v
+            neighbor_differences = xp.asarray(
+                [_w_[slc] - _w_[inner_slice] for slc in all_slices[1:]]
+            )
+            eps = 1e-20
+            v_min = xp.minimum(xp.min(neighbor_differences, axis=0), -eps)
+            v_max = xp.maximum(xp.max(neighbor_differences, axis=0), eps)
+
+            v_denom = xp.zeros_like(v_min)
+            for dim, node_arr in zip(xyz_tup, [x_nodes, y_nodes, z_nodes]):
+                if dim not in mesh.active_dims:
+                    continue
+                v_denom += xp.abs(node_arr[..., 0][inner_slice])
+            v = 2 * xp.minimum(xp.abs(v_min), xp.abs(v_max)) / (v_denom + eps)
+            v[...] = xp.minimum(v, 1.0)
+
+        # predictor step: limit slopes and evolve by 1/2 dt
+        for dim, h, node_arr in zip(
+            xyz_tup, [mesh.hx, mesh.hy, mesh.hz], [x_nodes, y_nodes, z_nodes]
+        ):
+            if dim not in mesh.active_dims:
+                continue
+
+            # compute limited slopes
+            if scheme.limiter == "ppmd":
+                dw[..., 0][inner_slice] = v * node_arr[..., 0][inner_slice]
+            else:
+                compute_limited_slopes(
+                    xp,
+                    _w_,
+                    dim,
+                    mesh.active_dims,
+                    out=dw,
+                    buffer=buffer,
+                    limiter=cast(Optional[Literal["minmod", "moncen"]], scheme.limiter),
+                    SED=False,
+                )
+            _dw = dw[..., 0]
+
+            # compute the evolution of the cell center by half a time step
+            ds[...] = self.flux_jvp(_w_, _dw, dim, primitives=limit_primitives)
+            w_t_half[...] = _w_ - ds * dt / 2 / h
+
+            # update the face nodes
+            node_arr[..., 0] = w_t_half - _dw / 2
+            node_arr[..., 1] = w_t_half + _dw / 2
+
+        self.increment_substepwise_logs()
+
+        # correct step: compute the fluxes based on the predictor step
+        for dim in mesh.active_dims:
+            self.validate_nodal_bc(t, dim, scheme)
+            self.inplace_integrate_fluxes(dim, scheme)
+
+        # compute the right-hand side of the ODE
+        dudt = self.compute_RHS().copy()
+        unew[...] = u + dt * dudt
+
+        self.increment_substepwise_logs()
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)

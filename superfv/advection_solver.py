@@ -40,6 +40,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         lazy_primitives: bool = False,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
         MUSCL: bool = False,
+        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
@@ -121,7 +122,16 @@ class AdvectionSolver(FiniteVolumeSolver):
                     primitive flux nodes.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
-            MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
+            MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
+                `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
+                - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
+                - `flux_recipe=2`: Slope limiting is performed on primitive slopes.
+                - `flux_recipe=3`: `flux_recipe=2` is used.
+            MUSCL_limiter: Slope limiter used for the MUSCL scheme, either for the base
+                scheme or the MOOD cascade. Options include:
+                - "minmod"
+                - "moncen"
+                - "ppmd"
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
@@ -183,6 +193,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             lazy_primitives=lazy_primitives,
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
+            MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,
             adaptive_dt=adaptive_dt,
             max_dt_revisions=max_dt_revisions,
@@ -260,6 +271,45 @@ class AdvectionSolver(FiniteVolumeSolver):
         vy = xp.max(xp.abs(u[idx("vy")]))
         vz = xp.max(xp.abs(u[idx("vz")]))
         return (self.CFL * h / (vx + vy + vz)).item()
+
+    def flux_jvp(
+        self,
+        w: ArrayLike,
+        vec: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        primitives: bool = True,
+    ) -> ArrayLike:
+        """
+        Jacobian-vector product for the primitive-variable quasilinear,
+        dimensionally-split system
+            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, (passives)]
+
+        Args:
+            w: State array with shape (nvars, nx, ny, nz).
+            vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
+            dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
+                or "z".
+            primitives: Unused in advection, since the variables are always primitive.
+
+        Returns:
+            ArrayLike: The flux Jacobian-vector product A @ vec.
+        """
+        xp = self.xp
+        idx = self.variable_index_map
+
+        _rho_ = idx("rho")
+        _v1_ = idx("v" + dim)
+        _v_ = idx("v")
+        _passives_ = idx("passives") if "passives" in idx else None
+
+        out = xp.empty_like(w)
+        out[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
+        if _passives_ is not None:
+            out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
+        out[_v_] = 0
+
+        return out
 
     def advection_upwind(
         self,

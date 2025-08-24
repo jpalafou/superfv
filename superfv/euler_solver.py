@@ -42,6 +42,7 @@ class EulerSolver(FiniteVolumeSolver):
         lazy_primitives: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
+        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
@@ -124,7 +125,16 @@ class EulerSolver(FiniteVolumeSolver):
                     primitive flux nodes.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
-            MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
+            MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
+                `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
+                - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
+                - `flux_recipe=2`: Slope limiting is performed on primitive slopes.
+                - `flux_recipe=3`: `flux_recipe=2` is used.
+            MUSCL_limiter: Slope limiter used for the MUSCL scheme, either for the base
+                scheme or the MOOD cascade. Options include:
+                - "minmod"
+                - "moncen"
+                - "ppmd"
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
@@ -192,6 +202,7 @@ class EulerSolver(FiniteVolumeSolver):
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
             MUSCL=MUSCL,
+            MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,
             adaptive_dt=adaptive_dt,
             max_dt_revisions=max_dt_revisions,
@@ -329,6 +340,61 @@ class EulerSolver(FiniteVolumeSolver):
             / xp.max(xp.sum(xp.abs(w[idx("v", keepdims=True)]), axis=0) + ndim * c)
         )
         return out.item()
+
+    def flux_jvp(
+        self,
+        w: ArrayLike,
+        vec: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        primitives: bool = True,
+    ) -> ArrayLike:
+        """
+        Jacobian-vector product for the primitive-variable quasilinear,
+        dimensionally-split system
+            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, P, (passives)]
+        if `primitives=True`, or the conservative-variable quasilinear system
+            dU/dt + A(U; [dim]) dU/d[dim] = 0,  U=[rho, mx, my, mz, E, (rho * passives)]
+        if `primitives=False`.
+
+        Args:
+            w: State array with shape (nvars, nx, ny, nz).
+            vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
+            dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
+                or "z".
+            primitives: Whether the state array `w` contains primitive variables.
+
+        Returns:
+            ArrayLike: The flux Jacobian-vector product A @ vec.
+        """
+        if not primitives:
+            raise NotImplementedError(
+                "This function doesn't support conservative variables at this moment."
+            )
+
+        xp = self.xp
+        idx = self.variable_index_map
+        gamma = self.gamma
+
+        _rho_ = idx("rho")
+        _v1_ = idx("v" + dim)
+        _vx_ = idx("vx")
+        _vy_ = idx("vy")
+        _vz_ = idx("vz")
+        _P_ = idx("P")
+        _passives_ = idx("passives") if "passives" in idx else None
+
+        out = xp.empty_like(w)
+        out[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
+        out[_vx_] = w[_v1_] * vec[_vx_]
+        out[_vy_] = w[_v1_] * vec[_vy_]
+        out[_vz_] = w[_v1_] * vec[_vz_]
+        out[_v1_] += (1 / w[_rho_]) * vec[_P_]
+        out[_P_] = gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
+        if _passives_ is not None:
+            out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
+
+        return out
 
     @MethodTimer(cat="EulerSolver.llf")
     def llf(

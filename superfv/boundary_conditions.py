@@ -1,7 +1,7 @@
 from typing import Callable, Literal, Optional, Tuple, Union, cast
 
 from .fv import AXIS_TO_DIM
-from .mesh import UniformFVMesh
+from .mesh import UniformFVMesh, xyz_tup
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap, crop
 
@@ -89,7 +89,7 @@ def apply_bc(
             "fv-averages" or "face-nodes". Specifies the polynomial degree of the
             quadrature rule used to evaluate the Dirichlet function.
     """
-    for i, dim in enumerate(("x", "y", "z")):
+    for i, dim in enumerate(xyz_tup):
         ip = i + 1
         pad_i = pad_width[i]
         for j, pos in enumerate(("l", "r")):
