@@ -56,7 +56,5 @@ class musclInterpolationScheme(InterpolationScheme):
         super().__post_init__()
         if self.name != "muscl":
             raise ValueError("musclInterpolationScheme must have name 'muscl'")
-        if self.limiter is None:
-            raise ValueError("musclInterpolationScheme requires a limiter.")
         if self.p != 1:
             raise ValueError("musclInterpolationScheme only supports p=1")

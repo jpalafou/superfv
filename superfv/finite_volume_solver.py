@@ -28,7 +28,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh, xyz_tup
-from .slope_limiting import MOOD, gather_neighbor_slices, minmod, moncen
+from .slope_limiting import MOOD, gather_neighbor_slices
 from .slope_limiting.MOOD import MOODConfig
 from .slope_limiting.muscl import compute_limited_slopes
 from .slope_limiting.zhang_and_shu import (
@@ -1146,14 +1146,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     xp, u, dim, adims, p, out=out, buffer=buffer
                 )
         elif isinstance(scheme, musclInterpolationScheme):
-            limiter: Callable[[ModuleType, ArrayLike, ArrayLike], ArrayLike]
-            if scheme.limiter == "minmod":
-                limiter = minmod
-            elif scheme.limiter == "moncen":
-                limiter = moncen
-            else:
-                raise ValueError(f"Unknown MUSCL limiter: {scheme.limiter}")
-            fv.interpolate_muscl_faces(xp, limiter, u, dim, out=out, buffer=buffer)
+            if scheme.limiter not in ("minmod", "moncen", None):
+                raise ValueError(f"Invalid MUSCL limiter: {scheme.limiter}")
+            slopes = self.arrays["centroid"]
+            compute_limited_slopes(
+                xp,
+                u,
+                dim,
+                adims,
+                out=slopes,
+                buffer=buffer,
+                limiter=cast(Optional[Literal["minmod", "moncen"]], scheme.limiter),
+            )
+            out[..., 0] = u - 0.5 * slopes[..., 0]
+            out[..., 1] = u + 0.5 * slopes[..., 0]
         else:
             raise ValueError(f"Unknown interpolation scheme: {scheme}")
 

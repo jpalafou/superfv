@@ -32,11 +32,11 @@ changes:
 - [x] buffer size is not well understood
 - [x] hydro tests should cover flux recipes
 - [x] add MUSCL-Hancock option
+- [x] remove `fv.interpolate_muscl_faces`, `fv.slope_limiting.minmod`, and `fv.slope_minmod.moncen` and switch to `muscl.muscl.compute_limited_slopes`
 
 to-do list:
 - [ ] add MUSCL-Hancock option for different slope limiters and SED
 - [ ] add MUSCL-Hancock option for conservative variables
-- [ ] remove `fv.interpolate_muscl_faces`, `fv.slope_limiting.minmod`, and `fv.slope_minmod.moncen` and switch to `muscl.muscl.compute_limited_slopes`
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls

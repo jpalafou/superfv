@@ -65,7 +65,7 @@ def compute_limited_slopes(
             xp, u, active_dims, out=alpha, buffer=abuff
         )
     else:
-        out_modified = buff_slc
+        out_modified = modify_slices(buff_slc, 4, slice(0, 1))
 
     # write slopes to `out` array
     if limiter == "minmod":
@@ -88,7 +88,7 @@ def compute_limited_slopes(
         if SED:
             out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
     elif limiter is None:
-        out[out_slc] = 0.5 * (dlft + drgt)
+        out[out_slc] = 0.5 * (u[slc_r] - u[slc_l])
     else:
         raise ValueError(f"Unknown limiter: {limiter}.")
 

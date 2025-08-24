@@ -13,7 +13,7 @@ from .stencil import (
     uniform_quadrature_weights,
 )
 from .tools.device_management import ArrayLike
-from .tools.slicing import crop, merge_slices, modify_slices
+from .tools.slicing import merge_slices
 
 InterpCoord = Union[int, float]
 InterpCoords = Sequence[InterpCoord]
@@ -900,62 +900,3 @@ def transversely_integrate_nodes(
         out=out,
         buffer=buffer,
     )
-
-
-def interpolate_muscl_faces(
-    xp: ModuleType,
-    limiter: Callable[[ModuleType, ArrayLike, ArrayLike], ArrayLike],
-    u: ArrayLike,
-    face_dim: Literal["x", "y", "z"],
-    *,
-    out: ArrayLike,
-    buffer: ArrayLike,
-) -> Tuple[slice, ...]:
-    """
-    Interpolate opposing face-centered nodes from an array of finite volume averages.
-
-    Args:
-        xp: `np` namespace.
-        limiter : Limiting function to apply to the differences. Should accept
-            - xp: `np` namespace.
-            - left_diff: Array of left differences, has shape (nvars, nx, ny, nz, ...).
-            - right_diff: Array of right differences, has shape
-                (nvars, nx, ny, nz, ...).
-            Returns an array of limited differences with the same shape.
-        u: Array of finite volume averages to interpolate, has shape
-            (nvars, nx, ny, nz).
-        face_dim: Dimension along which the MUSCL interpolation is performed.
-        out: Output array to store the interpolated values. Has shape
-            (nvars, nx, ny, nz, nout). The "left" face-centered node is stored in
-            out[..., 0] and the "right" face-centered node is stored in out[..., 1].
-        buffer: Array to store intermediate results for double or triple-sweep
-            interpolations, is ignored for single-sweep interpolations. Has shape
-            (nvars, nx, ny, nz, >=3).
-
-    Returns:
-        Slice objects indicating the modified regions in the output array.
-    """
-    # prepare slices
-    slc_l = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
-    slc_c = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
-    slc_r = crop(DIM_TO_AXIS[face_dim], (2, None), ndim=4)
-    buff_slc0 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 0)
-    buff_slc1 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 1)
-    buff_slc2 = modify_slices(merge_slices(slc_c, crop(4, (None, None))), 4, 2)
-
-    # allocate arrays
-    left_diff = buffer[buff_slc0]
-    right_diff = buffer[buff_slc1]
-    limited_diff = buffer[buff_slc2]
-
-    # compute differences
-    left_diff[...] = u[slc_c] - u[slc_l]
-    right_diff[...] = u[slc_r] - u[slc_c]
-    limited_diff[...] = limiter(xp, left_diff, right_diff)
-
-    # update left and right face values
-    out[buff_slc0] = u[slc_c] - 0.5 * limited_diff
-    out[buff_slc1] = u[slc_c] + 0.5 * limited_diff
-
-    modified = merge_slices(slc_c, crop(4, (None, 2)))
-    return modified
