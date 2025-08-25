@@ -267,10 +267,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
 
         h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
-        vx = xp.max(xp.abs(u[idx("vx")]))
-        vy = xp.max(xp.abs(u[idx("vy")]))
-        vz = xp.max(xp.abs(u[idx("vz")]))
-        return (self.CFL * h / (vx + vy + vz)).item()
+        return self.CFL * h / (xp.max(xp.sum(xp.abs(u[idx("v")]), axis=0))).item()
 
     def flux_jvp(
         self,

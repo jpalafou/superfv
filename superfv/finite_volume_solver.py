@@ -1688,13 +1688,66 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         z_nodes = arrays["z_nodes"]
         v = arrays["theta"]
         _w_ = arrays["_w_"] if limit_primitives else arrays["_u_"]
-        ds = arrays["buffer"][..., 0]
-        dw = arrays["buffer"][..., 1:2]
-        w_t_half = arrays["buffer"][..., 2]
+
+        dwx = arrays["buffer"][..., 0:1]
+        dwy = arrays["buffer"][..., 1:2]
+        dwz = arrays["buffer"][..., 2:3]
         buffer = arrays["buffer"][..., 3:]
+        w_t_half = buffer[..., 0]
 
         # update workspaces
         self.update_workspaces(t, u, scheme)
+
+        if scheme.limiter == "ppmd":
+            raise ValueError("ppmd not supported right now")
+
+        # predictor step: compute limited slopes
+        for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
+            if dim not in self.mesh.active_dims:
+                continue
+            compute_limited_slopes(
+                xp,
+                _w_,
+                dim,
+                mesh.active_dims,
+                out=slope_arr,
+                buffer=buffer,
+                limiter=cast(Optional[Literal["minmod", "moncen"]], scheme.limiter),
+                SED=False,
+            )
+
+        # predictor step: evolve cell-center by 1/2 dt
+        w_t_half[...] = _w_
+        for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
+            if dim not in mesh.active_dims:
+                continue
+            h = getattr(mesh, "h" + dim)
+            ds = self.flux_jvp(_w_, slope_arr[..., 0], dim, primitives=limit_primitives)
+            w_t_half[...] -= ds * dt / 2 / h
+
+        # predictor step: update the face nodes
+        for node_arr, slope_arr, dim in zip(
+            [x_nodes, y_nodes, z_nodes], [dwx, dwy, dwz], xyz_tup
+        ):
+            if dim not in mesh.active_dims:
+                continue
+            node_arr[..., 0] = w_t_half - slope_arr[..., 0] / 2
+            node_arr[..., 1] = w_t_half + slope_arr[..., 0] / 2
+
+        self.increment_substepwise_logs()
+
+        # corrector step: compute the fluxes based on the predictor step
+        for dim in mesh.active_dims:
+            self.validate_nodal_bc(t, dim, scheme)
+            self.inplace_integrate_fluxes(dim, scheme)
+
+        # compute the right-hand side of the ODE
+        dudt = self.compute_RHS().copy()
+        unew[...] = u + dt * dudt
+
+        self.increment_substepwise_logs()
+
+        return
 
         if scheme.limiter == "ppmd":
             # compute central slopes in each direction and store them in the respective nodes array
@@ -1725,50 +1778,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 v_denom += xp.abs(node_arr[..., 0][inner_slice])
             v = 2 * xp.minimum(xp.abs(v_min), xp.abs(v_max)) / (v_denom + eps)
             v[...] = xp.minimum(v, 1.0)
-
-        # predictor step: limit slopes and evolve by 1/2 dt
-        for dim, h, node_arr in zip(
-            xyz_tup, [mesh.hx, mesh.hy, mesh.hz], [x_nodes, y_nodes, z_nodes]
-        ):
-            if dim not in mesh.active_dims:
-                continue
-
-            # compute limited slopes
-            if scheme.limiter == "ppmd":
-                dw[..., 0][inner_slice] = v * node_arr[..., 0][inner_slice]
-            else:
-                compute_limited_slopes(
-                    xp,
-                    _w_,
-                    dim,
-                    mesh.active_dims,
-                    out=dw,
-                    buffer=buffer,
-                    limiter=cast(Optional[Literal["minmod", "moncen"]], scheme.limiter),
-                    SED=False,
-                )
-            _dw = dw[..., 0]
-
-            # compute the evolution of the cell center by half a time step
-            ds[...] = self.flux_jvp(_w_, _dw, dim, primitives=limit_primitives)
-            w_t_half[...] = _w_ - ds * dt / 2 / h
-
-            # update the face nodes
-            node_arr[..., 0] = w_t_half - _dw / 2
-            node_arr[..., 1] = w_t_half + _dw / 2
-
-        self.increment_substepwise_logs()
-
-        # correct step: compute the fluxes based on the predictor step
-        for dim in mesh.active_dims:
-            self.validate_nodal_bc(t, dim, scheme)
-            self.inplace_integrate_fluxes(dim, scheme)
-
-        # compute the right-hand side of the ODE
-        dudt = self.compute_RHS().copy()
-        unew[...] = u + dt * dudt
-
-        self.increment_substepwise_logs()
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)
