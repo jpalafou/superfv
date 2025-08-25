@@ -12,7 +12,6 @@ from typing import (
     Set,
     Tuple,
     Union,
-    cast,
 )
 
 import numpy as np
@@ -1155,7 +1154,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 adims,
                 out=slopes,
                 buffer=buffer,
-                limiter=cast(Optional[Literal["minmod", "moncen"]], scheme.limiter),
+                limiter=scheme.limiter,
             )
             out[..., 0] = u - 0.5 * slopes[..., 0]
             out[..., 1] = u + 0.5 * slopes[..., 0]
@@ -1661,17 +1660,31 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 raise ValueError(f"Runge-Kutta method not implemented for {q=}")
 
     def musclhancock(self, *args, **kwargs):
+        """
+        Apply the MUSCL-Hancock method for time integration.
+        """
+        self.integrator = "musclhancock"
+        self.stepper = self._musclhancock_step
+        self.integrate(*args, **kwargs)
+
+    def _musclhancock_step(self, t: float, u: ArrayLike, dt: float):
+        """
+        Implementation of `ExplicitODESolver.stepper` for the MUSCL-Hancock method.
+
+        Args:
+            t: Current time.
+            u: Current solution vector.
+            dt: Time step size.
+
+        Notes:
+            This method requires `self.flux_jvp` to be implemented.
+        """
         if not isinstance(self.base_scheme, musclInterpolationScheme):
             raise ValueError(
                 "The base scheme must be a MUSCL interpolation scheme to use "
                 "the MUSCL-Hancock method."
             )
 
-        self.integrator = "musclhancock"
-        self.stepper = self._musclhancock_step
-        self.integrate(*args, **kwargs)
-
-    def _musclhancock_step(self, t: float, u: ArrayLike, dt: float):
         xp = self.xp
         scheme = self.base_scheme
         mesh = self.mesh
@@ -1685,13 +1698,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         x_nodes = arrays["x_nodes"]
         y_nodes = arrays["y_nodes"]
         z_nodes = arrays["z_nodes"]
-        _w_ = arrays["_w_"] if limit_primitives else arrays["_u_"]
+        w_center = arrays["_w_"] if limit_primitives else arrays["_u_"]
 
+        # allocate slopes
         dwx = arrays["buffer"][..., 0:1]
         dwy = arrays["buffer"][..., 1:2]
         dwz = arrays["buffer"][..., 2:3]
         buffer = arrays["buffer"][..., 3:]
-        w_t_half = buffer[..., 0]
+        w_t_half = buffer[..., 0]  # be careful: this memory is shared
 
         # update workspaces
         self.update_workspaces(t, u, scheme)
@@ -1702,25 +1716,27 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 continue
             compute_limited_slopes(
                 xp,
-                _w_,
+                w_center,
                 dim,
                 mesh.active_dims,
                 out=slope_arr,
                 buffer=buffer,
-                limiter=cast(Optional[Literal["minmod", "moncen"]], scheme.limiter),
+                limiter=scheme.limiter,
                 SED=False,
             )
 
-        # predictor step: evolve cell-center by 1/2 dt
-        w_t_half[...] = _w_
+        # predictor step: evolve the cell-center by 1/2 dt
+        w_t_half[...] = w_center
         for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
             if dim not in mesh.active_dims:
                 continue
             h = getattr(mesh, "h" + dim)
-            ds = self.flux_jvp(_w_, slope_arr[..., 0], dim, primitives=limit_primitives)
+            ds = self.flux_jvp(
+                w_center, slope_arr[..., 0], dim, primitives=limit_primitives
+            )
             w_t_half[...] -= ds * dt / 2 / h
 
-        # predictor step: update the face nodes
+        # predictor step: update the face nodes using the limited slopes
         for node_arr, slope_arr, dim in zip(
             [x_nodes, y_nodes, z_nodes], [dwx, dwy, dwz], xyz_tup
         ):
@@ -1731,7 +1747,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.increment_substepwise_logs()
 
-        # corrector step: compute the fluxes based on the predictor step
+        # corrector step: compute fluxes based on the predictor step face nodes
         for dim in mesh.active_dims:
             self.validate_nodal_bc(t, dim, scheme)
             self.inplace_integrate_fluxes(dim, scheme)
@@ -1741,8 +1757,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         unew[...] = u + dt * dudt
 
         self.increment_substepwise_logs()
-
-        return
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)

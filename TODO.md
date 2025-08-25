@@ -34,6 +34,7 @@ changes:
 - [x] add MUSCL-Hancock option
 - [x] remove `fv.interpolate_muscl_faces`, `fv.slope_limiting.minmod`, and `fv.slope_minmod.moncen` and switch to `muscl.muscl.compute_limited_slopes`
 - [x] MUSCL is not positivty-preserving in 2D
+- [x] remove `cast` in FiniteVolumeSolver
 
 to-do list:
 - [ ] add MUSCL-Hancock option for different slope limiters and SED
@@ -42,5 +43,3 @@ to-do list:
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 - [ ] automatically set `lazy_primitives=True` if `p<2`
-- [ ] clean up muscl hancock code
-- [ ] remove `cast` in FiniteVolumeSolver
