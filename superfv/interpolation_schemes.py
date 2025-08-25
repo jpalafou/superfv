@@ -47,7 +47,7 @@ class musclInterpolationScheme(InterpolationScheme):
     gauss_legendre: bool = False
     flux_recipe: Optional[Literal[1, 2, 3]] = None
     lazy_primitives: bool = True
-    limiter: Optional[Literal["minmod", "moncen", "ppmd"]] = None
+    limiter: Optional[Literal["minmod", "moncen"]] = None
 
     def key(self) -> str:
         return f"{self.name}_{self.limiter}"

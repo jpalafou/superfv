@@ -38,7 +38,6 @@ changes:
 to-do list:
 - [ ] add MUSCL-Hancock option for different slope limiters and SED
 - [ ] add MUSCL-Hancock option for conservative variables
-- [ ] implement PP2D limiter, if necessary
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls

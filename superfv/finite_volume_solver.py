@@ -28,7 +28,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh, xyz_tup
-from .slope_limiting import MOOD, gather_neighbor_slices
+from .slope_limiting import MOOD
 from .slope_limiting.MOOD import MOODConfig
 from .slope_limiting.muscl import compute_limited_slopes
 from .slope_limiting.zhang_and_shu import (
@@ -100,7 +100,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: bool = False,
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
-        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"] = "minmod",
+        MUSCL_limiter: Literal["minmod", "moncen"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
@@ -191,7 +191,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 scheme or the MOOD cascade. Options include:
                 - "minmod"
                 - "moncen"
-                - "ppmd"
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
@@ -286,7 +285,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         flux_recipe: Literal[1, 2, 3],
         lazy_primitives: bool,
         MUSCL: bool,
-        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"],
+        MUSCL_limiter: Literal["minmod", "moncen"],
     ):
         self.base_scheme: InterpolationScheme
         self.p: int
@@ -644,7 +643,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_dt_revisions: int,
         MOOD: bool,
         cascade: Literal["first-order", "muscl", "full"],
-        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"],
+        MUSCL_limiter: Literal["minmod", "moncen"],
         max_MOOD_iters: int,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
@@ -1686,7 +1685,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         x_nodes = arrays["x_nodes"]
         y_nodes = arrays["y_nodes"]
         z_nodes = arrays["z_nodes"]
-        v = arrays["theta"]
         _w_ = arrays["_w_"] if limit_primitives else arrays["_u_"]
 
         dwx = arrays["buffer"][..., 0:1]
@@ -1697,9 +1695,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # update workspaces
         self.update_workspaces(t, u, scheme)
-
-        if scheme.limiter == "ppmd":
-            raise ValueError("ppmd not supported right now")
 
         # predictor step: compute limited slopes
         for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
@@ -1748,36 +1743,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.increment_substepwise_logs()
 
         return
-
-        if scheme.limiter == "ppmd":
-            # compute central slopes in each direction and store them in the respective nodes array
-            for dim, node_arr in zip(xyz_tup, [x_nodes, y_nodes, z_nodes]):
-                if dim not in mesh.active_dims:
-                    continue
-                node_arr[..., 0][crop(DIM_TO_AXIS[dim], (1, -1))] = 0.5 * (
-                    _w_[crop(DIM_TO_AXIS[dim], (2, None))]
-                    - _w_[crop(DIM_TO_AXIS[dim], (None, -2))]
-                )
-
-            # compute min and max over kernel of neighboring cells
-            all_slices = gather_neighbor_slices(mesh.active_dims, True)
-            inner_slice = all_slices[0]
-
-            # compute slope limiter v
-            neighbor_differences = xp.asarray(
-                [_w_[slc] - _w_[inner_slice] for slc in all_slices[1:]]
-            )
-            eps = 1e-20
-            v_min = xp.minimum(xp.min(neighbor_differences, axis=0), -eps)
-            v_max = xp.maximum(xp.max(neighbor_differences, axis=0), eps)
-
-            v_denom = xp.zeros_like(v_min)
-            for dim, node_arr in zip(xyz_tup, [x_nodes, y_nodes, z_nodes]):
-                if dim not in mesh.active_dims:
-                    continue
-                v_denom += xp.abs(node_arr[..., 0][inner_slice])
-            v = 2 * xp.minimum(xp.abs(v_min), xp.abs(v_max)) / (v_denom + eps)
-            v[...] = xp.minimum(v, 1.0)
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)

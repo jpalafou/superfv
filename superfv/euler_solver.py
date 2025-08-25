@@ -42,7 +42,7 @@ class EulerSolver(FiniteVolumeSolver):
         lazy_primitives: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
-        MUSCL_limiter: Literal["minmod", "moncen", "ppmd"] = "minmod",
+        MUSCL_limiter: Literal["minmod", "moncen"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
@@ -134,7 +134,6 @@ class EulerSolver(FiniteVolumeSolver):
                 scheme or the MOOD cascade. Options include:
                 - "minmod"
                 - "moncen"
-                - "ppmd"
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
