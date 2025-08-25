@@ -769,6 +769,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # initialize snapshot arrays
         assert arrays["u"].shape == (nvars, nx, ny, nz)
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+        arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
 
         # initialize workspace arrays
         _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_

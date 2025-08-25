@@ -327,18 +327,22 @@ class EulerSolver(FiniteVolumeSolver):
         """
         xp = self.xp
         idx = self.variable_index_map
-        ndim = self.mesh.ndim
+        mesh = self.mesh
+
+        sum_of_s_over_h = self.arrays["sum_of_s_over_h"]
 
         w = self.primitives_from_conservatives(u)
-        h = min(self.mesh.hx, self.mesh.hy, self.mesh.hz)
         c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
 
-        out = (
-            self.CFL
-            * h
-            / xp.max(xp.sum(xp.abs(w[idx("v", keepdims=True)]), axis=0) + ndim * c)
-        )
-        return out.item()
+        sum_of_s_over_h[...] = 0.0
+        for dim in mesh.active_dims:
+            v = xp.abs(w[idx("v" + dim)]) + c
+            h = getattr(mesh, "h" + dim)
+
+            sum_of_s_over_h[...] = sum_of_s_over_h + v / h
+
+        out = self.CFL / xp.max(sum_of_s_over_h).item()
+        return out
 
     def flux_jvp(
         self,
