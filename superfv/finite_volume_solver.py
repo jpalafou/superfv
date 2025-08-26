@@ -1102,7 +1102,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         u: ArrayLike,
         dim: Literal["x", "y", "z"],
-        scheme: InterpolationScheme,
+        scheme: polyInterpolationScheme,
         *,
         convert_to_primitives: bool = False,
     ):
@@ -1133,33 +1133,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         buffer = self.arrays["buffer"]
 
         # perform interpolation
-        if isinstance(scheme, polyInterpolationScheme):
-            p = scheme.p
-            if scheme.gauss_legendre:
-                fv.interpolate_GaussLegendre_nodes(
-                    xp, u, dim, adims, p, out=out, buffer=buffer
-                )
-            else:
-                fv.interpolate_face_centers(
-                    xp, u, dim, adims, p, out=out, buffer=buffer
-                )
-        elif isinstance(scheme, musclInterpolationScheme):
-            if scheme.limiter not in ("minmod", "moncen", None):
-                raise ValueError(f"Invalid MUSCL limiter: {scheme.limiter}")
-            slopes = self.arrays["centroid"]
-            compute_limited_slopes(
-                xp,
-                u,
-                dim,
-                adims,
-                out=slopes,
-                buffer=buffer,
-                limiter=scheme.limiter,
+        p = scheme.p
+        if scheme.gauss_legendre:
+            fv.interpolate_GaussLegendre_nodes(
+                xp, u, dim, adims, p, out=out, buffer=buffer
             )
-            out[..., 0] = u - 0.5 * slopes[..., 0]
-            out[..., 1] = u + 0.5 * slopes[..., 0]
         else:
-            raise ValueError(f"Unknown interpolation scheme: {scheme}")
+            fv.interpolate_face_centers(xp, u, dim, adims, p, out=out, buffer=buffer)
 
         if convert_to_primitives:
             # convert to primitive variables if requested
@@ -1335,19 +1315,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             t: Time value.
             scheme: Interpolation scheme to use for the flux computation.
         """
-        interpolate_primitives = scheme.flux_recipe == 3
+        interp_primitives = scheme.flux_recipe == 3
         limit_primitives = scheme.flux_recipe in (2, 3)
-
-        averages = self.arrays["_w_"] if interpolate_primitives else self.arrays["_u_"]
+        averages = self.arrays["_w_"] if interp_primitives else self.arrays["_u_"]
 
         # update the face node arrays with the interpolated face nodes
-        for dim in self.mesh.active_dims:
-            self.inplace_interpolate_faces(
-                averages,
-                dim,
-                scheme,
-                convert_to_primitives=limit_primitives and not interpolate_primitives,
+        if isinstance(scheme, polyInterpolationScheme):
+            for dim in self.mesh.active_dims:
+                self.inplace_interpolate_faces(
+                    averages,
+                    dim,
+                    scheme,
+                    convert_to_primitives=limit_primitives and not interp_primitives,
+                )
+        elif isinstance(scheme, musclInterpolationScheme):
+            self.inplace_reconstruct_muscl_faces(
+                scheme, limit_primitives=limit_primitives
             )
+        else:
+            raise ValueError("Unknown interpolation scheme.")
 
         # limit the face nodes arrays with the Zhang-Shu limiter
         if scheme.limiter == "zhang-shu":
@@ -1655,38 +1641,67 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Notes:
             This method requires `self.flux_jvp` to be implemented.
         """
-        if not isinstance(self.base_scheme, musclInterpolationScheme):
-            raise ValueError(
-                "The base scheme must be a MUSCL interpolation scheme to use "
-                "the MUSCL-Hancock method."
-            )
-
-        xp = self.xp
         scheme = self.base_scheme
-        mesh = self.mesh
-        arrays = self.arrays
+        limit_primitives = scheme.flux_recipe in (2, 3)
         self.substep_dt = dt
 
-        limit_primitives = scheme.flux_recipe in (2, 3)
+        if not isinstance(scheme, musclInterpolationScheme):
+            raise ValueError("The scheme must be a MUSCL interpolation scheme.")
+
+        # update workspace
+        self.update_workspaces(t, u, scheme)
+
+        # predictor step
+        self.inplace_reconstruct_muscl_faces(
+            scheme, limit_primitives=limit_primitives, hancock=True, dt=dt
+        )
+
+        self.increment_substepwise_logs()
+
+        # corrector step
+        for dim in self.mesh.active_dims:
+            self.normalize_node_arrays(t, dim, scheme, primitives=limit_primitives)
+            self.inplace_integrate_fluxes(dim, scheme)
+
+        dudt = self.compute_RHS().copy()
+        self.arrays["unew"][...] = u + dt * dudt
+
+        self.increment_substepwise_logs()
+
+    def inplace_reconstruct_muscl_faces(
+        self,
+        scheme: musclInterpolationScheme,
+        *,
+        limit_primitives: bool,
+        hancock: bool = False,
+        dt: Optional[float] = None,
+    ):
+        """
+        Interpolate face nodes using either a MUSCL or MUSCL-Hancock method and write
+        them to the appropriate arrays (`x_nodes`, `y_nodes`, `z_nodes`).
+
+        Args:
+            scheme: The MUSCL interpolation scheme to use.
+            limit_primitives: Whether to limit the primitive variables.
+            hancock: Whether to use the MUSCL-Hancock method.
+            dt: The time step size (required if hancock is True).
+        """
+        xp = self.xp
+        mesh = self.mesh
+        arrays = self.arrays
 
         # allocate arrays
-        unew = arrays["unew"]
         x_nodes = arrays["x_nodes"]
         y_nodes = arrays["y_nodes"]
         z_nodes = arrays["z_nodes"]
         w_center = arrays["_w_"] if limit_primitives else arrays["_u_"]
-
-        # allocate slopes
         dwx = arrays["buffer"][..., 0:1]
         dwy = arrays["buffer"][..., 1:2]
         dwz = arrays["buffer"][..., 2:3]
-        buffer = arrays["buffer"][..., 3:]
-        w_t_half = buffer[..., 0]  # be careful: this memory is shared
+        w_center_for_nodes = arrays["buffer"][..., 3]
+        buffer = arrays["buffer"][..., 4:]
 
-        # update workspaces
-        self.update_workspaces(t, u, scheme)
-
-        # predictor step: compute limited slopes
+        # compute limited slopes
         for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
             if dim not in self.mesh.active_dims:
                 continue
@@ -1701,38 +1716,33 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 SED=False,
             )
 
-        # predictor step: evolve the cell-center by 1/2 dt
-        w_t_half[...] = w_center
-        for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-            if dim not in mesh.active_dims:
-                continue
-            h = getattr(mesh, "h" + dim)
-            ds = self.flux_jvp(
-                w_center, slope_arr[..., 0], dim, primitives=limit_primitives
-            )
-            w_t_half[...] -= ds * dt / 2 / h
+        # evolve the cell-center by 1/2 dt
+        if hancock:
+            if dt is None:
+                raise ValueError(
+                    "dt must be provided for MUSCL-Hancock reconstruction."
+                )
 
-        # predictor step: update the face nodes using the limited slopes
+            w_center_for_nodes[...] = w_center
+            for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
+                if dim not in mesh.active_dims:
+                    continue
+                h = getattr(mesh, "h" + dim)
+                ds = self.flux_jvp(
+                    w_center, slope_arr[..., 0], dim, primitives=limit_primitives
+                )
+                w_center_for_nodes[...] -= ds * dt / 2 / h
+        else:
+            w_center_for_nodes[...] = w_center
+
+        # update the face nodes using the limited slopes
         for node_arr, slope_arr, dim in zip(
             [x_nodes, y_nodes, z_nodes], [dwx, dwy, dwz], xyz_tup
         ):
             if dim not in mesh.active_dims:
                 continue
-            node_arr[..., 0] = w_t_half - slope_arr[..., 0] / 2
-            node_arr[..., 1] = w_t_half + slope_arr[..., 0] / 2
-
-        self.increment_substepwise_logs()
-
-        # corrector step: compute fluxes based on the predictor step face nodes
-        for dim in mesh.active_dims:
-            self.normalize_node_arrays(t, dim, scheme, primitives=limit_primitives)
-            self.inplace_integrate_fluxes(dim, scheme)
-
-        # compute the right-hand side of the ODE
-        dudt = self.compute_RHS().copy()
-        unew[...] = u + dt * dudt
-
-        self.increment_substepwise_logs()
+            node_arr[..., 0] = w_center_for_nodes - slope_arr[..., 0] / 2
+            node_arr[..., 1] = w_center_for_nodes + slope_arr[..., 0] / 2
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)
