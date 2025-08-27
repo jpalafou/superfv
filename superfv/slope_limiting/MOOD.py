@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
 
 from superfv.boundary_conditions import BCs, apply_bc
+from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop
@@ -12,7 +13,7 @@ from .smooth_extrema_detection import inplace_smooth_extrema_detector
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from types import ModuleType
 
@@ -22,52 +23,42 @@ from superfv.interpolation_schemes import InterpolationScheme
 Fluxes = Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
 
 
-@dataclass
-class MOODConfig:
+@dataclass(frozen=True, slots=True)
+class MOODConfig(LimiterConfig):
     """
-    Configuration options for the MOOD (Multidimensional Optimal Order Detection)
-    algorithm.
+    Configuration for the MOOD framework.
 
     Attributes:
-        max_iters: Maximum number of iterations for the MOOD algorithm.
-        cascade: List of InterpolationScheme objects defining the MOOD cascade.
-        NAD: Whether to enable Numerical Admissibility Detection (NAD).
+        cascade: The list of interpolation schemes to use in the MOOD framework.
+        max_iters: The maximum number of iterations to perform.
+        NAD: Whether to use numerical admissibility detection to detect troubled cells.
+        PAD: Whether to use physical admissibility detection to detect troubled cells.
+        SED: Whether to use smooth extrema detection to forgive troubled cells.
         NAD_rtol: Relative tolerance for NAD violations.
         NAD_atol: Absolute tolerance for NAD violations.
-        global_dmp: Whether to use global DMP (Dynamic Maximum Principle) for NAD.
-        include_corners: Whether to include corner values in the DMP computation.
-        global_dmp: Whether to use global DMP (Dynamic Maximum Principle) for NAD.
-        PAD: Whether to enable Physical Admissibility Detection (PAD).
+        PAD_atol: Absolute tolerance for PAD violations.
         PAD_bounds: Physical bounds for each variable used in PAD. Has shape
             (nvars, 1, 1, 1, 2) with the minimum and maximum values for each variable
             stored in the first and second element of the last dimension, respectively.
-        PAD_atol: Absolute tolerance for PAD violations.
-        SED: Whether to enable Smooth Extrema Detection (SED) for NAD.
-
-    Attributes defined in __post_init__:
-        iter_idx: Current iteration index in the MOOD loop.
-        iter_count: Total number of iterations across all MOOD loops in a step.
-        cascade_status: List of boolean flags indicating the status of each
-            interpolation scheme in the cascade.
+        global_dmp: Whether to use global minima and maxima to set the range for NAD
+            violations instead of local minima and maxima.
+        include_corners: When `global_dmp=False`, whether to include corner cells when
+            computing the local minima and maxima.
     """
 
-    max_iters: int = 0
-    cascade: List[InterpolationScheme] = field(default_factory=list)
-    NAD: bool = False
+    cascade: List[InterpolationScheme]
+    max_iters: int
+    NAD: bool
+    PAD: bool
+    SED: bool
     NAD_rtol: float = 1.0
     NAD_atol: float = 0.0
+    PAD_atol: float = 0.0
+    PAD_bounds: Optional[ArrayLike] = None
     global_dmp: bool = False
     include_corners: bool = False
-    PAD: bool = False
-    PAD_bounds: Optional[ArrayLike] = None
-    PAD_atol: float = 0.0
-    SED: bool = False
 
     def __post_init__(self):
-        self.reset_iter_count()
-        self.reset_iter_count_hist()
-        self.reset_MOOD_loop()
-
         if self.PAD and self.PAD_bounds is None:
             raise ValueError(
                 "PAD requires PAD_bounds to be set. "
@@ -77,6 +68,32 @@ class MOODConfig:
             raise ValueError(
                 "SED requires NAD to be enabled. Please set NAD to a non-None value."
             )
+
+    def key(self) -> str:
+        cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
+        return f"MOOD: [{cascade_keys}]"
+
+
+@dataclass
+class MOODState:
+    """
+    Class that describes the state of the MOOD iterator.
+
+    Attributes:
+        config: The MOOD configuration.
+        iter_idx: Current iteration index in the MOOD loop.
+        iter_count: Total number of iterations across all MOOD loops in a step.
+        fine_iter_count: Number of iterations in the current MOOD loop.
+        cascade_status: List of boolean flags indicating the status of each
+            interpolation scheme in the cascade.
+    """
+
+    config: MOODConfig
+
+    def __post_init__(self):
+        self.reset_iter_count()
+        self.reset_iter_count_hist()
+        self.reset_MOOD_loop()
 
     def reset_iter_count(self):
         """
@@ -90,7 +107,7 @@ class MOODConfig:
         Reset the iter count history which accumulates the total number of iterations
         for each substep.
         """
-        self.iter_count_hist = []
+        self.iter_count_hist: List[int] = []
 
     def increment_iter_count_hist(self):
         """
@@ -105,7 +122,7 @@ class MOODConfig:
         """
         self.iter_idx = 0
         self.fine_iter_count = 0
-        self.cascade_status: List[bool] = [False] * len(self.cascade)
+        self.cascade_status: List[bool] = [False] * len(self.config.cascade)
 
     def increment_MOOD_iteration(self):
         """
@@ -131,17 +148,18 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
     # gather solver parameters
     xp = fv_solver.xp
     arrays = fv_solver.arrays
-    mesh = fv_solver.mesh
+    active_dims = fv_solver.active_dims
     lim_slc = fv_solver.variable_index_map("limiting", keepdims=True)
     interior = fv_solver.interior
     dt = fv_solver.substep_dt
-    MOOD_config = fv_solver.MOOD_config
+    MOOD_state = fv_solver.MOOD_state
 
     # gather MOOD parameters
-    iter_idx = MOOD_config.iter_idx
-    max_iters = MOOD_config.max_iters
+    iter_idx = MOOD_state.iter_idx
+    max_iters = MOOD_state.config.max_iters
+    cascade_status = MOOD_state.cascade_status
+    MOOD_config = MOOD_state.config
     cascade = MOOD_config.cascade
-    cascade_status = MOOD_config.cascade_status
     NAD = MOOD_config.NAD
     NAD_rtol = MOOD_config.NAD_rtol
     NAD_atol = MOOD_config.NAD_atol
@@ -183,7 +201,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
             xp,
             u_new[lim_slc],
             u_old[lim_slc],
-            fv_solver.mesh.active_dims,
+            active_dims,
             out=NAD_violations,
             buffer=buffer,
             rtol=NAD_rtol,
@@ -197,7 +215,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
         inplace_smooth_extrema_detector(
             xp,
             u_new[lim_slc],
-            fv_solver.mesh.active_dims,
+            active_dims,
             out=alpha,
             buffer=buffer,
         )
@@ -237,11 +255,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
     if has_troubles and iter_idx == 0:
         # store high-order fluxes
         scheme_key = cascade[0].key()
-        if "x" in mesh.active_dims:
+        if "x" in active_dims:
             arrays["F_" + scheme_key][...] = arrays["F"].copy()
-        if "y" in mesh.active_dims:
+        if "y" in active_dims:
             arrays["G_" + scheme_key][...] = arrays["G"].copy()
-        if "z" in mesh.active_dims:
+        if "z" in active_dims:
             arrays["H_" + scheme_key][...] = arrays["H"].copy()
         cascade_status[0] = True
 
@@ -363,11 +381,11 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     # gather solver parameters
     xp = fv_solver.xp
     arrays = fv_solver.arrays
-    mesh = fv_solver.mesh
+    active_dims = fv_solver.active_dims
     interior = fv_solver.interior
-    MOOD_config = fv_solver.MOOD_config
-    cascade = MOOD_config.cascade
-    cascade_status = MOOD_config.cascade_status
+    MOOD_state = fv_solver.MOOD_state
+    cascade = MOOD_state.config.cascade
+    cascade_status = MOOD_state.cascade_status
     max_idx = len(cascade) - 1
 
     # allocate arrays
@@ -390,29 +408,29 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
         fv_solver.inplace_compute_fluxes(t, scheme)
         cascade_status[current_max_idx] = True
 
-        if "x" in mesh.active_dims:
+        if "x" in active_dims:
             arrays["F_" + scheme.key()] = F.copy()
-        if "y" in mesh.active_dims:
+        if "y" in active_dims:
             arrays["G_" + scheme.key()] = G.copy()
-        if "z" in mesh.active_dims:
+        if "z" in active_dims:
             arrays["H_" + scheme.key()] = H.copy()
 
     # broadcast cascade index to each face
-    if "x" in mesh.active_dims:
+    if "x" in active_dims:
         F[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = F_mask[interior] == i
             xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
-    if "y" in mesh.active_dims:
+    if "y" in active_dims:
         G[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = G_mask[interior] == i
             xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
-    if "z" in mesh.active_dims:
+    if "z" in active_dims:
         H[...] = 0
         inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):

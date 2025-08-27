@@ -45,6 +45,9 @@ class UniformFVMesh:
         nx, ny, nz: Number of cells in the x, y, and z dimensions, respectively.
         xlim, ylim, zlim: Limits of the mesh in the x, y, and z dimensions,
             respectively, as tuples (min, max).
+        active_dims: A tuple of active dimensions containing "x", "y", and/or "z".
+            Active dimensions are those that get assigned a slab array. Inactive
+            dimensions must have a size of 1.
         slab_depth: The depth of the slab in each active dimension, which are
             defined as the dimensions with nx, ny, or nz greater than 1.
         array_manager: An ArrayManager instance for managing arrays on the appropriate
@@ -55,10 +58,6 @@ class UniformFVMesh:
         shape: The shape of the core mesh as a tuple (nx, ny, nz).
         size: The total number of cells in the core mesh (nx * ny * nz).
         hx, hy, hz: The cell sizes in the x, y, and z dimensions, respectively.
-        active_dims: A tuple of active dimensions (e.g., ('x', 'y')) based on the
-            number of cells in each dimension.
-        inactive_dims: A tuple of inactive dimensions (e.g., ('z')) based on the
-            number of cells in each dimension.
         ndim: The number of active dimensions in the mesh.
         x_is_active, y_is_active, z_is_active: Boolean flags indicating whether the
             x, y, and z dimensions are active (i.e., have more than one cell).
@@ -83,6 +82,7 @@ class UniformFVMesh:
     xlim: Tuple[float, float] = (0, 1)
     ylim: Tuple[float, float] = (0, 1)
     zlim: Tuple[float, float] = (0, 1)
+    active_dims: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
     slab_depth: int = 1
     array_manager: ArrayManager = field(default_factory=ArrayManager)
 
@@ -96,6 +96,7 @@ class UniformFVMesh:
     def _validate_args(self):
         nx, ny, nz = self.nx, self.ny, self.nz
         xlim, ylim, zlim = self.xlim, self.ylim, self.zlim
+        active_dims = self.active_dims
         slab_depth = self.slab_depth
 
         if any(x < 1 or not isinstance(x, int) for x in (nx, ny, nz)):
@@ -108,6 +109,12 @@ class UniformFVMesh:
             raise ValueError(
                 "Limits must be tuples of two values (min, max) with min < max."
             )
+        if any(dim not in xyz_tup for dim in active_dims):
+            raise ValueError("Active dimensions must be 'x', 'y', and/or 'z'.")
+        if any(
+            n > 1 and dim not in active_dims for dim, n in zip(xyz_tup, (nx, ny, nz))
+        ):
+            raise ValueError("Inactive dimensions must have only one cell.")
         if slab_depth < 0 or not isinstance(slab_depth, int):
             raise ValueError("Slab depth must be a non-negative integer.")
 
@@ -117,12 +124,6 @@ class UniformFVMesh:
         self.hx: float = (self.xlim[1] - self.xlim[0]) / self.nx
         self.hy: float = (self.ylim[1] - self.ylim[0]) / self.ny
         self.hz: float = (self.zlim[1] - self.zlim[0]) / self.nz
-        self.active_dims: Tuple[Literal["x", "y", "z"], ...] = tuple(
-            dim for dim, n in zip(xyz_tup, (self.nx, self.ny, self.nz)) if n > 1
-        )
-        self.inactive_dims: Tuple[Literal["x", "y", "z"], ...] = tuple(
-            dim for dim in xyz_tup if dim not in self.active_dims
-        )
         self.ndim = len(self.active_dims)
         self.x_is_active: bool = "x" in self.active_dims
         self.y_is_active: bool = "y" in self.active_dims

@@ -21,15 +21,15 @@ from .boundary_conditions import BCs, DirichletBC, Field, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .fv import DIM_TO_AXIS
 from .initial_conditions import _uninitialized
-from .interpolation_schemes import (
-    InterpolationScheme,
-    musclInterpolationScheme,
-    polyInterpolationScheme,
-)
+from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
 from .mesh import UniformFVMesh, xyz_tup
 from .slope_limiting import MOOD
-from .slope_limiting.MOOD import MOODConfig
-from .slope_limiting.muscl import compute_limited_slopes
+from .slope_limiting.MOOD import MOODConfig, MOODState
+from .slope_limiting.muscl import (
+    compute_limited_slopes,
+    musclConfig,
+    musclInterpolationScheme,
+)
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     compute_theta,
@@ -229,26 +229,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cupy: Whether to use CuPy for array operations.
             log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
+        self._init_active_dims(nx, ny, nz)
+        self._init_ic_callables(ic, ic_passives)
         self._init_array_management(cupy)
         self._init_spatial_discretization(
-            GL,
             p,
             flux_recipe,
+            GL,
             lazy_primitives,
             MUSCL,
             MUSCL_limiter,
-        )
-        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
-        self._init_ic(ic, ic_passives)
-        self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
-        self._init_riemann_solver(riemann_solver)
-        self._init_slope_limiting(
             ZS,
             adaptive_dt,
             max_dt_revisions,
             MOOD,
             cascade,
-            MUSCL_limiter,
             max_MOOD_iters,
             limiting_vars,
             NAD,
@@ -260,132 +255,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD_atol,
             SED,
         )
+        self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
+        self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_allocation()
         self._init_snapshots(log_every_step)
+        self._init_riemann_solver(riemann_solver)
 
-    def _init_array_management(self, cupy: bool):
-        # init cupy boolean and numpy namespace
-        self.cupy = False
-        if cupy and CUPY_AVAILABLE:
-            self.cupy = True
-        elif cupy:
-            warnings.warn("CuPy is not available. Using NumPy instead.")
-        self.xp = xp if self.cupy else np
+    def _init_active_dims(self, nx: int, ny: int, nz: int):
+        self.active_dims = tuple(d for d, n in zip(xyz_tup, (nx, ny, nz)) if n > 1)
+        self.inactive_dims = tuple(d for d in xyz_tup if d not in self.active_dims)
 
-        # init array manager
-        self.arrays = ArrayManager()
-        if self.cupy:
-            self.arrays.transfer_to_device("gpu")
-
-    def _init_spatial_discretization(
-        self,
-        GL: bool,
-        p: int,
-        flux_recipe: Literal[1, 2, 3],
-        lazy_primitives: bool,
-        MUSCL: bool,
-        MUSCL_limiter: Literal["minmod", "moncen"],
-    ):
-        self.base_scheme: InterpolationScheme
-        self.p: int
-
-        # validate flux recipe
-        if flux_recipe not in (1, 2, 3):
-            raise ValueError(
-                "flux_recipe must be 1, 2, or 3. See the documentation for details."
-            )
-
-        # MUSCL early escape
-        if MUSCL:
-            if p != 1:
-                warnings.warn("MUSCL overrides p to be 1.")
-            if flux_recipe == 3:
-                warnings.warn(
-                    "MUSCL overrides flux_recipe to be 2 when flux_recipe=3 is given."
-                )
-                flux_recipe = 2
-            self.p = 1
-            self.base_scheme = musclInterpolationScheme(
-                flux_recipe=flux_recipe,
-                limiter=MUSCL_limiter,
-            )
-            return
-
-        # assign polynomial degree
-        if p < 0:
-            raise ValueError("The polynomial degree must be non-negative.")
-        self.p = p
-
-        # assign base scheme
-        self.base_scheme = polyInterpolationScheme(
-            flux_recipe=flux_recipe,
-            limiter=None,
-            p=p,
-            lazy_primitives=lazy_primitives,
-            gauss_legendre=GL,
-        )
-
-    def _init_mesh(
-        self,
-        xlim: Tuple[float, float],
-        ylim: Tuple[float, float],
-        zlim: Tuple[float, float],
-        nx: int,
-        ny: int,
-        nz: int,
-        CFL: float,
-    ):
-        if CFL <= 0:
-            raise ValueError("The CFL number must be positive.")
-
-        # determine slab depth
-        stencil_depth = -2 * (-self.p // 2)
-        SED_depth = 3
-        slab_depth = max(stencil_depth, SED_depth)
-
-        # init mesh object
-        self.mesh = UniformFVMesh(
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            xlim=xlim,
-            ylim=ylim,
-            zlim=zlim,
-            slab_depth=slab_depth,
-            array_manager=self.arrays,
-        )
-
-        # assign attributes
-        self.CFL: float = CFL
-
-        # interior workspace view
-        self.interior = merge_slices(
-            *[
-                crop(DIM_TO_AXIS[dim], (self.mesh.slab_depth, -self.mesh.slab_depth))
-                for dim in self.mesh.active_dims
-            ]
-        )
-
-        # interior workspace view for fluxes
-        self.flux_interior = {
-            dim: (
-                merge_slices(
-                    *[
-                        crop(
-                            DIM_TO_AXIS[d],
-                            (self.mesh.slab_depth, -self.mesh.slab_depth),
-                        )
-                        for d in self.mesh.active_dims
-                        if d != dim
-                    ],
-                )
-                if self.mesh.ndim > 1
-                else slice(None)
-            )
-            for dim in self.mesh.active_dims
-        }
-
-    def _init_ic(
+    def _init_ic_callables(
         self,
         ic: FieldFunction,
         ic_passives: Optional[Dict[str, PassiveFieldFunction]],
@@ -419,21 +299,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.variable_index_map = idx
         self.nvars = idx.nvars
         self.n_passive_vars = len(np.arange(self.nvars)[idx("passives")])
-
-        # Initialize the ODE solver with the initial condition array
-        ic_arr = self.mesh.perform_GaussLegendre_quadrature(
-            lambda x, y, z: self.conservative_callable_ic(idx, x, y, z, 0.0),
-            node_axis=4,
-            mesh_region="core",
-            cell_region="interior",
-            p=self.p,
-        )
-
-        lower_bound = self.xp.min(ic_arr, axis=(1, 2, 3), keepdims=True)
-        upper_bound = self.xp.max(ic_arr, axis=(1, 2, 3), keepdims=True)
-        self.maximum_principle = (lower_bound, upper_bound)
-
-        super().__init__(ic_arr, self.arrays)
 
     def _callable_ic(
         self,
@@ -508,6 +373,320 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
         """
         return self.conservatives_from_primitives(self.callable_ic(idx, x, y, z, t))
+
+    def _init_array_management(self, cupy: bool):
+        # init cupy boolean and numpy namespace
+        self.cupy = False
+        if cupy and CUPY_AVAILABLE:
+            self.cupy = True
+        elif cupy:
+            warnings.warn("CuPy is not available. Using NumPy instead.")
+        self.xp = xp if self.cupy else np
+
+        # init array manager
+        self.arrays = ArrayManager()
+        if self.cupy:
+            self.arrays.transfer_to_device("gpu")
+
+    def _init_spatial_discretization(
+        self,
+        p: int,
+        flux_recipe: Literal[1, 2, 3],
+        GL: bool,
+        lazy_primitives: bool,
+        MUSCL: bool,
+        MUSCL_limiter: Literal["minmod", "moncen"],
+        ZS: bool,
+        adaptive_dt: bool,
+        max_dt_revisions: int,
+        MOOD: bool,
+        cascade: Literal["first-order", "muscl", "full"],
+        max_MOOD_iters: int,
+        limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
+        NAD: bool,
+        NAD_atol: float,
+        NAD_rtol: float,
+        global_dmp: bool,
+        include_corners: bool,
+        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
+        PAD_atol: float,
+        SED: bool,
+    ):
+        self.base_scheme: InterpolationScheme
+
+        idx = self.variable_index_map
+        idx.add_var_to_group("limiting", [])
+
+        null_MOOD_config = MOODConfig(
+            cascade=[], max_iters=0, NAD=False, PAD=False, SED=False
+        )
+        self.MOOD_state = MOODState(config=null_MOOD_config)
+        self.MOOD = False
+
+        # first-order scheme early escape
+        if p == 0:
+            self._init_unlimited_scheme(0, flux_recipe, GL, lazy_primitives)
+            return
+
+        # init a priori scheme
+        if MUSCL:
+            if ZS:
+                raise ValueError("MUSCL scheme cannot be combined with ZS.")
+            self._init_muscl_scheme(p, flux_recipe, MUSCL_limiter, SED)
+        elif ZS:
+            self._init_PAD(PAD)
+            self._init_zhang_shu_scheme(
+                p,
+                flux_recipe,
+                GL,
+                lazy_primitives,
+                include_corners,
+                PAD,
+                SED,
+                adaptive_dt,
+                max_dt_revisions,
+                PAD_atol,
+            )
+        else:
+            self._init_unlimited_scheme(p, flux_recipe, GL, lazy_primitives)
+
+        # init a posteriori scheme
+        if MOOD:
+            if not ZS:
+                self._init_PAD(PAD)
+            self._init_MOOD(
+                MOOD,
+                cascade,
+                MUSCL_limiter,
+                max_MOOD_iters,
+                NAD,
+                PAD,
+                SED,
+                NAD_rtol,
+                NAD_atol,
+                PAD_atol,
+                global_dmp,
+                include_corners,
+            )
+
+        # add limiting variables to the index map
+        if limiting_vars == "all":
+            limiting_vars = tuple(idx.var_idx_map.keys())
+        elif limiting_vars == "actives":
+            limiting_vars = tuple(idx.group_var_map["primitives"])
+        idx.add_var_to_group("limiting", limiting_vars)
+
+    def _init_unlimited_scheme(
+        self, p: int, flux_recipe: Literal[1, 2, 3], GL: bool, lazy_primitives: bool
+    ):
+        self.p = p
+        self.base_scheme = polyInterpolationScheme(
+            p=p,
+            flux_recipe=flux_recipe,
+            limiter_config=None,
+            gauss_legendre=GL,
+            lazy_primitives=lazy_primitives,
+        )
+
+    def _init_muscl_scheme(
+        self,
+        p: int,
+        flux_recipe: Literal[1, 2, 3],
+        MUSCL_limiter: Optional[Literal["minmod", "moncen"]],
+        SED: bool,
+    ):
+        if p != 1:
+            warnings.warn("MUSCL overrides p to be 1.")
+        if flux_recipe == 3:
+            warnings.warn("MUSCL overrides flux_recipe 3 to be 2.")
+            flux_recipe = 2
+
+        self.p = 1
+        self.base_scheme = musclInterpolationScheme(
+            flux_recipe=flux_recipe,
+            limiter_config=musclConfig(limiter=MUSCL_limiter, SED=SED),
+        )
+
+    def _init_zhang_shu_scheme(
+        self,
+        p: int,
+        flux_recipe: Literal[1, 2, 3],
+        GL: bool,
+        lazy_primitives: bool,
+        include_corners: bool,
+        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
+        SED: bool,
+        adaptive_dt: bool,
+        max_dt_revisions: int,
+        PAD_atol: float,
+    ):
+        self.p = p
+        self.base_scheme = polyInterpolationScheme(
+            p=p,
+            flux_recipe=flux_recipe,
+            limiter_config=ZhangShuConfig(
+                SED=SED,
+                adaptive_dt=adaptive_dt,
+                max_dt_revisions=max_dt_revisions,
+                include_corners=include_corners,
+                PAD_bounds=None if PAD is None else self.arrays["PAD_bounds"],
+                PAD_atol=PAD_atol,
+            ),
+            gauss_legendre=GL,
+            lazy_primitives=lazy_primitives,
+        )
+
+    def _init_MOOD(
+        self,
+        MOOD: bool,
+        cascade: Literal["first-order", "muscl", "full"],
+        MUSCL_limiter: Literal["minmod", "moncen"],
+        max_MOOD_iters: int,
+        NAD: bool,
+        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
+        SED: bool,
+        NAD_rtol: float,
+        NAD_atol: float,
+        PAD_atol: float,
+        global_dmp: bool,
+        include_corners: bool,
+    ):
+        if not MOOD:
+            return
+
+        base_scheme = self.base_scheme
+        if not isinstance(base_scheme, polyInterpolationScheme):
+            raise ValueError(
+                "Base scheme must be an instance of polyInterpolationScheme."
+            )
+
+        fallback_schemes: List[InterpolationScheme]
+        if cascade == "first-order":
+            fallback_schemes = [
+                polyInterpolationScheme(
+                    p=0,
+                    flux_recipe=base_scheme.flux_recipe,
+                    gauss_legendre=base_scheme.gauss_legendre,
+                    lazy_primitives=base_scheme.lazy_primitives,
+                )
+            ]
+        elif cascade == "muscl":
+            if base_scheme.flux_recipe == 3:
+                warnings.warn("MUSCL overrides flux_recipe 3 to be 2.")
+            _flux_recipe: Literal[1, 2] = (
+                2 if base_scheme.flux_recipe == 3 else base_scheme.flux_recipe
+            )
+            fallback_schemes = [
+                musclInterpolationScheme(
+                    flux_recipe=_flux_recipe,
+                    limiter_config=musclConfig(limiter=MUSCL_limiter, SED=False),
+                )
+            ]
+        elif cascade == "full":
+            fallback_schemes = [
+                polyInterpolationScheme(
+                    p=p,
+                    flux_recipe=base_scheme.flux_recipe,
+                    gauss_legendre=base_scheme.gauss_legendre,
+                    lazy_primitives=base_scheme.lazy_primitives,
+                )
+                for p in range(base_scheme.p - 1, -1, -1)
+            ]
+        cascade_list = [self.base_scheme] + fallback_schemes
+
+        MOOD_config = MOODConfig(
+            cascade=cascade_list,
+            max_iters=max_MOOD_iters,
+            NAD=NAD,
+            PAD=PAD is not None,
+            SED=SED,
+            NAD_rtol=NAD_rtol,
+            NAD_atol=NAD_atol,
+            PAD_atol=PAD_atol,
+            PAD_bounds=None if PAD is None else self.arrays["PAD_bounds"],
+            global_dmp=global_dmp,
+            include_corners=include_corners,
+        )
+        self.MOOD_state = MOODState(config=MOOD_config)
+        self.MOOD = True
+
+    def _init_PAD(
+        self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
+    ):
+        if PAD is None:
+            return
+        idx = self.variable_index_map
+        PAD_bounds = np.array([[-np.inf, np.inf] for _ in range(self.nvars)])
+        for var, (lb, ub) in PAD.items():
+            PAD_bounds[idx(var), 0] = lb if lb is not None else -np.inf
+            PAD_bounds[idx(var), 1] = ub if ub is not None else np.inf
+        PAD_bounds = np.expand_dims(
+            PAD_bounds, axis=(1, 2, 3)
+        )  # shape (nvars, 1, 1, 1, 2)
+        self.arrays.add("PAD_bounds", PAD_bounds)
+
+    def _init_mesh(
+        self,
+        xlim: Tuple[float, float],
+        ylim: Tuple[float, float],
+        zlim: Tuple[float, float],
+        nx: int,
+        ny: int,
+        nz: int,
+        CFL: float,
+    ):
+        if CFL <= 0:
+            raise ValueError("The CFL number must be positive.")
+
+        p = self.base_scheme.p
+
+        # determine slab depth
+        stencil_depth = -2 * (-p // 2)
+        SED_depth = 3
+        slab_depth = max(stencil_depth, SED_depth)
+
+        # init mesh object
+        self.mesh = UniformFVMesh(
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            xlim=xlim,
+            ylim=ylim,
+            zlim=zlim,
+            active_dims=self.active_dims,
+            slab_depth=slab_depth,
+            array_manager=self.arrays,
+        )
+
+        # assign attributes
+        self.CFL: float = CFL
+
+        # interior workspace view
+        self.interior = merge_slices(
+            *[
+                crop(DIM_TO_AXIS[dim], (self.mesh.slab_depth, -self.mesh.slab_depth))
+                for dim in self.active_dims
+            ]
+        )
+
+        # interior workspace view for fluxes
+        self.flux_interior = {
+            dim: (
+                merge_slices(
+                    *[
+                        crop(
+                            DIM_TO_AXIS[d],
+                            (self.mesh.slab_depth, -self.mesh.slab_depth),
+                        )
+                        for d in self.active_dims
+                        if d != dim
+                    ],
+                )
+                if self.mesh.ndim > 1
+                else slice(None)
+            )
+            for dim in self.active_dims
+        }
 
     def _init_bc(
         self,
@@ -635,147 +814,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         out[...] = self.riemann_func(wl, wr, dim)
 
-    def _init_slope_limiting(
-        self,
-        ZS: bool,
-        adaptive_dt: bool,
-        max_dt_revisions: int,
-        MOOD: bool,
-        cascade: Literal["first-order", "muscl", "full"],
-        MUSCL_limiter: Literal["minmod", "moncen"],
-        max_MOOD_iters: int,
-        limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
-        NAD: bool,
-        NAD_atol: float,
-        NAD_rtol: float,
-        global_dmp: bool,
-        include_corners: bool,
-        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
-        PAD_atol: float,
-        SED: bool,
-    ):
-        # reset slope limiting state
-        self.MOOD: bool = False
-        self.MOOD_config: MOODConfig = MOODConfig()
-        self.ZS = False
-        self.ZhangShu_config = ZhangShuConfig()
-
-        # configure variable indices
-        idx = self.variable_index_map
-        idx.add_var_to_group("limiting", [])
-
-        # skip slope limiting for first-order or if nothing is active
-        if (
-            self.p == 0
-            or (not ZS and not MOOD)
-            or isinstance(self.base_scheme, musclInterpolationScheme)
-        ):
-            return
-
-        # PAD
-        if PAD:
-            PAD_bounds = np.array([[-np.inf, np.inf] for _ in range(self.nvars)])
-            for var, (lb, ub) in PAD.items():
-                PAD_bounds[idx(var), 0] = lb if lb is not None else -np.inf
-                PAD_bounds[idx(var), 1] = ub if ub is not None else np.inf
-            PAD_bounds = np.expand_dims(
-                PAD_bounds, axis=(1, 2, 3)
-            )  # shape (nvars, 1, 1, 1, 2)
-            self.arrays.add("PAD_bounds", PAD_bounds)
-
-        # Zhang-Shu (a priori limiting)
-        if ZS:
-            self.ZS = True
-            self.base_scheme.limiter = "zhang-shu"
-            self.ZhangShu_config = ZhangShuConfig(
-                include_corners=include_corners,
-                SED=SED,
-                adaptive_dt=adaptive_dt,
-                max_dt_revisions=max_dt_revisions,
-                PAD_bounds=self.arrays["PAD_bounds"] if PAD else None,
-                PAD_atol=PAD_atol,
-            )
-            if adaptive_dt:
-                self._dt_criterion = self.adaptive_dt_criterion
-                self._compute_revised_dt = self.adaptive_dt_revision
-
-        # MOOD (a posteriori limiting)
-        if MOOD:
-            self.MOOD = True
-
-            # define MOOD cascade
-            fallback_schemes: List[InterpolationScheme]
-            if cascade == "first-order":
-                fallback_schemes = [
-                    polyInterpolationScheme(
-                        p=0,
-                        flux_recipe=self.base_scheme.flux_recipe,
-                        gauss_legendre=self.base_scheme.gauss_legendre,
-                    )
-                ]
-            elif cascade == "muscl":
-                fallback_schemes = [
-                    musclInterpolationScheme(
-                        flux_recipe=self.base_scheme.flux_recipe,
-                        limiter=MUSCL_limiter,
-                    )
-                ]
-            elif cascade == "full":
-                fallback_schemes = [
-                    polyInterpolationScheme(
-                        p=pi,
-                        flux_recipe=self.base_scheme.flux_recipe,
-                        gauss_legendre=self.base_scheme.gauss_legendre,
-                    )
-                    for pi in range(self.p - 1, -1, -1)
-                ]
-            cascade_list = [self.base_scheme] + fallback_schemes
-
-            # initialize MOOD configuration
-            self.MOOD_config = MOODConfig(
-                max_iters=max_MOOD_iters,
-                cascade=cascade_list,
-                NAD=NAD,
-                NAD_rtol=NAD_rtol,
-                NAD_atol=NAD_atol,
-                global_dmp=global_dmp,
-                include_corners=include_corners,
-                PAD=PAD is not None,
-                PAD_bounds=self.arrays["PAD_bounds"] if PAD else None,
-                PAD_atol=PAD_atol,
-                SED=SED,
-            )
-
-        # add limiing variables to the index map
-        if limiting_vars == "all":
-            limiting_vars = tuple(idx.var_idx_map.keys())
-        elif limiting_vars == "actives":
-            limiting_vars = tuple(idx.group_var_map["primitives"])
-        idx.add_var_to_group("limiting", limiting_vars)
-
     def _init_array_allocation(self):
         if self.cupy:
             self.arrays.transfer_to_device("gpu")
 
+        idx = self.variable_index_map
         scheme = self.base_scheme
+        mesh = self.mesh
         arrays = self.arrays
 
+        # initialize regular mesh arrays
+        nvars, nx, ny, nz = self.nvars, mesh.nx, mesh.ny, mesh.nz
+        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+        arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
+
         # initialize flux arrays
-        nvars, nx, ny, nz = self.nvars, self.mesh.nx, self.mesh.ny, self.mesh.nz
         arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
         arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
         arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
 
-        # initialize snapshot arrays
-        assert arrays["u"].shape == (nvars, nx, ny, nz)
-        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
-        arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
-
         # initialize workspace arrays
-        _nx_, _ny_, _nz_ = self.mesh._nx_, self.mesh._ny_, self.mesh._nz_
+        _nx_, _ny_, _nz_ = mesh._nx_, mesh._ny_, mesh._nz_
         max_nodes = self.nodes_per_face(scheme)
         max_ninterps = 2 * max_nodes
-        SED_buffer_cost = {1: 4, 2: 6, 3: 7}[self.mesh.ndim]
+        SED_buffer_cost = {1: 4, 2: 6, 3: 7}[mesh.ndim]
         base_buffer_size = SED_buffer_cost + 1
         MOOD_buffer_size = SED_buffer_cost + 4
         MUSCL_buffer_size = SED_buffer_cost + 6
@@ -803,7 +865,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # MOOD arrays
         if self.MOOD:
-            for scheme in self.MOOD_config.cascade:
+            for scheme in self.MOOD_state.config.cascade:
                 arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
                 arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
                 arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
@@ -813,10 +875,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
 
         # fill arrays with NaNs to sabotage unpermitted use
+        arrays["dudt"].fill(np.nan)
+        arrays["sum_of_s_over_h"].fill(np.nan)
         arrays["F"].fill(np.nan)
         arrays["G"].fill(np.nan)
         arrays["H"].fill(np.nan)
-        arrays["dudt"].fill(np.nan)
         arrays["_u_"].fill(np.nan)
         arrays["_ucc_"].fill(np.nan)
         arrays["_wcc_"].fill(np.nan)
@@ -833,6 +896,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # helper attribute
         self.flux_names = {"x": "F", "y": "G", "z": "H"}
+
+        # initialize the ODE solver with the initial condition array
+        ic_arr = mesh.perform_GaussLegendre_quadrature(
+            lambda x, y, z: self.conservative_callable_ic(idx, x, y, z, 0.0),
+            node_axis=4,
+            mesh_region="core",
+            cell_region="interior",
+            p=self.p,
+        )
+
+        super().__init__(ic_arr, self.arrays)  # defines "u"
+        assert arrays["u"].shape == (nvars, nx, ny, nz)
+
+        if getattr(self.base_scheme.limiter_config, "adaptive_dt", False):
+            self._dt_criterion = self.adaptive_dt_criterion
+            self._compute_revised_dt = self.adaptive_dt_revision
 
     def nodes_per_face(self, scheme: InterpolationScheme) -> int:
         """ """
@@ -977,11 +1056,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             None. The workspace arrays `_u_` and maybe `_w_` are updated in place.
         """
-        active_dims = self.mesh.active_dims
+        active_dims = self.active_dims
         interior = self.interior
         interior0 = interior + (0,)
         p = scheme.p
         xp = self.xp
+
+        # determine if lazy primitives should be used
+        if isinstance(scheme, polyInterpolationScheme):
+            use_lazy_primitives = False
+            if scheme.p in (0, 1) or scheme.lazy_primitives:
+                use_lazy_primitives = True
+        elif isinstance(scheme, musclInterpolationScheme):
+            use_lazy_primitives = True
+        else:
+            raise ValueError("Unknown scheme type.")
 
         _u_ = self.arrays["_u_"]
         _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
@@ -999,7 +1088,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
         # 3) primitive FV averages
-        if scheme.lazy_primitives:
+        if use_lazy_primitives:
             _wbf_[..., 0] = self.primitives_from_conservatives(_u_)
         else:
             fv.integrate_fv_averages(
@@ -1127,7 +1216,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             face interpolations are written along [:, :, :, :, ni:2*ni].
         """
         xp = self.xp
-        adims = self.mesh.active_dims
+        adims = self.active_dims
 
         out = self.arrays[dim + "_nodes"]
         buffer = self.arrays["buffer"]
@@ -1146,18 +1235,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             out[...] = self.primitives_from_conservatives(out)
 
     @MethodTimer(cat="FiniteVolumeSolver.zhang_shu_limiter")
-    def zhang_shu_limiter(self, p: int, primitives: bool = False):
+    def zhang_shu_limiter(
+        self, scheme: polyInterpolationScheme, primitives: bool = False
+    ):
         """
         Limit the face node arrays (`x_nodes`, `y_nodes`, `z_nodes`) using the
         Zhang-Shu limiter, theta, which is written to the `theta` array.
 
         Args:
-            p: Polynomial degree of the spatial discretization.
+            scheme: Interpolation scheme to use.
             primitives: Whether the face node arrays represent primitive variables.
         """
+        if not isinstance(scheme.limiter_config, ZhangShuConfig):
+            raise ValueError("Zhang-Shu limiter configuration is required.")
+
         xp = self.xp
         mesh = self.mesh
-        ZhangShu_config = self.ZhangShu_config
 
         # define array references
         average = self.arrays["_w_"] if primitives else self.arrays["_u_"]
@@ -1170,7 +1263,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute centroid then compute theta
         fv.interpolate_cell_centers(
-            xp, average, mesh.active_dims, p, out=centroid, buffer=buffer
+            xp, average, self.active_dims, scheme.p, out=centroid, buffer=buffer
         )
         compute_theta(
             xp,
@@ -1181,9 +1274,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             z,
             out=theta,
             buffer=buffer,
-            tol=ZhangShu_config.tol,
-            include_corners=ZhangShu_config.include_corners,
-            SED=ZhangShu_config.SED,
+            config=scheme.limiter_config,
         )
 
         # limit the face nodes
@@ -1281,7 +1372,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     xp,
                     left_state,
                     dim,
-                    self.mesh.active_dims,
+                    self.active_dims,
                     scheme.p,
                     out=flux_workspace[..., 0],
                 )
@@ -1292,7 +1383,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     self.xp,
                     left_state[..., 0],
                     dim,
-                    self.mesh.active_dims,
+                    self.active_dims,
                     scheme.p,
                     out=flux_workspace,
                     buffer=right_state,
@@ -1321,7 +1412,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # update the face node arrays with the interpolated face nodes
         if isinstance(scheme, polyInterpolationScheme):
-            for dim in self.mesh.active_dims:
+            for dim in self.active_dims:
                 self.inplace_interpolate_faces(
                     averages,
                     dim,
@@ -1336,11 +1427,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Unknown interpolation scheme.")
 
         # limit the face nodes arrays with the Zhang-Shu limiter
-        if scheme.limiter == "zhang-shu":
-            self.zhang_shu_limiter(scheme.p, primitives=limit_primitives)
+        if isinstance(scheme.limiter_config, ZhangShuConfig):
+            self.zhang_shu_limiter(scheme, primitives=limit_primitives)
 
         # compute the fluxes and assign them to their respective arrays
-        for dim in self.mesh.active_dims:
+        for dim in self.active_dims:
             self.normalize_node_arrays(t, dim, scheme, primitives=limit_primitives)
             self.inplace_integrate_fluxes(dim, scheme)
 
@@ -1351,11 +1442,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             t: Time value.
         """
-        self.MOOD_config.reset_MOOD_loop()
+        self.MOOD_state.reset_MOOD_loop()
         while True:
             if MOOD.detect_troubled_cells(self, t):
                 MOOD.inplace_revise_fluxes(self, t)
-                self.MOOD_config.increment_MOOD_iteration()
+                self.MOOD_state.increment_MOOD_iteration()
             else:
                 return
 
@@ -1369,7 +1460,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         out = self.arrays["dudt"]
         out[...] = 0.0
 
-        for dim in self.mesh.active_dims:
+        for dim in self.active_dims:
             self._add_flux_divergence(dim, out=out)
 
         return out
@@ -1449,17 +1540,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             True if unew satisfies the PAD criterion, False otherwise.
         """
         xp = self.xp
-        PAD_bounds = self.ZhangShu_config.PAD_bounds
-        PAD_atol = self.ZhangShu_config.PAD_atol
+        scheme = self.base_scheme
 
-        if PAD_bounds is None:
+        if not isinstance(scheme.limiter_config, ZhangShuConfig):
+            raise ValueError(
+                "PAD criterion requires a Zhang-Shu limiter configuration."
+            )
+        if scheme.limiter_config.PAD_bounds is None:
             raise ValueError(
                 "PAD bounds are not set. Please provide PAD bounds in the "
                 "ZhangShuConfig."
             )
 
         PAD_violations = self.arrays["buffer"][self.interior][..., 0]
-        MOOD.inplace_PAD_violations(xp, unew, PAD_bounds, PAD_atol, out=PAD_violations)
+        MOOD.inplace_PAD_violations(
+            xp,
+            unew,
+            scheme.limiter_config.PAD_bounds,
+            scheme.limiter_config.PAD_atol,
+            out=PAD_violations,
+        )
 
         return not xp.any(PAD_violations < 0)
 
@@ -1477,8 +1577,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Half the proposed timestep size if the maximum number of revisions hasn't
             been exceeded, otherwise raises a ValueError.
         """
+        if not isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
+            raise ValueError(
+                "PAD criterion requires a Zhang-Shu limiter configuration."
+            )
+
+        max_dt_revisions = self.base_scheme.limiter_config.max_dt_revisions
         n_dt_revisions = self.n_dt_revisions
-        max_dt_revisions = self.ZhangShu_config.max_dt_revisions
 
         if n_dt_revisions < max_dt_revisions:
             return dt / 2
@@ -1543,8 +1648,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         data = {"n_updates": n_updates, "update_rate": n_updates / run_time}
 
         if self.MOOD:
-            data["n_MOOD_iters"] = self.MOOD_config.iter_count
-            data["nfine_MOOD_iters"] = self.MOOD_config.iter_count_hist
+            data["n_MOOD_iters"] = self.MOOD_state.iter_count
+            data["nfine_MOOD_iters"] = self.MOOD_state.iter_count_hist
 
         if self.log_every_step:
             data.update(self.log_quantity())
@@ -1557,8 +1662,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         super().reset_stepwise_logs()
 
-        if hasattr(self, "MOOD") and self.MOOD:
-            self.MOOD_config.reset_iter_count_hist()
+        if self.MOOD:
+            self.MOOD_state.reset_iter_count_hist()
 
     def reset_substepwise_logs(self):
         """
@@ -1568,12 +1673,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.n_updates = 0
 
-        if hasattr(self, "ZS") and self.ZS:
+        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             self.arrays["theta_log"].fill(0.0)
 
-        if hasattr(self, "MOOD") and self.MOOD:
+        if self.MOOD:
             self.arrays["troubles_log"].fill(0)
-            self.MOOD_config.reset_iter_count()
+            self.MOOD_state.reset_iter_count()
 
     def increment_substepwise_logs(self):
         """
@@ -1585,7 +1690,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.n_updates += self.mesh.size
 
-        if self.ZS:
+        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             theta = self.arrays["theta"]
             theta_log = self.arrays["theta_log"]
             xp.add(theta_log, theta, out=theta_log)
@@ -1595,7 +1700,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             troubles_log = self.arrays["troubles_log"]
             xp.add(troubles_log, troubles, out=troubles_log)
 
-            self.MOOD_config.increment_iter_count_hist()
+            self.MOOD_state.increment_iter_count_hist()
 
     @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
@@ -1659,7 +1764,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.increment_substepwise_logs()
 
         # corrector step
-        for dim in self.mesh.active_dims:
+        for dim in self.active_dims:
             self.normalize_node_arrays(t, dim, scheme, primitives=limit_primitives)
             self.inplace_integrate_fluxes(dim, scheme)
 
@@ -1703,16 +1808,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute limited slopes
         for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-            if dim not in self.mesh.active_dims:
+            if dim not in self.active_dims:
                 continue
             compute_limited_slopes(
                 xp,
                 w_center,
                 dim,
-                mesh.active_dims,
+                self.active_dims,
                 out=slope_arr,
                 buffer=buffer,
-                limiter=scheme.limiter,
+                limiter=scheme.limiter_config.limiter,
                 SED=False,
             )
 
@@ -1725,7 +1830,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             w_center_for_nodes[...] = w_center
             for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-                if dim not in mesh.active_dims:
+                if dim not in self.active_dims:
                     continue
                 h = getattr(mesh, "h" + dim)
                 ds = self.flux_jvp(
@@ -1739,7 +1844,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for node_arr, slope_arr, dim in zip(
             [x_nodes, y_nodes, z_nodes], [dwx, dwy, dwz], xyz_tup
         ):
-            if dim not in mesh.active_dims:
+            if dim not in self.active_dims:
                 continue
             node_arr[..., 0] = w_center_for_nodes - slope_arr[..., 0] / 2
             node_arr[..., 1] = w_center_for_nodes + slope_arr[..., 0] / 2

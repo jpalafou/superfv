@@ -1,12 +1,60 @@
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Literal, Optional, Tuple
 
 from superfv.fv import DIM_TO_AXIS
+from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting.smooth_extrema_detection import (
     inplace_smooth_extrema_detector,
 )
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, modify_slices
+
+
+@dataclass(frozen=True, slots=True)
+class musclConfig(LimiterConfig):
+    """
+    Configuration for the MUSCL slope limiter.
+
+    Attributes:
+        limiter: The type of limiter to use. Can be "minmod", "moncen", or None.
+        SED: Whether to use the smooth extrema detector to relax the limiter.
+    """
+
+    limiter: Optional[Literal["minmod", "moncen"]]
+    SED: bool
+
+    def key(self) -> str:
+        return f"muscl-{self.limiter}"
+
+
+@dataclass(frozen=True, slots=True)
+class musclInterpolationScheme(InterpolationScheme):
+    """
+    Configuration for MUSCL interpolation schemes.
+
+    Attributes:
+        p: The polynomial degree. Must be 1.
+        flux_recipe: The flux recipe to use. For MUSCL schemes, this simplifies to:
+            - 1: compute conservative slopes -> limit conservative slopes -> compute
+                primitive nodes -> compute fluxes
+            - 2: compute primitive cell averages -> compute primitive slopes -> limit
+                primitive slopes -> compute fluxes
+        limiter_config: The MUSCL limiter configuration to use.
+    """
+
+    p: int = 1
+    flux_recipe: Literal[1, 2] = 2
+    limiter_config: musclConfig = musclConfig(limiter="minmod", SED=False)
+
+    def __post_init__(self):
+        if self.p != 1:
+            raise ValueError("musclInterpolationScheme must have p=1")
+        if not isinstance(self.limiter_config, musclConfig):
+            raise ValueError("musclInterpolationScheme requires a musclConfig")
+
+    def key(self) -> str:
+        return self.limiter_config.key()
 
 
 def compute_limited_slopes(

@@ -242,12 +242,12 @@ class EulerSolver(FiniteVolumeSolver):
                 "E": 4,
             },
             group_var_map={
-                "v": ["v" + dim for dim in self.mesh.active_dims],
-                "m": ["m" + dim for dim in self.mesh.active_dims],
+                "v": ["v" + dim for dim in self.active_dims],
+                "m": ["m" + dim for dim in self.active_dims],
                 "primitives": ["rho", "v", "P"],
                 "conservatives": ["rho", "m", "E"],
-                "passives": ["v" + dim for dim in self.mesh.inactive_dims]
-                + ["m" + dim for dim in self.mesh.inactive_dims],
+                "passives": ["v" + dim for dim in self.inactive_dims]
+                + ["m" + dim for dim in self.inactive_dims],
             },
         )
 
@@ -262,7 +262,7 @@ class EulerSolver(FiniteVolumeSolver):
             Array of conservative variables.
         """
         return hydro.prim_to_cons(
-            self.xp, self.variable_index_map, w, self.mesh.active_dims, self.gamma
+            self.xp, self.variable_index_map, w, self.active_dims, self.gamma
         )
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
@@ -276,7 +276,7 @@ class EulerSolver(FiniteVolumeSolver):
             Array of primitive variables.
         """
         return hydro.cons_to_prim(
-            self.xp, self.variable_index_map, u, self.mesh.active_dims, self.gamma
+            self.xp, self.variable_index_map, u, self.active_dims, self.gamma
         )
 
     @MethodTimer(cat="EulerSolver.log_quantity")
@@ -335,7 +335,7 @@ class EulerSolver(FiniteVolumeSolver):
         c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
 
         sum_of_s_over_h[...] = 0.0
-        for dim in mesh.active_dims:
+        for dim in self.active_dims:
             v = xp.abs(w[idx("v" + dim)]) + c
             h = getattr(mesh, "h" + dim)
 
@@ -415,7 +415,7 @@ class EulerSolver(FiniteVolumeSolver):
             wl,
             wr,
             dim,
-            self.mesh.active_dims,
+            self.active_dims,
             self.gamma,
         )
 
@@ -435,7 +435,7 @@ class EulerSolver(FiniteVolumeSolver):
             wl,
             wr,
             dim,
-            self.mesh.active_dims,
+            self.active_dims,
             self.gamma,
         )
 
@@ -454,7 +454,7 @@ class EulerSolver(FiniteVolumeSolver):
             wl,
             wr,
             dim,
-            self.mesh.active_dims,
+            self.active_dims,
             self.gamma,
         )
 

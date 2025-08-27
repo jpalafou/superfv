@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import ModuleType
-from typing import TYPE_CHECKING, Literal, Optional, cast
+from typing import Literal, Optional, cast
 
+from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import (
     inplace_smooth_extrema_detector,
@@ -11,37 +12,36 @@ from superfv.slope_limiting.smooth_extrema_detection import (
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import modify_slices
 
-if TYPE_CHECKING:
-    pass
 
-
-@dataclass
-class ZhangShuConfig:
+@dataclass(frozen=True, slots=True)
+class ZhangShuConfig(LimiterConfig):
     """
-    Configuration for Zhang and Shu slope limiting.
+    Configuration for the Zhang-Shu slope limiter,
+
+    θ = min(|M-u|/|Mj-u|, |m-u|/|mj-u|, 1),
+
+    where M, m are the local maxima and minima, respectively, and Mj and mj are the
+    maxima and minima of the nodes, respectively.
 
     Attributes:
-        include_corners: Whether to include corners when computing the discrete maximum
-            principle.
-        tol: Small tolerance value for division in the expression for theta:
-            min(abs(M - u) / (abs(Mj - u) + tol), abs(m - u) / (abs(mj - u) + tol))
-        SED: Whether to use the smooth extrema detector to relax theta.
-        adaptive_dt: Whether to adapt the time step based on a PAD condition.
-        max_dt_revisions: Maximum number of revisions for the adaptive time step.
-        PAD_bounds: Optional bounds for the PAD condition. Has shape
-            (nvars, 1, 1, 1, 2), where the minimum and maximum values are stored
-            in the first and second elements of the last axis, respectively, for each
-            variable. If None, the PAD condition is not used.
-        PAD_atol: Absolute tolerance for the PAD condition.
+        SED: Whether to use the smooth extrema detector to relax the limiter.
+        adaptive_dt: Whether to use adaptive time stepping.
+        max_dt_revisions: The maximum number of revisions for the time step.
+        include_corners: Whether to include corner cells when computing the discrete
+            maximum principle.
+        PAD_bounds: An array of shape (nvars, 2) specifying the physical bounds
+            (min, max) for each variable.
+        PAD_atol: Absolute tolerance for PAD violations.
+        tol: Tolerance for the denominator of the
     """
 
+    SED: bool
+    adaptive_dt: bool
+    max_dt_revisions: int
     include_corners: bool = False
-    tol: float = 1e-16
-    SED: bool = False
-    adaptive_dt: bool = False
-    max_dt_revisions: int = 0
     PAD_bounds: Optional[ArrayLike] = None
     PAD_atol: float = 0.0
+    tol: float = 1e-16
 
     def __post_init__(self):
         if self.adaptive_dt and self.PAD_bounds is None:
@@ -49,6 +49,9 @@ class ZhangShuConfig:
                 "Adaptive time stepping requires PAD_bounds to be set. "
                 "Set adaptive_dt=False if you do not want to use PAD."
             )
+
+    def key(self) -> str:
+        return "zhang-shu"
 
 
 def compute_theta(
@@ -61,9 +64,7 @@ def compute_theta(
     *,
     out: ArrayLike,
     buffer: ArrayLike,
-    tol: float = 1e-16,
-    include_corners: bool = False,
-    SED: bool = False,
+    config: ZhangShuConfig,
 ):
     """
     Compute Zhang and Shu's a priori slope limiting parameter theta based on arrays of
@@ -76,15 +77,15 @@ def compute_theta(
         x_nodes, y_nodes, z_nodes: Optional array of x,y,z-face node values. Has shape
             (nvars, nx, ny, nz, 2*n_nodes). If None, the x,y,z face is not considered.
         out: Array to which theta is written. Has shape (nvars, nx, ny, nz, 1).
-        tol: Small tolerance value for division.
         buffer: Array to which intermediate values are written.
-        include_corners: Whether to include corners when computing the discrete maximum
-            principle. Defaults to False.
-        SED: Whether to use the smooth extrema detector to relax theta.
+        config: Configuration for the Zhang-Shu limiter.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    include_corners = config.include_corners
+    SED = config.SED
+    tol = config.tol
 
     # allocate arrays
     dmp = buffer[..., :2]

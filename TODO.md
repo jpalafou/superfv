@@ -43,3 +43,5 @@ to-do list:
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 - [ ] automatically set `lazy_primitives=True` if `p<2`
+- [ ] add: `P` arg to slotted disk IC, fix: slotted disk test
+- [ ] make lazy_primitives default for advection solver

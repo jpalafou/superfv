@@ -223,10 +223,10 @@ class AdvectionSolver(FiniteVolumeSolver):
         return VariableIndexMap(
             {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
             group_var_map={
-                "v": ["v" + dim for dim in self.mesh.active_dims],
+                "v": ["v" + dim for dim in self.active_dims],
                 "primitives": ["rho", "v"],
                 "conservatives": [],
-                "passives": ["v" + dim for dim in self.mesh.inactive_dims],
+                "passives": ["v" + dim for dim in self.inactive_dims],
             },
         )
 
@@ -269,7 +269,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         sum_of_v_over_h = self.arrays["sum_of_s_over_h"]
 
         sum_of_v_over_h[...] = 0.0
-        for dim in mesh.active_dims:
+        for dim in self.active_dims:
             v = xp.abs(u[idx("v" + dim)])
             h = getattr(mesh, "h" + dim)
 

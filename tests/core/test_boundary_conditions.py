@@ -153,6 +153,7 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
         nx=N if "x" in dims else 1,
         ny=N if "y" in dims else 1,
         nz=N if "z" in dims else 1,
+        active_dims=tuple(dims),
         slab_depth=n_pad,
     )
     megamesh = UniformFVMesh(
@@ -162,6 +163,7 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
         xlim=(-0.5, 1.5) if "x" in dims else (0, 1),
         ylim=(-0.5, 1.5) if "y" in dims else (0, 1),
         zlim=(-0.5, 1.5) if "z" in dims else (0, 1),
+        active_dims=tuple(dims),
         slab_depth=0,
     )
     assert mesh._shape_ == megamesh.shape
@@ -254,6 +256,7 @@ def test_dirichlet_boundary_condition_cell_centers(dims):
         nx=N if "x" in dims else 1,
         ny=N if "y" in dims else 1,
         nz=N if "z" in dims else 1,
+        active_dims=tuple(dims),
         slab_depth=n_pad,
     )
     megamesh = UniformFVMesh(
@@ -263,6 +266,7 @@ def test_dirichlet_boundary_condition_cell_centers(dims):
         xlim=(-0.5, 1.5) if "x" in dims else (0, 1),
         ylim=(-0.5, 1.5) if "y" in dims else (0, 1),
         zlim=(-0.5, 1.5) if "z" in dims else (0, 1),
+        active_dims=tuple(dims),
         slab_depth=0,
     )
     assert mesh._shape_ == megamesh.shape
@@ -349,6 +353,7 @@ def test_dirichlet_boundary_condition_face_nodes(dims, p, face_pos):
         nx=N if "x" in dims else 1,
         ny=N if "y" in dims else 1,
         nz=N if "z" in dims else 1,
+        active_dims=tuple(dims),
         slab_depth=n_pad,
     )
     megamesh = UniformFVMesh(
@@ -358,6 +363,7 @@ def test_dirichlet_boundary_condition_face_nodes(dims, p, face_pos):
         xlim=(-0.5, 1.5) if "x" in dims else (0, 1),
         ylim=(-0.5, 1.5) if "y" in dims else (0, 1),
         zlim=(-0.5, 1.5) if "z" in dims else (0, 1),
+        active_dims=tuple(dims),
         slab_depth=0,
     )
     assert mesh._shape_ == megamesh.shape

@@ -75,7 +75,7 @@ def _parse_txyz_slices(
     slices: Dict[str, Union[int, slice]] = {}
     for dim, coord in zip("xyz", [x, y, z]):
         x_array = getattr(fv_solver.mesh, dim + "_centers")
-        if dim not in fv_solver.mesh.active_dims:
+        if dim not in fv_solver.active_dims:
             if coord is not None:
                 warnings.warn(
                     f"Dimension {dim} is not active in the solver. "
@@ -146,6 +146,7 @@ def _extract_variable_data(
         key += "cc"
 
     # extract the data
+    print(variable, key)
     return snapshot[key][idx(variable)]
 
 
@@ -201,7 +202,7 @@ def plot_1d_slice(
     """
 
     # find the dimensions to plot
-    active_dims = fv_solver.mesh.active_dims
+    active_dims = fv_solver.active_dims
     slicing_dims = [
         dim
         for dim, coord in zip("xyz", (x, y, z))
@@ -266,7 +267,7 @@ def plot_2d_slice(
     """
     # find the dimensions to plot
     is_valid = _is_None_or_tuple
-    active_dims = fv_solver.mesh.active_dims
+    active_dims = fv_solver.active_dims
     slicing_dims = [
         dim
         for dim, coord in zip("xyz", (x, y, z))
