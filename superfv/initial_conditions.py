@@ -173,6 +173,7 @@ def slotted_disk(
     t: float = 0.0,
     rho_min_max: Tuple[float, float] = (0.0, 1.0),
     rotation: Literal["cw", "ccw"] = "ccw",
+    P: float = 1,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -188,6 +189,7 @@ def slotted_disk(
         rho_min_max: Minimum and maximum values of the density.
         rotation: Rotation direction of the disk: "cw" for clockwise, "ccw" for
             counter-clockwise.
+        P: Pressure.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     out = xp.empty((len(idx.idxs), *x.shape))
@@ -216,6 +218,8 @@ def slotted_disk(
             f"Initial condition not implemented for variables: {idx.var_names}. "
             "Supported variables: {'u', 'vx', 'vy', 'vz'}."
         )
+    if "P" in idx.var_names:
+        out[idx("P")] = P
 
     return out
 

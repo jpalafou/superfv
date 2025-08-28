@@ -35,6 +35,7 @@ changes:
 - [x] remove `fv.interpolate_muscl_faces`, `fv.slope_limiting.minmod`, and `fv.slope_minmod.moncen` and switch to `muscl.muscl.compute_limited_slopes`
 - [x] MUSCL is not positivty-preserving in 2D
 - [x] remove `cast` in FiniteVolumeSolver
+- [x] add: `P` arg to slotted disk IC, fix: slotted disk test
 
 to-do list:
 - [ ] add MUSCL-Hancock option for different slope limiters and SED
@@ -43,5 +44,4 @@ to-do list:
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
 - [ ] automatically set `lazy_primitives=True` if `p<2`
-- [ ] add: `P` arg to slotted disk IC, fix: slotted disk test
 - [ ] make lazy_primitives default for advection solver
