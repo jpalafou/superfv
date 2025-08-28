@@ -132,10 +132,10 @@ def _extract_variable_data(
         return snapshot["troubles"][0]
 
     # determine the key for the variable
-    if variable in idx.group_var_map["primitives"]:
-        key = "w"
-    elif variable in idx.group_var_map["conservatives"]:
+    if variable in idx.group_var_map["conservatives"]:
         key = "u"
+    elif variable in idx.group_var_map["primitives"]:
+        key = "w"
     elif variable in idx.group_var_map["passives"]:
         key = "w"
     else:

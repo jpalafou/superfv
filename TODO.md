@@ -36,6 +36,8 @@ changes:
 - [x] MUSCL is not positivty-preserving in 2D
 - [x] remove `cast` in FiniteVolumeSolver
 - [x] add: `P` arg to slotted disk IC, fix: slotted disk test
+- [x] automatically set `lazy_primitives=True` if `p<2`
+- [x] make lazy_primitives default for advection solver
 
 to-do list:
 - [ ] add MUSCL-Hancock option for different slope limiters and SED
@@ -43,5 +45,3 @@ to-do list:
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
-- [ ] automatically set `lazy_primitives=True` if `p<2`
-- [ ] make lazy_primitives default for advection solver

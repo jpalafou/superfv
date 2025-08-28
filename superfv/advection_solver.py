@@ -37,7 +37,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
-        lazy_primitives: bool = False,
+        lazy_primitives: bool = True,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen"] = "minmod",
@@ -120,6 +120,8 @@ class AdvectionSolver(FiniteVolumeSolver):
                 - `flux_recipe=2`: The lazy primitives become the fallback option.
                 - `flux_recipe=3`: The lazy primitives are used to interpolate the
                     primitive flux nodes.
+                Defaults to `True` for the advection solver since the transformation is
+                trivial.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
