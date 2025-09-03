@@ -39,9 +39,12 @@ changes:
 - [x] automatically set `lazy_primitives=True` if `p<2`
 - [x] make lazy_primitives default for advection solver
 - [x] add MUSCL-Hancock option for different slope limiters and SED
+- [x] troubled cell detection uses the same u_old for each substep. is this correct? ANSWER: no. i did this as a hacky fix to positivity-preservation not working with RK4. but it shouldn't.
 
 to-do list:
 - [ ] add MUSCL-Hancock option for conservative variables
-- [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square
 - [ ] timer should pause during snapshot. maybe rephrase as clean up timer calls
+- [ ] euler step has no fine MOOD iter logging
+- [ ] positivity-preserving MOOD sometimes uses all of the allotted MOOD iters even if it doesn't improve the solution. This could be because the substep dt is too large so the PP criteria is too strict.
+- [ ] "first-order" cascade is the only one that reasonably works.

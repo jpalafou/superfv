@@ -175,8 +175,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
         return False
 
     # allocate arrays
-    u_old_interior = arrays["u"]
     u_old = arrays["_u_"]
+    u_old_interior = arrays["_u_"][interior]
     u_new = arrays["buffer"][..., 0]
     buffer = arrays["buffer"][lim_slc]
     NAD_violations = buffer[..., 1]
