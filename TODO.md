@@ -38,9 +38,9 @@ changes:
 - [x] add: `P` arg to slotted disk IC, fix: slotted disk test
 - [x] automatically set `lazy_primitives=True` if `p<2`
 - [x] make lazy_primitives default for advection solver
+- [x] add MUSCL-Hancock option for different slope limiters and SED
 
 to-do list:
-- [ ] add MUSCL-Hancock option for different slope limiters and SED
 - [ ] add MUSCL-Hancock option for conservative variables
 - [ ] troubled cell detection uses the same u_old for each substep. is this correct?
 - [ ] PAD asymmetry for 2D square

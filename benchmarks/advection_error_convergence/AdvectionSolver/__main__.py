@@ -13,15 +13,16 @@ from superfv.tools.norms import l1_norm
 OUTPUT_NAME = "benchmarks/advection_error_convergence/AdvectionSolver/" + "plot.png"
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
-P_LIST = [0, 1, 2, 3]
+P_LIST = [-1, 0, 1, 2, 3]
 OTHER_INPUTS = dict(
-    interpolation_scheme="transverse",
+    GL=False,
     cupy=False,
     ZS=True,
     adaptive_dt=False,
     SED=True,
     lazy_primitives=False,
 )
+MUSCL_INPUTS = dict(MUSCL=True, MUSCL_limiter="moncen", SED=True)
 
 # remove old output
 if os.path.exists(OUTPUT_NAME):
@@ -31,7 +32,7 @@ if os.path.exists(OUTPUT_NAME):
 data = []
 for N, p in product(N_LIST, P_LIST):
     # print status
-    print(f"Running N={N}, p={p}")
+    print(f"Running N={N}, MUSCL-Hancock" if p == -1 else f"Running N={N}, p={p}")
 
     def analytical_solution(idx, x, y, z, t, xp):
         return initial_conditions.sinus(
@@ -50,10 +51,13 @@ for N, p in product(N_LIST, P_LIST):
         nx=N if "x" in DIMS else 1,
         ny=N if "y" in DIMS else 1,
         nz=N if "z" in DIMS else 1,
-        p=p,
-        **OTHER_INPUTS,
+        p=1 if p == -1 else p,
+        **(MUSCL_INPUTS if p == -1 else OTHER_INPUTS),
     )
-    solver.run(1.0, progress_bar=False)
+    if p == -1:
+        solver.musclhancock(1.0, verbose=False)
+    else:
+        solver.run(1.0, verbose=False)
 
     # measure error
     idx = solver.variable_index_map
@@ -74,10 +78,9 @@ for p in P_LIST:
     ax.plot(
         df_p["N"],
         df_p["error"],
-        label=f"p={p}",
+        label="MUSCL-Hancock" if p == -1 else f"p={p}",
         marker="o",
-        linestyle="-",
-        color=cmap(p / max(P_LIST)),
+        color="red" if p == -1 else cmap((p) / max(P_LIST)),
     )
 ax.set_xscale("log", base=2)
 ax.set_yscale("log")

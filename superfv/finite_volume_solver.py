@@ -834,17 +834,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
 
         # initialize workspace arrays
-        _nx_, _ny_, _nz_ = mesh._nx_, mesh._ny_, mesh._nz_
         max_nodes = self.nodes_per_face(scheme)
         max_ninterps = 2 * max_nodes
-        SED_buffer_cost = {1: 4, 2: 6, 3: 7}[mesh.ndim]
-        base_buffer_size = SED_buffer_cost + 1
-        MOOD_buffer_size = SED_buffer_cost + 4
-        MUSCL_buffer_size = SED_buffer_cost + 6
-        buffer_size = max(base_buffer_size, max_nodes)
-        if self.MOOD or isinstance(scheme, musclInterpolationScheme):
-            buffer_size = max(buffer_size, MOOD_buffer_size, MUSCL_buffer_size)
+        buffer_size = self._compute_buffer_size(scheme)
 
+        _nx_, _ny_, _nz_ = mesh._nx_, mesh._ny_, mesh._nz_
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
@@ -912,6 +906,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if getattr(self.base_scheme.limiter_config, "adaptive_dt", False):
             self._dt_criterion = self.adaptive_dt_criterion
             self._compute_revised_dt = self.adaptive_dt_revision
+
+    def _compute_buffer_size(self, scheme: InterpolationScheme) -> int:
+        mesh = self.mesh
+        max_nodes = self.nodes_per_face(scheme)
+
+        SED_buffer_cost = {1: 4, 2: 6, 3: 7}[mesh.ndim]
+        base_buffer_size = SED_buffer_cost + 1
+
+        buffer_size = max(base_buffer_size, max_nodes)
+
+        MOOD_buffer_size = SED_buffer_cost + 4
+        MUSCL_buffer_size = SED_buffer_cost + 10
+
+        if self.MOOD or isinstance(scheme, musclInterpolationScheme):
+            buffer_size = max((buffer_size, MOOD_buffer_size, MUSCL_buffer_size))
+
+        return buffer_size
 
     def nodes_per_face(self, scheme: InterpolationScheme) -> int:
         """ """
@@ -1818,7 +1829,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 out=slope_arr,
                 buffer=buffer,
                 limiter=scheme.limiter_config.limiter,
-                SED=False,
+                SED=scheme.limiter_config.SED,
             )
 
         # evolve the cell-center by 1/2 dt
