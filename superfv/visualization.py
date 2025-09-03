@@ -146,7 +146,6 @@ def _extract_variable_data(
         key += "cc"
 
     # extract the data
-    print(variable, key)
     return snapshot[key][idx(variable)]
 
 
