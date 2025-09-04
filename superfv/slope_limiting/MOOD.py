@@ -91,49 +91,54 @@ class MOODState:
     config: MOODConfig
 
     def __post_init__(self):
-        self.reset_iter_count()
-        self.reset_iter_count_hist()
         self.reset_MOOD_loop()
+        self.reset_stepwise_counters()
 
-    def reset_iter_count(self):
+    def reset_stepwise_counters(self):
         """
-        Reset the iteration count which accumulates the total number of iterations
-        in a step across all MOOD loops in a step.
+        Reset logs which track information over the course of whole steps.
         """
         self.iter_count = 0
-
-    def reset_iter_count_hist(self):
-        """
-        Reset the iter count history which accumulates the total number of iterations
-        for each substep.
-        """
         self.iter_count_hist: List[int] = []
+        self.troubled_cell_count = 0
+        self.troubled_cell_count_hist: List[int] = []
 
-    def increment_iter_count_hist(self):
+    def increment_substep_hists(self):
         """
-        Increment the iter count history at the end of each substep.
+        Increment the substep history logs.
         """
         self.iter_count_hist.append(self.fine_iter_count)
+        self.troubled_cell_count_hist.append(self.fine_troubled_cell_count)
 
     def reset_MOOD_loop(self):
         """
-        Reset the iteration index and cascade status for the first MOOD iteration in a
-        MOOD loop.
+        Reset the parameters which change across every MOOD iteration.
         """
         self.iter_idx = 0
         self.fine_iter_count = 0
+        self.fine_troubled_cell_count = 0
         self.cascade_status: List[bool] = [False] * len(self.config.cascade)
 
     def increment_MOOD_iteration(self):
         """
-        Increment the iteration index and count for a single MOOD iteration.
+        Increment the parameters which change across every MOOD iteration.
         """
         self.iter_idx += 1
         self.iter_count += 1
         self.fine_iter_count += 1
 
+    def update_troubled_cell_count(self, n: int):
+        """
+        Update the number of troubled cells:
 
-def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
+        Args:
+            n: The number of troubled cells to add.
+        """
+        self.fine_troubled_cell_count = n
+        self.troubled_cell_count += n
+
+
+def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
     """
     Detect troubled cells in the finite volume solver.
 
@@ -142,8 +147,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
         t: Current time value.
 
     Returns:
-        bool: Whether any troubles were detected or whether the maximum number of
-            iterations for the MOOD algorithm has been reached.
+        int: The number of troubled cells.
     """
     # gather solver parameters
     xp = fv_solver.xp
@@ -156,7 +160,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
 
     # gather MOOD parameters
     iter_idx = MOOD_state.iter_idx
-    max_iters = MOOD_state.config.max_iters
     cascade_status = MOOD_state.cascade_status
     MOOD_config = MOOD_state.config
     cascade = MOOD_config.cascade
@@ -169,10 +172,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
     PAD_bounds = MOOD_config.PAD_bounds
     PAD_atol = MOOD_config.PAD_atol
     SED = MOOD_config.SED
-
-    # early escape if max iter count reached
-    if iter_idx >= max_iters:
-        return False
 
     # allocate arrays
     u_old = arrays["_u_"]
@@ -249,10 +248,14 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
     )
 
     # check for troubles
-    has_troubles = xp.any(troubles)
+    n_troubled_cells = xp.sum(troubles).item()
 
-    # reset some arrays
-    if has_troubles and iter_idx == 0:
+    # early escape for no troubles
+    if n_troubled_cells == 0:
+        return 0
+
+    # troubles were detected. reset some arrays
+    if iter_idx == 0:
         # store high-order fluxes
         scheme_key = cascade[0].key()
         if "x" in active_dims:
@@ -266,7 +269,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> bool:
         # reset cascade index array
         _cascade_idx_array_[...] = 0
 
-    return has_troubles
+    return n_troubled_cells
 
 
 def inplace_NAD_violations(

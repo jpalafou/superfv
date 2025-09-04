@@ -570,18 +570,27 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     lazy_primitives=base_scheme.lazy_primitives,
                 )
             ]
-        elif cascade == "muscl":
+        elif cascade in ("muscl", "muscl1"):
             if base_scheme.flux_recipe == 3:
                 warnings.warn("MUSCL overrides flux_recipe 3 to be 2.")
-            _flux_recipe: Literal[1, 2] = (
+            muscl_flux_recipe: Literal[1, 2] = (
                 2 if base_scheme.flux_recipe == 3 else base_scheme.flux_recipe
             )
             fallback_schemes = [
                 musclInterpolationScheme(
-                    flux_recipe=_flux_recipe,
+                    flux_recipe=muscl_flux_recipe,
                     limiter_config=musclConfig(limiter=MUSCL_limiter, SED=False),
                 )
             ]
+            if cascade == "muscl1":
+                fallback_schemes += [
+                    polyInterpolationScheme(
+                        p=0,
+                        flux_recipe=base_scheme.flux_recipe,
+                        gauss_legendre=base_scheme.gauss_legendre,
+                        lazy_primitives=base_scheme.lazy_primitives,
+                    )
+                ]
         elif cascade == "full":
             fallback_schemes = [
                 polyInterpolationScheme(
@@ -1453,13 +1462,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             t: Time value.
         """
-        self.MOOD_state.reset_MOOD_loop()
-        while True:
-            if MOOD.detect_troubled_cells(self, t):
+        state = self.MOOD_state
+
+        state.reset_MOOD_loop()
+        for _ in range(state.config.max_iters):
+            n = MOOD.detect_troubled_cells(self, t)
+            if n > 0:
                 MOOD.inplace_revise_fluxes(self, t)
-                self.MOOD_state.increment_MOOD_iteration()
+                state.increment_MOOD_iteration()
             else:
-                return
+                break
+        state.update_troubled_cell_count(n)
 
     def compute_RHS(self) -> ArrayLike:
         """
@@ -1659,8 +1672,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         data = {"n_updates": n_updates, "update_rate": n_updates / run_time}
 
         if self.MOOD:
-            data["n_MOOD_iters"] = self.MOOD_state.iter_count
-            data["nfine_MOOD_iters"] = self.MOOD_state.iter_count_hist
+            state = self.MOOD_state
+
+            if sum(state.iter_count_hist) != state.iter_count:
+                raise ValueError(
+                    "MOOD iteration count mismatch: "
+                    f"{state.iter_count_hist} != {state.iter_count}"
+                )
+            if sum(state.troubled_cell_count_hist) != state.troubled_cell_count:
+                raise ValueError(
+                    "MOOD troubled cell count mismatch: "
+                    f"{state.troubled_cell_count_hist} != {state.troubled_cell_count}"
+                )
+
+            data["n_MOOD_iters"] = state.iter_count
+            data["nfine_MOOD_iters"] = state.iter_count_hist
+            data["n_troubled_cells"] = state.troubled_cell_count
+            data["nfine_troubled_cells"] = state.troubled_cell_count_hist
 
         if self.log_every_step:
             data.update(self.log_quantity())
@@ -1674,7 +1702,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         super().reset_stepwise_logs()
 
         if self.MOOD:
-            self.MOOD_state.reset_iter_count_hist()
+            self.MOOD_state.reset_stepwise_counters()
 
     def reset_substepwise_logs(self):
         """
@@ -1689,7 +1717,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         if self.MOOD:
             self.arrays["troubles_log"].fill(0)
-            self.MOOD_state.reset_iter_count()
 
     def increment_substepwise_logs(self):
         """
@@ -1711,7 +1738,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             troubles_log = self.arrays["troubles_log"]
             xp.add(troubles_log, troubles, out=troubles_log)
 
-            self.MOOD_state.increment_iter_count_hist()
+            self.MOOD_state.increment_substep_hists()
 
     @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
