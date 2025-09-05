@@ -1,316 +1,472 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
 
+from superfv.boundary_conditions import BCs, apply_bc
+from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
-from superfv.tools.array_management import ArrayLike, crop
+from superfv.tools.device_management import ArrayLike
+from superfv.tools.slicing import crop
+
+from .smooth_extrema_detection import inplace_smooth_extrema_detector
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
-from .smooth_extrema_detection import compute_smooth_extrema_detector
+from dataclasses import dataclass
+from functools import lru_cache
+from types import ModuleType
+
+from superfv.interpolation_schemes import InterpolationScheme
 
 # custom type for fluxes
 Fluxes = Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
 
 
-def _cache_fluxes(fv_solver: FiniteVolumeSolver, fluxes: Fluxes, scheme: str):
+@dataclass(frozen=True, slots=True)
+class MOODConfig(LimiterConfig):
     """
-    Cache the fluxes for the given scheme in `fv_solver.MOOD_cache`.
+    Configuration for the MOOD framework.
+
+    Attributes:
+        cascade: The list of interpolation schemes to use in the MOOD framework.
+        max_iters: The maximum number of iterations to perform.
+        NAD: Whether to use numerical admissibility detection to detect troubled cells.
+        PAD: Whether to use physical admissibility detection to detect troubled cells.
+        SED: Whether to use smooth extrema detection to forgive troubled cells.
+        NAD_rtol: Relative tolerance for NAD violations.
+        NAD_atol: Absolute tolerance for NAD violations.
+        PAD_atol: Absolute tolerance for PAD violations.
+        PAD_bounds: Physical bounds for each variable used in PAD. Has shape
+            (nvars, 1, 1, 1, 2) with the minimum and maximum values for each variable
+            stored in the first and second element of the last dimension, respectively.
+        global_dmp: Whether to use global minima and maxima to set the range for NAD
+            violations instead of local minima and maxima.
+        include_corners: When `global_dmp=False`, whether to include corner cells when
+            computing the local minima and maxima.
+    """
+
+    cascade: List[InterpolationScheme]
+    max_iters: int
+    NAD: bool
+    PAD: bool
+    SED: bool
+    NAD_rtol: float = 1.0
+    NAD_atol: float = 0.0
+    PAD_atol: float = 0.0
+    PAD_bounds: Optional[ArrayLike] = None
+    global_dmp: bool = False
+    include_corners: bool = False
+
+    def __post_init__(self):
+        if self.PAD and self.PAD_bounds is None:
+            raise ValueError(
+                "PAD requires PAD_bounds to be set. "
+                "Set PAD=False if you do not want to use PAD."
+            )
+        if self.SED and not self.NAD:
+            raise ValueError(
+                "SED requires NAD to be enabled. Please set NAD to a non-None value."
+            )
+
+    def key(self) -> str:
+        cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
+        return f"MOOD: [{cascade_keys}]"
+
+
+@dataclass
+class MOODState:
+    """
+    Class that describes the state of the MOOD iterator.
+
+    Attributes:
+        config: The MOOD configuration.
+        iter_idx: Current iteration index in the MOOD loop.
+        iter_count: Total number of iterations across all MOOD loops in a step.
+        fine_iter_count: Number of iterations in the current MOOD loop.
+        cascade_status: List of boolean flags indicating the status of each
+            interpolation scheme in the cascade.
+    """
+
+    config: MOODConfig
+
+    def __post_init__(self):
+        self.reset_MOOD_loop()
+        self.reset_stepwise_counters()
+
+    def reset_stepwise_counters(self):
+        """
+        Reset logs which track information over the course of whole steps.
+        """
+        self.iter_count = 0
+        self.iter_count_hist: List[int] = []
+        self.troubled_cell_count = 0
+        self.troubled_cell_count_hist: List[int] = []
+
+    def increment_substep_hists(self):
+        """
+        Increment the substep history logs.
+        """
+        self.iter_count_hist.append(self.fine_iter_count)
+        self.troubled_cell_count_hist.append(self.fine_troubled_cell_count)
+
+    def reset_MOOD_loop(self):
+        """
+        Reset the parameters which change across every MOOD iteration.
+        """
+        self.iter_idx = 0
+        self.fine_iter_count = 0
+        self.fine_troubled_cell_count = 0
+        self.cascade_status: List[bool] = [False] * len(self.config.cascade)
+
+    def increment_MOOD_iteration(self):
+        """
+        Increment the parameters which change across every MOOD iteration.
+        """
+        self.iter_idx += 1
+        self.iter_count += 1
+        self.fine_iter_count += 1
+
+    def update_troubled_cell_count(self, n: int):
+        """
+        Update the number of troubled cells:
+
+        Args:
+            n: The number of troubled cells to add.
+        """
+        self.fine_troubled_cell_count = n
+        self.troubled_cell_count += n
+
+
+def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
+    """
+    Detect troubled cells in the finite volume solver.
 
     Args:
         fv_solver: FiniteVolumeSolver object.
-        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
-            Otherwise, is an array with shape:
-            - F: (nvars, nx+1, ny, nz, ...)
-            - G: (nvars, nx, ny+1, nz, ...)
-            - H: (nvars, nx, ny, nz+1, ...)
-        scheme: Name of the scheme used to compute the fluxes.
-    """
-    if fv_solver.using_xdim:
-        fv_solver.MOOD_cache.add("F_" + scheme, cast(ArrayLike, fluxes[0]))
-    if fv_solver.using_ydim:
-        fv_solver.MOOD_cache.add("G_" + scheme, cast(ArrayLike, fluxes[1]))
-    if fv_solver.using_zdim:
-        fv_solver.MOOD_cache.add("H_" + scheme, cast(ArrayLike, fluxes[2]))
-
-
-def init_MOOD(fv_solver: FiniteVolumeSolver, u: ArrayLike, fluxes: Fluxes):
-    """
-    Initialize the MOOD algorithm.
-
-    Args:
-        fv_solver: FiniteVolumeSolver object.
-        u: Array of conservative FV cell-averaged variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
-            Otherwise, is an array with shape:
-            - F: (nvars, nx+1, ny, nz, ...)
-            - G: (nvars, nx, ny+1, nz, ...)
-            - H: (nvars, nx, ny, nz+1, ...)
-    """
-    xp = fv_solver.xp
-    fv_solver.MOOD_cache.clear()
-    fv_solver.MOOD_cache.add("violations", xp.empty_like(u[0], dtype=bool))
-    initial_scheme = "fv" + str(fv_solver.p)
-    if initial_scheme != fv_solver.MOOD_cascade[0]:
-        raise ValueError(
-            f"Starting scheme {initial_scheme} is not the first scheme in the cascade {fv_solver.MOOD_cascade}."
-        )
-    _cache_fluxes(fv_solver, fluxes, initial_scheme)
-    fv_solver.MOOD_cache.add("cascade_idx_array", xp.full_like(u[:1], 0, dtype=int))
-    fv_solver.MOOD_iter_count = 0
-
-
-def detect_troubles(
-    fv_solver: FiniteVolumeSolver,
-    t: float,
-    u: ArrayLike,
-    fluxes: Fluxes,
-    NAD: Optional[float] = None,
-    PAD: Optional[ArrayLike] = None,
-    PAD_tol: float = 0.0,
-    SED: bool = False,
-) -> bool:
-    """
-    Detect troubles in the solution.
-
-    Args:
-        fv_solver: FiniteVolumeSolver object. Is expected to have variable group
-            "limiting_vars" defined in `fv_solver.variable_index_map.group_names`.
-        t: Time value.
-        u: Array of conservative FV cell-averaged variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
-            Otherwise, is an array with shape:
-            - F: (nvars, nx+1, ny, nz, ...)
-            - G: (nvars, nx, ny+1, nz, ...)
-            - H: (nvars, nx, ny, nz+1, ...)
-        NAD: Numerical admissibility detection tolerance. If not provided, numerical
-            admissibility is not checked.
-        PAD: Physical admissibility detection bounds as an array of shape (nvars, 2)
-            where the first column is the lower bound and the second column is the
-            upper bound. If None, physical admissibility is not checked.
-        PAD_tol: Tolerance for the physical admissibility detection. Default is 0.0.
-        SED: Whether to use the smooth extrema detector (SED) to detect troubles.
+        t: Current time value.
 
     Returns:
-        Whether troubles were detected (bool). If True, the MOOD algorithm will attempt
-            to revise the fluxes in the next step.
+        int: The number of troubled cells.
     """
-    idx = fv_solver.variable_index_map
+    # gather solver parameters
     xp = fv_solver.xp
+    arrays = fv_solver.arrays
+    active_dims = fv_solver.active_dims
+    lim_slc = fv_solver.variable_index_map("limiting", keepdims=True)
+    interior = fv_solver.interior
+    dt = fv_solver.substep_dt
+    MOOD_state = fv_solver.MOOD_state
 
-    # early escape if max iter count reached
-    if fv_solver.MOOD_iter_count >= fv_solver.MOOD_max_iter_count:
-        return False
+    # gather MOOD parameters
+    iter_idx = MOOD_state.iter_idx
+    cascade_status = MOOD_state.cascade_status
+    MOOD_config = MOOD_state.config
+    cascade = MOOD_config.cascade
+    NAD = MOOD_config.NAD
+    NAD_rtol = MOOD_config.NAD_rtol
+    NAD_atol = MOOD_config.NAD_atol
+    global_dmp = MOOD_config.global_dmp
+    include_corners = MOOD_config.include_corners
+    PAD = MOOD_config.PAD
+    PAD_bounds = MOOD_config.PAD_bounds
+    PAD_atol = MOOD_config.PAD_atol
+    SED = MOOD_config.SED
+
+    # allocate arrays
+    u_old = arrays["_u_"]
+    u_old_interior = arrays["_u_"][interior]
+    u_new = arrays["buffer"][..., 0]
+    buffer = arrays["buffer"][lim_slc]
+    NAD_violations = buffer[..., 1]
+    PAD_violations = buffer[..., 2][interior]
+    alpha = buffer[..., 3:4]
+    buffer = buffer[..., 4:]
+    troubles = arrays["troubles"]
+    _troubles_ = arrays["_troubles_"]
+    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
+
+    # reset troubles / cascade index array
+    troubles[...] = False
 
     # compute candidate solution
-    dt = fv_solver.substep_dt
-    ustar = u + dt * fv_solver.RHS(u, *fluxes)
+    u_new_interior = u_old_interior + dt * fv_solver.compute_RHS()
+    u_new[interior] = u_new_interior
+    fv_solver.inplace_apply_bc(t, u_new, scheme=fv_solver.base_scheme)
 
-    # compute NAD and/or PAD violations
-    limiting_slice = idx("limiting_vars")
-    possible_violations = xp.zeros_like(u[limiting_slice], dtype=bool)
-    if PAD is None and NAD is None:
-        return False
-    if NAD is not None:
-        dmp_min, dmp_max = compute_dmp(
+    # compute NAD violations
+    if NAD:
+        inplace_NAD_violations(
             xp,
-            fv_solver.apply_bc(u, 1),
-            dims=fv_solver.dims,
-            include_corners=True,
+            u_new[lim_slc],
+            u_old[lim_slc],
+            active_dims,
+            out=NAD_violations,
+            buffer=buffer,
+            rtol=NAD_rtol,
+            atol=NAD_atol,
+            global_dmp=global_dmp,
+            include_corners=include_corners,
         )
-        NAD_violations = compute_dmp_violations(xp, ustar, dmp_min, dmp_max, tol=NAD)
-        possible_violations[...] = NAD_violations[limiting_slice] < 0
+
+    # compute smooth extrema
     if SED:
-        alpha = compute_smooth_extrema_detector(
+        inplace_smooth_extrema_detector(
             xp,
-            fv_solver.apply_bc(ustar, 3)[limiting_slice],
-            fv_solver.axes,
+            u_new[lim_slc],
+            active_dims,
+            out=alpha,
+            buffer=buffer,
         )
-        possible_violations[...] = xp.logical_and(alpha < 1, possible_violations)
-    if PAD is not None:
-        possible_violations[...] = xp.logical_or.reduce(
-            [
-                possible_violations,
-                ustar[limiting_slice] < PAD[limiting_slice][..., 0] - PAD_tol,
-                ustar[limiting_slice] > PAD[limiting_slice][..., 1] + PAD_tol,
-            ]
+        troubles[...] = xp.any(
+            xp.logical_and(NAD_violations[interior] < 0, alpha[..., 0][interior] < 1),
+            axis=0,
+            keepdims=True,
         )
-    violations = xp.any(possible_violations, axis=0)
-
-    # return bool
-    if xp.any(violations):
-        fv_solver.MOOD_cache["violations"] = violations
-        fv_solver.MOOD_cache["cascade_idx_array"] = xp.where(
-            violations,
-            xp.minimum(
-                fv_solver.MOOD_cache["cascade_idx_array"] + 1,
-                len(fv_solver.MOOD_cascade) - 1,
-            ),
-            fv_solver.MOOD_cache["cascade_idx_array"],
-        )
-        return True
     else:
-        return False
+        troubles[...] = xp.any(NAD_violations[interior] < 0, axis=0, keepdims=True)
+
+    # compute PAD violations
+    if PAD:
+        inplace_PAD_violations(
+            xp,
+            u_new_interior[lim_slc],
+            cast(ArrayLike, PAD_bounds)[lim_slc],
+            physical_tols=PAD_atol,
+            out=PAD_violations,
+        )
+        xp.logical_or(
+            troubles, xp.any(PAD_violations < 0, axis=0, keepdims=True), out=troubles
+        )
+
+    # update troubles workspace
+    _troubles_[interior] = troubles
+    apply_bc(
+        _troubles_,
+        pad_width=fv_solver.bc_pad_width,
+        mode=normalize_troubles_bc(fv_solver.bc_mode),
+    )
+
+    # check for troubles
+    n_troubled_cells = xp.sum(troubles).item()
+
+    # early escape for no troubles
+    if n_troubled_cells == 0:
+        return 0
+
+    # troubles were detected. reset some arrays
+    if iter_idx == 0:
+        # store high-order fluxes
+        scheme_key = cascade[0].key()
+        if "x" in active_dims:
+            arrays["F_" + scheme_key][...] = arrays["F"].copy()
+        if "y" in active_dims:
+            arrays["G_" + scheme_key][...] = arrays["G"].copy()
+        if "z" in active_dims:
+            arrays["H_" + scheme_key][...] = arrays["H"].copy()
+        cascade_status[0] = True
+
+        # reset cascade index array
+        _cascade_idx_array_[...] = 0
+
+    return n_troubled_cells
 
 
-def compute_dmp_violations(
-    xp: Any, arr: ArrayLike, dmp_min: ArrayLike, dmp_max: ArrayLike, tol: float
-) -> ArrayLike:
+def inplace_NAD_violations(
+    xp: ModuleType,
+    u_new: ArrayLike,
+    u_old: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    *,
+    out: ArrayLike,
+    buffer: Optional[ArrayLike] = None,
+    rtol: float = 1.0,
+    atol: float = 0.0,
+    global_dmp: bool = False,
+    include_corners: bool = False,
+):
     """
-    Compute a boolean array indicating whether the given array violates the discrete
-    maximum principle.
+    Compute the numerical admissibility detection (NAD) violations.
 
     Args:
         xp: `np` namespace or equivalent.
-        arr: The array to check for violations. Has shape (nvars, nx, ny, nz).
-        dmp_min: The minimum values of the array. Has shape (nvars, nx, ny, nz).
-        dmp_max: The maximum values of the array. Has shape (nvars, nx, ny, nz).
-        tol: DMP tolerance.
+        u_new: New solution array. Has shape (nvars, nx, ny, nz).
+        u_old: Old solution array. Has shape (nvars, nx, ny, nz).
+        active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
+        out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
+        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2) if `global_dmp` is
+            False. If `global_dmp` is True, this parameter is ignored.
+        rtol: Relative tolerance for the NAD violations.
+        atol: Absolute tolerance for the NAD violations.
+        global_dmp: Whether to use global DMP.
+        include_corners: Whether to include corner values in the DMP computation.
+    """
+
+    if global_dmp:
+        dmp_min = xp.min(u_old, axis=(1, 2, 3), keepdims=True)
+        dmp_max = xp.max(u_old, axis=(1, 2, 3), keepdims=True)
+    elif buffer is None:
+        raise ValueError("Buffer must be provided if global_dmp is False.")
+    else:
+        dmp = buffer[..., :2]
+        dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
+        compute_dmp(xp, u_old, active_dims, out=dmp, include_corners=include_corners)
+    dmp_range = dmp_max - dmp_min
+    violations = xp.minimum(u_new - dmp_min, dmp_max - u_new) + rtol * dmp_range + atol
+
+    out[...] = violations
+
+
+def inplace_PAD_violations(
+    xp: ModuleType,
+    u_new: ArrayLike,
+    physical_ranges: ArrayLike,
+    physical_tols: float,
+    *,
+    out: ArrayLike,
+):
+    """
+    Compute the physical admissibility detection (PAD) violations.
+
+    Args:
+        xp: `np` namespace or equivalent.
+        u_new: New solution array. Has shape (nvars, nx, ny, nz).
+        physical_ranges: Physical ranges for each variable. Has shape (nvars, 2).
+        physical_tols: Physical tolerances for all variables as a single float.
+        out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
+    """
+    physical_mins = physical_ranges[..., 0]
+    physical_maxs = physical_ranges[..., 1]
+    out[...] = xp.minimum(u_new - physical_mins, physical_maxs - u_new) + physical_tols
+
+
+@lru_cache(maxsize=None)
+def normalize_troubles_bc(
+    bc_tuple: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
+) -> Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]]:
+    """
+    Normalize the boundary conditions for the trouble detection.
+
+    Args:
+        bc_tuple: A tuple of boundary conditions for each dimension, where each
+            boundary condition is a tuple of (left, right) BCs.
 
     Returns:
-        Array of DMP violations as negative values. Has shape (nvars, nx, ny, nz).
+        A normalized tuple of boundary conditions for each dimension.
+        - "none" for no boundary condition
+        - "periodic" for periodic boundary condition
+        - "zeros" for no-trouble boundary condition
     """
-    dmp_range = xp.max(dmp_max, axis=(1, 2, 3), keepdims=True) - xp.min(
-        dmp_min, axis=(1, 2, 3), keepdims=True
+
+    def map_bc(bc: BCs) -> BCs:
+        if bc == "none":
+            return "none"
+        elif bc == "periodic":
+            return "periodic"
+        else:
+            return "zeros"
+
+    return (
+        (map_bc(bc_tuple[0][0]), map_bc(bc_tuple[0][1])),
+        (map_bc(bc_tuple[1][0]), map_bc(bc_tuple[1][1])),
+        (map_bc(bc_tuple[2][0]), map_bc(bc_tuple[2][1])),
     )
-    violations = xp.minimum(arr - dmp_min, dmp_max - arr) + tol * dmp_range
-    return violations
 
 
-def revise_fluxes(
-    fv_solver: FiniteVolumeSolver,
-    t: float,
-    u: ArrayLike,
-    fluxes: Fluxes,
-    mode: Literal["transverse", "gauss-legendre"],
-    slope_limiter: Optional[Literal["minmod", "moncen"]] = None,
-) -> Fluxes:
+def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     """
-    Revise the fluxes using the MOOD algorithm.
+    In-place revision of fluxes based on the current time step.
 
     Args:
         fv_solver: FiniteVolumeSolver object.
-        t: Time value.
-        u: Array of conservative FV cell-averaged variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        fluxes: The fluxes (F, G, H). None if the corresponding dimension is unused.
-            Otherwise, is an array with shape:
-            - F: (nvars, nx+1, ny, nz, ...)
-            - G: (nvars, nx, ny+1, nz, ...)
-            - H: (nvars, nx, ny, nz+1, ...)
-        mode: The mode for interpolating nodes and integrals. Possible values:
-            - "transverse": Use transverse interpolation.
-            - "gauss-legendre": Use Gauss-Legendre interpolation.
-        slope_limiter: Optional slope limiter to use if `scheme` is "muscl". Possible
-            values:
-            - "minmod": Use the minmod slope limiter.
-            - "moncen": Use the Monotone Central slope limiter.
-
-    Returns:
-        fluxes: The revised fluxes (F, G, H). None if the corresponding dimension is
-            unused. Otherwise, is an array with shape:
-            - F: (nvars, nx+1, ny, nz, ...)
-            - G: (nvars, nx, ny+1, nz, ...)
-            - H: (nvars, nx, ny, nz+1, ...)
+        t: Current time value.
     """
-    fv_solver.MOOD_iter_count += 1
+    # gather solver parameters
     xp = fv_solver.xp
-    fallback_scheme = fv_solver.MOOD_cascade[
-        min(fv_solver.MOOD_iter_count, len(fv_solver.MOOD_cascade) - 1)
-    ]
-    if "F_" + fallback_scheme not in fv_solver.MOOD_cache:
-        # parse new scheme
-        if fallback_scheme[:2] == "fv":
-            p = int(fallback_scheme[2:])
-            limiting_scheme = None
-            slope_limiter = None
-        elif fallback_scheme == "muscl":
-            p = None
-            limiting_scheme = "muscl"
-            slope_limiter = slope_limiter
-        elif fallback_scheme == "half-dt":
-            raise NotImplementedError(
-                "Half-dt scheme is not implemented in MOOD revision."
-            )
-        else:
-            raise ValueError(f"Unknown fallback scheme {fallback_scheme}.")
+    arrays = fv_solver.arrays
+    active_dims = fv_solver.active_dims
+    interior = fv_solver.interior
+    MOOD_state = fv_solver.MOOD_state
+    cascade = MOOD_state.config.cascade
+    cascade_status = MOOD_state.cascade_status
+    max_idx = len(cascade) - 1
 
-        # compute fluxes needed
-        fallback_fluxes = fv_solver.compute_fluxes(
-            t, u, mode, p, limiting_scheme, slope_limiter
-        )
-        _cache_fluxes(fv_solver, fallback_fluxes, fallback_scheme)
+    # allocate arrays
+    F = arrays["F"]
+    G = arrays["G"]
+    H = arrays["H"]
+    F_mask = arrays["_mask_"][:, :, :-1, :-1]
+    G_mask = arrays["_mask_"][:, :-1, :, :-1]
+    H_mask = arrays["_mask_"][:, :-1, :-1, :]
+    _troubles_ = arrays["_troubles_"]
+    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
 
-    cascade_idx_array = fv_solver.MOOD_cache["cascade_idx_array"]
-    revised_F, revised_G, revised_H = None, None, None
-    if fv_solver.using_xdim:
-        F_cascade_idx_array = map_cell_values_to_face_values(
-            fv_solver,
-            cascade_idx_array,
-            "x",
-        )
-        revised_F = xp.zeros_like(fluxes[0])
-        for i, scheme in enumerate(fv_solver.MOOD_cascade):
-            revised_F += fv_solver.MOOD_cache["F_" + scheme] * xp.where(
-                F_cascade_idx_array == i, 1, 0
-            )
-    if fv_solver.using_ydim:
-        G_cascade_idx_array = map_cell_values_to_face_values(
-            fv_solver,
-            cascade_idx_array,
-            "y",
-        )
-        revised_G = xp.zeros_like(fluxes[1])
-        for i, scheme in enumerate(fv_solver.MOOD_cascade):
-            revised_G += fv_solver.MOOD_cache["G_" + scheme] * xp.where(
-                G_cascade_idx_array == i, 1, 0
-            )
-    if fv_solver.using_zdim:
-        H_cascade_idx_array = map_cell_values_to_face_values(
-            fv_solver,
-            cascade_idx_array,
-            "z",
-        )
-        revised_H = xp.zeros_like(fluxes[2])
-        for i, scheme in enumerate(fv_solver.MOOD_cascade):
-            revised_H += fv_solver.MOOD_cache["H_" + scheme] * xp.where(
-                H_cascade_idx_array == i, 1, 0
-            )
+    # assuming `troubles` has just been updated, update the cascade index array
+    xp.minimum(_cascade_idx_array_ + _troubles_, max_idx, out=_cascade_idx_array_)
+    current_max_idx = xp.max(_cascade_idx_array_)
 
-    return revised_F, revised_G, revised_H
+    # update the cascade scheme fluxes
+    if not cascade_status[current_max_idx]:
+        scheme = cascade[current_max_idx]
+        fv_solver.inplace_compute_fluxes(t, scheme)
+        cascade_status[current_max_idx] = True
+
+        if "x" in active_dims:
+            arrays["F_" + scheme.key()] = F.copy()
+        if "y" in active_dims:
+            arrays["G_" + scheme.key()] = G.copy()
+        if "z" in active_dims:
+            arrays["H_" + scheme.key()] = H.copy()
+
+    # broadcast cascade index to each face
+    if "x" in active_dims:
+        F[...] = 0
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
+        for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
+            mask = F_mask[interior] == i
+            xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
+
+    if "y" in active_dims:
+        G[...] = 0
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
+        for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
+            mask = G_mask[interior] == i
+            xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
+
+    if "z" in active_dims:
+        H[...] = 0
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
+        for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
+            mask = H_mask[interior] == i
+            xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 
-def map_cell_values_to_face_values(
-    fv_solver: FiniteVolumeSolver,
-    cell_values: ArrayLike,
-    dim: Literal["x", "y", "z"],
-) -> ArrayLike:
+def inplace_map_cells_values_to_face_values(
+    xp: ModuleType, cv: ArrayLike, axis: int, *, out: ArrayLike
+):
     """
     Map cell values to face values by taking the maximum of adjacent cell values.
 
     Args:
-        fv_solver: FiniteVolumeSolver object.
-        cell_values: Array of cell values. Has shape (nx, ny, nz, ...).
-        dim: Dimension along which to map the cell values to face values: "x", "y", or
-            "z".
+        xp: `np` namespace or equivalent.
+        cv: Array of cell values. Has shape (nvars, nx, ny, nz).
+        axis: Axis along which to map the cell values to face values:
+            - 1 for "x" (nx+1, ny, nz, ...)
+            - 2 for "y" (nx, ny+1, nz, ...)
+            - 3 for "z" (nx, ny, nz+1, ...)
+        out: Output array to store the face values. Has shape:
+            - (nvars, nx+1, ny, nz) if axis == 1
+            - (nvars, nx, ny+1, nz) if axis == 2
+            - (nvars, nx, ny, nz+1) if axis == 3
 
     Returns:
-        Array of face values with shape:
-            - (nx+1, ny, nz, ...) if dim == "x"
-            - (nx, ny+1, nz, ...) if dim == "y"
-            - (nx, ny, nz+1, ...) if dim == "z"
+        Slice objects indicating the modified regions in the output array.
     """
-    padded_cell_values = fv_solver.bc_for_troubled_cell_mask(
-        cell_values,
-        {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[dim],
-    )
-    axis = "xyz".index(dim) + 1
-    left_slice = crop(axis, (None, -1))
-    right_slice = crop(axis, (1, None))
-    face_values = fv_solver.xp.maximum(
-        padded_cell_values[left_slice], padded_cell_values[right_slice]
-    )
-    return face_values
+    lft = crop(axis, (None, -1))
+    rgt = crop(axis, (1, None))
+    ctr = crop(axis, (1, -1))
+
+    out[ctr] = cv[lft]
+    xp.maximum(out[ctr], cv[rgt], out=out[ctr])
+
+    return ctr

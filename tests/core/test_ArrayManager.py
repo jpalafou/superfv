@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from superfv.tools.array_management import CUPY_AVAILABLE, ArrayManager, xp
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayManager, xp
 
 
 def test_initialization():

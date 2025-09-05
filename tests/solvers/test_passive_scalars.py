@@ -3,7 +3,7 @@ import pytest
 
 import superfv.initial_conditions as ic
 from superfv import AdvectionSolver, EulerSolver
-from superfv.tools.array_management import l1_norm
+from superfv.tools.norms import l1_norm
 
 
 def test_AdvectionSolver_passive_scalar_invariance():
@@ -16,14 +16,14 @@ def test_AdvectionSolver_passive_scalar_invariance():
 
     # set up solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
+        ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=np),
         nx=N,
         p=p,
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.sinus(idx, x, y, z, vx=1),
+        ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=np),
         ic_passives={
-            "passive1": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1, 0)
+            "passive1": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, 0)
         },
         nx=N,
         p=p,
@@ -65,7 +65,9 @@ def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: st
         p=p,
         **limiting_config,
         ic_passives={
-            "passive_square": lambda x, y, z: np.where(np.abs(x - 0.5) < 0.25, 1, -1)
+            "passive_square": lambda x, y, z, t, xp: xp.where(
+                xp.abs(x - 0.5) < 0.25, 1, -1
+            )
         },
     )
 

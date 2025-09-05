@@ -30,7 +30,8 @@ def _get_nearest_index(
     idx = np.argmin(np.abs(array - coord)).item()
     if coord not in array:
         warnings.warn(
-            f"Coordinate {coord} not found in array. Using nearest: {array[idx]}."
+            f"Cell-centered coordinate {coord} not exactly matched in mesh;"
+            f" using nearest: {array[idx]:.6g}"
         )
     return idx
 
@@ -71,15 +72,18 @@ def _parse_txyz_slices(
     nearest_t = t_array[n]
 
     # get xyz slices
-    slices: Dict[str, Union[int, slice]] = {
-        "x": slice(None),
-        "y": slice(None),
-        "z": slice(None),
-    }
+    slices: Dict[str, Union[int, slice]] = {}
     for dim, coord in zip("xyz", [x, y, z]):
         x_array = getattr(fv_solver.mesh, dim + "_centers")
-        if coord is None:
-            continue
+        if dim not in fv_solver.active_dims:
+            if coord is not None:
+                warnings.warn(
+                    f"Dimension {dim} is not active in the solver. "
+                    f"Ignoring coordinate {coord}."
+                )
+            slices[dim] = 0
+        elif coord is None:
+            slices[dim] = slice(None)
         elif isinstance(coord, float):
             slices[dim] = _get_nearest_index(x_array, coord)
         elif isinstance(coord, tuple):
@@ -123,11 +127,15 @@ def _extract_variable_data(
     # choose the snapshot with the nearest time
     snapshot = fv_solver.snapshots(nearest_t)
 
+    # plot troubles
+    if variable == "troubles":
+        return snapshot["troubles"][0]
+
     # determine the key for the variable
-    if variable in idx.group_var_map["primitives"]:
-        key = "w"
-    elif variable in idx.group_var_map["conservatives"]:
+    if variable in idx.group_var_map["conservatives"]:
         key = "u"
+    elif variable in idx.group_var_map["primitives"]:
+        key = "w"
     elif variable in idx.group_var_map["passives"]:
         key = "w"
     else:
@@ -141,15 +149,30 @@ def _extract_variable_data(
     return snapshot[key][idx(variable)]
 
 
+def _is_None_or_tuple(
+    value: Optional[Union[float, Tuple[Optional[float], Optional[float]]]],
+) -> bool:
+    """
+    Check if the value is None or a tuple of length 2.
+
+    Args:
+        value: Value to check.
+
+    Returns:
+        True if value is None or a tuple of length 2, False otherwise.
+    """
+    return value is None or (isinstance(value, tuple) and len(value) == 2)
+
+
 def plot_1d_slice(
     fv_solver: FiniteVolumeSolver,
     ax: Axes,
     variable: str,
     cell_averaged: bool = False,
     t: Optional[float] = None,
-    x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
-    y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
-    z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = 0.5,
+    x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     xlabel: bool = False,
     **kwargs,
 ):
@@ -176,18 +199,26 @@ def plot_1d_slice(
     Raises:
         ValueError: If not exactly one of x, y, z is None or a tuple.
     """
-    # find the dimension and slices
-    if sum(coord is None or isinstance(coord, tuple) for coord in (x, y, z)) != 1:
-        raise ValueError("Exactly one of x, y, z must be None or a tuple.")
-    dim = next(
+
+    # find the dimensions to plot
+    active_dims = fv_solver.active_dims
+    slicing_dims = [
         dim
-        for dim, val in zip("XYZ", [x, y, z])
-        if val is None or isinstance(val, tuple)
-    )
+        for dim, coord in zip("xyz", (x, y, z))
+        if _is_None_or_tuple(coord) and dim in active_dims
+    ]
+    if len(slicing_dims) != 1:
+        raise ValueError(
+            "Exactly one of x, y, z must be None or a length-two tuple for a 1D slice, "
+            "and it must match an active mesh dimension."
+        )
+    dim = slicing_dims[0]
+
+    # find the nearest slices in time and space
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # gather data
-    x_arr = getattr(fv_solver.mesh, dim)[slices[0], slices[1], slices[2]]
+    x_arr = getattr(fv_solver.mesh, dim.upper())[slices[0], slices[1], slices[2]]
     f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
@@ -195,7 +226,7 @@ def plot_1d_slice(
     # plot
     ax.plot(x_arr, f_arr, **kwargs)
     if xlabel:
-        ax.set_xlabel(rf"${dim.lower()}$")
+        ax.set_xlabel(rf"${dim}$")
 
 
 def plot_2d_slice(
@@ -204,9 +235,9 @@ def plot_2d_slice(
     variable: str,
     cell_averaged: bool = False,
     t: Optional[float] = None,
-    x: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
-    y: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
-    z: Union[float, Tuple[Optional[float], Optional[float]]] = 0.5,
+    x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
+    z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     levels: Optional[Union[int, np.ndarray]] = None,
     **kwargs,
 ):
@@ -233,29 +264,33 @@ def plot_2d_slice(
     Raises:
         ValueError: If not exactly two of x, y, z is None or a tuple.
     """
-    # find the dimensions and slices
-    if sum(coord is None or isinstance(coord, tuple) for coord in (x, y, z)) != 2:
-        raise ValueError("Exactly two of x, y, z must be None or a tuple.")
-    dim1, dim2 = [
+    # find the dimensions to plot
+    is_valid = _is_None_or_tuple
+    active_dims = fv_solver.active_dims
+    slicing_dims = [
         dim
-        for dim, val in zip("XYZ", [x, y, z])
-        if val is None or isinstance(val, tuple)
+        for dim, coord in zip("xyz", (x, y, z))
+        if is_valid(coord) and dim in active_dims
     ]
+    if len(slicing_dims) != 2:
+        raise ValueError(
+            "Exactly two of x, y, z must be None or a length-two tuple for a 2D slice "
+            "and they must match the active mesh dimensions."
+        )
+    dim1, dim2 = slicing_dims
+
+    # find the nearest slices in time and space
     nearest_t, slices = _parse_txyz_slices(fv_solver, t, x, y, z)
 
     # determine plotting mode
     using = "imshow" if levels is None else "contour"
 
     if using == "contour":
-        x_arr = getattr(fv_solver.mesh, dim1)[slices[0], slices[1], slices[2]]
-        y_arr = getattr(fv_solver.mesh, dim2)[slices[0], slices[1], slices[2]]
+        x_arr = getattr(fv_solver.mesh, dim1.upper())[slices[0], slices[1], slices[2]]
+        y_arr = getattr(fv_solver.mesh, dim2.upper())[slices[0], slices[1], slices[2]]
     else:
-        x_arr = getattr(fv_solver.mesh, dim1.lower() + "_centers")[
-            slices["XYZ".index(dim1)]
-        ]
-        y_arr = getattr(fv_solver.mesh, dim2.lower() + "_centers")[
-            slices["XYZ".index(dim2)]
-        ]
+        x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
+        y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
     f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
         slices[0], slices[1], slices[2]
     ]
@@ -318,3 +353,40 @@ def plot_power_law_fit(ax: Axes, x: np.ndarray, f: np.ndarray, **kwargs):
     """
     p_law = power_law(x[0], f[0], x[-1], f[-1])
     ax.plot(x, p_law(x), **kwargs)
+
+
+def plot_timeseries(fv_solver: FiniteVolumeSolver, ax: Axes, variable: str, **kwargs):
+    """
+    Plot a timeseries logged in `fv_solver.minisnapshots`.
+
+    Args:
+        fv_solver: FiniteVolumeSolver object.
+        ax: Matplotlib axes object.
+        variable: Name of the variable to plot.
+        **kwargs: Keyword arguments for the plot.
+
+    Raises:
+        ValueError: `variable` is not in `fv_solver.minisnapshots`.
+    """
+    if variable not in fv_solver.minisnapshots:
+        raise ValueError(
+            f"Variable {variable} not found in `FiniteVolumeSolver.minisnapshots`."
+        )
+
+    t = fv_solver.minisnapshots["t"]
+    f = fv_solver.minisnapshots[variable]
+
+    # unpack the data and plot along substeps if it is a list of lists
+    if isinstance(f[0], list):
+        t_big = []
+        f_big = []
+
+        for t, dt, f_packet in zip(t, fv_solver.minisnapshots["dt"], f):
+            n = len(f_packet)
+            t_big.extend([t - (i / n) * dt for i in range(n - 1, -1, -1)])
+            f_big.extend(f_packet)
+
+        t = t_big
+        f = f_big
+
+    ax.plot(t, f, **kwargs)

@@ -1,11 +1,74 @@
-from functools import lru_cache
-from typing import Any, List, Literal, Tuple, Union, cast
+from functools import lru_cache, wraps
+from types import ModuleType
+from typing import Any, Callable, List, Literal, Sequence, Tuple, Union, cast
 
 import numpy as np
 from stencilpal import conservative_interpolation_stencil, uniform_quadrature
 from stencilpal.stencil import Stencil
 
-from .tools.array_management import ArrayLike, crop
+from .tools.device_management import ArrayLike
+from .tools.slicing import crop
+
+Coordinate = Union[int, float, Literal["l", "c", "r"]]
+
+
+def canonicalize_interp_coord(
+    func: Callable[[Any, int, Coordinate], np.ndarray],
+) -> Callable[[Any, int, Coordinate], ArrayLike]:
+    """
+    Decorator for `conservative_interpolation_weights` to ensure that the
+    interpolation coordinate `x` is always an integer if it is equivalent to an integer
+    value.
+    """
+
+    @wraps(func)
+    def wrapper(xp: Any, p: int, x: Coordinate) -> np.ndarray:
+        if isinstance(x, float) and x in (-1.0, 0.0, 1.0):
+            x = int(x)
+        return func(xp, p, x)
+
+    return wrapper
+
+
+@lru_cache(maxsize=None)
+@canonicalize_interp_coord
+def conservative_interpolation_weights(xp: Any, p: int, x: Coordinate) -> np.ndarray:
+    """
+    Returns the weights of the conservative interpolation stencil for a given
+    polynomial degree.
+
+    Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
+        p: The polynomial degree.
+        x: interpolation point on the interval [-1, 1] as a number or alias:
+            - "l": alias for the leftmost point of the cell (-1).
+            - "c": alias for the center of the cell (0).
+            - "r": alias for the rightmost point of the cell (1).
+
+    Returns:
+        Array of weights of the conservative interpolation stencil.
+            - If `x` is a string or integer, the stencil is returned with rational
+            weights and the weights are the pure division of the numerators by the
+            denominator.
+            - If `x` is a float, the returned array has a float data type, and the weights
+            are normalized to sum to 1.
+
+    Notes:
+        - Equivalent floating-point and integer values for the position `x` produce the
+        same hash. As a result, the type of the cached output depends on which call is
+        made first. For example, if `conservative_interpolation_weights(3, -1.0)` is
+        called before `conservative_interpolation_weights(3, -1)`, the latter will
+        return a float array, not an integer array.
+    """
+    stencil = conservative_interpolation_stencil(p, x)
+    resize_stencil(stencil, stencil_size(p))
+    if stencil.rational:
+        numerators = stencil.asnumpy()
+        denominator = np.sum(numerators)
+        w = numerators / denominator
+    else:
+        w = cast(np.ndarray, stencil.w)
+    return xp.asarray(w)
 
 
 @lru_cache(maxsize=None)
@@ -38,53 +101,13 @@ def resize_stencil(stencil: Stencil, target_size: int):
 
 
 @lru_cache(maxsize=None)
-def conservative_interpolation_weights(
-    p: int, x: Union[Literal["l", "c", "r"], int, float]
-) -> np.ndarray:
-    """
-    Returns the weights of the conservative interpolation stencil for a given
-    polynomial degree.
-
-    Args:
-        p: The polynomial degree.
-        x: interpolation point on the interval [-1, 1] as a number or alias:
-            - "l": alias for the leftmost point of the cell (-1).
-            - "c": alias for the center of the cell (0).
-            - "r": alias for the rightmost point of the cell (1).
-
-    Returns:
-        Array of weights of the conservative interpolation stencil.
-            - If `x` is a string or integer, the returned array has an integer data type,
-            with elements representing the numerators of the rational weights after a
-            common denominator is applied. In this case, the weights do not necessarily
-            sum to 1.
-            - If `x` is a float, the returned array has a float data type, and the weights
-            are normalized to sum to 1.
-
-    Notes:
-        - Equivalent floating-point and integer values for the position `x` produce the
-        same hash. As a result, the type of the cached output depends on which call is
-        made first. For example, if `conservative_interpolation_weights(3, -1.0)` is
-        called before `conservative_interpolation_weights(3, -1)`, the latter will
-        return a float array, not an integer array.
-    """
-    stencil = conservative_interpolation_stencil(p, x)
-    resize_stencil(stencil, stencil_size(p))
-    if stencil.rational:
-        numerators = stencil.asnumpy()
-        denominator = np.sum(numerators)
-        return numerators / denominator
-    else:
-        return cast(np.ndarray, stencil.w)
-
-
-@lru_cache(maxsize=None)
-def uniform_quadrature_weights(p: int) -> np.ndarray:
+def uniform_quadrature_weights(xp: Any, p: int) -> np.ndarray:
     """
     Returns the weights of the uniform quadrature stencil for a given polynomial
     degree.
 
     Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
         p: The polynomial degree.
 
     Returns:
@@ -99,15 +122,142 @@ def uniform_quadrature_weights(p: int) -> np.ndarray:
     if stencil.rational:
         numerators = stencil.asnumpy()
         denominator = np.sum(numerators)
-        return numerators / denominator
+        w = numerators / denominator
     else:
-        return cast(np.ndarray, stencil.w)
+        w = cast(np.ndarray, stencil.w)
+    return xp.asarray(w)
+
+
+def inplace_stencil_sweep(
+    xp: ModuleType,
+    arr: ArrayLike,
+    stencil_weights: Union[Sequence[float], ArrayLike],
+    axis: int,
+    *,
+    out: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Apply a symmetric stencil along a given axis and accumulate the result into the
+    central region.
+
+    Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
+        arr: Input array of field values to apply the stencil to.
+        stencil_weights: Sequence or array of stencil weights. Expected to have odd
+            length.
+        axis: Axis along which to apply the stencil.
+        out: Array to store the result. Expected to have the same shape as `arr`.
+
+    Returns:
+        A slice object specifying the region of `out` that was modified.
+    """
+    slices = get_symmetric_slices(arr.ndim, len(stencil_weights), axis)
+    modified = slices[len(slices) // 2]
+    out[modified] = 0.0
+    for w, s in zip(stencil_weights, slices):
+        xp.add(out[modified], xp.multiply(arr[s], w), out=out[modified])
+    return modified
+
+
+def inplace_multistencil_sweep_add_multiply(
+    xp: ModuleType,
+    arr: ArrayLike,
+    stencils: ArrayLike,
+    axis: int,
+    *,
+    out: ArrayLike,
+    start_idx: int = 0,
+) -> Tuple[slice, ...]:
+    """
+    Apply multiple symmetric stencils along a given axis and accumulate the results into
+    the central region using element-wise multiplication and addition.
+
+    Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
+        arr: Input array of field values to apply the stencils to.
+        stencils: Array of stencil weights. Expected to have shape
+            (nstencils, nweights).
+        axis: Axis along which to apply the stencils.
+        out: Array to store the result. Expected to have an additional dimension for
+            the stencils: (*arr.shape, nstencils).
+        start_idx: Starting index to write the results into `out`. This is useful when
+            `out` is a larger array that contains multiple stencil sweeps.
+
+    Returns:
+        A slice object specifying the region of `out` that was modified.
+    """
+    arr_ndims = arr.ndim
+    nstencils, stencil_len = stencils.shape
+
+    arr_slices = get_symmetric_slices(arr_ndims, stencil_len, axis)
+    modified = arr_slices[stencil_len // 2]
+
+    # Zero the central region across all stencils
+    out_modified = modified + (slice(start_idx, start_idx + nstencils),)
+    out[out_modified] = 0.0
+
+    # Prepare the arrays for accumulation
+    out_view = out[out_modified]
+    w_stack = stencils.T.reshape((stencil_len,) + (1,) * arr_ndims + (nstencils,))
+    for i, s in enumerate(arr_slices):
+        w = w_stack[i]
+        arr_sliced = arr[s][..., xp.newaxis]
+        xp.add(out_view, xp.multiply(arr_sliced, w), out=out_view)
+
+    return out_modified
+
+
+def inplace_multistencil_sweep(
+    xp: ModuleType,
+    arr: ArrayLike,
+    stencils: ArrayLike,
+    axis: int,
+    *,
+    out: ArrayLike,
+    start_idx: int = 0,
+) -> Tuple[slice, ...]:
+    """
+    Apply multiple symmetric stencils along a given axis and accumulate the results into
+    the central region using einsum.
+
+    Args:
+        xp: Array namespace (e.g., `np` or `cupy`).
+        arr: Input array of field values to apply the stencils to.
+        stencils: Array of stencil weights. Expected to have shape
+            (nstencils, nweights).
+        axis: Axis along which to apply the stencils.
+        out: Array to store the result. Expected to have an additional dimension for
+            the stencils: (*arr.shape, nstencils).
+        start_idx: Starting index to write the results into `out`. This is useful when
+            `out` is a larger array that contains multiple stencil sweeps.
+
+    Returns:
+        A slice object specifying the region of `out` that was modified.
+    """
+    arr_ndims = arr.ndim
+    nstencils, stencil_len = stencils.shape
+
+    arr_slices = get_symmetric_slices(arr_ndims, stencil_len, axis)
+    modified = arr_slices[stencil_len // 2]
+    out_modified = modified + (slice(start_idx, start_idx + nstencils),)
+
+    # Stack all relevant slices: shape -> (stencil_len, ...arr.shape)
+    arr_stack = xp.stack(
+        [arr[s] for s in arr_slices], axis=0
+    )  # (stencil_len, *arr.shape)
+
+    # Broadcast stencils: (stencil_len, nstencils)
+    # Result shape: (*arr.shape, nstencils)
+    result = xp.einsum("i...,in->...n", arr_stack, stencils.T)
+
+    # Write to output in-place
+    out[out_modified] = result
+
+    return out_modified
 
 
 @lru_cache(maxsize=None)
-def get_symmetric_slices(
-    ndim: int, nslices: int, axis: int
-) -> List[Union[slice, int, np.ndarray, Tuple[Union[slice, int, np.ndarray], ...]]]:
+def get_symmetric_slices(ndim: int, nslices: int, axis: int) -> List[Tuple[slice, ...]]:
     """
     Returns a list of slices that divide an array into `nslices` symmetric slices along
     the given axis.
@@ -121,35 +271,3 @@ def get_symmetric_slices(
         A list of slices that divide an array into `nslices`.
     """
     return [crop(axis, (i, -(nslices - 1) + i), ndim=ndim) for i in range(nslices)]
-
-
-def stencil_sweep(
-    xp: Any, arr: ArrayLike, stencil_weights: np.ndarray, axis: int
-) -> ArrayLike:
-    """
-    Perform a stencil sweep on a field.
-
-    Args:
-        xp: `np` namespace.
-        y: Array of field values to sweep. Must have shape (nvars, nx, ny, nz, ...).
-        stencil_weights: Array of stencil weights to apply. Has shape (nweights,).
-        axis: The axis along which to sweep.
-
-    Returns:
-        Array of field values after the stencil sweep. Has shape
-            (nvars, <= nx, <= ny, <= nz, ...).
-    """
-    # reshape weights to broadcast with y
-    weights = stencil_weights.T.reshape((len(stencil_weights),) + (1,) * arr.ndim)
-
-    # get slices
-    slices = get_symmetric_slices(arr.ndim, len(stencil_weights), axis)
-
-    # initialize output array
-    out = xp.zeros_like(arr[slices[0]])
-
-    # sweep
-    for w, s in zip(weights, slices):
-        xp.add(out, xp.multiply(arr[s], w), out)
-
-    return out

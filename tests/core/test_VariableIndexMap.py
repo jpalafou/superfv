@@ -1,54 +1,7 @@
 import numpy as np
 import pytest
 
-from superfv.tools.array_management import VariableIndexMap, merge_indices
-
-# ---------- Tests for merge_indices ----------
-
-
-def test_merge_indices_ints():
-    assert merge_indices(1, 2, 3) == slice(1, 4)
-    assert np.array_equal(merge_indices(3, 1, 2, as_array=True), np.array([1, 2, 3]))
-
-
-def test_merge_indices_slices():
-    assert merge_indices(slice(0, 3), 3) == slice(0, 4)
-    assert np.array_equal(
-        merge_indices(slice(0, 2), 4, as_array=True), np.array([0, 1, 4])
-    )
-
-
-def test_merge_indices_sequences():
-    assert merge_indices([0, 1], (2, 3), np.array([4, 5])) == slice(0, 6)
-    assert np.array_equal(
-        merge_indices([0, 1], (2, 3), np.array([4, 5]), as_array=True), np.arange(6)
-    )
-
-
-def test_merge_empty():
-    assert merge_indices(()) == slice(0, 0)
-    assert merge_indices([]) == slice(0, 0)
-    assert np.array_equal(merge_indices([], as_array=True), np.array([], dtype=np.int_))
-
-
-def test_merge_indices_invalid():
-    with pytest.raises(ValueError):
-        merge_indices(-1)
-    with pytest.raises(ValueError):
-        merge_indices(slice(-1, 3))
-    with pytest.raises(ValueError):
-        merge_indices(slice(1, None))
-    with pytest.raises(ValueError):
-        merge_indices(slice(1, 3, 2))
-    with pytest.raises(ValueError):
-        merge_indices([1.0, 2.0])
-    with pytest.raises(TypeError):
-        merge_indices("bad")
-    with pytest.raises(ValueError):
-        merge_indices(np.array([[1, 2, 3], [4, 5, 6]]))
-
-
-# ---------- Tests for VariableIndexMap ----------
+from superfv.tools.slicing import VariableIndexMap
 
 
 def test_add_var_and_get_index():

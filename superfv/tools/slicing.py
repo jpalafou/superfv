@@ -1,70 +1,18 @@
-import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Literal,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
-# determine if CuPy is available
-xp = np
-cp_array = np.ndarray
-cp_array_to_numpy_array = np.asarray
-np_array_to_cp_array = np.asarray
-CUPY_AVAILABLE = False
-if not TYPE_CHECKING:
-    try:
-        import cupy as cp
+from .device_management import ArrayLike
 
-        xp = cp
-        cp_array = cp.ndarray
-        cp_array_to_numpy_array = cp.asnumpy
-        np_array_to_cp_array = cp.asarray
-        CUPY_AVAILABLE = True
-    except Exception:
-        pass
-
-# define custom types
-ArrayLike = Union[np.ndarray, xp.ndarray]
 IndexLike = Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]
 SliceBounds = Tuple[Union[None, int], Union[None, int]]
 
 
-def l1_norm(array: ArrayLike) -> float:
-    """
-    Compute the L1 norm of an array.
-    """
-    return np.mean(np.abs(array))
-
-
-def l2_norm(array: ArrayLike) -> float:
-    """
-    Compute the L2 norm of an array.
-    """
-    return np.sqrt(np.mean(np.square(array)))
-
-
-def linf_norm(array: ArrayLike) -> float:
-    """
-    Compute the L-infinity norm of an array.
-    """
-    return np.max(np.abs(array))
-
-
-@lru_cache(maxsize=None)
 def crop(
     axis: Union[int, Tuple[int, ...]],
-    cut: Tuple[int, int],
+    cut: Tuple[Optional[int], Optional[int]],
     step: Optional[int] = None,
     ndim: Optional[int] = None,
 ) -> Tuple[slice, ...]:
@@ -81,6 +29,16 @@ def crop(
     Returns:
         Tuple of slices for the given axis or axes.
     """
+    return _crop(axis, cut, step, ndim)
+
+
+@lru_cache(maxsize=None)
+def _crop(
+    axis: Union[int, Tuple[int, ...]],
+    cut: Tuple[Optional[int], Optional[int]],
+    step: Optional[int] = None,
+    ndim: Optional[int] = None,
+) -> Tuple[slice, ...]:
     if isinstance(axis, int):
         axis = (axis,)
     rank = ndim if ndim is not None else max(axis) + 1
@@ -92,6 +50,26 @@ def crop(
             )
         out[ax] = slice(cut[0] or None, cut[1] or None, step)
     return tuple(out)
+
+
+def crop_to_center(
+    arr: ArrayLike,
+    target_shape: Tuple[int, ...],
+    ignore_axes: Optional[Union[int, Tuple[int, ...]]] = None,
+) -> ArrayLike:
+    """
+    Crop an array to a target shape by removing an equal amount from both ends along each axis.
+
+    Args:
+        arr: The input array to be cropped.
+        target_shape: The desired shape of the output array.
+        ignore_axes: Axes to ignore when cropping.
+
+    Returns:
+        A cropped version of the input array with the target shape.
+    """
+    slices = _crop_to_center(arr.shape, target_shape, ignore_axes)
+    return arr[slices]
 
 
 @lru_cache(maxsize=None)
@@ -137,26 +115,6 @@ def _crop_to_center(
     return tuple(out)
 
 
-def crop_to_center(
-    arr: ArrayLike,
-    target_shape: Tuple[int, ...],
-    ignore_axes: Optional[Union[int, Tuple[int, ...]]] = None,
-) -> ArrayLike:
-    """
-    Crop an array to a target shape by removing an equal amount from both ends along each axis.
-
-    Args:
-        arr: The input array to be cropped.
-        target_shape: The desired shape of the output array.
-        ignore_axes: Axes to ignore when cropping.
-
-    Returns:
-        A cropped version of the input array with the target shape.
-    """
-    slices = _crop_to_center(arr.shape, target_shape, ignore_axes)
-    return arr[slices]
-
-
 def intersection_shape(*args: Tuple[int, ...]) -> Tuple[int, ...]:
     """
     Compute the intersection of the shapes of multiple arrays.
@@ -177,7 +135,8 @@ def merge_indices(
     as_array: bool = False,
 ) -> IndexLike:
     """
-    Merge indices, slices, or sequences of integers into a single slice or numpy array.
+    Merge indices, slices, or sequences of integers into a union of indices as a slice
+    if they form a contiguous range, or as a numpy array otherwise.
 
     Args:
         *slices: Indices, slices, or sequences of integers to merge.
@@ -225,6 +184,71 @@ def merge_indices(
         if idxs == list(range(idxs[0], idxs[-1] + 1)):
             return slice(idxs[0], idxs[-1] + 1)
     return np.array(idxs, dtype=np.int_)
+
+
+def merge_slices(*args: Tuple[slice, ...], union: bool = False) -> Tuple[slice, ...]:
+    """
+    Merge multiple N-dimensional slices into a single tuple of slices that covers the
+    intersection or union of all input slices along each axis.
+
+    Args:
+        *args: Tuples of slices (e.g., for indexing a multi-dimensional array).
+        union: If True, compute the union of the slices instead of the intersection.
+
+    Returns:
+        Tuple of slices that represent the merged slices along each axis.
+    """
+    return _merge_slices(*args, union=union)
+
+
+@lru_cache(maxsize=None)
+def _merge_slices(*args: Tuple[slice, ...], union: bool = False) -> Tuple[slice, ...]:
+    n = max(len(s) for s in args)
+    result = []
+    for i in range(n):
+        starts_raw = [s[i].start if i < len(s) else None for s in args]
+        stops_raw = [s[i].stop if i < len(s) else None for s in args]
+
+        starts = [x for x in starts_raw if x is not None]
+        stops = [x for x in stops_raw if x is not None]
+
+        if union:
+            start = min(starts) if len(starts) == len(starts_raw) else None
+            stop = max(stops) if len(stops) == len(stops_raw) else None
+        else:
+            start = max(starts) if starts else None
+            stop = min(stops) if stops else None
+
+        result.append(slice(start, stop))
+    return tuple(result)
+
+
+def modify_slices(
+    slc: Tuple[Union[int, slice], ...], axis: int, new_slice: Union[int, slice]
+) -> Tuple[Union[int, slice], ...]:
+    """
+    Adjust a slice tuple by replacing the slice at a specific axis with a new slice.
+
+    Args:
+        slc: Tuple of slices.
+        axis: Axis index to adjust.
+        new_slice: New slice/index to replace the existing one at the specified axis.
+
+    Returns:
+        A new tuple of slices with the specified axis replaced by the new slice.
+    """
+    return _modify_slices(slc, axis, new_slice)
+
+
+@lru_cache(maxsize=None)
+def _modify_slices(
+    slc: Tuple[Union[int, slice], ...], axis: int, new_slice: slice
+) -> Tuple[Union[int, slice], ...]:
+    if axis < 0 or axis >= len(slc):
+        raise IndexError(
+            f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
+        )
+    return slc[:axis] + (new_slice,) + slc[axis + 1 :]
 
 
 @dataclass
@@ -386,172 +410,14 @@ class VariableIndexMap:
         self._cache[key] = out
         return out
 
-
-class ArrayManager:
-    """
-    Class for managing arrays which can be transferred between CPU and GPU.
-    """
-
-    def _transfer_array(self, name: str, device: Literal["cpu", "gpu"]):
-        """Transfers a specific array between CPU and GPU."""
-        self._check_name_exists(name)
-        is_cupy = isinstance(self.arrays[name], cp_array)
-        if device == "cpu" and is_cupy:
-            self.arrays[name] = cp_array_to_numpy_array(self.arrays[name])
-        elif device == "gpu" and not is_cupy:
-            self.arrays[name] = np_array_to_cp_array(self.arrays[name])
-
-    def _dummy_transfer_array(self, name: str, device: Literal["cpu", "gpu"]):
-        pass
-
-    def __init__(self, arrays: Optional[Dict[str, np.ndarray]] = None):
-        """
-        Initializes the array manager.
-
-        Args:
-            arrays: Dictionary of NumPy arrays.
-        """
-        self.arrays: Dict[str, ArrayLike] = arrays if arrays else {}
-        self.device: Literal["cpu", "gpu"] = "cpu"
-        self.transfer_array = (
-            self._transfer_array if CUPY_AVAILABLE else self._dummy_transfer_array
-        )
-
-    def __repr__(self) -> str:
-        return f"ArrayManager({self.arrays.keys()})"
-
-    def __str__(self) -> str:
-        return f"ArrayManager with arrays: {list(self.arrays.keys())}"
-
-    def _check_name_exists(self, name: str):
-        if name not in self.arrays:
-            raise KeyError(f"Array with name '{name}' not found.")
-
-    def _check_name_available(self, name: str):
-        if name in self.arrays:
-            raise KeyError(f"Array with name '{name}' already exists.")
-
-    def transfer_to_device(self, device: Literal["cpu", "gpu"]):
-        """
-        Transfer all arrays to a specific device.
-
-        Args:
-            device: Device to transfer arrays to ("cpu" or "gpu").
-        """
-        if self.device == device:
-            raise ValueError(f"ArrayManager is already using {device}.")
-        if not CUPY_AVAILABLE:
-            warnings.warn("CuPy is not available. Falling back to NumPy.")
-            return
-        for name in self.arrays:
-            self.transfer_array(name, device)
-        self.device = device
-
-    def add(self, name: str, array: ArrayLike):
-        """
-        Add an array to the manager.
-
-        Args:
-            name: Name of the array.
-            array: NumPy or CuPy array.
-        """
-        self._check_name_available(name)
-        self.arrays[name] = array
-        self.transfer_array(name, self.device)
-
-    def remove(self, name: str):
-        """
-        Remove an array from the manager.
-
-        Args:
-            name: Name of the array.
-        """
-        self._check_name_exists(name)
-        del self.arrays[name]
-
-    def rename(self, name: str, new_name: str):
-        """
-        Rename an array.
-
-        Args:
-            name: Current name of the array.
-            new_name: New name of the array.
-        """
-        self._check_name_exists(name)
-        self._check_name_available(new_name)
-        self.add(new_name, self.arrays[name])
-        self.remove(name)
-
-    def clear(self):
-        """
-        Remove all arrays from the manager
-        """
-        self.arrays.clear()
-
-    def __getitem__(
-        self, name: str, copy: bool = False, asnumpy: bool = False
-    ) -> ArrayLike:
-        """
-        Get an array from the manager.
-
-        Args:
-            name: Name of the array.
-            copy: If True, return a copy of the array.
-            asnumpy: If True, return a NumPy array.
-
-        Returns:
-            NumPy or CuPy array.
-        """
-        self._check_name_exists(name)
-        array = self.arrays[name]
-        if copy:
-            array = array.copy()
-        if asnumpy and self.device == "gpu":
-            array = cp_array_to_numpy_array(array)
-        return array
-
-    def get_numpy_copy(self, name: str) -> np.ndarray:
-        """
-        Get a NumPy copy of an array.
-
-        Args:
-            name: Name of the array.
-        """
-        return self.__getitem__(name, True, True)
-
-    def __setitem__(self, name: str, array: ArrayLike):
-        """
-        Modify an existing array in place.
-
-        This prevents users from replacing arrays entirely, ensuring that
-        preallocated memory is used efficiently.
-
-        Args:
-            name: Name of the array.
-            array: New values to assign in-place.
-        """
-        self._check_name_exists(name)
-        if self.arrays[name].shape != array.shape:
-            raise ValueError(
-                f"Cannot assign array with shape {array.shape} to array with shape {self.arrays[name].shape}."
-            )
-        if self.arrays[name].dtype != array.dtype:
-            raise ValueError(
-                f"Cannot assign array with dtype {array.dtype} to array with dtype {self.arrays[name].dtype}."
-            )
-        self.arrays[name][...] = array
-
     def __contains__(self, name: str) -> bool:
         """
-        Check if an array exists in the manager.
+        Check if a variable or group exists in the variable index map or group variable map.
 
         Args:
-            name: Name of the array.
-        """
-        return name in self.arrays
+            name: Name of the variable or group.
 
-    def to_dict(self) -> Dict[str, Any]:
+        Returns:
+            True if the variable or group exists, False otherwise.
         """
-        Return a dictionary representation of the manager.
-        """
-        return dict(names=list(self.arrays.keys()), device=self.device)
+        return name in self.var_idx_map or name in self.group_var_map

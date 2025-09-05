@@ -6,26 +6,37 @@ changes:
 - [x] fix: 2DZS + RK4
 - [x] fix: only working tests are pytest --ignore tests/test_SodShockTube1D.py
 - [x] fix: CI pipeline
-
-issues:
-- [ ] write a test that compares periodic advection to time-dependent dirichlet boundary conditions
-- [ ] test_ZS and test_MOOD
-- [ ] redundant PAD checks in ZS_adaptive_dt and detect_troubles
-- [ ] vestigial 'half-dt' option in MOOD
-- [ ] move interpolation and integration functions to fv or some other modules
-
-optimizations:
-- [ ] preallocate padded arrays?
-- [ ] timer should pause during snapshot
-- [ ] look into cleaning up interpolation cache
-
-cosmetics:
-- [ ] clean up hydro/riemann solver modules
-- [ ] make gauss-legendre a boolean option
-- [ ] fix: progress bar for allow_overshoot=True
-- [ ] switch from f"v{dim}" style to "v" + dim style for slight performance improvement
-- [ ] expand README.md
-
-very ambitious changes:
-- [ ] multi-core support
-- [ ] coverage
+- [x] for large p and N, the first step is actually the fastest
+- [x] move interpolation and integration functions to fv or some other modules
+- [x] look into cleaning up interpolation cache
+- [x] adaptive timestep should revise "unew"
+- [x] preallocate padded arrays?
+- [x] plot_1d_slice and others should default to x=None, y=0.5, z=0.5
+- [x] use PAD violations function for adaptive dt
+- [x] ZhangShuConfig
+- [x] plot n_MOOD_iters over substeps (increment of dt/4 for rk4, etc)
+- [x] flux recipe 3 has issue logging fine MOOD iters
+- [x] move `inplace_troubles_bc` to the MOOD module
+- [x] remove redundant interpolation code in snapshot
+- [x] MUSCL scheme breaks inplace compute fluxes due to not having a `mode` attribute
+- [x] add HLLC riemann solver
+- [x] redundant PAD checks in ZS_adaptive_dt and detect_troubles
+- [x] vestigial 'half-dt' option in MOOD
+- [x] clean up hydro/riemann solver modules
+- [x] fix: progress bar for allow_overshoot=True
+- [x] make gauss-legendre a boolean option
+- [x] `avoid0` in riemann solver module should be made more public and shared by the smooth extrema detection module
+- [x] move `self.timer.reset("current_step")` to called_at_beginning_of_step
+- [x] buffer fv_interpolate should be optional for the single-sweep case
+- [x] sort and clean `ExplicitODESolver` and `FiniteVolumeSolver` methods
+- [x] buffer size is not well understood
+- [x] hydro tests should cover flux recipes
+- [x] add MUSCL-Hancock option
+- [x] remove `fv.interpolate_muscl_faces`, `fv.slope_limiting.minmod`, and `fv.slope_minmod.moncen` and switch to `muscl.muscl.compute_limited_slopes`
+- [x] MUSCL is not positivty-preserving in 2D
+- [x] remove `cast` in FiniteVolumeSolver
+- [x] add: `P` arg to slotted disk IC, fix: slotted disk test
+- [x] automatically set `lazy_primitives=True` if `p<2`
+- [x] make lazy_primitives default for advection solver
+- [x] add MUSCL-Hancock option for different slope limiters and SED
+- [x] troubled cell detection uses the same u_old for each substep. is this correct? ANSWER: no. i did this as a hacky fix to positivity-preservation not working with RK4. but it shouldn't.

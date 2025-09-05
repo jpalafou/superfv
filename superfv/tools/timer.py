@@ -4,21 +4,6 @@ from typing import Dict, Iterable, Optional, cast
 import numpy as np
 
 
-def method_timer(method, cat):
-    def wrapper(self, *args, **kwargs):
-        if cat not in self.timer:
-            self.timer.add_cat(cat)
-        ALREADY_RUNNING = self.timer._running[cat]
-        if not ALREADY_RUNNING:
-            self.timer.start(cat)
-        result = method(self, *args, **kwargs)
-        if not ALREADY_RUNNING:
-            self.timer.stop(cat)
-        return result
-
-    return wrapper
-
-
 class Timer:
     """
     Timer class for timing code execution.
@@ -64,12 +49,13 @@ class Timer:
         if cat not in self.cats:
             raise ValueError(f"Category '{cat}' not found in timer categories.")
 
-    def start(self, cat: str):
+    def start(self, cat: str, reset: bool = False):
         """
         Start timer of a category.
 
         Args:
             cat: Category name.
+            reset: If True, reset the timer for this category.
         """
         self._check_cat_existence(cat)
         if self._running[cat]:
@@ -77,6 +63,10 @@ class Timer:
                 f"Cannot start '{cat}' timer since it is already in progress."
             )
         else:
+            if reset:
+                self.n_calls[cat] = 0
+                self.cum_time[cat] = 0.0
+
             self._running[cat] = True
             self._start_time[cat] = time.time()
             self.n_calls[cat] += 1
@@ -144,3 +134,26 @@ class Timer:
 
     def __contains__(self, cat: str) -> bool:
         return cat in self.cats
+
+
+class MethodTimer:
+    """
+    Decorator for timing methods in a class with a Timer instance.
+    """
+
+    def __init__(self, cat):
+        self.cat = cat
+
+    def __call__(self, method):
+        def wrapped(instance, *args, **kwargs):
+            if self.cat not in instance.timer:
+                instance.timer.add_cat(self.cat)
+            already_running = instance.timer._running[self.cat]
+            if not already_running:
+                instance.timer.start(self.cat)
+            result = method(instance, *args, **kwargs)
+            if not already_running:
+                instance.timer.stop(self.cat)
+            return result
+
+        return wrapped

@@ -1,15 +1,17 @@
-from functools import partial
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Dict, Literal, Optional, Tuple, Union
 
-import numpy as np
 import wtflux
 
+from . import hydro, riemann_solvers
 from .boundary_conditions import DirichletBC
-from .finite_volume_solver import FiniteVolumeSolver
-from .hydro import conservatives_from_primitives, primitives_from_conservatives
-from .riemann_solvers import call_riemann_solver
-from .tools.array_management import ArrayLike, VariableIndexMap
-from .tools.timer import method_timer
+from .finite_volume_solver import (
+    FieldFunction,
+    FiniteVolumeSolver,
+    PassiveFieldFunction,
+)
+from .tools.device_management import ArrayLike
+from .tools.slicing import VariableIndexMap
+from .tools.timer import MethodTimer
 
 
 class EulerSolver(FiniteVolumeSolver):
@@ -19,10 +21,8 @@ class EulerSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: Callable[[VariableIndexMap, ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        ic_passives: Optional[
-            Dict[str, Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]]
-        ] = None,
+        ic: FieldFunction,
+        ic_passives: Optional[Dict[str, PassiveFieldFunction]] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
@@ -37,29 +37,35 @@ class EulerSolver(FiniteVolumeSolver):
         nz: int = 1,
         p: int = 0,
         CFL: float = 0.8,
-        interpolation_scheme: Literal["gauss-legendre", "transverse"] = "transverse",
+        GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
+        MUSCL_limiter: Literal["minmod", "moncen"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
         MOOD: bool = False,
+        cascade: Literal["first-order", "muscl", "full"] = "first-order",
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
-        NAD: Optional[float] = None,
+        NAD: bool = False,
+        NAD_rtol: float = 1.0,
+        NAD_atol: float = 0.0,
+        global_dmp: bool = False,
+        include_corners: bool = False,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
-        PAD_tol: float = 1e-15,
+        PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        log_every_step: bool = True,
         gamma: float = 1.4,
     ):
         """
-        Initialize the finite volume solverf or the Euler equations.
+        Initialize the finite volume solver for the Euler equations.
 
         Args:
-            Args:
             ic: Initial condition function of pointwise, primitive variables. The
                 function must accept the following arguments:
                 - idx: VariableIndexMap object.
@@ -96,12 +102,8 @@ class EulerSolver(FiniteVolumeSolver):
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
             CFL: CFL number.
-            interpolation_scheme: Scheme to use for the interpolation of face nodes.
-                Possible values:
-                - "gauss-legendre": Interpolate nodes at the Gauss-Legendre quadrature
-                    points. Compute the flux integral using Gauss-Legendre quadrature.
-                - "transverse": Interpolate nodes at the cell face centers. Compute the
-                    flux integral using a transverse quadrature.
+            GL: Whether to use Gauss-Legendre quadrature for flux integration. If
+                `False`, the transverse quadrature is used.
             flux_recipe: Recipe for interpolating flux nodes. Possible values:
                 - 1: Interpolate conservative nodes from conservative cell averages.
                     Apply slope limiting to the conservative nodes. Transform to
@@ -123,7 +125,15 @@ class EulerSolver(FiniteVolumeSolver):
                     primitive flux nodes.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
-            MUSCL: Whether to use the MUSCL scheme for a priori slope limiting.
+            MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
+                `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
+                - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
+                - `flux_recipe=2`: Slope limiting is performed on primitive slopes.
+                - `flux_recipe=3`: `flux_recipe=2` is used.
+            MUSCL_limiter: Slope limiter used for the MUSCL scheme, either for the base
+                scheme or the MOOD cascade. Options include:
+                - "minmod"
+                - "moncen"
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
@@ -133,6 +143,10 @@ class EulerSolver(FiniteVolumeSolver):
                 if `adaptive_dt=True`. Defaults to 8.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
+            cascade: A string indicating which type of MOOD cascade to use:
+                - "first-order": Fall back directly to a first-order scheme.
+                - "muscl": Fall back directly to a MUSCL scheme.
+                - "full": Fall back to a full cascade of scheme in descending order.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
             limiting_vars: Specifies which variables are subject to slope limiting.
@@ -143,15 +157,21 @@ class EulerSolver(FiniteVolumeSolver):
                 For the Zhang-Shu limiter, all variables are always limited, but
                 `limiting_vars` determines which variables are checked for PAD when
                 using adaptive timestepping.
-            NAD: The NAD tolerance. If None, NAD is not checked.
+            NAD: Whether to use nuerical admissibility detection (NAD) when determining
+                if a cell is troubled in the MOOD loop.
+            NAD_rtol: Relative tolerance for the NAD violations.
+            NAD_atol: Absolute tolerance for the NAD violations.
+            global_dmp: Whether to use a global DMP check for NAD violations.
+            include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
-            PAD_tol: Tolerance for the PAD check as an absolute value from the minimum
+            PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            log_every_step: Whether to call `log_quantity` at the end of each timestep.
             gamma (float): Adiabatic index.
         """
         # init hydro
@@ -176,30 +196,30 @@ class EulerSolver(FiniteVolumeSolver):
             nz=nz,
             p=p,
             CFL=CFL,
-            interpolation_scheme=interpolation_scheme,
+            GL=GL,
             riemann_solver=riemann_solver,
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
             MUSCL=MUSCL,
+            MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,
             adaptive_dt=adaptive_dt,
             max_dt_revisions=max_dt_revisions,
             MOOD=MOOD,
+            cascade=cascade,
             max_MOOD_iters=max_MOOD_iters,
             limiting_vars=limiting_vars,
             NAD=NAD,
+            NAD_rtol=NAD_rtol,
+            NAD_atol=NAD_atol,
+            global_dmp=global_dmp,
+            include_corners=include_corners,
             PAD=PAD,
-            PAD_tol=PAD_tol,
+            PAD_atol=PAD_atol,
             SED=SED,
             cupy=cupy,
+            log_every_step=log_every_step,
         )
-
-    def _init_snapshots(self):
-        super()._init_snapshots()
-        self.minisnapshots["min_rho"] = []
-        self.minisnapshots["max_rho"] = []
-        self.minisnapshots["min_E"] = []
-        self.minisnapshots["max_E"] = []
 
     def define_vars(self) -> VariableIndexMap:
         """
@@ -222,12 +242,12 @@ class EulerSolver(FiniteVolumeSolver):
                 "E": 4,
             },
             group_var_map={
-                "v": ["v" + dim for dim in "xyz" if self.using[dim]],
-                "m": ["m" + dim for dim in "xyz" if self.using[dim]],
+                "v": ["v" + dim for dim in self.active_dims],
+                "m": ["m" + dim for dim in self.active_dims],
                 "primitives": ["rho", "v", "P"],
                 "conservatives": ["rho", "m", "E"],
-                "passives": ["v" + dim for dim in "xyz" if not self.using[dim]]
-                + ["m" + dim for dim in "xyz" if not self.using[dim]],
+                "passives": ["v" + dim for dim in self.inactive_dims]
+                + ["m" + dim for dim in self.inactive_dims],
             },
         )
 
@@ -241,8 +261,8 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of conservative variables.
         """
-        return conservatives_from_primitives(
-            self.hydro, self.variable_index_map, w, self.gamma
+        return hydro.prim_to_cons(
+            self.xp, self.variable_index_map, w, self.active_dims, self.gamma
         )
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
@@ -255,37 +275,44 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of primitive variables.
         """
-        return primitives_from_conservatives(
-            self.hydro, self.variable_index_map, u, self.gamma
+        return hydro.cons_to_prim(
+            self.xp, self.variable_index_map, u, self.active_dims, self.gamma
         )
 
-    @partial(method_timer, cat="EulerSolver.llf")
-    def llf(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        primitives: bool = True,
-    ) -> ArrayLike:
+    @MethodTimer(cat="EulerSolver.log_quantity")
+    def log_quantity(self) -> Dict[str, float]:
         """
-        LLF implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
-        """
-        return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "llf")
+        Log the minimum density and pressure.
 
-    @partial(method_timer, cat="EulerSolver.hllc")
-    def hllc(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        primitives: bool = True,
-    ) -> ArrayLike:
+        Returns:
+            Dictionary with the following keys:
+            - "min_rho": Minimum density.
+            - "min_P": Minimum pressure.
         """
-        HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
-        """
-        return call_riemann_solver(self, wl, wr, dim, self.gamma, primitives, "hllc")
+        min_rho, min_P = self.get_physical_mins()
 
-    @partial(method_timer, cat="EulerSolver.compute_dt")
+        return {
+            "min_rho": min_rho,
+            "min_P": min_P,
+        }
+
+    def get_physical_mins(self) -> Tuple[float, float]:
+        """
+        Helper function for logging and printing the minimum density and pressure.
+
+        Returns:
+            Tuple of minimum density and minimum pressure from the primitive workspace
+                array `self.arrays["_wcc_"]`.
+        """
+        idx = self.variable_index_map
+        interior = self.interior
+
+        min_rho = self.arrays["_wcc_"][interior][idx("rho")].min().item()
+        min_P = self.arrays["_wcc_"][interior][idx("P")].min().item()
+
+        return min_rho, min_P
+
+    @MethodTimer(cat="EulerSolver.compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
@@ -298,18 +325,147 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Time-step size.
         """
+        xp = self.xp
         idx = self.variable_index_map
-        w = self.primitives_from_conservatives(u)
-        h = min(self.mesh.h)
-        c = self.hydro.sound_speed(rho=w[idx("rho")], P=w[idx("P")], gamma=self.gamma)
-        out = self.CFL * h / np.max(np.sum(np.abs(w[idx("v")]), axis=0) + self.ndim * c)
-        return out.item()
+        mesh = self.mesh
 
-    @partial(method_timer, cat="EulerSolver.minisnapshot")
-    def minisnapshot(self):
-        super().minisnapshot()
+        sum_of_s_over_h = self.arrays["sum_of_s_over_h"]
+
+        w = self.primitives_from_conservatives(u)
+        c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
+
+        sum_of_s_over_h[...] = 0.0
+        for dim in self.active_dims:
+            v = xp.abs(w[idx("v" + dim)]) + c
+            h = getattr(mesh, "h" + dim)
+
+            sum_of_s_over_h[...] = sum_of_s_over_h + v / h
+
+        out = self.CFL / xp.max(sum_of_s_over_h).item()
+        return out
+
+    def flux_jvp(
+        self,
+        w: ArrayLike,
+        vec: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        primitives: bool = True,
+    ) -> ArrayLike:
+        """
+        Jacobian-vector product for the primitive-variable quasilinear,
+        dimensionally-split system
+            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, P, (passives)]
+        if `primitives=True`, or the conservative-variable quasilinear system
+            dU/dt + A(U; [dim]) dU/d[dim] = 0,  U=[rho, mx, my, mz, E, (rho * passives)]
+        if `primitives=False`.
+
+        Args:
+            w: State array with shape (nvars, nx, ny, nz).
+            vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
+            dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
+                or "z".
+            primitives: Whether the state array `w` contains primitive variables.
+
+        Returns:
+            ArrayLike: The flux Jacobian-vector product A @ vec.
+        """
+        if not primitives:
+            raise NotImplementedError(
+                "This function doesn't support conservative variables at this moment."
+            )
+
+        xp = self.xp
         idx = self.variable_index_map
-        self.minisnapshots["min_rho"].append(self.arrays["u"][idx("rho")].min().item())
-        self.minisnapshots["max_rho"].append(self.arrays["u"][idx("rho")].max().item())
-        self.minisnapshots["min_E"].append(self.arrays["u"][idx("E")].min().item())
-        self.minisnapshots["max_E"].append(self.arrays["u"][idx("E")].max().item())
+        gamma = self.gamma
+
+        _rho_ = idx("rho")
+        _v1_ = idx("v" + dim)
+        _vx_ = idx("vx")
+        _vy_ = idx("vy")
+        _vz_ = idx("vz")
+        _P_ = idx("P")
+        _passives_ = idx("passives") if "passives" in idx else None
+
+        out = xp.empty_like(w)
+        out[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
+        out[_vx_] = w[_v1_] * vec[_vx_]
+        out[_vy_] = w[_v1_] * vec[_vy_]
+        out[_vz_] = w[_v1_] * vec[_vz_]
+        out[_v1_] += (1 / w[_rho_]) * vec[_P_]
+        out[_P_] = gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
+        if _passives_ is not None:
+            out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
+
+        return out
+
+    @MethodTimer(cat="EulerSolver.llf")
+    def llf(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike:
+        """
+        LLF implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
+        """
+        return riemann_solvers.llf(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+            self.active_dims,
+            self.gamma,
+        )
+
+    @MethodTimer(cat="EulerSolver.hllc")
+    def hllc(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike:
+        """
+        HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
+        """
+        return riemann_solvers.hllc(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+            self.active_dims,
+            self.gamma,
+        )
+
+    def hllct(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike:
+        """
+        HLLC Teyssier implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
+        """
+        return riemann_solvers.hllct(
+            self.xp,
+            self.variable_index_map,
+            wl,
+            wr,
+            dim,
+            self.active_dims,
+            self.gamma,
+        )
+
+    def build_update_message(self) -> str:
+        """
+        Build the update message for the FV solver, including the minimum density and
+        pressure.
+        """
+        min_rho, min_P = self.get_physical_mins()
+
+        message = super().build_update_message()
+        message += f" | min(rho)={min_rho:.2e}, min(P)={min_P:.2e}"
+
+        return message

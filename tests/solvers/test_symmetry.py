@@ -3,9 +3,9 @@ from typing import Tuple
 import numpy as np
 import pytest
 
-import superfv.initial_conditions as ic
 from superfv import AdvectionSolver, EulerSolver
-from superfv.tools.array_management import l1_norm
+from superfv.initial_conditions import slotted_disk, sod_shock_tube_1d, square
+from superfv.tools.norms import l1_norm
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
@@ -20,12 +20,12 @@ def test_AdvectionSolver_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
 
     # set up solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, **{f"v{dim1}": 1}),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{dim1}": 1}, xp=xp),
         p=p,
         **{f"n{dim1}": N},
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, **{f"v{dim2}": 1}),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{dim2}": 1}, xp=xp),
         p=p,
         **{f"n{dim2}": N},
     )
@@ -44,11 +44,9 @@ def test_AdvectionSolver_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
 
 
 @pytest.mark.parametrize("p", [0, 1, 3, 7])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
+@pytest.mark.parametrize("GL", [True, False])
 @pytest.mark.parametrize("dims1_dims2", [("xy", "yz"), ("yz", "xz")])
-def test_AdvectionSolver_symmetry_2D(
-    p: int, interpolation_scheme: str, dims1_dims2: Tuple[str, str]
-):
+def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, str]):
     """
     Assert that the solution is the same along each solver plane in 2D.
     """
@@ -58,15 +56,19 @@ def test_AdvectionSolver_symmetry_2D(
 
     # set up solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, **{f"v{d1x}": 1, f"v{d1y}": 1}),
+        ic=lambda idx, x, y, z, t, xp: square(
+            idx, x, y, z, **{f"v{d1x}": 1, f"v{d1y}": 1}, xp=xp
+        ),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         **{f"n{d1x}": N, f"n{d1y}": N},
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, **{f"v{d2x}": 1, f"v{d2y}": 1}),
+        ic=lambda idx, x, y, z, t, xp: square(
+            idx, x, y, z, **{f"v{d2x}": 1, f"v{d2y}": 1}, xp=xp
+        ),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         **{f"n{d2x}": N, f"n{d2y}": N},
     )
 
@@ -84,8 +86,8 @@ def test_AdvectionSolver_symmetry_2D(
 
 
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: str):
+@pytest.mark.parametrize("GL", [True, False])
+def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
     """
     Assert that the result of a counter-clockwise rotation of a slotted disk is the
     same as the mirror of the result of a clockwise rotation.
@@ -95,22 +97,22 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: st
 
     # initialize solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.slotted_disk(idx, x, y, z),
+        ic=lambda idx, x, y, z, t, xp: slotted_disk(idx, x, y, z, xp=xp),
         bcx="ic",
         bcy="ic",
         p=p,
         nx=N,
         ny=N,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.slotted_disk(idx, x, y, z, rotation="cw"),
+        ic=lambda idx, x, y, z, t, xp: slotted_disk(idx, x, y, z, rotation="cw", xp=xp),
         bcx="ic",
         bcy="ic",
         p=p,
         nx=N,
         ny=N,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
     )
 
     # run solvers
@@ -126,8 +128,8 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, interpolation_scheme: st
     assert l1_error < 1e-15
 
 
-@pytest.mark.parametrize("interpolation_scheme", ["transverse", "gauss-legendre"])
-def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
+@pytest.mark.parametrize("GL", [True, False])
+def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
     """
     Assert that the solution is equivariant under translation in 3D.
     """
@@ -137,17 +139,17 @@ def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
 
     # set up solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, vx=1, vy=1, vz=1),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=1, vy=1, vz=1, xp=xp),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         nx=N,
         ny=N,
         nz=N,
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z: ic.square(idx, x, y, z, vx=-1, vy=-1, vz=-1),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=-1, vy=-1, vz=-1, xp=xp),
         p=p,
-        interpolation_scheme=interpolation_scheme,
+        GL=GL,
         nx=N,
         ny=N,
         nz=N,
@@ -167,9 +169,17 @@ def test_AdvectionSolver_translational_symmetry_3D(interpolation_scheme: str):
 
 
 @pytest.mark.parametrize("p", [0, 3, 7])
+@pytest.mark.parametrize("flux_recipe", [1, 2, 3])
+@pytest.mark.parametrize("lazy_primitives", [False, True])
 @pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z")])
-def test_Sod_shock_tube_symmetry_1D(p: int, limiting: str, dim1_dim2: Tuple[str, str]):
+def test_Sod_shock_tube_symmetry_1D(
+    p: int,
+    flux_recipe: int,
+    lazy_primitives: bool,
+    limiting: str,
+    dim1_dim2: Tuple[str, str],
+):
     """
     Assert that the 1D Sod shock tube solution is the same along each solver dimension.
     """
@@ -183,10 +193,20 @@ def test_Sod_shock_tube_symmetry_1D(p: int, limiting: str, dim1_dim2: Tuple[str,
         else {"MOOD": True, "NAD": 1e-5}
     )
     solver1 = EulerSolver(
-        ic=ic.sod_shock_tube_1d, **{f"n{dim1}": N}, p=p, **limiting_config
+        ic=sod_shock_tube_1d,
+        **{f"n{dim1}": N},
+        p=p,
+        flux_recipe=flux_recipe,
+        lazy_primitives=lazy_primitives,
+        **limiting_config,
     )
     solver2 = EulerSolver(
-        ic=ic.sod_shock_tube_1d, **{f"n{dim2}": N}, p=p, **limiting_config
+        ic=sod_shock_tube_1d,
+        **{f"n{dim2}": N},
+        p=p,
+        flux_recipe=flux_recipe,
+        lazy_primitives=lazy_primitives,
+        **limiting_config,
     )
 
     # run solvers

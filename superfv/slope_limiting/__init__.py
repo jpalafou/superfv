@@ -1,10 +1,13 @@
+from functools import lru_cache
 from itertools import product
-from typing import Any, Callable, Literal, Tuple
+from typing import Any, Callable, List, Literal, Tuple
 
 import numpy as np
 
+from superfv.fv import DIM_TO_AXIS
 from superfv.stencil import get_symmetric_slices
-from superfv.tools.array_management import ArrayLike
+from superfv.tools.device_management import ArrayLike
+from superfv.tools.slicing import crop, merge_slices
 
 
 def minmod(
@@ -45,48 +48,105 @@ def moncen(xp: Any, du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
     return xp.where(du_left * du_right >= 0, slope, 0)
 
 
-def compute_dmp(
-    xp: Any, arr: ArrayLike, dims: str, include_corners: bool = False
-) -> Tuple[ArrayLike, ArrayLike]:
+def gather_neighbor_slices(
+    active_dims: Tuple[Literal["x", "y", "z"], ...], include_corners: bool
+) -> List[Tuple[slice, ...]]:
     """
-    Computes the discrete maximum principle (DMP) for an array along the 2nd, 3rd,
-    and/or 4th axes.
+    Returns a list of slice objects for gathering neighbors in up to 3 dimensions with
+    the center slice as the first element.
+
+    Args:
+        active_dims (Tuple[Literal["x", "y", "z"], ...]): Active dimensions for
+        interpolation.
+        include_corners (bool): Whether to include corner neighbors.
+
+    Returns:
+        List[Tuple[slice, ...]]: List of slice objects for gathering neighbors.
+    """
+    return _gather_neighbor_slices(active_dims, include_corners)
+
+
+@lru_cache(maxsize=None)
+def _gather_neighbor_slices(
+    active_dims: Tuple[Literal["x", "y", "z"], ...], include_corners: bool
+) -> List[Tuple[slice, ...]]:
+    ndim = len(active_dims)
+    axes = tuple(DIM_TO_AXIS[dim] for dim in active_dims)
+
+    # gather all slices excluding the center
+    all_slices: List[Tuple[slice, ...]] = []
+    if include_corners:
+        for offset in product([-1, 0, 1], repeat=ndim):
+            if offset == (0,) * ndim:
+                continue
+            all_slices.append(
+                merge_slices(
+                    *[
+                        crop(i, (1 + shift, -1 + shift), ndim=4)
+                        for i, shift in zip(axes, offset)
+                    ]
+                )
+            )
+    else:
+        for ax in axes:
+            for shift in [-1, 1]:
+                all_slices.append(
+                    merge_slices(
+                        *[
+                            crop(
+                                i,
+                                (1 + shift, -1 + shift) if ax == i else (1, -1),
+                                ndim=4,
+                            )
+                            for i in axes
+                        ]
+                    )
+                )
+
+    # insert inner slices in beginning
+    inner_slice = merge_slices(*[crop(i, (1, -1), ndim=4) for i in axes])
+    all_slices.insert(0, inner_slice)
+
+    return all_slices
+
+
+def compute_dmp(
+    xp: Any,
+    arr: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    *,
+    out: ArrayLike,
+    include_corners: bool,
+) -> Tuple[slice, ...]:
+    """
+    Compute the minimum and maximum values of each point and its neighbors along
+    specified dimensions.
 
     Args:
         xp (Any): `np` namespace.
         arr (ArrayLike): Array. First axis is assumed to be variable axis. Has shape
-            (nvars, nx, ny, nz, ...).
-        dims (str): Dimension to check. Must be a subset of "xyz".
+            (nvars, nx, ny, nz).
+        active_dims (Tuple[Literal["x", "y", "z"], ...]): Dimensions to check.
+        out (ArrayLike): Output array to store the results. Should have shape
+            (nvars, nx, ny, nz, >=2).
         include_corners (bool): Whether to include corners.
+
     Returns:
-        Tuple[ArrayLike, ArrayLike]: Minimum and maximum values of the array along the
-            specified dimension.
+        Slice objects indicating the modified regions in the output array.
     """
-    dim_map = {"x": 1, "y": 2, "z": 3}
-    active_dims = [dim_map[d] for d in dims]
+    all_slices = gather_neighbor_slices(active_dims, include_corners)
+    inner_slice = all_slices[0]
 
-    slices = [slice(None)] * arr.ndim
-    for d in active_dims:
-        slices[d] = slice(1, -1)
-    dmp_min = arr[tuple(slices)].copy()
-    dmp_max = arr[tuple(slices)].copy()
+    # stack views of neighbors
+    all_views = [arr[slc] for slc in all_slices]
+    stacked = xp.stack(all_views, axis=0)
 
-    for offsets in product([-1, 0, 1], repeat=len(active_dims)):
-        if (
-            not include_corners and all(offsets) and len(active_dims) > 1
-        ):  # skip the corners
-            continue
-        if not any(offsets):  # skip the center
-            continue
-        slices = [slice(None)] * arr.ndim
-        for d, offset in zip(active_dims, offsets):
-            slices[d] = {-1: slice(2, None), 0: slice(1, -1), 1: slice(None, -2)}[
-                offset
-            ]
-        dmp_min[...] = xp.minimum(dmp_min, arr[tuple(slices)])
-        dmp_max[...] = xp.maximum(dmp_max, arr[tuple(slices)])
+    # compute min an max
+    out[inner_slice + (0,)] = xp.min(stacked, axis=0)
+    out[inner_slice + (1,)] = xp.max(stacked, axis=0)
 
-    return dmp_min, dmp_max
+    # return inner slice
+    return inner_slice + (slice(None, 2),)
 
 
 def muscl(

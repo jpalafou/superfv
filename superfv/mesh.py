@@ -1,10 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import product
-from typing import Optional, Tuple
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 
-from superfv.fv import gauss_legendre_mesh
+from .fv import gauss_legendre_mesh
+from .tools.device_management import ArrayLike, ArrayManager, xp
+
+xyz_tup: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
 
 
 def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -36,32 +39,41 @@ def uniform_3D_mesh(
 @dataclass
 class UniformFVMesh:
     """
-    A class to represent a uniform finite volume mesh in 3D space.
+    A uniform finite volume mesh in 3D space.
 
     Args:
-        nx, ny, nz: Number of cells in the x, y, and z dimensions.
-        xlim, ylim, zlim: Limits of the mesh in the x, y, and z dimensions.
-        ignore_x, ignore_y, ignore_z: If True, this dimension will no longer be
-            considered 'active' in the mesh, meaning it will not be considered when
-            generating slabs or quadrature points.
-        slab_depth: Number of cells to add as slabs on each side of the mesh along each
-            active dimension.
+        nx, ny, nz: Number of cells in the x, y, and z dimensions, respectively.
+        xlim, ylim, zlim: Limits of the mesh in the x, y, and z dimensions,
+            respectively, as tuples (min, max).
+        active_dims: A tuple of active dimensions containing "x", "y", and/or "z".
+            Active dimensions are those that get assigned a slab array. Inactive
+            dimensions must have a size of 1.
+        slab_depth: The depth of the slab in each active dimension, which are
+            defined as the dimensions with nx, ny, or nz greater than 1.
+        array_manager: An ArrayManager instance for managing arrays on the appropriate
+            device (CPU or GPU). This is used to store and manage the mesh arrays
+            efficiently, especially when using GPU acceleration.
 
     Attributes:
-        shape: Shape of the mesh as (nx, ny, nz).
-        hx, hy, hz: Cell sizes in the x, y, and z dimensions.
-        h: Tuple of cell sizes (hx, hy, hz).
-        x_interfaces, y_interfaces, z_interfaces: Interfaces in the x, y, and z
-            and z dimensions as 1D arrays.
-        x_centers, y_centers, z_centers (ndarray): Centers of the cells in the x,
-            dimensions as 1D arrays.
-        X, Y, Z: Mesh grid arrays for the x, y, and z dimensions as 3D arrays.
-        coords: Tuple of 3D arrays representing the coordinates of the mesh in the x,
-            y, and z dimensions.
-        xl_slab, xr_slab, yl_slab, yr_slab, zl_slab, zr_slab: Slab meshes on each of
-            the six sides of the meshes, represented as tuples of 3D arrays for the x,
-            y, and z coordinates.
-
+        shape: The shape of the core mesh as a tuple (nx, ny, nz).
+        size: The total number of cells in the core mesh (nx * ny * nz).
+        hx, hy, hz: The cell sizes in the x, y, and z dimensions, respectively.
+        ndim: The number of active dimensions in the mesh.
+        x_is_active, y_is_active, z_is_active: Boolean flags indicating whether the
+            x, y, and z dimensions are active (i.e., have more than one cell).
+        x_slab_depth, y_slab_depth, z_slab_depth: The slab depth for each active
+            dimension, which is equal to slab_depth if the dimension is active,
+            otherwise 0.
+        _nx_, _ny_, _nz_: The number of cells in the padded mesh, accounting for
+            slab_depth in each active dimension.
+        _shape_: The shape of the padded mesh as a tuple (_nx_, _ny_, _nz_).
+        _size_: The total number of cells in the padded mesh (_nx_ * _ny_ * _nz_).
+        x_centers, y_centers, z_centers: The coordinates of the cell centers in the
+            x, y, and z dimensions, respectively.
+        x_interfaces, y_interfaces, z_interfaces: The coordinates of the cell
+            interfaces in the x, y, and z dimensions, respectively.
+        X, Y, Z: 3D arrays representing the coordinates of the cell centers in
+            the x, y, and z dimensions, respectively.
     """
 
     nx: int = 1
@@ -70,72 +82,103 @@ class UniformFVMesh:
     xlim: Tuple[float, float] = (0, 1)
     ylim: Tuple[float, float] = (0, 1)
     zlim: Tuple[float, float] = (0, 1)
-    ignore_x: bool = False
-    ignore_y: bool = False
-    ignore_z: bool = False
+    active_dims: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
     slab_depth: int = 1
+    array_manager: ArrayManager = field(default_factory=ArrayManager)
 
     def __post_init__(self):
-        # validate mesh dimensions
-        if any((not isinstance(n, int) or n < 1) for n in (self.nx, self.ny, self.nz)):
+        self._validate_args()
+        self._assign_scalar_attributes()
+        self._set_interfaces_and_centers()
+        self._init_core()
+        self._init_slabs()
+
+    def _validate_args(self):
+        nx, ny, nz = self.nx, self.ny, self.nz
+        xlim, ylim, zlim = self.xlim, self.ylim, self.zlim
+        active_dims = self.active_dims
+        slab_depth = self.slab_depth
+
+        if any(x < 1 or not isinstance(x, int) for x in (nx, ny, nz)):
             raise ValueError("Mesh dimensions (nx, ny, nz) must be positive integers.")
-        # validate limits
         if any(
-            (not isinstance(lim, tuple) or len(lim) != 2 or lim[0] >= lim[1])
-            for lim in (self.xlim, self.ylim, self.zlim)
+            lower >= upper
+            or not (isinstance(lower, (int, float)) and isinstance(upper, (int, float)))
+            for lower, upper in (xlim, ylim, zlim)
         ):
             raise ValueError(
                 "Limits must be tuples of two values (min, max) with min < max."
             )
-        # validate slab depths
-        if self.slab_depth < 0 or not isinstance(self.slab_depth, int):
-            raise ValueError("Slab depth must be non-negative integer.")
+        if any(dim not in xyz_tup for dim in active_dims):
+            raise ValueError("Active dimensions must be 'x', 'y', and/or 'z'.")
+        if any(
+            n > 1 and dim not in active_dims for dim, n in zip(xyz_tup, (nx, ny, nz))
+        ):
+            raise ValueError("Inactive dimensions must have only one cell.")
+        if slab_depth < 0 or not isinstance(slab_depth, int):
+            raise ValueError("Slab depth must be a non-negative integer.")
 
-        # assign mesh properties
-        self.shape = (self.nx, self.ny, self.nz)
-        self.hx = (self.xlim[1] - self.xlim[0]) / self.nx
-        self.hy = (self.ylim[1] - self.ylim[0]) / self.ny
-        self.hz = (self.zlim[1] - self.zlim[0]) / self.nz
-        self.h = (self.hx, self.hy, self.hz)
-        self.x_active = not self.ignore_x
-        self.y_active = not self.ignore_y
-        self.z_active = not self.ignore_z
-
-        self._set_interfaces_and_centers()
-        self._init_mesh()
-        self._init_slabs()
-
-        self.gauss_legendre_quadrature_cache: dict[
-            Tuple[int, Optional[str], Optional[str]],
-            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-        ] = {}
+    def _assign_scalar_attributes(self):
+        self.shape: Tuple[int, int, int] = (self.nx, self.ny, self.nz)
+        self.size: int = self.nx * self.ny * self.nz
+        self.hx: float = (self.xlim[1] - self.xlim[0]) / self.nx
+        self.hy: float = (self.ylim[1] - self.ylim[0]) / self.ny
+        self.hz: float = (self.zlim[1] - self.zlim[0]) / self.nz
+        self.ndim = len(self.active_dims)
+        self.x_is_active: bool = "x" in self.active_dims
+        self.y_is_active: bool = "y" in self.active_dims
+        self.z_is_active: bool = "z" in self.active_dims
+        self.x_slab_depth: int = self.slab_depth if self.x_is_active else 0
+        self.y_slab_depth: int = self.slab_depth if self.y_is_active else 0
+        self.z_slab_depth: int = self.slab_depth if self.z_is_active else 0
+        self._nx_: int = self.nx + 2 * self.x_slab_depth
+        self._ny_: int = self.ny + 2 * self.y_slab_depth
+        self._nz_: int = self.nz + 2 * self.z_slab_depth
+        self._shape_: Tuple[int, int, int] = (self._nx_, self._ny_, self._nz_)
+        self._size_: int = self._nx_ * self._ny_ * self._nz_
 
     def _set_interfaces_and_centers(self):
-        self.x_interfaces = np.linspace(self.xlim[0], self.xlim[1], self.nx + 1)
-        self.y_interfaces = np.linspace(self.ylim[0], self.ylim[1], self.ny + 1)
-        self.z_interfaces = np.linspace(self.zlim[0], self.zlim[1], self.nz + 1)
-        self.x_centers = 0.5 * (self.x_interfaces[:-1] + self.x_interfaces[1:])
-        self.y_centers = 0.5 * (self.y_interfaces[:-1] + self.y_interfaces[1:])
-        self.z_centers = 0.5 * (self.z_interfaces[:-1] + self.z_interfaces[1:])
+        x_interfaces = np.linspace(self.xlim[0], self.xlim[1], self.nx + 1)
+        y_interfaces = np.linspace(self.ylim[0], self.ylim[1], self.ny + 1)
+        z_interfaces = np.linspace(self.zlim[0], self.zlim[1], self.nz + 1)
+        x_centers = 0.5 * (x_interfaces[:-1] + x_interfaces[1:])
+        y_centers = 0.5 * (y_interfaces[:-1] + y_interfaces[1:])
+        z_centers = 0.5 * (z_interfaces[:-1] + z_interfaces[1:])
 
-    def _init_mesh(self):
-        self.X, self.Y, self.Z = uniform_3D_mesh(
+        self.array_manager.add("core_x_interfaces", x_interfaces)
+        self.array_manager.add("core_y_interfaces", y_interfaces)
+        self.array_manager.add("core_z_interfaces", z_interfaces)
+        self.array_manager.add("core_x_centers", x_centers)
+        self.array_manager.add("core_y_centers", y_centers)
+        self.array_manager.add("core_z_centers", z_centers)
+
+        # convenient copies
+        self.x_centers = self.array_manager.get_numpy_copy("core_x_centers")
+        self.y_centers = self.array_manager.get_numpy_copy("core_y_centers")
+        self.z_centers = self.array_manager.get_numpy_copy("core_z_centers")
+        self.x_interfaces = self.array_manager.get_numpy_copy("core_x_interfaces")
+        self.y_interfaces = self.array_manager.get_numpy_copy("core_y_interfaces")
+        self.z_interfaces = self.array_manager.get_numpy_copy("core_z_interfaces")
+
+    def _init_core(self):
+        X, Y, Z = uniform_3D_mesh(
             self.nx, self.ny, self.nz, self.xlim, self.ylim, self.zlim
         )
-        self.coords = (self.X, self.Y, self.Z)
+
+        self.array_manager.add("core_X", X)
+        self.array_manager.add("core_Y", Y)
+        self.array_manager.add("core_Z", Z)
+
+        # convenient copies
+        self.X = self.array_manager.get_numpy_copy("core_X")
+        self.Y = self.array_manager.get_numpy_copy("core_Y")
+        self.Z = self.array_manager.get_numpy_copy("core_Z")
 
     def _init_slabs(self):
-        self.xl_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-        self.xr_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-        self.yl_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-        self.yr_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-        self.zl_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-        self.zr_slab: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-
         slab_depth = {
-            "x": self.slab_depth if self.x_active else 0,
-            "y": self.slab_depth if self.y_active else 0,
-            "z": self.slab_depth if self.z_active else 0,
+            "x": self.slab_depth if self.x_is_active else 0,
+            "y": self.slab_depth if self.y_is_active else 0,
+            "z": self.slab_depth if self.z_is_active else 0,
         }
         lim1 = {"x": self.xlim[0], "y": self.ylim[0], "z": self.zlim[0]}
         lim2 = {"x": self.xlim[1], "y": self.ylim[1], "z": self.zlim[1]}
@@ -143,7 +186,7 @@ class UniformFVMesh:
         n = {"x": self.nx, "y": self.ny, "z": self.nz}
 
         for dim, pos in product("xyz", "lr"):
-            if getattr(self, f"ignore_{dim}"):
+            if dim not in self.active_dims:
                 continue
             shape = {
                 ax: (slab_depth[ax] if ax == dim else n[ax] + 2 * slab_depth[ax])
@@ -172,64 +215,159 @@ class UniformFVMesh:
                 bounds["y"],
                 bounds["z"],
             )
-            setattr(self, f"{dim}{pos}_slab", (X, Y, Z))
 
-    def get_slab(self, dim: str, pos: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        out = getattr(self, f"{dim}{pos}_slab", None)
-        if out is None:
-            raise ValueError(f"Slab {dim}{pos} is not defined in this mesh.")
-        return out
+            self.array_manager.add(f"{dim}{pos}_slab_X", X)
+            self.array_manager.add(f"{dim}{pos}_slab_Y", Y)
+            self.array_manager.add(f"{dim}{pos}_slab_Z", Z)
 
-    def get_gauss_legendre_quadrature(
-        self, p: int, slab: Optional[str] = None, face: Optional[str] = None
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def get_cell_centers(
+        self, region: Literal["core", "xl", "xr", "yl", "yr", "zl", "zr"] = "core"
+    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         """
-        Get Gauss-Legendre quadrature points and weights for the mesh.
+        Get the cell centers of the core mesh or a specific slab.
 
         Args:
-            p: Polynomial degree of the quadrature rule. This determines the number of
-                quadrature points in each dimension.
-            slab: Slab to use for the quadrature. May be one of "xl", "xr", "yl", "yr",
-                "zl", "zr". If None, the core mesh will be used.
-            face: Face over which to integrate. May be one of "xl", "xr", "yl", "yr",
-                "zl", "zr". If None, the quadrature will span the interior of each
-                cell.
+            region: A string indicating which region to return. Must be one of:
+                - "core": The main interior mesh (default)
+                - "xl", "xr", "yl", "yr", "zl", "zr": The left/right slab in x/y/z
 
         Returns:
-            Xp, Yp, Zp: Arrays of the quadrature points in the x, y, and z dimensions,
-                respectively. Each has shape (nx, ny, nz, n_quadrature_points), where
-                `n_quadrature_points` depends on the polynomial degree `p`.
-            w: Array of quadrature weights with shape (1, 1, 1, n_quadrature_points).
+            Tuple of 3D arrays (X, Y, Z) representing cell centers.
         """
-        key = (p, slab, face)
-        if key in self.gauss_legendre_quadrature_cache:
-            return self.gauss_legendre_quadrature_cache[key]
+        if region == "core":
+            return (
+                self.array_manager["core_X"],
+                self.array_manager["core_Y"],
+                self.array_manager["core_Z"],
+            )
+        return self.get_slab_cell_centers(region)
 
-        if slab is None:
-            X, Y, Z = self.X, self.Y, self.Z
-        else:
-            slab_dim, slab_pos = slab[0], slab[1]
-            X, Y, Z = self.get_slab(slab_dim, slab_pos)
+    def get_slab_cell_centers(
+        self,
+        region: Literal["xl", "xr", "yl", "yr", "zl", "zr"],
+    ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
+        """
+        Get the cell centers of a specific slab.
 
-        px = p if self.x_active else 0
-        py = p if self.y_active else 0
-        pz = p if self.z_active else 0
+        Args:
+            region: A string indicating which region to return. Must be one of:
+                - "xl", "xr", "yl", "yr", "zl", "zr": The left/right slab in x/y/z
+
+        Returns:
+            Tuple of 3D arrays (X, Y, Z) representing cell centers.
+        """
+        if any(f"{region}_slab_{dim}" not in self.array_manager for dim in "XYZ"):
+            raise ValueError(f"{region}_slab not found in arrays.")
+        X = self.array_manager[f"{region}_slab_X"]
+        Y = self.array_manager[f"{region}_slab_Y"]
+        Z = self.array_manager[f"{region}_slab_Z"]
+        return X, Y, Z
+
+    def get_GaussLegendre_quadrature(
+        self,
+        mesh_region: Literal["core", "xl", "xr", "yl", "yr", "zl", "zr"],
+        cell_region: Literal["interior", "xl", "xr", "yl", "yr", "zl", "zr"],
+        p: int = 0,
+    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+        """
+        Get Gauss-Legendre quadrature points and weights for a specific mesh region and
+        cell region.
+
+        Args:
+            mesh_region: The region of the mesh to use for the quadrature. Must be one
+                of "core", "xl", "xr", "yl", "yr", "zl", "zr".
+            cell_region: The region of the cell to use for the quadrature. Must be
+                "interior" to compute the quadrature points in the interior of each
+                cell or one of "xl", "xr", "yl", "yr", "zl", "zr" to compute the
+                quadrature points on one of each cell's faces.
+            p: Polynomial degree of the quadrature rule. This determines the number of
+                quadrature points in each active dimension.
+
+        Returns:
+            X, Y, Z: Arrays of the quadrature points in the x, y, and z dimensions,
+                respectively, where the quadrature nodes are flattened along axis 3 of
+                each array. In other words, each has shape
+                (nx, ny, nz, n_quadrature_points), where `n_quadrature_points` depends
+                on the polynomial degree `p`.
+            w: Array of quadrature weights flattened along axis 3 with shape
+                (1, 1, 1, n_quadrature_points).
+        """
+        key = f"{mesh_region}_{cell_region}_p{p}"
+        keys = [f"{key}_{ax}" for ax in "XYZ"] + [f"{key}_w"]
+
+        if all(key in self.array_manager for key in keys):
+            X = self.array_manager[keys[0]]
+            Y = self.array_manager[keys[1]]
+            Z = self.array_manager[keys[2]]
+            w = self.array_manager[keys[3]]
+            return X, Y, Z, w
+
+        _xp = xp if self.array_manager.device == "gpu" else np
+        px = p if self.x_is_active else 0
+        py = p if self.y_is_active else 0
+        pz = p if self.z_is_active else 0
         h = (self.hx, self.hy, self.hz)
-        if face is None:
-            Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, py, pz))
+
+        X, Y, Z = self.get_cell_centers(mesh_region)
+
+        if cell_region == "interior":
+            Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, pz))
         else:
-            dim, pos = face[0], face[1]
+            dim, pos = cell_region[0], cell_region[1]
             match dim:
                 case "x":
-                    Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (0, py, pz))
+                    Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (0, py, pz))
                     Xp = Xp + (-0.5 * self.hx if pos == "l" else 0.5 * self.hx)
                 case "y":
-                    Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, 0, pz))
+                    Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (px, 0, pz))
                     Yp = Yp + (-0.5 * self.hy if pos == "l" else 0.5 * self.hy)
                 case "z":
-                    Xp, Yp, Zp, w = gauss_legendre_mesh(X, Y, Z, h, (px, py, 0))
+                    Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, 0))
                     Zp = Zp + (-0.5 * self.hz if pos == "l" else 0.5 * self.hz)
 
-        val = Xp, Yp, Zp, w
-        self.gauss_legendre_quadrature_cache[key] = val
-        return val
+        self.array_manager.add(keys[0], Xp)
+        self.array_manager.add(keys[1], Yp)
+        self.array_manager.add(keys[2], Zp)
+        self.array_manager.add(keys[3], w)
+
+        return Xp, Yp, Zp, w
+
+    def perform_GaussLegendre_quadrature(
+        self,
+        f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        node_axis: int,
+        mesh_region: Literal["core", "xl", "xr", "yl", "yr", "zl", "zr"],
+        cell_region: Literal["interior", "xl", "xr", "yl", "yr", "zl", "zr"],
+        p: int = 0,
+    ):
+        """
+        Perform Gauss-Legendre quadrature on a function over the specified mesh region
+        and cell region.
+
+        Args:
+            f: A callable function that takes the quadrature points (X, Y, Z)
+                and returns an array of values to be integrated.
+            node_axis: The axis along which to sum the quadrature results. This is
+                typically the axis corresponding to the nodes of the mesh.
+            mesh_region: The region of the mesh to use for the quadrature. Must be one
+                of "core", "xl", "xr", "yl", "yr", "zl", "zr".
+            cell_region: The region of the cell to use for the quadrature. Must be
+                "interior" to compute the quadrature points in the interior of each
+                cell or one of "xl", "xr", "yl", "yr", "zl", "zr" to compute the
+                quadrature points on one of each cell's faces.
+            p: Polynomial degree of the quadrature rule. This determines the number of
+                quadrature points in each active dimension.
+        """
+        _xp = xp if self.array_manager.device == "gpu" else np
+
+        X, Y, Z, w = self.get_GaussLegendre_quadrature(mesh_region, cell_region, p)
+        f_eval = f(X, Y, Z)
+        return _xp.sum(f_eval * w, axis=node_axis)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["gauss_legendre_quadrature_cache"] = {}
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
