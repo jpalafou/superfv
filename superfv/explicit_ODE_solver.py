@@ -7,7 +7,7 @@ import numpy as np
 
 from .tools.device_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
-from .tools.timer import MethodTimer, Timer
+from .tools.timer import Timer
 
 
 def clamp_dt(t: float, dt: float, target_time: Optional[float] = None) -> float:
@@ -96,7 +96,7 @@ class ExplicitODESolver(ABC):
         self.arrays["unew"].fill(np.nan)
 
         # initialize timer
-        self.timer = Timer(cats=["!ExplicitODESolver.integrate.body", "current_step"])
+        self.timer = Timer(cats=["wall", "take_step", "snapshot", "minisnapshot"])
 
         # initialize snapshots
         self.snapshots: Snapshots = Snapshots()
@@ -106,7 +106,7 @@ class ExplicitODESolver(ABC):
             "n_steps": [],
             "n_substeps": [],
             "n_dt_revisions": [],
-            "run_time": [],
+            "step_time": [],
         }
 
         # initialize commit details
@@ -229,7 +229,6 @@ class ExplicitODESolver(ABC):
         """
         raise NotImplementedError("compute_revised_dt method not implemented.")
 
-    @MethodTimer(cat="ExplicitODESolver.take_step")
     def take_step(self, target_time: Optional[float] = None):
         """
         Take a single step in the integration.
@@ -263,17 +262,16 @@ class ExplicitODESolver(ABC):
         start.
         """
         self.reset_stepwise_logs()
-        self.timer.start("current_step", reset=True)
+        self.timer.start("take_step")
 
     def called_at_end_of_step(self):
         """
         Helper function called at the end of each step ending with a timer stop.
         """
-        self.timer.stop("current_step")
+        self.timer.stop("take_step")
         self.increment_stepwise_logs()
         self.increment_global_logs()
 
-    @MethodTimer(cat="ExplicitODESolver.integrate")
     def integrate(
         self,
         T: Optional[Union[float, List[float]]] = None,
@@ -302,6 +300,7 @@ class ExplicitODESolver(ABC):
             log_freq: Step frequency of logging updates to the progress bar.
             no_snapshots: Whether to skip taking snapshots.
         """
+        self.timer.start("wall")
         if (n is None and T is None) or (n is not None and T is not None):
             raise ValueError("Either 'n' or 'T' must be defined, but not both.")
         elif n is not None:
@@ -326,6 +325,7 @@ class ExplicitODESolver(ABC):
                 log_freq=log_freq,
                 no_snapshots=no_snapshots,
             )
+        self.timer.stop("wall")
 
     def _integrate_for_fixed_number_of_steps(
         self,
@@ -357,22 +357,20 @@ class ExplicitODESolver(ABC):
         # take initial snapshots
         if self.t not in self.minisnapshots["t"]:
             if not no_snapshots:
-                self.snapshot()
-            self.minisnapshot()
+                self._timed_snapshot()
+            self._timed_minisnapshot()
 
-        self.timer.start("!ExplicitODESolver.integrate.body")
         for _ in range(n):
             self.take_step()
-            self.minisnapshot()
+            self._timed_minisnapshot()
 
             if verbose:
                 if self.n_steps % log_freq == 0 or self.n_steps >= n:
                     status_print(self.build_update_message())
-        self.timer.stop("!ExplicitODESolver.integrate.body")
 
         # closing actions
         if not no_snapshots:
-            self.snapshot()
+            self._timed_snapshot()
         if verbose:
             status_print(self.build_closing_message(), closing=True)
 
@@ -423,21 +421,21 @@ class ExplicitODESolver(ABC):
         # initial snapshot
         if self.t not in self.minisnapshots["t"]:
             if not no_snapshots:
-                self.snapshot()
-            self.minisnapshot()
+                self._timed_snapshot()
+            self._timed_minisnapshot()
 
         # simulation loop
-        self.timer.start("!ExplicitODESolver.integrate.body")
         while self.t < T_max:
             self.take_step(target_time=target_time)
-            self.minisnapshot()
+            self._timed_minisnapshot()
 
             # snapshot decision and target time update
             if not no_snapshots:
-                if self.t > T_max:
-                    self.snapshot()  # trigger closing snapshot
+                if self.t > T_max:  # trigger closing snapshot
+                    self._timed_snapshot()
                 elif (not allow_overshoot and self.t == target_time) or log_every_step:
-                    self.snapshot()
+                    self._timed_snapshot()
+
                     if self.t == target_time and self.t < T_max:
                         target_time = target_times.pop(0)
 
@@ -445,7 +443,6 @@ class ExplicitODESolver(ABC):
             if verbose:
                 if self.n_steps % log_freq == 0 or self.t >= T_max:
                     status_print(self.build_update_message())
-        self.timer.stop("!ExplicitODESolver.integrate.body")
 
         # closing actions
         if verbose:
@@ -462,12 +459,24 @@ class ExplicitODESolver(ABC):
         Mini snapshot function. Is executed after every step. Override to save more
         data to `self.minisnapshots`.
         """
-        self.minisnapshots["t"].append(self.t)
-        self.minisnapshots["dt"].append(self.dt)
-        self.minisnapshots["n_steps"].append(self.n_steps)
-        self.minisnapshots["n_substeps"].append(self.n_substeps)
-        self.minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
-        self.minisnapshots["run_time"].append(self.timer.cum_time["current_step"])
+        minisnapshots = self.minisnapshots
+
+        minisnapshots["t"].append(self.t)
+        minisnapshots["dt"].append(self.dt)
+        minisnapshots["n_steps"].append(self.n_steps)
+        minisnapshots["n_substeps"].append(self.n_substeps)
+        minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
+        minisnapshots["step_time"].append(self.timer.goldfish_lap_time["take_step"])
+
+    def _timed_minisnapshot(self):
+        self.timer.start("minisnapshot")
+        self.minisnapshot()
+        self.timer.stop("minisnapshot")
+
+    def _timed_snapshot(self):
+        self.timer.start("snapshot")
+        self.snapshot()
+        self.timer.stop("snapshot")
 
     def read_snapshots(self) -> bool:
         """

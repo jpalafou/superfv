@@ -12,7 +12,7 @@ sim.euler(n=5, progress_bar=False)
 
 n_cells_updated_per_s = (
     np.array(sim.minisnapshots["n_updates"])[1:]
-    / np.array(sim.minisnapshots["run_time"])[1:]
+    / np.array(sim.minisnapshots["step_time"])[1:]
 )
 
 for i in range(len(n_cells_updated_per_s)):

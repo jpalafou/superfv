@@ -279,7 +279,6 @@ class EulerSolver(FiniteVolumeSolver):
             self.xp, self.variable_index_map, u, self.active_dims, self.gamma
         )
 
-    @MethodTimer(cat="EulerSolver.log_quantity")
     def log_quantity(self) -> Dict[str, float]:
         """
         Log the minimum density and pressure.
@@ -312,7 +311,7 @@ class EulerSolver(FiniteVolumeSolver):
 
         return min_rho, min_P
 
-    @MethodTimer(cat="EulerSolver.compute_dt")
+    @MethodTimer(cat="compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
@@ -405,7 +404,6 @@ class EulerSolver(FiniteVolumeSolver):
 
         return out
 
-    @MethodTimer(cat="EulerSolver.llf")
     def llf(
         self,
         wl: ArrayLike,
@@ -425,7 +423,6 @@ class EulerSolver(FiniteVolumeSolver):
             self.gamma,
         )
 
-    @MethodTimer(cat="EulerSolver.hllc")
     def hllc(
         self,
         wl: ArrayLike,

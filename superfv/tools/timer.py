@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Iterable, Optional, cast
+from typing import Dict, Iterable, Set, cast
 
 import numpy as np
 
@@ -17,16 +17,38 @@ class Timer:
         Initializes the timer.
 
         Args:
-            cats: Tuple of categories.
+            cats: Iterable of category names to initialize.
             precision: Precision of the time values.
         """
-        self.cats = set(cats)
-        self._running: Dict[str, bool] = {cat: False for cat in cats}
-        self._start_time: Dict[str, Optional[float]] = {cat: None for cat in cats}
+        # Public
+        self.cats: Set[str] = set()
+        self.goldfish_lap_time: Dict[str, float] = {}
+        self.cum_time: Dict[str, float] = {}
+        self.n_calls: Dict[str, int] = {}
 
-        # Outputs
-        self.cum_time: Dict[str, float] = {cat: 0.0 for cat in cats}
-        self.n_calls: Dict[str, int] = {cat: 0 for cat in cats}
+        # Private
+        self._running: Dict[str, bool] = {}
+        self._start_time: Dict[str, float] = {}
+
+        for cat in cats:
+            self._add_cat(cat)
+
+    def _add_cat(self, cat: str):
+        """
+        Internal method to add a new timer category without checks.
+
+        Args:
+            cat: Category name.
+        """
+        # Public
+        self.cats.add(cat)
+        self.goldfish_lap_time[cat] = np.nan
+        self.cum_time[cat] = 0.0
+        self.n_calls[cat] = 0
+
+        # Private
+        self._running[cat] = False
+        self._start_time[cat] = np.nan
 
     def add_cat(self, cat: str):
         """
@@ -37,13 +59,7 @@ class Timer:
         """
         if cat in self.cats:
             raise ValueError(f"Category '{cat}' already exists.")
-        self.cats.add(cat)
-        self._running[cat] = False
-        self._start_time[cat] = None
-
-        # Outputs
-        self.cum_time[cat] = 0.0
-        self.n_calls[cat] = 0
+        self._add_cat(cat)
 
     def _check_cat_existence(self, cat: str):
         if cat not in self.cats:
@@ -56,6 +72,7 @@ class Timer:
         Args:
             cat: Category name.
             reset: If True, reset the timer for this category.
+            same_call: If True, do not increment the call count.
         """
         self._check_cat_existence(cat)
         if self._running[cat]:
@@ -80,7 +97,9 @@ class Timer:
         """
         self._check_cat_existence(cat)
         if self._running[cat]:
-            self.cum_time[cat] += time.time() - cast(float, self._start_time[cat])
+            lap_time = time.time() - cast(float, self._start_time[cat])
+            self.goldfish_lap_time[cat] = lap_time
+            self.cum_time[cat] += lap_time
             self._running[cat] = False
             self._start_time[cat] = None
         else:
@@ -146,14 +165,9 @@ class MethodTimer:
 
     def __call__(self, method):
         def wrapped(instance, *args, **kwargs):
-            if self.cat not in instance.timer:
-                instance.timer.add_cat(self.cat)
-            already_running = instance.timer._running[self.cat]
-            if not already_running:
-                instance.timer.start(self.cat)
+            instance.timer.start(self.cat)
             result = method(instance, *args, **kwargs)
-            if not already_running:
-                instance.timer.stop(self.cat)
+            instance.timer.stop(self.cat)
             return result
 
         return wrapped

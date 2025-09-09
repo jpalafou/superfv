@@ -15,6 +15,7 @@ from typing import (
 )
 
 import numpy as np
+import pandas as pd
 
 from . import fv
 from .boundary_conditions import BCs, DirichletBC, Field, apply_bc
@@ -258,6 +259,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_allocation()
+        self._init_timer()
         self._init_snapshots(log_every_step)
         self._init_riemann_solver(riemann_solver)
 
@@ -800,7 +802,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
         self.riemann_func = getattr(self, riemann_solver)
 
-    @MethodTimer(cat="FiniteVolumeSolver.riemann_solver")
+    @MethodTimer(cat="riemann_solver")
     def riemann_solver(
         self,
         wl: ArrayLike,
@@ -945,6 +947,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
         return 1
 
+    def _init_timer(self):
+        new_timer_cats = [
+            "compute_dt",
+            "apply_bc",
+            "riemann_solver",
+            "zhang_shu_limiter",
+            "MOOD_loop",
+            "detect_troubled_cells",
+            "revise_fluxes",
+        ]
+
+        for cat in new_timer_cats:
+            self.timer.add_cat(cat)
+
+        self.sorted_timer_cats = (
+            ["wall", "take_step"] + new_timer_cats + ["snapshot", "minisnapshot"]
+        )
+
     def _init_snapshots(self, log_every_step: bool):
         self.log_every_step = log_every_step
 
@@ -999,6 +1019,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
+    @MethodTimer(cat="compute_dt")
     @abstractmethod
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
@@ -1124,7 +1145,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _w_[interior] = _wbf_[interior0]
         self.inplace_apply_bc(t, _w_, scheme=scheme, primitives=True)
 
-    @MethodTimer(cat="FiniteVolumeSolver.inplace_apply_bc")
+    @MethodTimer(cat="apply_bc")
     def inplace_apply_bc(
         self,
         t: float,
@@ -1211,7 +1232,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=p,
         )
 
-    @MethodTimer(cat="FiniteVolumeSolver.inplace_interpolate_faces")
     def inplace_interpolate_faces(
         self,
         u: ArrayLike,
@@ -1259,7 +1279,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # convert to primitive variables if requested
             out[...] = self.primitives_from_conservatives(out)
 
-    @MethodTimer(cat="FiniteVolumeSolver.zhang_shu_limiter")
+    @MethodTimer(cat="zhang_shu_limiter")
     def zhang_shu_limiter(
         self, scheme: polyInterpolationScheme, primitives: bool = False
     ):
@@ -1357,7 +1377,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cell_region=dim + "r",
         )
 
-    @MethodTimer(cat="FiniteVolumeSolver.inplace_integrate_fluxes")
     def inplace_integrate_fluxes(
         self, dim: Literal["x", "y", "z"], scheme: InterpolationScheme
     ):
@@ -1421,7 +1440,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 
-    @MethodTimer(cat="FiniteVolumeSolver.inplace_compute_fluxes")
     def inplace_compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """
         Write fluxes to their respective arrays (`F`, `G`, and `H`) based on the
@@ -1460,6 +1478,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.normalize_node_arrays(t, dim, scheme, primitives=limit_primitives)
             self.inplace_integrate_fluxes(dim, scheme)
 
+    @MethodTimer(cat="MOOD_loop")
     def MOOD_loop(self, t: float):
         """
         Perform the MOOD loop to detect and revise troubled cells.
@@ -1471,9 +1490,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.reset_MOOD_loop()
         for _ in range(state.config.max_iters):
+
+            self.timer.start("detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
+            self.timer.stop("detect_troubled_cells")
+
             if n_revisable > 0:
+                self.timer.start("revise_fluxes")
                 MOOD.inplace_revise_fluxes(self, t)
+                self.timer.stop("revise_fluxes")
+
                 state.increment_MOOD_iteration()
             else:
                 break
@@ -1515,7 +1541,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             out=out,
         )
 
-    @MethodTimer(cat="FiniteVolumeSolver.f")
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
         Compute the right-hand side of the ODE:
@@ -1683,9 +1708,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         n_updates = self.n_updates
         run_time = (
-            self.minisnapshots["run_time"][-1]
-            if len(self.minisnapshots["run_time"]) > 0
-            and self.minisnapshots["run_time"][-1] > 0
+            self.minisnapshots["step_time"][-1]
+            if len(self.minisnapshots["step_time"]) > 0
+            and self.minisnapshots["step_time"][-1] > 0
             else np.nan
         )
         data = {"n_updates": n_updates, "update_rate": n_updates / run_time}
@@ -1764,7 +1789,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             self.MOOD_state.increment_substep_hists()
 
-    @MethodTimer(cat="FiniteVolumeSolver.run")
     def run(self, *args, q_max=3, **kwargs):
         """
         Solve the conservation law using a Runge-Kutta method whose order matches the
@@ -1916,6 +1940,66 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def plot_2d_slice(self, *args, **kwargs):
         return plot_2d_slice(self, *args, **kwargs)
+
+    def print_timings(self, total_time_spec: str = ".2f"):
+        """
+        Print the timing statistics for the solver.
+
+        Args:
+            total_time_spec: Format specification for the total time column.
+        """
+        df = self.get_timings_df()
+
+        # Nicer labels + hierarchy
+        children = {"MOOD_loop": ["detect_troubled_cells", "revise_fluxes"]}
+
+        for parent, kids in children.items():
+            for k in kids:
+                sel = df["Routine"].eq(k)
+                df.loc[sel, "Routine"] = "      " + df.loc[sel, "Routine"]
+
+        # Formats
+        calls = df["# of calls"].astype(int).astype(str)
+        totals = df["Total time (s)"].map(
+            lambda x: "-" if pd.isna(x) or x == 0 else f"{x:{total_time_spec}}"
+        )
+        pct = df["% time"].map(
+            lambda x: "-" if pd.isna(x) or x == 0 else f"{100*x:.1f}"
+        )
+
+        # Dynamic column widths
+        w1 = max(len("Routine"), int(df["Routine"].str.len().max()))
+        w2 = max(len("# of calls"), int(calls.str.len().max()))
+        w3 = max(len("Total time (s)"), int(totals.str.len().max()))
+        w4 = max(len("% time"), int(pd.Series(pct).str.len().max()))
+
+        # Print table
+        print(
+            f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}"
+        )
+        print(f"{'-'*w1}  {'-'*w2}  {'-'*w3}  {'-'*w4}")
+        for name, c, tot, p in zip(df["Routine"], calls, totals, pct):
+            print(f"{name:<{w1}}  {c:>{w2}}  {tot:>{w3}}  {p:>{w4}}")
+
+    def get_timings_df(self) -> pd.DataFrame:
+        """
+        Get the timing statistics for the solver as a DataFrame.
+        """
+
+        timer = self.timer
+
+        data = []
+        for cat in self.sorted_timer_cats:
+            data.append(
+                {
+                    "Routine": cat,
+                    "# of calls": timer.n_calls[cat],
+                    "Total time (s)": timer.cum_time[cat],
+                }
+            )
+        df = pd.DataFrame(data)
+
+        return df
 
     def __getstate__(self):
         state = self.__dict__.copy()

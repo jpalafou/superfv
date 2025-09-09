@@ -244,7 +244,6 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return u
 
-    @MethodTimer(cat="AdvectionSolver.log_quantity")
     def log_quantity(self) -> Dict[str, float]:
         """
         Log the minimum and maximum density in the domain.
@@ -264,6 +263,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             "max_rho": max_rho,
         }
 
+    @MethodTimer(cat="compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
         Compute the time-step size based on the CFL condition.
