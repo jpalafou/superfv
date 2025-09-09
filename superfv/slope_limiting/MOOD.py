@@ -186,9 +186,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     w_old = arrays["_w_"]
     u_new = arrays["buffer"][..., 0]
     buffer = arrays["buffer"]
-    NAD_violations = buffer[..., 1]
+    NAD_violations = buffer[..., 1][lim_slc]
     PAD_violations = buffer[..., 2][interior]
-    alpha = buffer[..., 3:4]
+    alpha = buffer[..., 3:4][lim_slc]
     buffer = buffer[..., 4:]
     troubles = arrays["troubles"]
     _troubles_ = arrays["_troubles_"]
@@ -228,7 +228,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             (w_new if primitive_NAD else u_new)[lim_slc],
             active_dims,
             out=alpha,
-            buffer=buffer,
+            buffer=buffer[lim_slc],
         )
         troubles[0] = xp.any(
             xp.logical_and(NAD_violations[interior] < 0, alpha[..., 0][interior] < 1),

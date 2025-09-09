@@ -117,13 +117,14 @@ def compute_limited_slopes(
 
     # write slopes to `out` array
     if limiter == "minmod":
-        if SED:
-            raise ValueError("SED is not supported with minmod limiter.")
         dlft[...] = u[slc_c] - u[slc_l]
         drgt[...] = u[slc_r] - u[slc_c]
+        dcen[...] = 0.5 * (dlft + drgt)
         dsgn[...] = xp.sign(dlft)
         dslp[...] = dsgn * xp.minimum(xp.abs(dlft), xp.abs(drgt))
         out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
+        if SED:
+            out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
     elif limiter == "moncen":
         dlft[...] = u[slc_c] - u[slc_l]
         drgt[...] = u[slc_r] - u[slc_c]

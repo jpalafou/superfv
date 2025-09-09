@@ -6,20 +6,22 @@ import numpy as np
 import pandas as pd
 
 from superfv import EulerSolver, initial_conditions
-from superfv.tools.norms import l1_norm
+from superfv.tools.norms import linf_norm
 
 # problem inputs
 OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
-P_LIST = [-1, 0, 1, 2]
+P_LIST = [-1, 0, 1, 2, 3]
 OTHER_INPUTS = dict(
     flux_recipe=1,
     lazy_primitives=False,
-    GL=False,
+    SED=True,
     ZS=True,
     adaptive_dt=False,
-    SED=True,
+    # MOOD=True,
+    # NAD=True,
+    # limiting_vars=("rho",),
 )
 MUSCL_INPUTS = dict(flux_recipe=2, MUSCL=True, MUSCL_limiter="moncen", SED=True)
 
@@ -42,7 +44,8 @@ for N, p in product(N_LIST, P_LIST):
             t,
             xp=xp,
             **{"v" + dim: len(DIMS) - i for i, dim in enumerate(DIMS)},
-            P=0,
+            bounds=(1e-8, 1.0),
+            P=1e-8,
         )
 
     # run solver
@@ -66,7 +69,7 @@ for N, p in product(N_LIST, P_LIST):
     rho_analytical = analytical_solution(
         idx, solver.mesh.X, solver.mesh.Y, solver.mesh.Z, 1.0, xp=np
     )[idx("rho")]
-    error = l1_norm(rho_numerical - rho_analytical)
+    error = linf_norm(rho_numerical - rho_analytical)
     data.append(dict(N=N, p=p, error=error))
 df = pd.DataFrame(data)
 
@@ -86,6 +89,6 @@ for p in P_LIST:
 ax.set_xscale("log", base=2)
 ax.set_yscale("log")
 ax.set_xlabel("N")
-ax.set_ylabel("Linf error")
+ax.set_ylabel(r"$L_\infty$")
 ax.legend()
 fig.savefig(OUTPUT_NAME)
