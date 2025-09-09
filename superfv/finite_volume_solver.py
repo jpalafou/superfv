@@ -1307,9 +1307,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         buffer = self.arrays["buffer"]
 
         # compute centroid and theta
-        fv.interpolate_cell_centers(
-            xp, average, self.active_dims, scheme.p, out=centroid, buffer=buffer
-        )
         compute_theta(
             xp,
             average,
