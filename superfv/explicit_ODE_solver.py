@@ -364,6 +364,11 @@ class ExplicitODESolver(ABC):
             self.take_step()
             self._timed_minisnapshot()
 
+            # take snapshot
+            if log_every_step:
+                self._timed_snapshot()
+
+            # update progress bar
             if verbose:
                 if self.n_steps % log_freq == 0 or self.n_steps >= n:
                     status_print(self.build_update_message())

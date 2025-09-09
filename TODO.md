@@ -6,6 +6,7 @@ changes:
 - [x] Improve timer output and pause run_time during snapshots and minisnapshots
 - [x] interpolate center in Zhang Shu limiter?
 - [x] array allocation is a mess
+- [x] `_integrate_for_fixed_number_of_steps` missing log every step option
 
 todo:
-- [ ] `_integrate_for_fixed_number_of_steps` missing log every step option
+- [ ] write solutions to disk
