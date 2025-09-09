@@ -258,13 +258,12 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         mode=normalize_troubles_bc(fv_solver.bc_mode),
     )
 
-    # check for troubles
+    # trouble counts
     n_troubled_cells = xp.sum(troubles).item()
-
     revisable_troubled_cells = troubles & (_cascade_idx_array_[interior] < max_idx)
     n_revisable_troubled_cells = xp.sum(revisable_troubled_cells).item()
 
-    # early escape for no troubles
+    # early escape for no revisable troubles
     if n_revisable_troubled_cells == 0:
         return 0, n_troubled_cells
 
