@@ -196,6 +196,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
     # reset troubles / cascade index array
     troubles[...] = False
+    if iter_idx == 0:
+        _cascade_idx_array_[...] = 0
 
     # compute candidate solution
     u_new_interior = u_old_interior + dt * fv_solver.compute_RHS()
@@ -266,7 +268,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     if n_revisable_troubled_cells == 0:
         return 0, n_troubled_cells
 
-    # revisable troubles were detected. reset some arrays
+    # revisable troubles were detected. initialize cascade cache
     if iter_idx == 0:
         # store high-order fluxes
         scheme_key = cascade[0].key()
@@ -278,10 +280,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             arrays["H_" + scheme_key][...] = arrays["H"].copy()
         cascade_status[0] = True
 
-        # reset cascade index array
-        _cascade_idx_array_[...] = 0
-
-    return n_troubled_cells, n_troubled_cells
     return n_revisable_troubled_cells, n_troubled_cells
 
 
