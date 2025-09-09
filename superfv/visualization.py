@@ -105,7 +105,11 @@ def _parse_txyz_slices(
 
 
 def _extract_variable_data(
-    fv_solver: FiniteVolumeSolver, nearest_t: float, variable: str, cell_averaged: bool
+    fv_solver: FiniteVolumeSolver,
+    nearest_t: float,
+    variable: str,
+    cell_averaged: bool,
+    theta: bool,
 ) -> np.ndarray:
     """
     Extract the data for a given variable at the nearest time.
@@ -116,6 +120,7 @@ def _extract_variable_data(
         variable: Name of the variable to extract from the snapshots.
         cell_averaged: Whether to extract the cell-averaged data. If False, the
             variable is extracted using its cell-centered values.
+        theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
     Returns:
         Array of data for the variable at the nearest time.
 
@@ -127,12 +132,16 @@ def _extract_variable_data(
     # choose the snapshot with the nearest time
     snapshot = fv_solver.snapshots(nearest_t)
 
-    # plot troubles
-    if variable == "troubles":
-        return snapshot["troubles"][0]
+    # plot troubles/cascade
+    if variable in ("troubles", "cascade"):
+        return snapshot[variable][0]
 
     # determine the key for the variable
-    if variable in idx.group_var_map["conservatives"]:
+    if theta:
+        if "theta" not in snapshot:
+            raise ValueError("Theta not found in snapshots.")
+        key = "theta"
+    elif variable in idx.group_var_map["conservatives"]:
         key = "u"
     elif variable in idx.group_var_map["primitives"]:
         key = "w"
@@ -142,7 +151,8 @@ def _extract_variable_data(
         raise ValueError(
             f"Variable {variable} not found in groups 'primitives' 'conservatives', or 'passives'."
         )
-    if not cell_averaged:
+
+    if not theta and not cell_averaged:
         key += "cc"
 
     # extract the data
@@ -169,6 +179,7 @@ def plot_1d_slice(
     ax: Axes,
     variable: str,
     cell_averaged: bool = False,
+    theta: bool = False,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -185,6 +196,7 @@ def plot_1d_slice(
         variable: Name of the variable to plot.
         cell_averaged: Whether to plot the cell average of the variable. If False, the
             variable is plotted using its cell-centered values.
+        theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -219,9 +231,9 @@ def plot_1d_slice(
 
     # gather data
     x_arr = getattr(fv_solver.mesh, dim.upper())[slices[0], slices[1], slices[2]]
-    f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
-        slices[0], slices[1], slices[2]
-    ]
+    f_arr = _extract_variable_data(
+        fv_solver, nearest_t, variable, cell_averaged, theta
+    )[slices[0], slices[1], slices[2]]
 
     # plot
     ax.plot(x_arr, f_arr, **kwargs)
@@ -234,6 +246,7 @@ def plot_2d_slice(
     ax: Axes,
     variable: str,
     cell_averaged: bool = False,
+    theta: bool = False,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -250,6 +263,7 @@ def plot_2d_slice(
         variable: Name of the variable to plot.
         cell_averaged: Whether to plot the cell average of the variable. If False, the
             variable is plotted using its cell-centered values.
+        theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -291,9 +305,9 @@ def plot_2d_slice(
     else:
         x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
         y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
-    f_arr = _extract_variable_data(fv_solver, nearest_t, variable, cell_averaged)[
-        slices[0], slices[1], slices[2]
-    ]
+    f_arr = _extract_variable_data(
+        fv_solver, nearest_t, variable, cell_averaged, theta
+    )[slices[0], slices[1], slices[2]]
 
     # rotate for imshow
     f_arr = np.rot90(f_arr, 1)

@@ -138,7 +138,7 @@ class MOODState:
         self.troubled_cell_count += n
 
 
-def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
+def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int, int]:
     """
     Detect troubled cells in the finite volume solver.
 
@@ -147,10 +147,13 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
         t: Current time value.
 
     Returns:
-        int: The number of troubled cells.
+        A tuple containing:
+        - The number of revisable troubled cells detected.
+        - The total number of troubled cells detected, including non-revisable ones.
     """
     # gather solver parameters
     xp = fv_solver.xp
+    scheme = fv_solver.base_scheme
     arrays = fv_solver.arrays
     active_dims = fv_solver.active_dims
     lim_slc = fv_solver.variable_index_map("limiting", keepdims=True)
@@ -173,11 +176,16 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
     PAD_atol = MOOD_config.PAD_atol
     SED = MOOD_config.SED
 
+    # determine limiting style
+    primitive_NAD = scheme.flux_recipe in (2, 3)
+    max_idx = len(cascade) - 1
+
     # allocate arrays
     u_old = arrays["_u_"]
     u_old_interior = arrays["_u_"][interior]
+    w_old = arrays["_w_"]
     u_new = arrays["buffer"][..., 0]
-    buffer = arrays["buffer"][lim_slc]
+    buffer = arrays["buffer"]
     NAD_violations = buffer[..., 1]
     PAD_violations = buffer[..., 2][interior]
     alpha = buffer[..., 3:4]
@@ -193,16 +201,18 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
     u_new_interior = u_old_interior + dt * fv_solver.compute_RHS()
     u_new[interior] = u_new_interior
     fv_solver.inplace_apply_bc(t, u_new, scheme=fv_solver.base_scheme)
+    w_new = fv_solver.primitives_from_conservatives(u_new)
+    w_new_interior = w_new[interior]
 
     # compute NAD violations
     if NAD:
         inplace_NAD_violations(
             xp,
-            u_new[lim_slc],
-            u_old[lim_slc],
+            (w_new if primitive_NAD else u_new)[lim_slc],
+            (w_old if primitive_NAD else u_old)[lim_slc],
             active_dims,
             out=NAD_violations,
-            buffer=buffer,
+            buffer=buffer[lim_slc],
             rtol=NAD_rtol,
             atol=NAD_atol,
             global_dmp=global_dmp,
@@ -213,25 +223,24 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
     if SED:
         inplace_smooth_extrema_detector(
             xp,
-            u_new[lim_slc],
+            (w_new if primitive_NAD else u_new)[lim_slc],
             active_dims,
             out=alpha,
             buffer=buffer,
         )
-        troubles[...] = xp.any(
+        troubles[0] = xp.any(
             xp.logical_and(NAD_violations[interior] < 0, alpha[..., 0][interior] < 1),
             axis=0,
-            keepdims=True,
         )
     else:
-        troubles[...] = xp.any(NAD_violations[interior] < 0, axis=0, keepdims=True)
+        troubles[0] = xp.any(NAD_violations[interior] < 0, axis=0)
 
     # compute PAD violations
     if PAD:
         inplace_PAD_violations(
             xp,
-            u_new_interior[lim_slc],
-            cast(ArrayLike, PAD_bounds)[lim_slc],
+            w_new_interior,
+            cast(ArrayLike, PAD_bounds),
             physical_tols=PAD_atol,
             out=PAD_violations,
         )
@@ -250,11 +259,14 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
     # check for troubles
     n_troubled_cells = xp.sum(troubles).item()
 
-    # early escape for no troubles
-    if n_troubled_cells == 0:
-        return 0
+    revisable_troubled_cells = troubles & (_cascade_idx_array_[interior] < max_idx)
+    n_revisable_troubled_cells = xp.sum(revisable_troubled_cells).item()
 
-    # troubles were detected. reset some arrays
+    # early escape for no troubles
+    if n_revisable_troubled_cells == 0:
+        return 0, n_troubled_cells
+
+    # revisable troubles were detected. reset some arrays
     if iter_idx == 0:
         # store high-order fluxes
         scheme_key = cascade[0].key()
@@ -269,7 +281,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> int:
         # reset cascade index array
         _cascade_idx_array_[...] = 0
 
-    return n_troubled_cells
+    return n_troubled_cells, n_troubled_cells
+    return n_revisable_troubled_cells, n_troubled_cells
 
 
 def inplace_NAD_violations(

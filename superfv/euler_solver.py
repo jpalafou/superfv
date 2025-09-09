@@ -302,13 +302,13 @@ class EulerSolver(FiniteVolumeSolver):
 
         Returns:
             Tuple of minimum density and minimum pressure from the primitive workspace
-                array `self.arrays["_wcc_"]`.
+                array `self.arrays["_w_"]`.
         """
         idx = self.variable_index_map
         interior = self.interior
 
-        min_rho = self.arrays["_wcc_"][interior][idx("rho")].min().item()
-        min_P = self.arrays["_wcc_"][interior][idx("P")].min().item()
+        min_rho = self.arrays["_w_"][interior][idx("rho")].min().item()
+        min_P = self.arrays["_w_"][interior][idx("P")].min().item()
 
         return min_rho, min_P
 
@@ -342,6 +342,12 @@ class EulerSolver(FiniteVolumeSolver):
             sum_of_s_over_h[...] = sum_of_s_over_h + v / h
 
         out = self.CFL / xp.max(sum_of_s_over_h).item()
+
+        if out <= 0.0:
+            raise ValueError("Computed non-positive time-step size.")
+        if xp.isnan(out):
+            raise ValueError("Computed NaN time-step size.")
+
         return out
 
     def flux_jvp(

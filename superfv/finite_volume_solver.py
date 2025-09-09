@@ -858,9 +858,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("theta", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("theta_log", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta_log", np.empty((nvars, nx, ny, nz)))
         arrays.add("troubles", np.zeros((1, nx, ny, nz), dtype=bool))
-        arrays.add("troubles_log", np.zeros((1, nx, ny, nz), dtype=int))
+        arrays.add("troubles_log", np.zeros((1, nx, ny, nz), dtype=float))
+        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz), dtype=float))
         arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
         arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
@@ -928,8 +929,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MOOD_buffer_size = SED_buffer_cost + 4
         MUSCL_buffer_size = SED_buffer_cost + 10
 
-        if self.MOOD or isinstance(scheme, musclInterpolationScheme):
+        if isinstance(scheme.limiter_config, ZhangShuConfig):
+            buffer_size = max(buffer_size, SED_buffer_cost)
+        elif self.MOOD:
             buffer_size = max((buffer_size, MOOD_buffer_size, MUSCL_buffer_size))
+        elif isinstance(scheme, musclInterpolationScheme):
+            buffer_size = max(buffer_size, MUSCL_buffer_size)
 
         return buffer_size
 
@@ -1281,7 +1286,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         theta = self.arrays["theta"]
         buffer = self.arrays["buffer"]
 
-        # compute centroid then compute theta
+        # compute centroid and theta
         fv.interpolate_cell_centers(
             xp, average, self.active_dims, scheme.p, out=centroid, buffer=buffer
         )
@@ -1466,13 +1471,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.reset_MOOD_loop()
         for _ in range(state.config.max_iters):
-            n = MOOD.detect_troubled_cells(self, t)
-            if n > 0:
+            n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
+            if n_revisable > 0:
                 MOOD.inplace_revise_fluxes(self, t)
                 state.increment_MOOD_iteration()
             else:
                 break
-        state.update_troubled_cell_count(n)
+        state.update_troubled_cell_count(n_total)
 
     def compute_RHS(self) -> ArrayLike:
         """
@@ -1579,7 +1584,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_violations = self.arrays["buffer"][self.interior][..., 0]
         MOOD.inplace_PAD_violations(
             xp,
-            unew,
+            self.primitives_from_conservatives(unew),
             scheme.limiter_config.PAD_bounds,
             scheme.limiter_config.PAD_atol,
             out=PAD_violations,
@@ -1634,6 +1639,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.update_workspaces(self.t, self.arrays["u"], self.base_scheme)
 
+        if (
+            isinstance(self.base_scheme.limiter_config, ZhangShuConfig)
+            and self.n_substeps > 1
+        ):
+            theta = self.arrays["theta_log"]
+            theta[...] = theta / self.n_substeps
+        if self.MOOD and self.n_substeps > 1:
+            troubles = self.arrays["troubles_log"]
+            cascade_idx = self.arrays["cascade_idx_log"]
+
+            troubles[...] = troubles / self.n_substeps
+            cascade_idx[...] = cascade_idx / self.n_substeps
+
         # store the snapshot
         data = {
             "u": self.arrays.get_numpy_copy("u"),
@@ -1642,6 +1660,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "w": self.arrays.get_numpy_copy("_w_")[interior],
             "theta": self.arrays.get_numpy_copy("theta_log"),
             "troubles": self.arrays.get_numpy_copy("troubles_log"),
+            "cascade": self.arrays.get_numpy_copy("cascade_idx_log"),
         }
         self.snapshots.log(self.t, data)
 
@@ -1717,6 +1736,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         if self.MOOD:
             self.arrays["troubles_log"].fill(0)
+            self.arrays["cascade_idx_log"].fill(0)
 
     def increment_substepwise_logs(self):
         """
@@ -1729,14 +1749,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_updates += self.mesh.size
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            theta = self.arrays["theta"]
+            theta = self.arrays["theta"][self.interior][..., 0]
             theta_log = self.arrays["theta_log"]
             xp.add(theta_log, theta, out=theta_log)
 
         if self.MOOD:
             troubles = self.arrays["troubles"]
             troubles_log = self.arrays["troubles_log"]
+            cascade_idx = self.arrays["_cascade_idx_array_"][self.interior]
+            cascade_idx_log = self.arrays["cascade_idx_log"]
+
             xp.add(troubles_log, troubles, out=troubles_log)
+            xp.add(cascade_idx_log, cascade_idx, out=cascade_idx_log)
 
             self.MOOD_state.increment_substep_hists()
 

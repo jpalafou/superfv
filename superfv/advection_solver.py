@@ -246,10 +246,22 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     @MethodTimer(cat="AdvectionSolver.log_quantity")
     def log_quantity(self) -> Dict[str, float]:
+        """
+        Log the minimum and maximum density in the domain.
+
+        Returns:
+            Dictionary with the following keys:
+            - "min_rho": Minimum density in the domain.
+            - "max_rho": Maximum density in the domain.
+        """
         idx = self.variable_index_map
+
+        min_rho = self.arrays["u"][idx("rho")].min().item()
+        max_rho = self.arrays["u"][idx("rho")].max().item()
+
         return {
-            "min_rho": self.arrays["u"][idx("rho")].min().item(),
-            "max_rho": self.arrays["u"][idx("rho")].max().item(),
+            "min_rho": min_rho,
+            "max_rho": max_rho,
         }
 
     def compute_dt(self, t: float, u: ArrayLike) -> float:
