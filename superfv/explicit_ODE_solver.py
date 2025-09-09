@@ -1,7 +1,7 @@
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Optional, Union, cast
 
 import numpy as np
 
@@ -134,7 +134,7 @@ class ExplicitODESolver(ABC):
         pass
 
     @abstractmethod
-    def f(self, t: float, u: ArrayLike) -> Tuple[float, ArrayLike]:
+    def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
         Right-hand side of the ODE.
 

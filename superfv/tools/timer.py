@@ -101,7 +101,7 @@ class Timer:
             self.goldfish_lap_time[cat] = lap_time
             self.cum_time[cat] += lap_time
             self._running[cat] = False
-            self._start_time[cat] = None
+            self._start_time[cat] = np.nan
         else:
             raise RuntimeError(
                 f"Cannot stop '{cat}' timer since it is not in progress."
