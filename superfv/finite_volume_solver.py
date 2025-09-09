@@ -859,46 +859,27 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("theta", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("theta_log", np.empty((nvars, nx, ny, nz)))
-        arrays.add("troubles", np.zeros((1, nx, ny, nz), dtype=bool))
-        arrays.add("troubles_log", np.zeros((1, nx, ny, nz), dtype=float))
-        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz), dtype=float))
-        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
         arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
         arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
-        # MOOD arrays
-        if self.MOOD:
-            for scheme in self.MOOD_state.config.cascade:
-                arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
-                arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
-                arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
-            arrays.add(
-                "_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int)
-            )
-            arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
+        # Zhang-Shu limiter arrays
+        arrays.add("theta", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta_log", np.zeros((nvars, nx, ny, nz)))
 
-        # fill arrays with NaNs to sabotage unpermitted use
-        arrays["dudt"].fill(np.nan)
-        arrays["sum_of_s_over_h"].fill(np.nan)
-        arrays["F"].fill(np.nan)
-        arrays["G"].fill(np.nan)
-        arrays["H"].fill(np.nan)
-        arrays["_u_"].fill(np.nan)
-        arrays["_ucc_"].fill(np.nan)
-        arrays["_wcc_"].fill(np.nan)
-        arrays["_w_"].fill(np.nan)
-        arrays["buffer"].fill(np.nan)
-        arrays["x_nodes"].fill(np.nan)
-        arrays["y_nodes"].fill(np.nan)
-        arrays["z_nodes"].fill(np.nan)
-        arrays["centroid"].fill(np.nan)
-        arrays["theta"].fill(np.nan)
-        arrays["F_wrkspce"].fill(np.nan)
-        arrays["G_wrkspce"].fill(np.nan)
-        arrays["H_wrkspce"].fill(np.nan)
+        # MOOD arrays
+        arrays.add("troubles", np.zeros((1, nx, ny, nz), dtype=bool))
+        arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
+        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
+
+        for scheme in self.MOOD_state.config.cascade:
+            arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
+            arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
+            arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
+
+        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
+        arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
 
         # helper attribute
         self.flux_names = {"x": "F", "y": "G", "z": "H"}
@@ -1658,21 +1639,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         interior = self.interior
         interior0 = interior + (0,)
+        using_ZS = isinstance(self.base_scheme.limiter_config, ZhangShuConfig)
 
         self.update_workspaces(self.t, self.arrays["u"], self.base_scheme)
-
-        if (
-            isinstance(self.base_scheme.limiter_config, ZhangShuConfig)
-            and self.n_substeps > 1
-        ):
-            theta = self.arrays["theta_log"]
-            theta[...] = theta / self.n_substeps
-        if self.MOOD and self.n_substeps > 1:
-            troubles = self.arrays["troubles_log"]
-            cascade_idx = self.arrays["cascade_idx_log"]
-
-            troubles[...] = troubles / self.n_substeps
-            cascade_idx[...] = cascade_idx / self.n_substeps
 
         # store the snapshot
         data = {
@@ -1680,10 +1649,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "ucc": self.arrays.get_numpy_copy("_ucc_")[interior0],
             "wcc": self.arrays.get_numpy_copy("_wcc_")[interior0],
             "w": self.arrays.get_numpy_copy("_w_")[interior],
-            "theta": self.arrays.get_numpy_copy("theta_log"),
-            "troubles": self.arrays.get_numpy_copy("troubles_log"),
-            "cascade": self.arrays.get_numpy_copy("cascade_idx_log"),
         }
+
+        # configure limiting arrays
+        if using_ZS and self.n_substeps > 1:
+            theta = self.arrays["theta_log"]
+            theta[...] = theta / self.n_substeps
+
+            data["theta"] = self.arrays.get_numpy_copy("theta_log")
+
+        if self.MOOD and self.n_substeps > 1:
+            troubles = self.arrays["troubles_log"]
+            cascade_idx = self.arrays["cascade_idx_log"]
+
+            troubles[...] = troubles / self.n_substeps
+            cascade_idx[...] = cascade_idx / self.n_substeps
+
+            data["troubles"] = self.arrays.get_numpy_copy("troubles_log")
+            data["cascade"] = self.arrays.get_numpy_copy("cascade_idx_log")
+
         self.snapshots.log(self.t, data)
 
     def minisnapshot(self):

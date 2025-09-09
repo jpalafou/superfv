@@ -5,7 +5,7 @@ changes:
 - [x] SED for MUSCL-minmod
 - [x] Improve timer output and pause run_time during snapshots and minisnapshots
 - [x] interpolate center in Zhang Shu limiter?
+- [x] array allocation is a mess
 
 todo:
-- [ ] array allocation is a mess
 - [ ] `_integrate_for_fixed_number_of_steps` missing log every step option
