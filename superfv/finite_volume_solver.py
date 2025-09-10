@@ -1930,6 +1930,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             total_time_spec: Format specification for the total time column.
         """
         df = self.get_timings_df()
+        df["% time"] = (
+            df["Total time (s)"]
+            / df.loc[df["Routine"] == "wall", "Total time (s)"].values[0]
+        )
 
         # Nicer labels + hierarchy
         children = {"MOOD_loop": ["detect_troubled_cells", "revise_fluxes"]}
