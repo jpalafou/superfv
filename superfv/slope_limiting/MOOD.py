@@ -413,7 +413,7 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
 
     # assuming `troubles` has just been updated, update the cascade index array
     xp.minimum(_cascade_idx_array_ + _troubles_, max_idx, out=_cascade_idx_array_)
-    current_max_idx = xp.max(_cascade_idx_array_)
+    current_max_idx = xp.max(_cascade_idx_array_).item()
 
     # update the cascade scheme fluxes
     if not cascade_status[current_max_idx]:
