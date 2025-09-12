@@ -84,7 +84,7 @@ def _parse_txyz_slices(
             slices[dim] = 0
         elif coord is None:
             slices[dim] = slice(None)
-        elif isinstance(coord, float):
+        elif isinstance(coord, (int, float)):
             slices[dim] = _get_nearest_index(x_array, coord)
         elif isinstance(coord, tuple):
             if len(coord) != 2:

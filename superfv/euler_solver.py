@@ -49,7 +49,7 @@ class EulerSolver(FiniteVolumeSolver):
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full"] = "first-order",
         max_MOOD_iters: int = 1,
-        limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
+        limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "actives",
         NAD: bool = False,
         NAD_rtol: float = 1.0,
         NAD_atol: float = 0.0,
