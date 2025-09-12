@@ -94,11 +94,9 @@ def apply_bc(
         pad_i = pad_width[i]
         for j, pos in enumerate(("l", "r")):
             left = not bool(j)
-            if pad_i == 0:
+            if mode[i][j] == "none" or pad_i == 0:
                 continue
             match mode[i][j]:
-                case "none":
-                    continue
                 case "periodic":
                     apply_periodic_bc(_u_, pad_i, ip, left)
                 case "dirichlet":

@@ -751,9 +751,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ) -> ArrayLike:
             return self.callable_ic(idx, x, y, z, 0.0)
 
-        for bci, fi in zip((bcx, bcy, bcz), (x_dirichlet, y_dirichlet, z_dirichlet)):
+        for dim, bci, fi in zip(
+            xyz_tup, (bcx, bcy, bcz), (x_dirichlet, y_dirichlet, z_dirichlet)
+        ):
             mode_list_i: List[BCs] = []
             prim_drch_list_i: List[Optional[Field]] = []
+
+            if dim not in self.active_dims:
+                mode_list.append(("none", "none"))
+                primitive_dirichlet_list.append((None, None))
+                continue
+
             for j, (bc, f) in enumerate(zip(as_pair(bci), as_pair(fi))):
                 if bc == "ic":
                     mode_list_i.append("dirichlet")

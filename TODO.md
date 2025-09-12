@@ -8,9 +8,9 @@ changes:
 - [x] array allocation is a mess
 - [x] `_integrate_for_fixed_number_of_steps` missing log every step option
 - [x] do something about these divide-by-0 warnings (`warnings.filterwarnings("ignore", category=RuntimeWarning)`)
+- [x] automatically set inactive dim BCs to "none"
 
 todo:
 - [ ] MUSCL-Hancock fails to converge to second-order even when MUSCL_limiter=None. The is remedied by using `flux_recipe=1` and `.ssprk2()`, so the issue is probably with my predictor-corrector implementation.
 - [ ] write solutions to disk
-- [ ] automatically set inactive dim BCs to "none"
 - [ ] rm 'inplace' from function names
