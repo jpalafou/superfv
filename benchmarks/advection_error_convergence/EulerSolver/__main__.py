@@ -43,9 +43,9 @@ for N, p in product(N_LIST, P_LIST):
             z,
             t,
             xp=xp,
-            **{"v" + dim: len(DIMS) - i for i, dim in enumerate(DIMS)},
-            bounds=(1e-8, 1.0),
-            P=1e-8,
+            **{"v" + dim: 1.0 for dim in DIMS},
+            bounds=(1, 2),
+            P=1,
         )
 
     # run solver

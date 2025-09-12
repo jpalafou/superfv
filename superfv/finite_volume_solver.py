@@ -679,7 +679,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Unknown interpolation scheme.")
 
         slab_depth = node_cost + limiting_cost + max(flux_integral_cost, 1)
-        slab_depth = 2
 
         # init mesh object
         self.mesh = UniformFVMesh(

@@ -84,9 +84,9 @@ def sinus(
             r += y - vy * t
         if "z" in dims:
             r += z - vz * t
-        out[idx("rho")] = (
-            0.5 * (bounds[1] - bounds[0]) * xp.sin(2 * np.pi * r) + 0.5 + bounds[0]
-        )
+        out[idx("rho")] = (bounds[1] - bounds[0]) * (
+            0.5 * xp.sin(2 * np.pi * r) + 0.5
+        ) + bounds[0]
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz

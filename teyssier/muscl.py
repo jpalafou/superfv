@@ -101,6 +101,14 @@ def set_ic(x, ic_type="sod test"):
         d[...] = 1.0
         p[...] = 1e-5
         p[0] = 0.5 * (gamma - 1) * 1.0 / (1 / n)
+    elif ic_type == "sinus":
+        rho_max = 2.0
+        rho_min = 1.0
+        p0 = 1.0
+
+        d[...] = (rho_max - rho_min) * (0.5 * np.sin(2 * np.pi * x) + 0.5) + rho_min
+        v[...] = 1.0
+        p[...] = p0
     else:
         print("Unknown IC type=", ic_type)
     # convert to conservative variables
