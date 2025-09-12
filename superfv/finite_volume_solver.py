@@ -969,6 +969,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "MOOD_loop",
             "detect_troubled_cells",
             "revise_fluxes",
+            "cuda_sync",
         ]
 
         for cat in new_timer_cats:
@@ -1568,8 +1569,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         using CuPy, and to perform any additional cleanup or logging.
         """
         if self.cupy:
-            self.xp.cuda.Device().synchronize()
+            self.cuda_sync()
         super().called_at_end_of_step()
+
+    @MethodTimer(cat="cuda_sync")
+    def cuda_sync(self):
+        """
+        Synchronize the GPU.
+        """
+        self.xp.cuda.Device().synchronize()
 
     def snapshot(self):
         """
