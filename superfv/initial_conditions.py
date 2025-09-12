@@ -373,12 +373,12 @@ def sedov(
     if "z" in dims:
         inside_blast_cell &= xp.abs(z) < h
 
-    E_blast_cell = 1 / (2 ** len(dims) * h ** len(dims))
+    P_blast_cell = (gamma - 1) * 1 / ((2 * h) ** len(dims))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
         out[idx("rho")] = rho0
-        out[idx("P")] = xp.where(inside_blast_cell, (gamma - 1) * E_blast_cell, P0)
+        out[idx("P")] = xp.where(inside_blast_cell, P_blast_cell, P0)
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "

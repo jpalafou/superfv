@@ -76,14 +76,14 @@ def llf(
     ul = prim_to_cons(xp, idx, wl, active_dims, gamma)
     ur = prim_to_cons(xp, idx, wr, active_dims, gamma)
 
-    cl = sound_speed(xp, idx, wl, gamma) + xp.abs(wl[idx("v" + dim)])
-    cr = sound_speed(xp, idx, wr, gamma) + xp.abs(wr[idx("v" + dim)])
-    cmax = xp.maximum(cl, cr)
+    sl = sound_speed(xp, idx, wl, gamma) + xp.abs(wl[idx("v" + dim)])
+    sr = sound_speed(xp, idx, wr, gamma) + xp.abs(wr[idx("v" + dim)])
+    smax = xp.maximum(sl, sr)
 
     Fl = fluxes(xp, idx, wl, dim, active_dims, gamma)
     Fr = fluxes(xp, idx, wr, dim, active_dims, gamma)
 
-    F = 0.5 * (Fl + Fr - cmax * (ur - ul))
+    F = 0.5 * (Fl + Fr - smax * (ur - ul))
 
     return F
 
@@ -255,8 +255,6 @@ def hllct(
     # waves speed
     sl = xp.minimum(vl, vr) - xp.maximum(cl, cr)
     sr = xp.maximum(vl, vr) + xp.maximum(cl, cr)
-    dcl = dl * (vl - sl)
-    dcr = dr * (sr - vr)
     dcl = dl * (vl - sl)
     dcr = dr * (sr - vr)
     # star state velocity and pressure

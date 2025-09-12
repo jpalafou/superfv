@@ -657,7 +657,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # determine slab depth
         if isinstance(bs, musclInterpolationScheme):
-            node_cost = 1
+            node_cost = 0  # included in limiter
             limiting_cost = 3 if bs.limiter_config.SED else 1
             flux_integral_cost = 0
         elif isinstance(bs, polyInterpolationScheme):
@@ -679,6 +679,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Unknown interpolation scheme.")
 
         slab_depth = node_cost + limiting_cost + max(flux_integral_cost, 1)
+        slab_depth = 2
 
         # init mesh object
         self.mesh = UniformFVMesh(
