@@ -11,3 +11,5 @@ changes:
 todo:
 - [ ] MUSCL-Hancock fails to converge to second-order even when MUSCL_limiter=None. The is remedied by using `flux_recipe=1` and `.ssprk2()`, so the issue is probably with my predictor-corrector implementation.
 - [ ] write solutions to disk
+- [ ] automatically set inactive dim BCs to "none"
+- [ ] apply bcs only once to conservative cell averages

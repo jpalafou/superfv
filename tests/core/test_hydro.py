@@ -1,12 +1,10 @@
 import numpy as np
 import pytest
 
-from superfv.hydro import cons_to_prim, prim_to_cons
+import teyssier
+from superfv.hydro import cons_to_prim, fluxes, prim_to_cons
+from superfv.tools.norms import l1_norm, linf_norm
 from superfv.tools.slicing import VariableIndexMap
-
-
-def l1_norm(a, b):
-    return np.mean(np.abs((a - b)))
 
 
 @pytest.fixture
@@ -56,7 +54,7 @@ def test_primitive_to_conservative_invertability(trial, gamma, euler_slicer):
     W2 = cons_to_prim(np, idx, U, active_dims="xyz", gamma=gamma)
 
     # check that the primitive values are the same
-    assert l1_norm(W, W2) < 1e-15
+    assert l1_norm(W - W2) < 1e-15
 
 
 @pytest.mark.parametrize("trial", range(10))
@@ -79,4 +77,68 @@ def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
     U2 = prim_to_cons(np, idx, W, active_dims="xyz", gamma=gamma)
 
     # check that the primitive values are the same
-    assert l1_norm(U, U2) < 1e-15
+    assert l1_norm(U - U2) < 1e-15
+
+
+def test_teyssier_prim_to_cons(euler_slicer):
+    idx = euler_slicer
+    idx.add_var_to_group("test", ("rho", "vx", "P"))
+
+    N = 64
+
+    w = np.empty((5, N, N, N))
+    w[idx("rho")] = 1e-6 * np.random.rand(N, N, N)
+    w[idx("vx")] = 2.0 * np.random.rand(N, N, N) - 1.0
+    w[idx("P")] = 1e-6 * np.random.rand(N, N, N)
+
+    u1 = prim_to_cons(np, idx, w, active_dims=("x",), gamma=1.4)
+    u2 = teyssier.prim_to_cons(w[idx("test")])
+
+    assert linf_norm(u1[idx("rho")] - u2[0]) == 0
+    assert linf_norm(u1[idx("mx")] - u2[1]) == 0
+    assert linf_norm(u1[idx("E")] - u2[2]) == 0
+
+
+def test_teyssier_cons_to_prim(euler_slicer):
+    idx = euler_slicer
+    idx.add_var_to_group("test", ("rho", "mx", "E"))
+
+    N = 64
+
+    u = np.empty((5, N, N, N))
+    u[idx("rho")] = 1e-6 * np.random.rand(N, N, N) + 1.0
+    u[idx("mx")] = 2.0 * np.random.rand(N, N, N) - 1.0
+    u[idx("E")] = 1e-6 * np.random.rand(N, N, N) + 1.0
+
+    w1 = cons_to_prim(np, idx, u, active_dims=("x",), gamma=1.4)
+    w2 = teyssier.cons_to_prim(u[idx("test")])
+
+    assert linf_norm(w1[idx("rho")] - w2[0]) == 0
+    assert linf_norm(w1[idx("vx")] - w2[1]) == 0
+    assert linf_norm(w1[idx("P")] - w2[2]) == 0
+
+
+def test_teyssier_compute_fluxes(euler_slicer):
+    idx = euler_slicer
+    idx.add_var_to_group("test", ("rho", "vx", "P"))
+
+    N = 64
+
+    w = np.empty((5, N, N, N))
+    w[idx("rho")] = 1e-6 * np.random.rand(N, N, N) + 1.0
+    w[idx("vx")] = 2.0 * np.random.rand(N, N, N) - 1.0
+    w[idx("P")] = 1e-6 * np.random.rand(N, N, N) + 1.0
+
+    f1 = teyssier.prim_to_flux(w[idx("test")])
+    f2 = fluxes(
+        np,
+        idx,
+        w,
+        "x",
+        active_dims=("x",),
+        gamma=1.4,
+    )
+
+    assert linf_norm(f1[0] - f2[idx("rho")]) < 1e-15
+    assert linf_norm(f1[1] - f2[idx("mx")]) < 1e-15
+    assert linf_norm(f1[2] - f2[idx("E")]) < 1e-15
