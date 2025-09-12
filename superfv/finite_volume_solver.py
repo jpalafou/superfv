@@ -42,6 +42,9 @@ from .tools.slicing import VariableIndexMap, crop, merge_slices
 from .tools.timer import MethodTimer
 from .visualization import plot_1d_slice, plot_2d_slice
 
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+
 Directions = Literal["x", "y", "z"]
 Faces = Literal["xl", "xr", "yl", "yr", "zl", "zr"]
 
