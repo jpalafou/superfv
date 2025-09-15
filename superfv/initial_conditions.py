@@ -93,7 +93,7 @@ def sinus(
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
-            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+            "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
     if "P" in idx.var_names:
         out[idx("P")] = P
@@ -158,7 +158,7 @@ def square(
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
-            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+            "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
     if "P" in idx.var_names:
         out[idx("P")] = P
@@ -216,7 +216,7 @@ def slotted_disk(
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
-            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+            "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
     if "P" in idx.var_names:
         out[idx("P")] = P
@@ -276,7 +276,7 @@ def sod_shock_tube_1d(
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
-            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
 
@@ -312,7 +312,7 @@ def velocity_ramp(
     out = xp.empty((len(idx.idxs), *x.shape))
 
     if len(dims) != 1:
-        raise ValueError("Sod shock tube initial condition only works in 1D.")
+        raise ValueError("Velocity ramp initial condition only works in 1D.")
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
@@ -326,7 +326,7 @@ def velocity_ramp(
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
-            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
 
@@ -382,6 +382,170 @@ def sedov(
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
-            "Supported variables: {'u', 'vx', 'vy', 'vz'}."
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
+        )
+    return out
+
+
+def toro1(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the Toro 1 shock tube initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+    """
+    dims = parse_xyz(x, y, z)
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    if len(dims) != 1:
+        raise ValueError("Toro initial condition only works in 1D.")
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+        r = {"x": x, "y": y, "z": z}[dims]
+
+        out[idx("rho")] = xp.where(r < 0.3, 1.0, 0.125)
+        out[idx("v" + dims)] = xp.where(r < 0.3, 0.75, 0.0)
+        out[idx("P")] = xp.where(r < 0.3, 1.0, 0.1)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
+        )
+    return out
+
+
+def toro2(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the Toro 2 shock tube initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+    """
+    dims = parse_xyz(x, y, z)
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    if len(dims) != 1:
+        raise ValueError("Toro initial condition only works in 1D.")
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+        r = {"x": x, "y": y, "z": z}[dims]
+
+        out[idx("rho")] = 1
+        out[idx("v" + dims)] = xp.where(r < 0.5, -2, 2)
+        out[idx("P")] = 0.4
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
+        )
+    return out
+
+
+def toro3(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the Toro 3 shock tube initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+    """
+    dims = parse_xyz(x, y, z)
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    if len(dims) != 1:
+        raise ValueError("Toro initial condition only works in 1D.")
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+        r = {"x": x, "y": y, "z": z}[dims]
+
+        out[idx("rho")] = 1
+        out[idx("P")] = xp.where(r < 0.5, 1000, 0.01)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
+        )
+    return out
+
+
+def shu_osher(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the Shu-Osher problem initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+    """
+    dims = parse_xyz(x, y, z)
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    if len(dims) != 1:
+        raise ValueError("Shu-Osher initial condition only works in 1D.")
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+        r = {"x": x, "y": y, "z": z}[dims]
+
+        density_wave = 1 + 0.2 * xp.sin(2 * np.pi * 8 * r)
+        out[idx("rho")] = xp.where(r < 0.125, 3.857143, density_wave)
+        out[idx("v" + dims)] = xp.where(r < 0.125, 2.629369, 0)
+        out[idx("P")] = xp.where(r < 0.125, 10.33333, 1)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out

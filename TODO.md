@@ -10,6 +10,7 @@ changes:
 - [x] do something about these divide-by-0 warnings (`warnings.filterwarnings("ignore", category=RuntimeWarning)`)
 - [x] automatically set inactive dim BCs to "none"
 - [x] write solutions to disk
+- [x] ZS4 comparison with Teyssier for the 1D experiments
 
 todo:
 - [ ] rm 'inplace' from function names
@@ -17,6 +18,3 @@ todo:
 - [ ] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
 - [ ] rm wtflux backend for now
 - [ ] fix: hydro operators on nonsense ghost values
-
-experiments:
-- [ ] ZS4 comparison with Teyssier for the 1D experiments
