@@ -9,10 +9,14 @@ changes:
 - [x] `_integrate_for_fixed_number_of_steps` missing log every step option
 - [x] do something about these divide-by-0 warnings (`warnings.filterwarnings("ignore", category=RuntimeWarning)`)
 - [x] automatically set inactive dim BCs to "none"
+- [x] write solutions to disk
 
 todo:
-- [ ] write solutions to disk
 - [ ] rm 'inplace' from function names
 - [ ] in `FiniteVolumeSolver.run`, switch `q_max` to `mode: Optional[int] = None` and allow -1 for MUSCL-Hancock
 - [ ] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
 - [ ] rm wtflux backend for now
+- [ ] fix: hydro operators on nonsense ghost values
+
+experiments:
+- [ ] ZS4 comparison with Teyssier for the 1D experiments

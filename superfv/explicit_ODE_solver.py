@@ -449,7 +449,10 @@ class ExplicitODESolver(ABC):
                 if self.n_steps % log_freq == 0 or self.t >= T_max:
                     status_print(self.build_update_message())
 
-        # closing actions
+        # wrap up snapshots
+        self.postprocess_snapshots()
+
+        # print closing message
         if verbose:
             status_print(self.build_closing_message(), closing=True)
 

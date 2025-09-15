@@ -9,6 +9,8 @@ from matplotlib.axes import Axes
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
+from .tools.loader import OutputLoader
+
 warnings.simplefilter("always")
 
 
@@ -37,7 +39,7 @@ def _get_nearest_index(
 
 
 def _parse_txyz_slices(
-    fv_solver: FiniteVolumeSolver,
+    fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     t: Optional[float],
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]],
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]],
@@ -47,7 +49,7 @@ def _parse_txyz_slices(
     Parse the time and spatial slices for a given time and coordinates.
 
     Args:
-        fv_solver: FiniteVolumeSolver object.
+        fv_solver: FiniteVolumeSolver or OutputLoader object.
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Each can be:
@@ -67,7 +69,11 @@ def _parse_txyz_slices(
         ValueError: x, y, or z is not None, a float, or a tuple of length 2.
     """
     # get nearest time
-    t_array = np.sort(np.array(fv_solver.snapshots.times()))
+    if isinstance(fv_solver, OutputLoader):
+        t_list = list(fv_solver.file_index.values())
+    else:
+        t_list = fv_solver.snapshots.times()
+    t_array = np.sort(np.array(t_list))
     n = -1 if t is None else _get_nearest_index(t_array, t)
     nearest_t = t_array[n]
 
@@ -105,7 +111,7 @@ def _parse_txyz_slices(
 
 
 def _extract_variable_data(
-    fv_solver: FiniteVolumeSolver,
+    fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     nearest_t: float,
     variable: str,
     cell_averaged: bool,
@@ -115,7 +121,7 @@ def _extract_variable_data(
     Extract the data for a given variable at the nearest time.
 
     Args:
-        fv_solver: FiniteVolumeSolver object.
+        fv_solver: FiniteVolumeSolver or OutputLoader object.
         nearest_t: Nearest time.
         variable: Name of the variable to extract from the snapshots.
         cell_averaged: Whether to extract the cell-averaged data. If False, the
@@ -130,6 +136,8 @@ def _extract_variable_data(
     idx = fv_solver.variable_index_map
 
     # choose the snapshot with the nearest time
+    if isinstance(fv_solver, OutputLoader):
+        fv_solver.load_snapshot(nearest_t)
     snapshot = fv_solver.snapshots(nearest_t)
 
     # plot troubles/cascade
@@ -175,7 +183,7 @@ def _is_None_or_tuple(
 
 
 def plot_1d_slice(
-    fv_solver: FiniteVolumeSolver,
+    fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     ax: Axes,
     variable: str,
     cell_averaged: bool = False,
@@ -191,7 +199,7 @@ def plot_1d_slice(
     Plot a 1D slice of a variable at a given time and coordinates.
 
     Args:
-        fv_solver: FiniteVolumeSolver object.
+        fv_solver: FiniteVolumeSolver or OutputLoader object.
         ax: Matplotlib axes object.
         variable: Name of the variable to plot.
         cell_averaged: Whether to plot the cell average of the variable. If False, the
@@ -242,7 +250,7 @@ def plot_1d_slice(
 
 
 def plot_2d_slice(
-    fv_solver: FiniteVolumeSolver,
+    fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     ax: Axes,
     variable: str,
     cell_averaged: bool = False,
@@ -258,7 +266,7 @@ def plot_2d_slice(
     Plot a 2D slice of a variable at a given time and coordinates.
 
     Args:
-        fv_solver: FiniteVolumeSolver object.
+        fv_solver: FiniteVolumeSolver or OutputLoader object.
         ax: Matplotlib axes object.
         variable: Name of the variable to plot.
         cell_averaged: Whether to plot the cell average of the variable. If False, the
@@ -369,12 +377,17 @@ def plot_power_law_fit(ax: Axes, x: np.ndarray, f: np.ndarray, **kwargs):
     ax.plot(x, p_law(x), **kwargs)
 
 
-def plot_timeseries(fv_solver: FiniteVolumeSolver, ax: Axes, variable: str, **kwargs):
+def plot_timeseries(
+    fv_solver: Union[FiniteVolumeSolver, OutputLoader],
+    ax: Axes,
+    variable: str,
+    **kwargs,
+):
     """
     Plot a timeseries logged in `fv_solver.minisnapshots`.
 
     Args:
-        fv_solver: FiniteVolumeSolver object.
+        fv_solver: FiniteVolumeSolver or OutputLoader object.
         ax: Matplotlib axes object.
         variable: Name of the variable to plot.
         **kwargs: Keyword arguments for the plot.

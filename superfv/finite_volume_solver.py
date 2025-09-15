@@ -1,4 +1,5 @@
 import json
+import pickle
 import warnings
 from abc import ABC, abstractmethod
 from types import ModuleType
@@ -1932,6 +1933,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         super().write_metadata()
         self.write_config()
+        self.write_mesh()
 
     def write_config(self):
         """
@@ -1942,6 +1944,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         with open(self.path / "config.json", "w") as f:
             json.dump(self.to_dict(), f, indent=4)
+
+    def write_mesh(self):
+        """
+        Write the mesh to 'mesh.pkl'.
+        """
+        if self.path is None:
+            return
+
+        with open(self.path / "snapshots" / "mesh.pkl", "wb") as f:
+            pickle.dump(self.mesh, f)
 
     def to_dict(self) -> dict:
         """
