@@ -1,4 +1,6 @@
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List
 
 
@@ -10,11 +12,16 @@ class Snapshots:
 
     def __init__(self):
         self.data: Dict[float, Any] = {}
+        self.file_index: Dict[int, float] = {}
         self._update_metadata()
 
     def _update_metadata(self):
         self.time_values = sorted(list(self.data.keys()))
         self.size = len(self.time_values)
+
+    def _check_t_exists(self, t: float):
+        if t not in self.data:
+            raise KeyError(f"No snapshot data available for time {t}.")
 
     def log(self, t: float, data: Any):
         """
@@ -43,10 +50,30 @@ class Snapshots:
         Raises:
             KeyError: If no snapshot data is available for time `t`.
         """
-        if t not in self.data:
-            raise KeyError(f"No snapshot data available for time {t}.")
+        self._check_t_exists(t)
         del self.data[t]
         self._update_metadata()
+
+    def write(self, path: Path, t: float):
+        """
+        Write snapshot data at time `t` to the specified path.
+
+        Args:
+            path: Path to which the snapshot data is written.
+            t: Time at which to write the snapshot data.
+        """
+        self._check_t_exists(t)
+        filepath = self._get_next_available_snapshot_dir(path)
+        with open(filepath, "wb") as f:
+            pickle.dump(self.data[t], f)
+        self.file_index[int(str(filepath)[-8:-4])] = t
+
+    def _get_next_available_snapshot_dir(self, path: Path) -> Path:
+        for i in range(10000):
+            candidate = path / f"snapshot_{i:04d}.pkl"
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError("Ran out of snapshot directories.")
 
     def clear(self):
         """
@@ -68,8 +95,7 @@ class Snapshots:
         Raises:
             KeyError: If no snapshot data is available for time `t`.
         """
-        if t not in self.data:
-            raise KeyError(f"No snapshot data available for time {t}.")
+        self._check_t_exists(t)
         return self.data[t]
 
     def __getitem__(self, n: int) -> Any:

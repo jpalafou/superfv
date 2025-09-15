@@ -472,3 +472,11 @@ class EulerSolver(FiniteVolumeSolver):
         message += f" | min(rho)={min_rho:.2e}, min(P)={min_P:.2e}"
 
         return message
+
+    def to_dict(self) -> dict:
+        """
+        Return a dict of solver parameters independent of results.
+        """
+        out = super().to_dict()
+        out["gamma"] = self.gamma
+        return out

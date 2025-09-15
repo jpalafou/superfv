@@ -1,3 +1,4 @@
+import json
 import warnings
 from abc import ABC, abstractmethod
 from types import ModuleType
@@ -61,6 +62,8 @@ class FieldFunction(Protocol):
         xp: ModuleType,
     ) -> ArrayLike: ...
 
+    def __name__(self) -> str: ...
+
 
 class PassiveFieldFunction(Protocol):
     def __call__(
@@ -72,6 +75,8 @@ class PassiveFieldFunction(Protocol):
         *,
         xp: ModuleType,
     ) -> ArrayLike: ...
+
+    def __name__(self) -> str: ...
 
 
 class FiniteVolumeSolver(ExplicitODESolver, ABC):
@@ -263,7 +268,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
         self._init_array_allocation()
         self._init_timer()
-        self._init_snapshots(log_every_step)
         self._init_riemann_solver(riemann_solver)
 
     def _init_active_dims(self, nx: int, ny: int, nz: int):
@@ -979,14 +983,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ["wall", "take_step"] + new_timer_cats + ["snapshot", "minisnapshot"]
         )
 
-    def _init_snapshots(self, log_every_step: bool):
-        self.log_every_step = log_every_step
-
-        # allocate keys from collect_minisnapshot_data
-        keys = self.collect_minisnapshot_data().keys()
-        for key in keys:
-            self.minisnapshots[key] = []
-
     @abstractmethod
     def define_vars(self) -> VariableIndexMap:
         """
@@ -1579,10 +1575,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         self.xp.cuda.Device().synchronize()
 
-    def snapshot(self):
+    def prepare_snapshot_data(self) -> Dict[str, np.ndarray]:
         """
-        Simple snapshot method that writes the solution to `self.snapshots` keyed by
-        the current time value.
+        Returns the arrays to be saved in the snapshot at time `self.t`.
         """
         interior = self.interior
         interior0 = interior + (0,)
@@ -1590,7 +1585,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.update_workspaces(self.t, self.arrays["u"], self.base_scheme)
 
-        # store the snapshot
+        # write the snapshot dict
         data = {
             "u": self.arrays.get_numpy_copy("u"),
             "ucc": self.arrays.get_numpy_copy("_ucc_")[interior0],
@@ -1598,7 +1593,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "w": self.arrays.get_numpy_copy("_w_")[interior],
         }
 
-        # configure limiting arrays
+        # include limiting arrays in snapshot dict
         if using_ZS and self.n_substeps > 1:
             theta = self.arrays["theta_log"]
             theta[...] = theta / self.n_substeps
@@ -1615,33 +1610,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             data["troubles"] = self.arrays.get_numpy_copy("troubles_log")
             data["cascade"] = self.arrays.get_numpy_copy("cascade_idx_log")
 
-        self.snapshots.log(self.t, data)
+        return data
 
-    def minisnapshot(self):
+    def prepare_minisnapshot_data(self) -> Dict[str, Any]:
         """
-        Overwrite the `minisnapshot` method to collect additional data.
+        Returns the data to be saved in a minisnapshot, including cell update rate and
+        MOOD data.
         """
-        super().minisnapshot()
+        data = super().prepare_minisnapshot_data()
 
-        data = self.collect_minisnapshot_data()
-        for key, value in data.items():
-            self.minisnapshots[key].append(value)
-
-    def collect_minisnapshot_data(self) -> Dict[str, Any]:
-        """
-        Collect additional data for a minisnapshot.
-
-        Returns:
-            Dictionary mapping minisnapshot keys to their values.
-        """
         n_updates = self.n_updates
-        run_time = (
-            self.minisnapshots["step_time"][-1]
-            if len(self.minisnapshots["step_time"]) > 0
-            and self.minisnapshots["step_time"][-1] > 0
-            else np.nan
+        data.update(
+            {"n_updates": n_updates, "update_rate": n_updates / data["step_time"]}
         )
-        data = {"n_updates": n_updates, "update_rate": n_updates / run_time}
 
         if self.MOOD:
             state = self.MOOD_state
@@ -1657,13 +1638,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     f"{state.troubled_cell_count_hist} != {state.troubled_cell_count}"
                 )
 
-            data["n_MOOD_iters"] = state.iter_count
-            data["nfine_MOOD_iters"] = state.iter_count_hist
-            data["n_troubled_cells"] = state.troubled_cell_count
-            data["nfine_troubled_cells"] = state.troubled_cell_count_hist
+            data.update(
+                {
+                    "n_MOOD_iters": state.iter_count,
+                    "nfine_MOOD_iters": state.iter_count_hist,
+                    "n_troubled_cells": state.troubled_cell_count,
+                    "nfine_troubled_cells": state.troubled_cell_count_hist,
+                }
+            )
 
-        if self.log_every_step:
-            data.update(self.log_quantity())
+        data.update(self.log_quantity())
 
         return data
 
@@ -1877,6 +1861,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             total_time_spec: Format specification for the total time column.
         """
+        print(self.get_timings_message(total_time_spec=total_time_spec))
+
+    def get_timings_message(self, total_time_spec: str) -> str:
+        """
+        Return a string of the timing statistics for the solver.
+
+        Args:
+            total_time_spec: Format specification for the total time column.
+        """
         df = self.get_timings_df()
         df["% time"] = (
             df["Total time (s)"]
@@ -1906,13 +1899,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         w3 = max(len("Total time (s)"), int(totals.str.len().max()))
         w4 = max(len("% time"), int(pd.Series(pct).str.len().max()))
 
-        # Print table
-        print(
-            f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}"
-        )
-        print(f"{'-'*w1}  {'-'*w2}  {'-'*w3}  {'-'*w4}")
+        # Write string
+        out = f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}"
+        out += "\n" + f"{'-'*w1}  {'-'*w2}  {'-'*w3}  {'-'*w4}"
         for name, c, tot, p in zip(df["Routine"], calls, totals, pct):
-            print(f"{name:<{w1}}  {c:>{w2}}  {tot:>{w3}}  {p:>{w4}}")
+            out += "\n" + f"{name:<{w1}}  {c:>{w2}}  {tot:>{w3}}  {p:>{w4}}"
+        return out
 
     def get_timings_df(self) -> pd.DataFrame:
         """
@@ -1933,6 +1925,53 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         df = pd.DataFrame(data)
 
         return df
+
+    def write_metadata(self):
+        """
+        Write commit details and config before the solver runs.
+        """
+        super().write_metadata()
+        self.write_config()
+
+    def write_config(self):
+        """
+        Write `self.to_dict()` to 'config.json'.
+        """
+        if self.path is None:
+            return
+
+        with open(self.path / "config.json", "w") as f:
+            json.dump(self.to_dict(), f, indent=4)
+
+    def to_dict(self) -> dict:
+        """
+        Return a dict of solver parameters independent of results.
+        """
+        return dict(
+            active_dims=self.active_dims,
+            base_scheme=self.base_scheme.to_dict(),
+            bc_mode=self.bc_mode,
+            CFL=self.CFL,
+            ic=self.ic.__name__,
+            integrator=self.integrator if hasattr(self, "integrator") else None,
+            MOOD_config=self.MOOD_state.config.to_dict() if self.MOOD else None,
+            mesh=self.mesh.to_dict(),
+            nvars=self.nvars,
+            n_passive_vars=self.n_passive_vars,
+            riemann_func=self.riemann_func.__name__,
+            variable_index_map=self.variable_index_map.to_dict(),
+            xp=self.xp.__name__,
+        )
+
+    def write_timings(self, total_time_spec: str = ".6f"):
+        """
+        Postprocess IO step that writes timing results to output directory.
+        """
+        if self.path is None:
+            raise FileNotFoundError("Path not specified.")
+
+        with open(self.path / "timings.txt", "w") as f:
+            f.write(self.get_timings_message(total_time_spec))
 
     def __getstate__(self):
         state = self.__dict__.copy()

@@ -421,3 +421,6 @@ class VariableIndexMap:
             True if the variable or group exists, False otherwise.
         """
         return name in self.var_idx_map or name in self.group_var_map
+
+    def to_dict(self) -> dict:
+        return {"var_idx_map": self.var_idx_map, "group_var_map": self.group_var_map}

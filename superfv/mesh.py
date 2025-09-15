@@ -364,9 +364,20 @@ class UniformFVMesh:
         f_eval = f(X, Y, Z)
         return _xp.sum(f_eval * w, axis=node_axis)
 
+    def to_dict(self) -> dict:
+        return dict(
+            nx=self.nx,
+            ny=self.ny,
+            nz=self.nz,
+            xlim=self.xlim,
+            ylim=self.ylim,
+            zlim=self.zlim,
+            active_dims=self.active_dims,
+            slab_depth=self.slab_depth,
+        )
+
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["gauss_legendre_quadrature_cache"] = {}
         return state
 
     def __setstate__(self, state):

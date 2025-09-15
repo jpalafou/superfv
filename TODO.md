@@ -13,3 +13,6 @@ changes:
 todo:
 - [ ] write solutions to disk
 - [ ] rm 'inplace' from function names
+- [ ] in `FiniteVolumeSolver.run`, switch `q_max` to `mode: Optional[int] = None` and allow -1 for MUSCL-Hancock
+- [ ] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
+- [ ] rm wtflux backend for now

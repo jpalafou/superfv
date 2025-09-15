@@ -1,9 +1,13 @@
 import os
+import pickle
+import shutil
 import subprocess
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Union, cast
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 import numpy as np
+import pandas as pd
 
 from .tools.device_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
@@ -52,12 +56,9 @@ class ExplicitODESolver(ABC):
         commit_details: Git commit details.
         integrator: Name of the integrator.
         stepper: Stepper function.
-        snapshot_dir: Directory to save snapshots.
 
     Notes:
         - The `f` method must be implemented by the subclass.
-        - The `read_snapshots` and `write_snapshots` methods can be overridden to
-          read and write additional data.
         - The `snapshot` method can be overridden to save additional data or perform
             other operations at each snapshot.
         - The `called_at_end_of_step` method can be overridden to perform additional
@@ -100,14 +101,12 @@ class ExplicitODESolver(ABC):
 
         # initialize snapshots
         self.snapshots: Snapshots = Snapshots()
-        self.minisnapshots: Dict[str, list] = {
-            "t": [],
-            "dt": [],
-            "n_steps": [],
-            "n_substeps": [],
-            "n_dt_revisions": [],
-            "step_time": [],
-        }
+        self.minisnapshots: Dict[str, list] = {}
+        for key in self.prepare_minisnapshot_data().keys():
+            self.minisnapshots[key] = []
+
+        # initialize IO
+        self.path: Optional[Path] = None
 
         # initialize commit details
         self.commit_details = self._get_commit_details()
@@ -167,6 +166,13 @@ class ExplicitODESolver(ABC):
         """
         Returns a string message for the printed closing message after integration
         ends.
+        """
+        pass
+
+    @abstractmethod
+    def prepare_snapshot_data(self) -> Any:
+        """
+        Returns the data to be saved in the snapshot at time `self.t`.
         """
         pass
 
@@ -277,12 +283,12 @@ class ExplicitODESolver(ABC):
         T: Optional[Union[float, List[float]]] = None,
         n: Optional[int] = None,
         log_every_step: bool = False,
-        snapshot_dir: Optional[str] = None,
-        overwrite: bool = False,
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
         no_snapshots: bool = False,
+        path: Optional[str] = None,
+        overwrite: bool = False,
     ):
         """
         Integrate the ODE.
@@ -293,47 +299,45 @@ class ExplicitODESolver(ABC):
                 defined.
             n: Number of steps to take. If None, `T` must be defined.
             log_every_step: Whether to a snapshot at every step.
-            snapshot_dir Directory to save snapshots. If None, does not save.
-            overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             verbose: Whether to print verbose output during integration.
             log_freq: Step frequency of logging updates to the progress bar.
             no_snapshots: Whether to skip taking snapshots.
+            path: Path to which integration output is written if not None.
+            overwrite: Whether to overwrite the output directory if it exists.
         """
         self.timer.start("wall")
-        if (n is None and T is None) or (n is not None and T is not None):
-            raise ValueError("Either 'n' or 'T' must be defined, but not both.")
-        elif n is not None:
+
+        # prepare output directory
+        self.prepare_output_directory(path, overwrite)
+
+        # perform integration
+        if n is not None and T is None:
             self._integrate_for_fixed_number_of_steps(
                 n,
                 log_every_step=log_every_step,
-                snapshot_dir=snapshot_dir,
-                overwrite=overwrite,
+                verbose=verbose,
+                log_freq=log_freq,
+                no_snapshots=no_snapshots,
+            )
+        elif T is not None and n is None:
+            self._integrate_until_target_time_is_reached(
+                cast(Union[float, List[float]], T),
+                log_every_step=log_every_step,
                 allow_overshoot=allow_overshoot,
                 verbose=verbose,
                 log_freq=log_freq,
                 no_snapshots=no_snapshots,
             )
         else:
-            self._integrate_until_target_time_is_reached(
-                cast(Union[float, List[float]], T),
-                log_every_step=log_every_step,
-                snapshot_dir=snapshot_dir,
-                overwrite=overwrite,
-                allow_overshoot=allow_overshoot,
-                verbose=verbose,
-                log_freq=log_freq,
-                no_snapshots=no_snapshots,
-            )
+            raise ValueError("Either 'n' or 'T' must be defined, but not both.")
+
         self.timer.stop("wall")
 
     def _integrate_for_fixed_number_of_steps(
         self,
         n: int,
         log_every_step: bool = False,
-        snapshot_dir: Optional[str] = None,
-        overwrite: bool = False,
-        allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
         no_snapshots: bool = False,
@@ -344,38 +348,38 @@ class ExplicitODESolver(ABC):
         Args:
             n: Number of steps to take.
             log_every_step: Whether to a snapshot at every step.
-            snapshot_dir Directory to save snapshots. If None, does not save.
-            overwrite: Whether to overwrite the snapshot directory if it exists.
-            allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             verbose: Whether to print a progress bar during integration.
             log_freq: Step frequency of logging updates to the progress bar.
             no_snapshots: Whether to skip taking snapshots.
         """
+        # print initial message
         if verbose:
             status_print(self.build_opening_message())
 
         # take initial snapshots
         if self.t not in self.minisnapshots["t"]:
             if not no_snapshots:
-                self._timed_snapshot()
-            self._timed_minisnapshot()
+                self.take_snapshot()
+            self.take_minisnapshot()
 
+        # simulation loop
         for _ in range(n):
             self.take_step()
-            self._timed_minisnapshot()
+            self.take_minisnapshot()
 
             # take snapshot
-            if log_every_step:
-                self._timed_snapshot()
+            if log_every_step or self.n_steps == n:
+                self.take_snapshot()
 
-            # update progress bar
+            # update printed message
             if verbose:
                 if self.n_steps % log_freq == 0 or self.n_steps >= n:
                     status_print(self.build_update_message())
 
-        # closing actions
-        if not no_snapshots:
-            self._timed_snapshot()
+        # wrap up snapshots
+        self.postprocess_snapshots()
+
+        # print closing message
         if verbose:
             status_print(self.build_closing_message(), closing=True)
 
@@ -383,8 +387,6 @@ class ExplicitODESolver(ABC):
         self,
         T: Union[float, List[float]],
         log_every_step: bool = False,
-        snapshot_dir: Optional[str] = None,
-        overwrite: bool = False,
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
@@ -397,8 +399,6 @@ class ExplicitODESolver(ABC):
             T: Times to simulate until. If list, snapshots are taken at each time
                 in the list. If float, a single time is used.
             log_every_step: Whether to a snapshot at every step.
-            snapshot_dir Directory to save snapshots. If None, does not save.
-            overwrite: Whether to overwrite the snapshot directory if it exists.
             allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
             verbose: Whether to print a progress bar during integration.
             log_freq: Step frequency of logging updates to the progress bar.
@@ -426,20 +426,20 @@ class ExplicitODESolver(ABC):
         # initial snapshot
         if self.t not in self.minisnapshots["t"]:
             if not no_snapshots:
-                self._timed_snapshot()
-            self._timed_minisnapshot()
+                self.take_snapshot()
+            self.take_minisnapshot()
 
         # simulation loop
         while self.t < T_max:
             self.take_step(target_time=target_time)
-            self._timed_minisnapshot()
+            self.take_minisnapshot()
 
             # snapshot decision and target time update
             if not no_snapshots:
                 if self.t > T_max:  # trigger closing snapshot
-                    self._timed_snapshot()
+                    self.take_snapshot()
                 elif (not allow_overshoot and self.t == target_time) or log_every_step:
-                    self._timed_snapshot()
+                    self.take_snapshot()
 
                     if self.t == target_time and self.t < T_max:
                         target_time = target_times.pop(0)
@@ -453,53 +453,99 @@ class ExplicitODESolver(ABC):
         if verbose:
             status_print(self.build_closing_message(), closing=True)
 
-    def snapshot(self):
+    def prepare_minisnapshot_data(self) -> Dict[str, Any]:
         """
-        Snapshot function. Override to save more data to `self.snapshots`.
+        Returns the data to be saved in a minisnapshot.
         """
-        pass
+        return {
+            "t": self.t,
+            "dt": self.dt,
+            "n_steps": self.n_steps,
+            "n_substeps": self.n_substeps,
+            "n_dt_revisions": self.n_dt_revisions,
+            "step_time": self.timer.goldfish_lap_time["take_step"],
+        }
 
-    def minisnapshot(self):
+    def prepare_output_directory(
+        self, path: Optional[str] = None, overwrite: bool = False
+    ):
         """
-        Mini snapshot function. Is executed after every step. Override to save more
-        data to `self.minisnapshots`.
-        """
-        minisnapshots = self.minisnapshots
-
-        minisnapshots["t"].append(self.t)
-        minisnapshots["dt"].append(self.dt)
-        minisnapshots["n_steps"].append(self.n_steps)
-        minisnapshots["n_substeps"].append(self.n_substeps)
-        minisnapshots["n_dt_revisions"].append(self.n_dt_revisions)
-        minisnapshots["step_time"].append(self.timer.goldfish_lap_time["take_step"])
-
-    def _timed_minisnapshot(self):
-        self.timer.start("minisnapshot")
-        self.minisnapshot()
-        self.timer.stop("minisnapshot")
-
-    def _timed_snapshot(self):
-        self.timer.start("snapshot")
-        self.snapshot()
-        self.timer.stop("snapshot")
-
-    def read_snapshots(self) -> bool:
-        """
-        Read snapshots from the snapshot directory. Override to load more data.
-
-        Returns:
-            True if snapshots were read successfully, False otherwise.
-        """
-        raise NotImplementedError("read_snapshots method not implemented.")
-
-    def write_snapshots(self, overwrite: bool = False):
-        """
-        Write snapshots to the snapshot directory. Override to save more data.
+        Create output directory if it doesn't exist and throw an error or overwrite it
+        if it does.
 
         Args:
-            overwrite: Whether to overwrite the snapshot directory if it exists.
+            path: Output path as a string.
+            overwrite: Whether to completely delete the path if it exists.
         """
-        raise NotImplementedError("write_snapshots method not implemented.")
+        if path is None:
+            return None
+
+        out_path = Path(path)
+
+        if out_path.exists() and overwrite:
+            shutil.rmtree(out_path)
+        elif out_path.exists() and not overwrite:
+            raise FileExistsError(f"Output directory '{out_path}' already exists.")
+
+        os.makedirs(out_path)
+        os.makedirs(out_path / "snapshots")
+        self.path = out_path
+
+        # write some metadata before anything runs
+        self.write_metadata()
+
+    def write_metadata(self):
+        """
+        Write commit details before the solver runs.
+        """
+        if self.path is None:
+            return
+        with open(self.path / "commit_details.txt", "w") as f:
+            for key, value in self.commit_details.items():
+                f.write(f"{key}: {value}\n")
+
+    def take_snapshot(self):
+        """
+        Log and time snapshot data at time `self.t` and write it to `self.path` if not None.
+        """
+        self.timer.start("snapshot")
+
+        data = self.prepare_snapshot_data()
+        self.snapshots.log(self.t, data)
+
+        if self.path is not None:
+            self.snapshots.write(self.path / "snapshots", self.t)
+
+        self.timer.stop("snapshot")
+
+    def take_minisnapshot(self):
+        """
+        Log and time minisnapshot data.
+        """
+        self.timer.start("minisnapshot")
+
+        data = self.prepare_minisnapshot_data()
+        for key, value in data.items():
+            self.minisnapshots[key].append(value)
+
+        self.timer.stop("minisnapshot")
+
+    def postprocess_snapshots(self):
+        """
+        Write the minisnapshots and snapshot index to the snapshot path if not None.
+        """
+        if self.path is None:
+            return
+
+        # pickle minisnapshots lists
+        with open(self.path / "snapshots" / "minisnapshots.pkl", "wb") as f:
+            pickle.dump(self.minisnapshots, f)
+
+        # write snapshot index as csv
+        df = pd.DataFrame(
+            [{"index": i, "t": t} for i, t in self.snapshots.file_index.items()]
+        )
+        df.to_csv(self.path / "snapshots" / "index.csv", index=False)
 
     def reset_global_logs(self):
         """

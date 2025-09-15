@@ -73,6 +73,25 @@ class MOODConfig(LimiterConfig):
         cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
         return f"MOOD: [{cascade_keys}]"
 
+    def to_dict(self) -> dict:
+        return dict(
+            cascade=[scheme.to_dict() for scheme in self.cascade],
+            max_iters=self.max_iters,
+            NAD=self.NAD,
+            PAD=self.PAD,
+            SED=self.SED,
+            NAD_rtol=self.NAD_rtol,
+            NAD_atol=self.NAD_atol,
+            PAD_atol=self.PAD_atol,
+            PAD_bounds=(
+                None
+                if self.PAD_bounds is None
+                else self.PAD_bounds[:, 0, 0, 0, :].tolist()
+            ),
+            global_dmp=self.global_dmp,
+            include_corners=self.include_corners,
+        )
+
 
 @dataclass
 class MOODState:
@@ -136,6 +155,15 @@ class MOODState:
         """
         self.fine_troubled_cell_count = n
         self.troubled_cell_count += n
+
+    def to_dict(self) -> dict:
+        """
+        Convert the MOODState to a dictionary.
+
+        Returns:
+            A dictionary representation of the MOODState.
+        """
+        return self.config.to_dict()
 
 
 def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int, int]:

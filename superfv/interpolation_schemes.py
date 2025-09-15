@@ -14,6 +14,11 @@ class LimiterConfig(ABC):
         """Return a unique key for the limiter configuration."""
         pass
 
+    @abstractmethod
+    def to_dict(self) -> dict:
+        """Convert the limiter configuration to a dictionary."""
+        pass
+
 
 @dataclass(frozen=True, slots=True)
 class InterpolationScheme(ABC):
@@ -49,6 +54,11 @@ class InterpolationScheme(ABC):
         """Return a unique key for the interpolation scheme."""
         pass
 
+    @abstractmethod
+    def to_dict(self) -> dict:
+        """Convert the interpolation scheme to a dictionary."""
+        pass
+
 
 @dataclass(frozen=True, slots=True)
 class polyInterpolationScheme(InterpolationScheme):
@@ -78,3 +88,14 @@ class polyInterpolationScheme(InterpolationScheme):
 
     def key(self) -> str:
         return f"poly{self.p}"
+
+    def to_dict(self) -> dict:
+        return dict(
+            p=self.p,
+            flux_recipe=self.flux_recipe,
+            limiter_config=(
+                None if self.limiter_config is None else self.limiter_config.to_dict()
+            ),
+            gauss_legendre=self.gauss_legendre,
+            lazy_primitives=self.lazy_primitives,
+        )

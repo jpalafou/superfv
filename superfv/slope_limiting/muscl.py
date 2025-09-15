@@ -27,6 +27,12 @@ class musclConfig(LimiterConfig):
     def key(self) -> str:
         return f"muscl-{self.limiter}"
 
+    def to_dict(self) -> dict:
+        return dict(
+            limiter=self.limiter,
+            SED=self.SED,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class musclInterpolationScheme(InterpolationScheme):
@@ -55,6 +61,15 @@ class musclInterpolationScheme(InterpolationScheme):
 
     def key(self) -> str:
         return self.limiter_config.key()
+
+    def to_dict(self) -> dict:
+        return dict(
+            p=self.p,
+            flux_recipe=self.flux_recipe,
+            limiter_config=(
+                None if self.limiter_config is None else self.limiter_config.to_dict()
+            ),
+        )
 
 
 def compute_limited_slopes(

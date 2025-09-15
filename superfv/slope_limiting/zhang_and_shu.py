@@ -53,6 +53,21 @@ class ZhangShuConfig(LimiterConfig):
     def key(self) -> str:
         return "zhang-shu"
 
+    def to_dict(self) -> dict:
+        return dict(
+            SED=self.SED,
+            adaptive_dt=self.adaptive_dt,
+            max_dt_revisions=self.max_dt_revisions,
+            include_corners=self.include_corners,
+            PAD_bounds=(
+                None
+                if self.PAD_bounds is None
+                else self.PAD_bounds[:, 0, 0, 0, :].tolist()
+            ),
+            PAD_atol=self.PAD_atol,
+            tol=self.tol,
+        )
+
 
 def compute_theta(
     xp: ModuleType,
