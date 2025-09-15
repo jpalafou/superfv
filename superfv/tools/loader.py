@@ -72,6 +72,7 @@ class OutputLoader:
         if t == "all":
             for t in self.file_index.values():
                 self.load_snapshot(t)
+            return
 
         if t not in self.file_index.values():
             raise KeyError(f"No snapshot data available for time {t}.")
