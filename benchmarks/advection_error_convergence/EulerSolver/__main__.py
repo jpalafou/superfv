@@ -12,9 +12,9 @@ from superfv.tools.norms import linf_norm as norm
 OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
-P_LIST = [3]
+P_LIST = [0, 1, 2, 3]
 MUSCL_CONFIG = dict(MUSCL=True, MUSCL_limiter="moncen", SED=True)
-APRIORI_CONFIG = dict(ZS=True, adaptive_dt=False, SED=True, lazy_primitives=False)
+APRIORI_CONFIG = dict(ZS=True, adaptive_dt=False, lazy_primitives=False, SED=True)
 APOSTERIORI_CONFIG = dict(
     MOOD=True,
     cascade="first-order",

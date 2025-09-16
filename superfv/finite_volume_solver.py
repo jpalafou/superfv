@@ -461,11 +461,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self._init_unlimited_scheme(p, flux_recipe, GL, lazy_primitives)
 
         # init a posteriori scheme
-        if MOOD:
+        self.MOOD = MOOD
+        if self.MOOD:
             if not ZS:
                 self._init_PAD(PAD)
             self._init_MOOD(
-                MOOD,
                 cascade,
                 MUSCL_limiter,
                 max_MOOD_iters,
@@ -548,7 +548,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_MOOD(
         self,
-        MOOD: bool,
         cascade: Literal["first-order", "muscl", "full"],
         MUSCL_limiter: Literal["minmod", "moncen"],
         max_MOOD_iters: int,
@@ -561,9 +560,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         global_dmp: bool,
         include_corners: bool,
     ):
-        if not MOOD:
-            return
-
         base_scheme = self.base_scheme
         if not isinstance(base_scheme, polyInterpolationScheme):
             raise ValueError(
@@ -627,7 +623,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             include_corners=include_corners,
         )
         self.MOOD_state = MOODState(config=MOOD_config)
-        self.MOOD = True
 
     def _init_PAD(
         self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
@@ -676,7 +671,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiting_cost = 0
             if isinstance(bs.limiter_config, ZhangShuConfig):
                 limiting_cost = 3 if bs.limiter_config.SED else 1
-            if MOOD:
+            if self.MOOD:
                 limiting_cost = 3 if self.MOOD_state.config.SED else 1
 
             flux_integral_cost = s if len(self.active_dims) > 1 else 0
