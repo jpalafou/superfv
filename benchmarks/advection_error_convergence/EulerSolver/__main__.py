@@ -6,89 +6,140 @@ import numpy as np
 import pandas as pd
 
 from superfv import EulerSolver, initial_conditions
-from superfv.tools.norms import linf_norm
+from superfv.tools.norms import linf_norm as norm
 
-# problem inputs
+# solver parameters
 OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
-P_LIST = [-1, 0, 1, 2, 3]
-OTHER_INPUTS = dict(
-    flux_recipe=1,
-    lazy_primitives=False,
+P_LIST = [3]
+MUSCL_CONFIG = dict(MUSCL=True, MUSCL_limiter="moncen", SED=True)
+APRIORI_CONFIG = dict(ZS=True, adaptive_dt=False, SED=True, lazy_primitives=False)
+APOSTERIORI_CONFIG = dict(
+    MOOD=True,
+    cascade="first-order",
+    max_MOOD_iters=1,
+    limiting_vars="actives",
+    NAD=True,
+    NAD_rtol=1e-2,
+    NAD_atol=1e-7,
     SED=True,
-    ZS=True,
-    adaptive_dt=False,
-    # MOOD=True,
-    # NAD=True,
-    # limiting_vars=("rho",),
 )
-MUSCL_INPUTS = dict(flux_recipe=2, MUSCL=True, MUSCL_limiter="moncen", SED=True)
 
-# remove old output
+
+def sinus(idx, x, y, z, t, xp):
+    return initial_conditions.sinus(
+        idx,
+        x,
+        y,
+        z,
+        t,
+        xp=xp,
+        **{"v" + dim: 1.0 for dim in DIMS},
+        bounds=(1, 2),
+        P=1,
+    )
+
+
+# clean up old output
 if os.path.exists(OUTPUT_NAME):
     os.remove(OUTPUT_NAME)
 
-# loop over all combinations of N and p
+# loop over configurations
 data = []
-for N, p in product(N_LIST, P_LIST):
-    # print status
-    print(f"Running N={N}, MUSCL-Hancock" if p == -1 else f"Running N={N}, p={p}")
+for (i, flux_recipe), (j, (config, config_name)) in product(
+    enumerate([1, 2, 3]),
+    enumerate(
+        [
+            (APRIORI_CONFIG, "a priori"),
+            (APOSTERIORI_CONFIG, "a posteriori"),
+            (MUSCL_CONFIG, "muscl-hancock"),
+        ]
+    ),
+):
+    for N, p in product(N_LIST, P_LIST):
+        # MUSCL-Hancock is picky
+        if config_name == "muscl-hancock" and (p != 1 or flux_recipe != 2):
+            continue
 
-    def analytical_solution(idx, x, y, z, t, xp):
-        return initial_conditions.sinus(
-            idx,
-            x,
-            y,
-            z,
-            t,
-            xp=xp,
-            **{"v" + dim: 1.0 for dim in DIMS},
-            bounds=(1, 2),
-            P=1,
+        print(
+            f"Running N={N}, p={p}, flux_recipe={flux_recipe}, config_name={config_name}"
         )
 
-    # run solver
-    solver = EulerSolver(
-        ic=analytical_solution,
-        nx=N if "x" in DIMS else 1,
-        ny=N if "y" in DIMS else 1,
-        nz=N if "z" in DIMS else 1,
-        p=1 if p == -1 else p,
-        **(MUSCL_INPUTS if p == -1 else OTHER_INPUTS),
-    )
-    if p == -1:
-        solver.musclhancock(1.0, log_freq=10)
-    else:
-        solver.run(1.0, log_freq=10)
-    print()
+        # init solver
+        sim = EulerSolver(
+            ic=sinus,
+            nx=N if "x" in DIMS else 1,
+            ny=N if "y" in DIMS else 1,
+            nz=N if "z" in DIMS else 1,
+            p=p,
+            flux_recipe=flux_recipe,
+            **config,
+        )
 
-    # measure error
-    idx = solver.variable_index_map
-    rho_numerical = solver.snapshots(1.0)["wcc"][idx("rho")]
-    rho_analytical = analytical_solution(
-        idx, solver.mesh.X, solver.mesh.Y, solver.mesh.Z, 1.0, xp=np
-    )[idx("rho")]
-    error = linf_norm(rho_numerical - rho_analytical)
-    data.append(dict(N=N, p=p, error=error))
+        # run solver
+        if config_name == "muscl-hancock":
+            sim.musclhancock(1.0, log_freq=10)
+        else:
+            sim.run(1.0, log_freq=10)
+        print()
+
+        # compute error
+        idx = sim.variable_index_map
+        rho_numerical = sim.snapshots(1.0)["wcc"][idx("rho")]
+        rho_analytical = sinus(idx, sim.mesh.X, sim.mesh.Y, sim.mesh.Z, 1.0, xp=np)[
+            idx("rho")
+        ]
+        error = norm(rho_numerical - rho_analytical)
+
+        data.append(
+            dict(N=N, p=p, flux_recipe=flux_recipe, config=config_name, error=error)
+        )
 df = pd.DataFrame(data)
 
-# plot error curves of p over N
-fig, ax = plt.subplots()
-cmap = plt.get_cmap("viridis")
+# plot results
+fig, axs = plt.subplots(3, 2, sharex=True, sharey=True, figsize=(8, 8))
 
-for p in P_LIST:
-    df_p = df[df["p"] == p]
-    ax.plot(
-        df_p["N"],
-        df_p["error"],
-        label="MUSCL-Hancock" if p == -1 else f"p={p}",
-        marker="o",
-        color="red" if p == -1 else cmap((p) / max(P_LIST)),
+axs[0, 0].set_ylabel("flux recipe 1")
+axs[1, 0].set_ylabel("flux recipe 2")
+axs[2, 0].set_ylabel("flux recipe 3")
+axs[0, 0].set_title(r"a priori")
+axs[0, 1].set_title(r"a posteriori")
+for i, j in product(range(3), range(2)):
+    ax = axs[i, j]
+
+    ax.grid()
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log", base=10)
+
+
+for (i, flux_recipe), config, p in product(
+    enumerate([1, 2, 3]), ["a priori", "a posteriori", "muscl-hancock"], P_LIST
+):
+    if config == "muscl-hancock" and (flux_recipe != 2 or p != 1):
+        continue
+    j = {"a priori": 0, "a posteriori": 1, "muscl-hancock": 0}[config]
+    style = (
+        dict(
+            color=plt.get_cmap("tab10")(4),
+            label="MUSCL-Hancock",
+            marker="o",
+            mfc="none",
+            linestyle="--",
+        )
+        if config == "muscl-hancock"
+        else dict(
+            color=plt.get_cmap("tab10")(p),
+            label=f"$p={p}$",
+            marker="o",
+            mfc="none",
+            linestyle="-",
+        )
     )
-ax.set_xscale("log", base=2)
-ax.set_yscale("log")
-ax.set_xlabel("N")
-ax.set_ylabel(r"$L_\infty$")
-ax.legend()
-fig.savefig(OUTPUT_NAME)
+    df_sub = df[(df.flux_recipe == flux_recipe) & (df.config == config) & (df.p == p)]
+    df_sub = df_sub.sort_values("N")
+    axs[i, j].plot(df_sub.N, df_sub.error, **style)
+
+axs[1, 0].legend()
+
+fig.savefig(OUTPUT_NAME, dpi=300)
