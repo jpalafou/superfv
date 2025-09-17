@@ -247,6 +247,8 @@ class ExplicitODESolver(ABC):
         t, u = self.t, self.arrays["u"]
         dt = clamp_dt(t, self.compute_dt(t, u), target_time)
 
+        self.validate_dt(dt)
+
         while True:
             self.reset_substepwise_logs()
             self.stepper(t, u, dt)  # revises self.arrays["unew"]
@@ -261,6 +263,18 @@ class ExplicitODESolver(ABC):
         self.dt = dt
 
         self.called_at_end_of_step()
+
+    def validate_dt(self, dt: float):
+        """
+        Validate the computed time-step size.
+
+        Args:
+            dt: Time-step size to validate.
+        """
+        if dt <= 0.0:
+            raise RuntimeError("Computed non-positive time-step size.")
+        if np.isnan(dt):
+            raise RuntimeError("Computed NaN time-step size.")
 
     def called_at_beginning_of_step(self):
         """

@@ -342,11 +342,6 @@ class EulerSolver(FiniteVolumeSolver):
 
         out = self.CFL / xp.max(sum_of_s_over_h).item()
 
-        if out <= 0.0:
-            raise ValueError("Computed non-positive time-step size.")
-        if xp.isnan(out):
-            raise ValueError("Computed NaN time-step size.")
-
         return out
 
     def flux_jvp(
