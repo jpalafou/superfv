@@ -13,8 +13,20 @@ OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"
 DIMS = "x"
 N_LIST = [16, 32, 64, 128, 256]
 P_LIST = [0, 1, 2, 3]
-MUSCL_CONFIG = dict(MUSCL=True, MUSCL_limiter="moncen", SED=True)
-APRIORI_CONFIG = dict(ZS=True, adaptive_dt=False, lazy_primitives=False, SED=True)
+Q_MAX = 3
+MUSCL_CONFIG = dict(
+    MUSCL=True,
+    MUSCL_limiter="moncen",
+    SED=True,
+    riemann_solver="hllc",
+)
+APRIORI_CONFIG = dict(
+    ZS=True,
+    adaptive_dt=True,
+    PAD={"rho": (0, None), "P": (0, None)},
+    SED=True,
+    riemann_solver="hllc",
+)
 APOSTERIORI_CONFIG = dict(
     MOOD=True,
     cascade="first-order",
@@ -24,6 +36,7 @@ APOSTERIORI_CONFIG = dict(
     NAD_rtol=1e-2,
     NAD_atol=1e-7,
     SED=True,
+    riemann_solver="hllc",
 )
 
 
@@ -37,7 +50,7 @@ def sinus(idx, x, y, z, t, xp):
         xp=xp,
         **{"v" + dim: 1.0 for dim in DIMS},
         bounds=(1, 2),
-        P=1,
+        P=1e-5,
     )
 
 
@@ -78,10 +91,18 @@ for (i, flux_recipe), (j, (config, config_name)) in product(
         )
 
         # run solver
-        if config_name == "muscl-hancock":
-            sim.musclhancock(1.0, log_freq=10)
-        else:
-            sim.run(1.0, log_freq=10)
+        try:
+            if config_name == "muscl-hancock":
+                sim.musclhancock(1.0, log_freq=10)
+            else:
+                sim.run(1.0, log_freq=10, q_max=Q_MAX)
+        except RuntimeError as e:
+            print(f"  -> simulation failed: {e}\n")
+            error = np.nan
+            data.append(
+                dict(N=N, p=p, flux_recipe=flux_recipe, config=config_name, error=error)
+            )
+            continue
         print()
 
         # compute error

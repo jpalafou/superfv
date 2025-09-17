@@ -273,6 +273,8 @@ class ExplicitODESolver(ABC):
         """
         if dt <= 0.0:
             raise RuntimeError("Computed non-positive time-step size.")
+        if dt < 1e-15:
+            raise RuntimeError("Computed step size smaller than 1e-15.")
         if np.isnan(dt):
             raise RuntimeError("Computed NaN time-step size.")
 
