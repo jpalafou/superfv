@@ -40,10 +40,14 @@ class MOODConfig(LimiterConfig):
         PAD_bounds: Physical bounds for each variable used in PAD. Has shape
             (nvars, 1, 1, 1, 2) with the minimum and maximum values for each variable
             stored in the first and second element of the last dimension, respectively.
-        global_dmp: Whether to use global minima and maxima to set the range for NAD
-            violations instead of local minima and maxima.
-        include_corners: When `global_dmp=False`, whether to include corner cells when
-            computing the local minima and maxima.
+        absolute_dmp: Whether to use the absolute values of the DMP instead of the
+            range to set the NAD bounds. The NAD condition for each case is:
+            - `absolute_dmp=False`:
+                umin-rtol*(umax-umin)-atol <= u_new <= umax+rtol*(umax-umin)+atol
+            - `absolute_dmp=True`:
+                umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
+        include_corners: Whether to include corner cells when computing the local
+            minima and maxima.
     """
 
     cascade: List[InterpolationScheme]
@@ -55,7 +59,7 @@ class MOODConfig(LimiterConfig):
     NAD_atol: float = 0.0
     PAD_atol: float = 0.0
     PAD_bounds: Optional[ArrayLike] = None
-    global_dmp: bool = False
+    absolute_dmp: bool = False
     include_corners: bool = False
 
     def __post_init__(self):
@@ -88,7 +92,7 @@ class MOODConfig(LimiterConfig):
                 if self.PAD_bounds is None
                 else self.PAD_bounds[:, 0, 0, 0, :].tolist()
             ),
-            global_dmp=self.global_dmp,
+            absolute_dmp=self.absolute_dmp,
             include_corners=self.include_corners,
         )
 
@@ -197,7 +201,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     NAD = MOOD_config.NAD
     NAD_rtol = MOOD_config.NAD_rtol
     NAD_atol = MOOD_config.NAD_atol
-    global_dmp = MOOD_config.global_dmp
+    absolute_dmp = MOOD_config.absolute_dmp
     include_corners = MOOD_config.include_corners
     PAD = MOOD_config.PAD
     PAD_bounds = MOOD_config.PAD_bounds
@@ -245,7 +249,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             buffer=buffer[lim_slc],
             rtol=NAD_rtol,
             atol=NAD_atol,
-            global_dmp=global_dmp,
+            absolute_dmp=absolute_dmp,
             include_corners=include_corners,
         )
 
@@ -320,7 +324,7 @@ def inplace_NAD_violations(
     buffer: Optional[ArrayLike] = None,
     rtol: float = 1.0,
     atol: float = 0.0,
-    global_dmp: bool = False,
+    absolute_dmp: bool = False,
     include_corners: bool = False,
 ):
     """
@@ -332,27 +336,30 @@ def inplace_NAD_violations(
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
-        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2) if `global_dmp` is
-            False. If `global_dmp` is True, this parameter is ignored.
+        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2) if `absolute_dmp` is
+            False. If `absolute_dmp` is True, this parameter is ignored.
         rtol: Relative tolerance for the NAD violations.
         atol: Absolute tolerance for the NAD violations.
-        global_dmp: Whether to use global DMP.
+        absolute_dmp: Whether to use the absolute values of the DMP instead of the
+            range to set the NAD bounds. The NAD condition for each case is:
+            - `absolute_dmp=False`:
+                umin-rtol*(umax-umin)-atol <= u_new <= umax+rtol*(umax-umin)+atol
+            - `absolute_dmp=True`:
+                umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
         include_corners: Whether to include corner values in the DMP computation.
     """
+    dmp = buffer[..., :2]
+    dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
+    compute_dmp(xp, u_old, active_dims, out=dmp, include_corners=include_corners)
 
-    if global_dmp:
-        dmp_min = xp.min(u_old, axis=(1, 2, 3), keepdims=True)
-        dmp_max = xp.max(u_old, axis=(1, 2, 3), keepdims=True)
-    elif buffer is None:
-        raise ValueError("Buffer must be provided if global_dmp is False.")
+    if absolute_dmp:
+        upper_bound = dmp_max + rtol * xp.abs(dmp_max) + atol
+        lower_bound = dmp_min - rtol * xp.abs(dmp_min) - atol
     else:
-        dmp = buffer[..., :2]
-        dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
-        compute_dmp(xp, u_old, active_dims, out=dmp, include_corners=include_corners)
-    dmp_range = dmp_max - dmp_min
-    violations = xp.minimum(u_new - dmp_min, dmp_max - u_new) + rtol * dmp_range + atol
-
-    out[...] = violations
+        dmp_range = dmp_max - dmp_min
+        upper_bound = dmp_max + rtol * dmp_range + atol
+        lower_bound = dmp_min - rtol * dmp_range - atol
+    out[...] = xp.minimum(u_new - lower_bound, upper_bound - u_new)
 
 
 def inplace_PAD_violations(

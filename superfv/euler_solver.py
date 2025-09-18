@@ -53,7 +53,7 @@ class EulerSolver(FiniteVolumeSolver):
         NAD: bool = False,
         NAD_rtol: float = 1.0,
         NAD_atol: float = 0.0,
-        global_dmp: bool = False,
+        absolute_dmp: bool = False,
         include_corners: bool = False,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -161,7 +161,12 @@ class EulerSolver(FiniteVolumeSolver):
                 if a cell is troubled in the MOOD loop.
             NAD_rtol: Relative tolerance for the NAD violations.
             NAD_atol: Absolute tolerance for the NAD violations.
-            global_dmp: Whether to use a global DMP check for NAD violations.
+            absolute_dmp: Whether to use the absolute values of the DMP instead of the
+            range to set the NAD bounds. The NAD condition for each case is:
+            - `absolute_dmp=False`:
+                umin-rtol*(umax-umin)-atol <= u_new <= umax+rtol*(umax-umin)+atol
+            - `absolute_dmp=True`:
+                umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
@@ -212,7 +217,7 @@ class EulerSolver(FiniteVolumeSolver):
             NAD=NAD,
             NAD_rtol=NAD_rtol,
             NAD_atol=NAD_atol,
-            global_dmp=global_dmp,
+            absolute_dmp=absolute_dmp,
             include_corners=include_corners,
             PAD=PAD,
             PAD_atol=PAD_atol,
