@@ -1552,7 +1552,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if n_dt_revisions < max_dt_revisions:
             return dt / 2
         raise RuntimeError(
-            f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations."
+            f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations with dt={dt}."
         )
 
     def called_at_end_of_step(self):

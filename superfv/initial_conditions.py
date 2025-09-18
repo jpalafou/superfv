@@ -549,3 +549,43 @@ def shu_osher(
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
+
+
+def interacting_blast_wave_1d(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the interacting blast wave initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+    """
+    dims = parse_xyz(x, y, z)
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    if len(dims) != 1:
+        raise ValueError("Toro initial condition only works in 1D.")
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+        r = {"x": x, "y": y, "z": z}[dims]
+
+        out[idx("rho")] = 1
+        out[idx("P")] = xp.where(r < 0.1, 1000, np.where(r < 0.9, 0.01, 100))
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
+        )
+    return out
