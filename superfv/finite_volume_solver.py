@@ -928,8 +928,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
 
         arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
-        arrays.add("_blended_troubles_", np.zeros((1, _nx_, _ny_, _nz_)))
         arrays.add("_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
+        arrays.add("_blended_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_)))
         arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
         arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
 

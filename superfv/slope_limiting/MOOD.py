@@ -327,7 +327,7 @@ def inplace_NAD_violations(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
     out: ArrayLike,
-    buffer: Optional[ArrayLike] = None,
+    buffer: ArrayLike,
     rtol: float = 1.0,
     atol: float = 0.0,
     absolute_dmp: bool = False,
@@ -342,8 +342,7 @@ def inplace_NAD_violations(
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
-        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2) if `absolute_dmp` is
-            False. If `absolute_dmp` is True, this parameter is ignored.
+        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2).
         rtol: Relative tolerance for the NAD violations.
         atol: Absolute tolerance for the NAD violations.
         absolute_dmp: Whether to use the absolute values of the DMP instead of the
@@ -442,7 +441,7 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     cascade_status = MOOD_state.cascade_status
     max_idx = len(cascade) - 1
 
-    # early esape for single fallback scheme case
+    # early escape for single fallback scheme case
     if len(cascade) == 2:
         revise_fluxes_with_fallback_scheme(fv_solver, t)
         return
@@ -530,16 +529,21 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     G_mask = arrays["_fmask_"][:, :-1, :, :-1]
     H_mask = arrays["_fmask_"][:, :-1, :-1, :]
     _troubles_ = arrays["_troubles_"]
-    _blended_troubles_ = arrays["_blended_troubles_"]
+    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
+    _blended_cascade_idx_array_ = arrays["_blended_cascade_idx_array_"]
     troubles_buffer = arrays["buffer"][:1, ..., 1:]
 
-    # compute blended troubled cells
+    # assuming `troubles` has just been updated, update the cascade index array
+    xp.minimum(_cascade_idx_array_ + _troubles_, 1, out=_cascade_idx_array_)
+    # max is 1 since there should be at least 1 troubled cell at this point
+
+    # blend cascade index
     if MOOD_state.config.blend:
-        _blended_troubles_[...] = _troubles_
+        _blended_cascade_idx_array_[...] = _cascade_idx_array_
         blend_troubled_cells(
-            xp, _blended_troubles_, active_dims, buffer=troubles_buffer
+            xp, _blended_cascade_idx_array_, active_dims, buffer=troubles_buffer
         )
-        _troubles_ = _blended_troubles_
+        _cascade_idx_array_ = _blended_cascade_idx_array_
 
     # compute fallback scheme fluxes
     if not cascade_status[1]:
@@ -556,22 +560,21 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _troubles_, 1, out=F_mask)
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
         mask = F_mask[interior]
-        # print(xp.sum(_troubles_), xp.sum(mask))
         xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
         xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _troubles_, 2, out=G_mask)
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
         mask = G_mask[interior]
         xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
         xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _troubles_, 3, out=H_mask)
+        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
         mask = H_mask[interior]
         xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
         xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
