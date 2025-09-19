@@ -115,6 +115,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_dt_revisions: int = 8,
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full"] = "first-order",
+        blend: bool = False,
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = False,
@@ -213,6 +214,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - "first-order": Fall back directly to a first-order scheme.
                 - "muscl": Fall back directly to a MUSCL scheme.
                 - "full": Fall back to a full cascade of scheme in descending order.
+            blend: Whether to blend the troubled cell indicator with neighboring
+                cells following Vilar and Abgrall 2022. Only valid for "first-order"
+                and "muscl" cascades.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
             limiting_vars: Specifies which variables are subject to slope limiting.
@@ -259,6 +263,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             max_dt_revisions,
             MOOD,
             cascade,
+            blend,
             max_MOOD_iters,
             limiting_vars,
             NAD,
@@ -416,6 +421,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_dt_revisions: int,
         MOOD: bool,
         cascade: Literal["first-order", "muscl", "full"],
+        blend: bool,
         max_MOOD_iters: int,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
@@ -433,7 +439,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         idx.add_var_to_group("limiting", [])
 
         null_MOOD_config = MOODConfig(
-            cascade=[], max_iters=0, NAD=False, PAD=False, SED=False
+            cascade=[], blend=False, max_iters=0, NAD=False, PAD=False, SED=False
         )
         self.MOOD_state = MOODState(config=null_MOOD_config)
         self.MOOD = False
@@ -472,6 +478,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 self._init_PAD(PAD)
             self._init_MOOD(
                 cascade,
+                blend,
                 MUSCL_limiter,
                 max_MOOD_iters,
                 NAD,
@@ -554,6 +561,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_MOOD(
         self,
         cascade: Literal["first-order", "muscl", "full"],
+        blend: bool,
         MUSCL_limiter: Literal["minmod", "moncen"],
         max_MOOD_iters: int,
         NAD: bool,
@@ -616,6 +624,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         MOOD_config = MOODConfig(
             cascade=cascade_list,
+            blend=blend,
             max_iters=max_MOOD_iters,
             NAD=NAD,
             PAD=PAD is not None,
@@ -915,8 +924,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
 
         arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("_blended_troubles_", np.zeros((1, _nx_, _ny_, _nz_)))
         arrays.add("_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
         arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
+        arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
 
         # helper attribute
         self.flux_names = {"x": "F", "y": "G", "z": "H"}

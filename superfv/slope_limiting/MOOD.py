@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
 
 from superfv.boundary_conditions import BCs, apply_bc
+from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.device_management import ArrayLike
@@ -30,6 +31,8 @@ class MOODConfig(LimiterConfig):
 
     Attributes:
         cascade: The list of interpolation schemes to use in the MOOD framework.
+        blend: Whether to blend troubled cells when using a fallback scheme. Only valid
+            for cascades of length 2.
         max_iters: The maximum number of iterations to perform.
         NAD: Whether to use numerical admissibility detection to detect troubled cells.
         PAD: Whether to use physical admissibility detection to detect troubled cells.
@@ -51,6 +54,7 @@ class MOODConfig(LimiterConfig):
     """
 
     cascade: List[InterpolationScheme]
+    blend: bool
     max_iters: int
     NAD: bool
     PAD: bool
@@ -72,6 +76,8 @@ class MOODConfig(LimiterConfig):
             raise ValueError(
                 "SED requires NAD to be enabled. Please set NAD to a non-None value."
             )
+        if self.blend and len(self.cascade) != 2:
+            raise ValueError("Blending is only supported for cascades of length 2.")
 
     def key(self) -> str:
         cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
@@ -436,6 +442,11 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     cascade_status = MOOD_state.cascade_status
     max_idx = len(cascade) - 1
 
+    # early esape for single fallback scheme case
+    if len(cascade) == 2:
+        revise_fluxes_with_fallback_scheme(fv_solver, t)
+        return
+
     # allocate arrays
     F = arrays["F"]
     G = arrays["G"]
@@ -486,6 +497,86 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 
+def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
+    """
+    In-place revision of fluxes based on the current time step using a fallback scheme.
+
+    Args:
+        fv_solver: FiniteVolumeSolver object.
+        t: Current time value.
+    """
+    # gather solver parameters
+    xp = fv_solver.xp
+    arrays = fv_solver.arrays
+    active_dims = fv_solver.active_dims
+    interior = fv_solver.interior
+    MOOD_state = fv_solver.MOOD_state
+    cascade = MOOD_state.config.cascade
+    cascade_status = MOOD_state.cascade_status
+
+    # parse schemes
+    if len(cascade) != 2:
+        raise ValueError(
+            "Fallback scheme revision requires a cascade of exactly 2 schemes."
+        )
+    base_scheme = cascade[0]
+    fallback_scheme = cascade[1]
+
+    # allocate arrays
+    F = arrays["F"]
+    G = arrays["G"]
+    H = arrays["H"]
+    F_mask = arrays["_fmask_"][:, :, :-1, :-1]
+    G_mask = arrays["_fmask_"][:, :-1, :, :-1]
+    H_mask = arrays["_fmask_"][:, :-1, :-1, :]
+    _troubles_ = arrays["_troubles_"]
+    _blended_troubles_ = arrays["_blended_troubles_"]
+    troubles_buffer = arrays["buffer"][:1, ..., 1:]
+
+    # compute blended troubled cells
+    if MOOD_state.config.blend:
+        _blended_troubles_[...] = _troubles_
+        blend_troubled_cells(
+            xp, _blended_troubles_, active_dims, buffer=troubles_buffer
+        )
+        _troubles_ = _blended_troubles_
+
+    # compute fallback scheme fluxes
+    if not cascade_status[1]:
+        fv_solver.inplace_compute_fluxes(t, fallback_scheme)
+        cascade_status[1] = True
+
+        if "x" in active_dims:
+            arrays["F_" + fallback_scheme.key()] = F.copy()
+        if "y" in active_dims:
+            arrays["G_" + fallback_scheme.key()] = G.copy()
+        if "z" in active_dims:
+            arrays["H_" + fallback_scheme.key()] = H.copy()
+
+    # broadcast cascade index to each face
+    if "x" in active_dims:
+        F[...] = 0
+        inplace_map_cells_values_to_face_values(xp, _troubles_, 1, out=F_mask)
+        mask = F_mask[interior]
+        # print(xp.sum(_troubles_), xp.sum(mask))
+        xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
+        xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
+
+    if "y" in active_dims:
+        G[...] = 0
+        inplace_map_cells_values_to_face_values(xp, _troubles_, 2, out=G_mask)
+        mask = G_mask[interior]
+        xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
+        xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
+
+    if "z" in active_dims:
+        H[...] = 0
+        inplace_map_cells_values_to_face_values(xp, _troubles_, 3, out=H_mask)
+        mask = H_mask[interior]
+        xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
+        xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
+
+
 def inplace_map_cells_values_to_face_values(
     xp: ModuleType, cv: ArrayLike, axis: int, *, out: ArrayLike
 ):
@@ -515,3 +606,48 @@ def inplace_map_cells_values_to_face_values(
     xp.maximum(out[ctr], cv[rgt], out=out[ctr])
 
     return ctr
+
+
+def blend_troubled_cells(
+    xp: ModuleType,
+    troubles: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    *,
+    buffer: ArrayLike,
+):
+    """
+    Overwrite the troubled cells array `troubles` with a blended value based on
+    neighboring troubled cells.
+
+    Args:
+        xp: `np` namespace or equivalent.
+        troubles: Array of troubled cell indicators. Has shape (1, nx, ny, nz). Must
+            have float dtype.
+        active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
+        buffer: Buffer array with shape (1, nx, ny, nz, >= 1) to store intermediate
+            values.
+    """
+    theta = buffer[..., 0]
+    ndim = len(active_dims)
+
+    # initialize theta
+    theta[...] = troubles
+
+    if ndim == 1:
+        axis = DIM_TO_AXIS[active_dims[0]]
+        lft_slc = crop(axis, (None, -1))
+        rgt_slc = crop(axis, (1, None))
+
+        # First neighbors
+        theta[lft_slc] = xp.maximum(0.75 * troubles[rgt_slc], theta[lft_slc])
+        theta[rgt_slc] = xp.maximum(0.75 * troubles[lft_slc], theta[rgt_slc])
+
+        # Second neighbors
+        theta[lft_slc] = xp.maximum(0.25 * (theta[rgt_slc] > 0), theta[lft_slc])
+        theta[rgt_slc] = xp.maximum(0.25 * (theta[lft_slc] > 0), theta[rgt_slc])
+    elif ndim == 2:
+        raise NotImplementedError("2D blending is not implemented yet.")
+    elif ndim == 3:
+        raise NotImplementedError("3D blending is not implemented yet.")
+
+    troubles[...] = theta

@@ -48,6 +48,7 @@ class EulerSolver(FiniteVolumeSolver):
         max_dt_revisions: int = 8,
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full"] = "first-order",
+        blend: bool = False,
         max_MOOD_iters: int = 1,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "actives",
         NAD: bool = False,
@@ -147,6 +148,9 @@ class EulerSolver(FiniteVolumeSolver):
                 - "first-order": Fall back directly to a first-order scheme.
                 - "muscl": Fall back directly to a MUSCL scheme.
                 - "full": Fall back to a full cascade of scheme in descending order.
+            blend: Whether to blend the troubled cell indicator with neighboring
+                cells following Vilar and Abgrall 2022. Only valid for "first-order"
+                and "muscl" cascades.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
             limiting_vars: Specifies which variables are subject to slope limiting.
@@ -212,6 +216,7 @@ class EulerSolver(FiniteVolumeSolver):
             max_dt_revisions=max_dt_revisions,
             MOOD=MOOD,
             cascade=cascade,
+            blend=blend,
             max_MOOD_iters=max_MOOD_iters,
             limiting_vars=limiting_vars,
             NAD=NAD,

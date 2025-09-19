@@ -165,6 +165,89 @@ def square(
     return out
 
 
+def composite(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float = 0.0,
+    vx: float = 0,
+    vy: float = 0,
+    vz: float = 0,
+    P: float = 1,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the 1D composite profile.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Time variable. Unused.
+        vx: Uniform velocity in the x-direction.
+        vy: Uniform velocity in the y-direction.
+        vz: Uniform velocity in the z-direction.
+        P: Pressure.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    dims = parse_xyz(x, y, z)
+    if dims != "x":
+        raise ValueError("Composite profile only defined for x as the only active dim.")
+
+    out = xp.empty((len(idx.idxs), *x.shape))
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
+        # advection case
+        r = {"x": x, "y": y, "z": z}[dims]
+        u = xp.zeros_like(r)
+
+        gauss_part = (
+            1
+            / 6
+            * (
+                xp.exp(-xp.log(2) / 36 / 0.0025**2 * (r - 0.0025 - 0.15) ** 2)
+                + xp.exp(-xp.log(2) / 36 / 0.0025**2 * (r + 0.0025 - 0.15) ** 2)
+                + 4 * xp.exp(-xp.log(2) / 36 / 0.0025**2 * (r - 0.15) ** 2)
+            )
+        )
+        square_part = 0.75
+        triangle_part = 1 - xp.abs(20 * (r - 0.55))
+        ellipse_part = (
+            1
+            / 6
+            * (
+                xp.sqrt(xp.maximum(1 - (20 * (r - 0.75 - 0.0025)) ** 2, 0))
+                + xp.sqrt(xp.maximum(1 - (20 * (r - 0.75 + 0.0025)) ** 2, 0))
+                + 4 * xp.sqrt(xp.maximum(1 - (20 * (r - 0.75)) ** 2, 0))
+            )
+        )
+
+        u = xp.where(xp.logical_and(r >= 0.1, r <= 0.2), gauss_part, u)
+        u = xp.where(xp.logical_and(r >= 0.3, r <= 0.4), square_part, u)
+        u = xp.where(xp.logical_and(r >= 0.5, r <= 0.6), triangle_part, u)
+        u = xp.where(xp.logical_and(r >= 0.7, r <= 0.8), ellipse_part, u)
+
+        out[idx("rho")] = u
+        out[idx("vx")] = vx
+        out[idx("vy")] = vy
+        out[idx("vz")] = vz
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz'}."
+        )
+    if "P" in idx.var_names:
+        out[idx("P")] = P
+    return out
+
+
 def slotted_disk(
     idx: VariableIndexMap,
     x: ArrayLike,
