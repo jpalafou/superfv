@@ -686,7 +686,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             if isinstance(bs.limiter_config, ZhangShuConfig):
                 limiting_cost = 3 if bs.limiter_config.SED else 1
             if self.MOOD:
-                limiting_cost = 3 if self.MOOD_state.config.SED else 1
+                NAD_cost = 1
+                if self.MOOD_state.config.SED:
+                    NAD_cost = 3
+                trouble_map_cost = 3 if self.MOOD_state.config.blend else 1
+                limiting_cost = NAD_cost + trouble_map_cost
 
             flux_integral_cost = s if len(self.active_dims) > 1 else 0
         else:
