@@ -32,6 +32,8 @@ class OutputLoader:
 
         self.snapshots = Snapshots()
 
+        print(f'Successfully read simulation output from "{self.path}"')
+
     def load_config(self):
         with open(self.path / "config.json", "r") as f:
             return json.load(f)
