@@ -188,6 +188,9 @@ def plot_1d_slice(
     variable: str,
     cell_averaged: bool = False,
     theta: bool = False,
+    trouble_marker: Optional[str] = None,
+    trouble_color: str = "red",
+    trouble_size_rate: float = 0.5,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -205,6 +208,15 @@ def plot_1d_slice(
         cell_averaged: Whether to plot the cell average of the variable. If False, the
             variable is plotted using its cell-centered values.
         theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
+        trouble_marker: Style of marker overlaid on troubled cells. If None, no markers
+            are overlaid. Only valid for solvers that use MOOD.
+        trouble_color: Color of the trouble markers.
+        trouble_size_rate: Float in [0, 1] controlling how the size of trouble markers
+            scales with trouble level (which ranges from 0 to 1). A value of 0 makes
+            all trouble markers the same size as the variable markers, regardless of
+            trouble level. A value of 1 makes the smallest trouble markers vanish
+            (size 0) and the largest match the size of the variable markers.
+            Intermediate values interpolate linearly between these extremes.
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -244,7 +256,34 @@ def plot_1d_slice(
     )[slices[0], slices[1], slices[2]]
 
     # plot
-    ax.plot(x_arr, f_arr, **kwargs)
+    (line,) = ax.plot(x_arr, f_arr, **kwargs)
+
+    # optionally plot troubles
+    if trouble_marker is not None:
+        ms = line.get_markersize()
+        min_trouble_size = (1 - trouble_size_rate) * ms
+        trouble_size_rate = trouble_size_rate * ms
+
+        troubles_arr = _extract_variable_data(
+            fv_solver, nearest_t, "troubles", False, False
+        )[slices[0], slices[1], slices[2]]
+        trouble_levels = np.unique(troubles_arr)
+
+        for trouble_level in trouble_levels:
+            if trouble_level == 0:
+                continue
+            trouble_size = min_trouble_size + trouble_size_rate * trouble_level
+            troubles_idx = troubles_arr == trouble_level
+            ax.plot(
+                x_arr[troubles_idx],
+                f_arr[troubles_idx],
+                marker=trouble_marker,
+                color=trouble_color,
+                markersize=trouble_size,
+                linestyle="none",
+            )
+
+    # optionally add x label
     if xlabel:
         ax.set_xlabel(rf"${dim}$")
 
