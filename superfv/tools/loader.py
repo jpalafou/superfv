@@ -92,3 +92,16 @@ class OutputLoader:
             data = pickle.load(f)
 
         self.snapshots.log(t, data)
+
+    def print_timings(self, total_time_spec: str = ".2f"):
+        """
+        Print the timing statistics for the solver.
+
+        Args:
+            total_time_spec: Format specification for the total time column.
+        """
+        with open(self.path / "timings.txt", "r") as f:
+            lines = f.readlines()
+
+        for line in lines:
+            print(line.strip())
