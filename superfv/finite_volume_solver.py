@@ -918,8 +918,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("theta_log", np.zeros((nvars, nx, ny, nz)))
 
         # MOOD arrays
-        arrays.add("troubles", np.zeros((1, nx, ny, nz), dtype=bool))
-        arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
+        arrays.add("troubles", np.zeros((nvars, nx, ny, nz), dtype=bool))
+        arrays.add("troubles_log", np.zeros((nvars, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
         for scheme in self.MOOD_state.config.cascade:
@@ -927,7 +927,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
             arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
 
-        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("_troubles_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("_any_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
         arrays.add("_blended_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_)))
         arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))

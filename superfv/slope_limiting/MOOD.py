@@ -230,6 +230,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     buffer = buffer[..., 4:]
     troubles = arrays["troubles"]
     _troubles_ = arrays["_troubles_"]
+    _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
 
     # reset troubles / cascade index array
@@ -268,12 +269,12 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             out=alpha,
             buffer=buffer[lim_slc],
         )
-        troubles[0] = xp.any(
-            xp.logical_and(NAD_violations[interior] < 0, alpha[..., 0][interior] < 1),
-            axis=0,
+        troubles[lim_slc] = xp.logical_and(
+            NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
         )
+
     else:
-        troubles[0] = xp.any(NAD_violations[interior] < 0, axis=0)
+        troubles[lim_slc] = NAD_violations[interior]
 
     # compute PAD violations
     if PAD:
@@ -284,9 +285,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             physical_tols=PAD_atol,
             out=PAD_violations,
         )
-        xp.logical_or(
-            troubles, xp.any(PAD_violations < 0, axis=0, keepdims=True), out=troubles
-        )
+        xp.logical_or(troubles, PAD_violations < 0, out=troubles)
 
     # update troubles workspace
     _troubles_[interior] = troubles
@@ -297,8 +296,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     )
 
     # trouble counts
-    n_troubled_cells = xp.sum(troubles).item()
-    revisable_troubled_cells = troubles & (_cascade_idx_array_[interior] < max_idx)
+    _any_troubles_[...] = xp.any(_troubles_, axis=0, keepdims=True)
+    any_troubles = _any_troubles_[interior]
+
+    n_troubled_cells = xp.sum(any_troubles).item()
+    revisable_troubled_cells = any_troubles & (_cascade_idx_array_[interior] < max_idx)
     n_revisable_troubled_cells = xp.sum(revisable_troubled_cells).item()
 
     # early escape for no revisable troubles
@@ -453,11 +455,11 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     F_mask = arrays["_mask_"][:, :, :-1, :-1]
     G_mask = arrays["_mask_"][:, :-1, :, :-1]
     H_mask = arrays["_mask_"][:, :-1, :-1, :]
-    _troubles_ = arrays["_troubles_"]
+    _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
 
     # assuming `troubles` has just been updated, update the cascade index array
-    xp.minimum(_cascade_idx_array_ + _troubles_, max_idx, out=_cascade_idx_array_)
+    xp.minimum(_cascade_idx_array_ + _any_troubles_, max_idx, out=_cascade_idx_array_)
     current_max_idx = xp.max(_cascade_idx_array_).item()
 
     # update the cascade scheme fluxes
@@ -528,13 +530,13 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     F_mask = arrays["_fmask_"][:, :, :-1, :-1]
     G_mask = arrays["_fmask_"][:, :-1, :, :-1]
     H_mask = arrays["_fmask_"][:, :-1, :-1, :]
-    _troubles_ = arrays["_troubles_"]
+    _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
     _blended_cascade_idx_array_ = arrays["_blended_cascade_idx_array_"]
     troubles_buffer = arrays["buffer"][:1, ..., 1:]
 
     # assuming `troubles` has just been updated, update the cascade index array
-    xp.minimum(_cascade_idx_array_ + _troubles_, 1, out=_cascade_idx_array_)
+    xp.minimum(_cascade_idx_array_ + _any_troubles_, 1, out=_cascade_idx_array_)
     # max is 1 since there should be at least 1 troubled cell at this point
 
     # blend cascade index

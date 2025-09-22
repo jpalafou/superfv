@@ -114,8 +114,9 @@ def _extract_variable_data(
     fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     nearest_t: float,
     variable: str,
-    cell_averaged: bool,
-    theta: bool,
+    cell_averaged: bool = False,
+    theta: bool = False,
+    troubles: bool = False,
 ) -> np.ndarray:
     """
     Extract the data for a given variable at the nearest time.
@@ -141,8 +142,14 @@ def _extract_variable_data(
     snapshot = fv_solver.snapshots(nearest_t)
 
     # plot troubles/cascade
-    if variable in ("troubles", "cascade"):
-        return snapshot[variable][0]
+    if troubles:
+        # troubled to be overlaid on variable plot
+        return snapshot["troubles"][idx(variable)]
+    if variable == "troubles":
+        # troubles to be plotted as their own variable
+        return np.max(snapshot["troubles"], axis=0)
+    if variable == "cascade":
+        return snapshot["cascade"][0]
 
     # determine the key for the variable
     if theta:
@@ -252,7 +259,11 @@ def plot_1d_slice(
     # gather data
     x_arr = getattr(fv_solver.mesh, dim.upper())[slices[0], slices[1], slices[2]]
     f_arr = _extract_variable_data(
-        fv_solver, nearest_t, variable, cell_averaged, theta
+        fv_solver,
+        nearest_t,
+        variable,
+        cell_averaged=cell_averaged,
+        theta=theta,
     )[slices[0], slices[1], slices[2]]
 
     # plot
@@ -265,7 +276,7 @@ def plot_1d_slice(
         trouble_size_rate = trouble_size_rate * ms
 
         troubles_arr = _extract_variable_data(
-            fv_solver, nearest_t, "troubles", False, False
+            fv_solver, nearest_t, variable, troubles=True
         )[slices[0], slices[1], slices[2]]
         trouble_levels = np.unique(troubles_arr)
 
@@ -353,7 +364,7 @@ def plot_2d_slice(
         x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
         y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
     f_arr = _extract_variable_data(
-        fv_solver, nearest_t, variable, cell_averaged, theta
+        fv_solver, nearest_t, variable, cell_averaged=cell_averaged, theta=theta
     )[slices[0], slices[1], slices[2]]
 
     # rotate for imshow
