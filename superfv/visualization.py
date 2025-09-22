@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 
@@ -310,8 +311,9 @@ def plot_2d_slice(
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     levels: Optional[Union[int, np.ndarray]] = None,
+    cmap: Optional[str] = None,
     **kwargs,
-):
+) -> Tuple[Union[plt.Imshow, plt.QuadContourSet], Optional[plt.Colorbar]]:
     """
     Plot a 2D slice of a variable at a given time and coordinates.
 
@@ -331,6 +333,7 @@ def plot_2d_slice(
             `start` and `end`. Either bound may be None to indicate an open interval.
             - None: selects the full range along that dimension.
         levels: Contour levels to plot. If None, uses imshow instead of contour.
+        cmap: Colormap to use for the plot. If None, no colormap is applied.
         **kwargs: Keyword arguments for the plot.
 
     Raises:
@@ -375,7 +378,7 @@ def plot_2d_slice(
 
     # plot
     if using == "imshow":
-        ax.imshow(
+        im = ax.imshow(
             f_arr,
             extent=(
                 cast(float, x_arr[0]),
@@ -383,13 +386,25 @@ def plot_2d_slice(
                 cast(float, y_arr[0]),
                 cast(float, y_arr[-1]),
             ),
+            cmap=cmap,
             **kwargs,
         )
     elif using == "contour":
-        ax.contour(x_arr, y_arr, f_arr, levels=levels, **kwargs)
+        im = ax.contour(x_arr, y_arr, f_arr, levels=levels, cmap=cmap, **kwargs)
 
+    # add colorbar
+    if cmap is None:
+        cbar = None
+    else:
+        cbar = plt.colorbar(
+            ax.images[0] if using == "imshow" else ax.collections[0], ax=ax
+        )
+
+    # add axis labels
     ax.set_xlabel(rf"${dim1}$")
     ax.set_ylabel(rf"${dim2}$")
+
+    return im, cbar
 
 
 def power_law(

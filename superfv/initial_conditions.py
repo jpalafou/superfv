@@ -672,3 +672,63 @@ def interacting_blast_wave_1d(
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
+
+
+def kelvin_helmholtz_2d(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the Kelvin-Helmholtz instability initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError(
+            "Kelvin-Helmholtz initial condition requires all hydro variables."
+        )
+
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Kelvin-Helmholtz initial condition only works in 2D.")
+    dim1, dim2 = dims
+
+    d1 = {"x": x, "y": y, "z": z}[dim1]
+    d2 = {"x": x, "y": y, "z": z}[dim2]
+
+    inner_region = xp.logical_and(d2 > 0.25, d2 < 0.75)
+
+    w0 = 0.1
+    sigma = 0.05 * np.sqrt(2)
+
+    rho = xp.where(inner_region, 2.0, 1.0)
+    v1 = xp.where(inner_region, 0.5, -0.5)
+    v2 = (
+        w0
+        * xp.sin(4 * np.pi * d1)
+        * (
+            xp.exp(-((d2 - 0.25) ** 2) / ((2 * sigma) ** 2))
+            + xp.exp(-((d2 - 0.75) ** 2) / ((2 * sigma) ** 2))
+        )
+    )
+    P = 2.5
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    out[idx("rho")] = rho
+    out[idx("v" + dim1)] = v1
+    out[idx("v" + dim2)] = v2
+    out[idx("P")] = P
+
+    return out
