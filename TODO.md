@@ -19,3 +19,4 @@ todo:
 - [ ] rm wtflux backend for now
 - [ ] fix: hydro operators on nonsense ghost values
 - [ ] ZS + flux_recipe=2 doesn't converge
+- [ ] change terminology `transfer_to_device("cpu")` and `transfer_to_device("gpu")` to `transfer_to_host` and `transfer_to_device`

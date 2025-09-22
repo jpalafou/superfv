@@ -405,8 +405,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # init array manager
         self.arrays = ArrayManager()
+        self.mesh_arrays = ArrayManager()
         if self.cupy:
             self.arrays.transfer_to_device("gpu")
+            self.mesh_arrays.transfer_to_device("gpu")
 
     def _init_spatial_discretization(
         self,
@@ -708,7 +710,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             zlim=zlim,
             active_dims=self.active_dims,
             slab_depth=slab_depth,
-            array_manager=self.arrays,
+            array_manager=self.mesh_arrays,
         )
 
         # assign attributes
@@ -1343,7 +1345,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         else:
             if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
                 fv.integrate_GaussLegendre_nodes(
-                    xp,
+                    self.xp,
                     left_state,
                     dim,
                     self.active_dims,
@@ -1968,8 +1970,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.path is None:
             return
 
+        if self.cupy:
+            self.mesh_arrays.transfer_to_device("cpu")
+
         with open(self.path / "snapshots" / "mesh.pkl", "wb") as f:
             pickle.dump(self.mesh, f)
+
+        if self.cupy:
+            self.mesh_arrays.transfer_to_device("gpu")
 
     def to_dict(self) -> dict:
         """
@@ -1980,7 +1988,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             base_scheme=self.base_scheme.to_dict(),
             bc_mode=self.bc_mode,
             CFL=self.CFL,
-            ic=self.ic.__name__,
+            ic=getattr(self.ic, "__name__", "unknown name"),
             integrator=self.integrator if hasattr(self, "integrator") else None,
             MOOD_config=self.MOOD_state.config.to_dict() if self.MOOD else None,
             mesh=self.mesh.to_dict(),

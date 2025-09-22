@@ -502,6 +502,7 @@ class ExplicitODESolver(ABC):
         out_path = Path(path)
 
         if out_path.exists() and overwrite:
+            print(f'Overwriting existing output directory "{out_path}".')
             shutil.rmtree(out_path)
         elif out_path.exists() and not overwrite:
             raise FileExistsError(f"Output directory '{out_path}' already exists.")

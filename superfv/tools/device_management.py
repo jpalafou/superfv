@@ -213,5 +213,15 @@ class ArrayManager:
         """
         Get the state of the ArrayManager for serialization.
         """
-        self.transfer_to_device("cpu")
+        if self.device == "gpu":
+            raise MemoryError("Cannot serialize ArrayManager while on GPU.")
         return self.__dict__.copy()
+
+    def __setstate__(self, state: Dict[str, Any]):
+        """
+        Set the state of the ArrayManager from serialization.
+
+        Args:
+            state: State dictionary.
+        """
+        self.__dict__.update(state)
