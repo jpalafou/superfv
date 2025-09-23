@@ -4,7 +4,7 @@ import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -298,75 +298,86 @@ class ExplicitODESolver(ABC):
         self,
         T: Optional[Union[float, List[float]]] = None,
         n: Optional[int] = None,
-        log_every_step: bool = False,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
-        no_snapshots: bool = False,
         path: Optional[str] = None,
         overwrite: bool = False,
     ):
         """
-        Integrate the ODE.
+        Integrate the ODE system forward in time.
 
         Args:
-            T: Times to simulate until. If list, snapshots are taken at each time
-                in the list. If float, a single time is used. If None, `n` must be
-                defined.
-            n: Number of steps to take. If None, `T` must be defined.
-            log_every_step: Whether to a snapshot at every step.
-            allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
-            verbose: Whether to print verbose output during integration.
-            log_freq: Step frequency of logging updates to the progress bar.
-            no_snapshots: Whether to skip taking snapshots.
-            path: Path to which integration output is written if not None.
-            overwrite: Whether to overwrite the output directory if it exists.
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
         """
         self.timer.start("wall")
 
-        # prepare output directory
-        self.prepare_output_directory(path, overwrite)
+        try:
+            self.prepare_output_directory(path, overwrite)
 
-        # perform integration
-        if n is not None and T is None:
-            self._integrate_for_fixed_number_of_steps(
-                n,
-                log_every_step=log_every_step,
-                verbose=verbose,
-                log_freq=log_freq,
-                no_snapshots=no_snapshots,
-            )
-        elif T is not None and n is None:
-            self._integrate_until_target_time_is_reached(
-                cast(Union[float, List[float]], T),
-                log_every_step=log_every_step,
-                allow_overshoot=allow_overshoot,
-                verbose=verbose,
-                log_freq=log_freq,
-                no_snapshots=no_snapshots,
-            )
-        else:
-            raise ValueError("Either 'n' or 'T' must be defined, but not both.")
+            if snapshot_mode not in ("target", "none", "every"):
+                raise ValueError(
+                    f"Invalid snapshot_mode '{snapshot_mode}'. "
+                    "Must be 'target', 'none', or 'every'."
+                )
 
-        self.timer.stop("wall")
+            if T is None and n is not None:
+                self._integrate_for_fixed_number_of_steps(
+                    n=n,
+                    snapshot_mode=snapshot_mode,
+                    verbose=verbose,
+                    log_freq=log_freq,
+                )
+            elif T is not None and n is None:
+                self._integrate_until_target_time_is_reached(
+                    T=T,
+                    snapshot_mode=snapshot_mode,
+                    allow_overshoot=allow_overshoot,
+                    verbose=verbose,
+                    log_freq=log_freq,
+                )
+            else:
+                raise ValueError("Specify exactly one of 'T' or 'n'.")
+        finally:
+            self.timer.stop("wall")
 
     def _integrate_for_fixed_number_of_steps(
         self,
         n: int,
-        log_every_step: bool = False,
-        verbose: bool = True,
-        log_freq: int = 100,
-        no_snapshots: bool = False,
+        snapshot_mode: Literal["target", "none", "every"],
+        verbose: bool,
+        log_freq: int,
     ):
         """
-        Integrate the ODE for a fixed number of steps.
+        Integrate the ODE system for a fixed number of steps.
 
         Args:
             n: Number of steps to take.
-            log_every_step: Whether to a snapshot at every step.
-            verbose: Whether to print a progress bar during integration.
-            log_freq: Step frequency of logging updates to the progress bar.
-            no_snapshots: Whether to skip taking snapshots.
+            snapshot_mode: When to take snapshots.
+                - "target" (default): at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
         """
         # print initial message
         if verbose:
@@ -374,17 +385,17 @@ class ExplicitODESolver(ABC):
 
         # take initial snapshots
         if self.t not in self.minisnapshots["t"]:
-            if not no_snapshots:
+            if snapshot_mode != "none":
                 self.take_snapshot()
             self.take_minisnapshot()
 
         # simulation loop
-        for _ in range(n):
+        for i in range(1, n + 1):
             self.take_step()
             self.take_minisnapshot()
 
             # take snapshot
-            if not no_snapshots and (log_every_step or self.n_steps == n):
+            if (snapshot_mode == "target" and i == n) or snapshot_mode == "every":
                 self.take_snapshot()
 
             # update printed message
@@ -402,38 +413,32 @@ class ExplicitODESolver(ABC):
     def _integrate_until_target_time_is_reached(
         self,
         T: Union[float, List[float]],
-        log_every_step: bool = False,
-        allow_overshoot: bool = False,
-        verbose: bool = True,
-        log_freq: int = 100,
-        no_snapshots: bool = False,
+        snapshot_mode: Literal["target", "none", "every"],
+        allow_overshoot: bool,
+        verbose: bool,
+        log_freq: int,
     ):
         """
         Integrate the ODE until a target time is reached.
 
         Args:
-            T: Times to simulate until. If list, snapshots are taken at each time
-                in the list. If float, a single time is used.
-            log_every_step: Whether to a snapshot at every step.
-            allow_overshoot: Whether to allow overshooting of 'T' if it is a float.
-            verbose: Whether to print a progress bar during integration.
-            log_freq: Step frequency of logging updates to the progress bar.
-            no_snapshots: Whether to skip taking snapshots.
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+            snapshot_mode: When to take snapshots.
+                - "target" (default): at t=0 and each target time. If multiple target
+                    times are crossed in a single step, only one snapshot is taken
+                    at the end of the step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
         """
-        # format list of target times
-        target_times: List[float]
-        if T is None:
-            raise ValueError("T and n cannot both be None.")
-        elif isinstance(T, int) or isinstance(T, float):
-            target_times = [T]
-        elif isinstance(T, list):
-            target_times = sorted([float(t) for t in T])
-        else:
-            raise ValueError(f"Invalid type for T: {type(T)}")
-        if min(target_times) <= 0:
-            raise ValueError("Target times must be greater than 0.")
+        target_times = self._get_target_time_list(T)
         T_max = max(target_times)
-        target_time = None if allow_overshoot else target_times.pop(0)
+        target_time = target_times.pop(0)
 
         # setup progress bar
         if verbose:
@@ -441,26 +446,31 @@ class ExplicitODESolver(ABC):
 
         # initial snapshot
         if self.t not in self.minisnapshots["t"]:
-            if not no_snapshots:
+            if snapshot_mode != "none":
                 self.take_snapshot()
             self.take_minisnapshot()
 
         # simulation loop
         while self.t < T_max:
-            self.take_step(target_time=target_time)
+            self.take_step(target_time=None if allow_overshoot else target_time)
             self.take_minisnapshot()
 
-            # snapshot decision and target time update
-            if not no_snapshots:
-                if self.t > T_max:  # trigger closing snapshot
-                    self.take_snapshot()
-                elif (not allow_overshoot and self.t == target_time) or log_every_step:
-                    self.take_snapshot()
+            # count how many target times we crossed on this step
+            crossed = 0
+            while self.t >= target_time:
+                crossed += 1
+                if target_times:
+                    target_time = target_times.pop(0)
+                else:
+                    break
 
-                    if self.t == target_time and self.t < T_max:
-                        target_time = target_times.pop(0)
+            # take at most one snapshot this step
+            if snapshot_mode == "every":
+                self.take_snapshot()
+            elif snapshot_mode == "target" and crossed > 0:
+                self.take_snapshot()
 
-            # update progress bar
+            # update printed message
             if verbose:
                 if self.n_steps % log_freq == 0 or self.t >= T_max:
                     status_print(self.build_update_message())
@@ -471,6 +481,28 @@ class ExplicitODESolver(ABC):
         # print closing message
         if verbose:
             status_print(self.build_closing_message(), closing=True)
+
+    def _get_target_time_list(self, T: Union[float, List[float]]) -> List[float]:
+        """
+        Format the target time(s) into a sorted list.
+
+        Args:
+            T: Target simulation time(s).
+                - single float: Integrate until this time.
+                - list of floats: integrate until each listed time.
+
+        Returns:
+            Sorted list of target times.
+        """
+        if isinstance(T, int) or isinstance(T, float):
+            target_times = [T]
+        elif isinstance(T, list):
+            target_times = sorted([float(t) for t in T])
+        else:
+            raise ValueError(f"Invalid type for T: {type(T)}")
+        if min(target_times) <= 0:
+            raise ValueError("Target times must be greater than 0.")
+        return target_times
 
     def prepare_minisnapshot_data(self) -> Dict[str, Any]:
         """
