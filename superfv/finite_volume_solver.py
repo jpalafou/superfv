@@ -1640,7 +1640,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         n_updates = self.n_updates
         data.update(
-            {"n_updates": n_updates, "update_rate": n_updates / data["step_time"]}
+            {
+                "n_updates": n_updates,
+                "substep_update_rate": n_updates / data["step_time"],
+                "update_rate": self.mesh.size / data["step_time"],
+            }
         )
 
         if self.MOOD:
@@ -1777,8 +1781,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.inplace_reconstruct_muscl_faces(
             scheme, limit_primitives=limit_primitives, hancock=True, dt=dt
         )
-
-        self.increment_substepwise_logs()
 
         # corrector step
         for dim in self.active_dims:

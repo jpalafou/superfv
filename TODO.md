@@ -21,3 +21,4 @@ todo:
 - [ ] ZS + flux_recipe=2 doesn't converge
 - [ ] change terminology `transfer_to_device("cpu")` and `transfer_to_device("gpu")` to `transfer_to_host` and `transfer_to_device`
 - [ ] rm: log_every_step argument
+- [ ] timing file should print with \n at the end to make catting more pleasant

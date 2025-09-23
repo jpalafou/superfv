@@ -384,7 +384,7 @@ class ExplicitODESolver(ABC):
             self.take_minisnapshot()
 
             # take snapshot
-            if log_every_step or self.n_steps == n:
+            if not no_snapshots and (log_every_step or self.n_steps == n):
                 self.take_snapshot()
 
             # update printed message

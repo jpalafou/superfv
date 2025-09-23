@@ -5,7 +5,7 @@ N = 2048
 T = 0.8
 gamma = 1.4
 
-path = "../out/kelvin-helmholtz/"
+path = "/scratch/gpfs/jp7427/out/kelvin-helmholtz_N=2048/"
 overwrite = []
 
 configs = {

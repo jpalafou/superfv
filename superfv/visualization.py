@@ -312,6 +312,12 @@ def plot_2d_slice(
     z: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     levels: Optional[Union[int, np.ndarray]] = None,
     cmap: Optional[str] = None,
+    colorbar: bool = False,
+    overlay_troubles: bool = False,
+    troubles_cmap: str = "Reds",
+    troubles_alpha: float = 0.5,
+    xlabel: bool = False,
+    ylabel: bool = False,
     **kwargs,
 ) -> Tuple[Union[plt.Imshow, plt.QuadContourSet], Optional[plt.Colorbar]]:
     """
@@ -334,6 +340,13 @@ def plot_2d_slice(
             - None: selects the full range along that dimension.
         levels: Contour levels to plot. If None, uses imshow instead of contour.
         cmap: Colormap to use for the plot. If None, no colormap is applied.
+        colorbar: Whether to add a colorbar to the plot.
+        overlay_troubles: Whether to overlay troubled cells on top of the variable
+            plot. Only valid for solvers that use MOOD.
+        troubles_cmap: Colormap to use for the troubled cells overlay.
+        troubles_alpha: Alpha value for the troubled cells overlay.
+        xlabel: Whether to show the x-axis label.
+        ylabel: Whether to show the y-axis label.
         **kwargs: Keyword arguments for the plot.
 
     Raises:
@@ -378,31 +391,44 @@ def plot_2d_slice(
 
     # plot
     if using == "imshow":
-        im = ax.imshow(
-            f_arr,
-            extent=(
-                cast(float, x_arr[0]),
-                cast(float, x_arr[-1]),
-                cast(float, y_arr[0]),
-                cast(float, y_arr[-1]),
-            ),
-            cmap=cmap,
-            **kwargs,
+        extent = (
+            cast(float, x_arr[0]),
+            cast(float, x_arr[-1]),
+            cast(float, y_arr[0]),
+            cast(float, y_arr[-1]),
         )
+
+        im = ax.imshow(f_arr, extent=extent, cmap=cmap, **kwargs)
+
+        if overlay_troubles:
+            troubles_arr = _extract_variable_data(
+                fv_solver, nearest_t, variable, troubles=True
+            )[slices[0], slices[1], slices[2]]
+            troubles_arr = np.rot90(troubles_arr, 1)
+            ax.imshow(
+                np.where(troubles_arr > 0, troubles_arr, np.nan),
+                extent=extent,
+                alpha=troubles_alpha,
+                cmap=troubles_cmap,
+                vmin=0,
+                vmax=1,
+            )
     elif using == "contour":
         im = ax.contour(x_arr, y_arr, f_arr, levels=levels, cmap=cmap, **kwargs)
 
     # add colorbar
-    if cmap is None:
-        cbar = None
-    else:
+    if colorbar:
         cbar = plt.colorbar(
             ax.images[0] if using == "imshow" else ax.collections[0], ax=ax
         )
+    else:
+        cbar = None
 
     # add axis labels
-    ax.set_xlabel(rf"${dim1}$")
-    ax.set_ylabel(rf"${dim2}$")
+    if xlabel:
+        ax.set_xlabel(rf"${dim1}$")
+    if ylabel:
+        ax.set_ylabel(rf"${dim2}$")
 
     return im, cbar
 
