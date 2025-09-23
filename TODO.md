@@ -15,8 +15,8 @@ changes:
 - [x] rm wtflux backend for now
 - [x] rm: log_every_step argument
 - [x] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
+- [x] rm 'inplace' from function names
 
 todo:
-- [ ] rm 'inplace' from function names
 - [ ] fix: hydro operators on nonsense ghost values
 - [ ] ZS + flux_recipe=2 doesn't converge

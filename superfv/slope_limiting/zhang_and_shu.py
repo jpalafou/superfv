@@ -6,9 +6,7 @@ from typing import Literal, Optional, cast
 
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
-from superfv.slope_limiting.smooth_extrema_detection import (
-    inplace_smooth_extrema_detector,
-)
+from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import modify_slices
 
@@ -145,7 +143,7 @@ def compute_theta(
     # relax theta using a smooth extrema detector
     if SED:
         alpha = buffer[..., :1]
-        modified = inplace_smooth_extrema_detector(
+        modified = smooth_extrema_detector(
             xp,
             u,
             active_dims,

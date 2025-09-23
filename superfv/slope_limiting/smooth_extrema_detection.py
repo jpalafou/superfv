@@ -6,7 +6,7 @@ from superfv.tools.slicing import crop, merge_slices, modify_slices
 from superfv.tools.stability import avoid0
 
 
-def inplace_central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
+def central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
     """
     Compute 1D central difference, ignoring mesh size.
 
@@ -18,7 +18,7 @@ def inplace_central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
     out[crop(axis, (1, -1))] = 0.5 * (u[crop(axis, (2, 0))] - u[crop(axis, (0, -2))])
 
 
-def inplace_1d_smooth_extrema_detector(
+def smooth_extema_detector_1d(
     xp: Any,
     u: ArrayLike,
     dim: Literal["x", "y", "z"],
@@ -55,8 +55,8 @@ def inplace_1d_smooth_extrema_detector(
     vr = buffer[..., 3]
 
     # compute derivatives
-    inplace_central_difference(u, axis, out=du)
-    inplace_central_difference(du, axis, out=dv)
+    central_difference(u, axis, out=du)
+    central_difference(du, axis, out=dv)
     dv[...] = avoid0(xp, 0.5 * dv, eps)
 
     # left detector
@@ -82,7 +82,7 @@ def inplace_1d_smooth_extrema_detector(
     return modified
 
 
-def inplace_2d_smooth_extrema_detector(
+def smooth_extema_detector_2d(
     xp: Any,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
@@ -113,10 +113,10 @@ def inplace_2d_smooth_extrema_detector(
     alpha_dim1 = buffer[..., 4:5]
     alpha_dim2 = buffer[..., 5:6]
 
-    modified1 = inplace_1d_smooth_extrema_detector(
+    modified1 = smooth_extema_detector_1d(
         xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
     )
-    modified2 = inplace_1d_smooth_extrema_detector(
+    modified2 = smooth_extema_detector_1d(
         xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
     )
 
@@ -126,7 +126,7 @@ def inplace_2d_smooth_extrema_detector(
     return modified
 
 
-def inplace_3d_smooth_extrema_detector(
+def smooth_extema_detector_3d(
     xp: Any,
     u: ArrayLike,
     buffer: ArrayLike,
@@ -157,13 +157,13 @@ def inplace_3d_smooth_extrema_detector(
     alpha_dim2 = buffer[..., 5:6]
     alpha_dim3 = buffer[..., 6:7]
 
-    modified1 = inplace_1d_smooth_extrema_detector(
+    modified1 = smooth_extema_detector_1d(
         xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
     )
-    modified2 = inplace_1d_smooth_extrema_detector(
+    modified2 = smooth_extema_detector_1d(
         xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
     )
-    modified3 = inplace_1d_smooth_extrema_detector(
+    modified3 = smooth_extema_detector_1d(
         xp, u, dim3, buffer[..., :4], out=alpha_dim3, eps=eps
     )
 
@@ -174,7 +174,7 @@ def inplace_3d_smooth_extrema_detector(
     return modified
 
 
-def inplace_smooth_extrema_detector(
+def smooth_extrema_detector(
     xp: Any,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
@@ -184,7 +184,7 @@ def inplace_smooth_extrema_detector(
     eps: float = 1e-16,
 ):
     """
-    Compute the smooth extrema detector alpha inplace along specified dimensions.
+    Compute the smooth extrema detector alpha along specified dimensions.
 
     Args:
         xp: `np` namespace.
@@ -204,13 +204,11 @@ def inplace_smooth_extrema_detector(
 
     """
     if len(active_dims) == 1:
-        return inplace_1d_smooth_extrema_detector(
+        return smooth_extema_detector_1d(
             xp, u, active_dims[0], buffer, out=out, eps=eps
         )
     elif len(active_dims) == 2:
-        return inplace_2d_smooth_extrema_detector(
-            xp, u, active_dims, buffer, out=out, eps=eps
-        )
+        return smooth_extema_detector_2d(xp, u, active_dims, buffer, out=out, eps=eps)
     elif len(active_dims) == 3:
-        return inplace_3d_smooth_extrema_detector(xp, u, buffer, out=out, eps=eps)
+        return smooth_extema_detector_3d(xp, u, buffer, out=out, eps=eps)
     raise ValueError("active_dims must have length 1, 2, or 3.")

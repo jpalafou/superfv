@@ -4,9 +4,7 @@ from typing import Literal, Optional, Tuple
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
-from superfv.slope_limiting.smooth_extrema_detection import (
-    inplace_smooth_extrema_detector,
-)
+from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, modify_slices
 
@@ -124,7 +122,7 @@ def compute_limited_slopes(
 
     # compute smooth extrema detector if requested
     if SED:
-        out_modified = inplace_smooth_extrema_detector(
+        out_modified = smooth_extrema_detector(
             xp, u, active_dims, out=alpha, buffer=abuff
         )
     else:

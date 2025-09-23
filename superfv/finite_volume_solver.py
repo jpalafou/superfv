@@ -1152,7 +1152,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
-        self.inplace_apply_bc(t, _u_, scheme=scheme)
+        self.apply_bc(t, _u_, scheme=scheme)
 
         # 1) conservative and primitive centroids
         fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=buffer)
@@ -1168,7 +1168,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _w_[...] = _wbf_[..., 0]
 
     @MethodTimer(cat="apply_bc")
-    def inplace_apply_bc(
+    def apply_bc(
         self,
         t: float,
         u: ArrayLike,
@@ -1201,7 +1201,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=scheme.p,
         )
 
-    def inplace_interpolate_faces(
+    def interpolate_faces(
         self,
         u: ArrayLike,
         dim: Literal["x", "y", "z"],
@@ -1296,7 +1296,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if z is not None:
             z[...] = zhang_shu_operator(z, average[..., np.newaxis], theta)
 
-    def inplace_integrate_fluxes(
+    def integrate_fluxes(
         self,
         dim: Literal["x", "y", "z"],
         scheme: InterpolationScheme,
@@ -1370,7 +1370,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
 
-    def inplace_compute_fluxes(self, t: float, scheme: InterpolationScheme):
+    def compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """
         Write fluxes to their respective arrays (`F`, `G`, and `H`) based on the
         workspace arrays `_u_` and `_w_`.
@@ -1386,16 +1386,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # update the face node arrays with the interpolated face nodes
         if isinstance(scheme, polyInterpolationScheme):
             for dim in self.active_dims:
-                self.inplace_interpolate_faces(
+                self.interpolate_faces(
                     averages,
                     dim,
                     scheme,
                     convert_to_primitives=limit_primitives and not interp_primitives,
                 )
         elif isinstance(scheme, musclInterpolationScheme):
-            self.inplace_reconstruct_muscl_faces(
-                scheme, limit_primitives=limit_primitives
-            )
+            self.reconstruct_muscl_faces(scheme, limit_primitives=limit_primitives)
         else:
             raise ValueError("Unknown interpolation scheme.")
 
@@ -1405,7 +1403,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute the fluxes and assign them to their respective arrays
         for dim in self.active_dims:
-            self.inplace_integrate_fluxes(
+            self.integrate_fluxes(
                 dim, scheme, convert_to_primitives=not limit_primitives
             )
 
@@ -1428,7 +1426,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             if n_revisable > 0:
                 self.timer.start("revise_fluxes")
-                MOOD.inplace_revise_fluxes(self, t)
+                MOOD.revise_fluxes(self, t)
                 self.timer.stop("revise_fluxes")
 
                 state.increment_MOOD_iteration()
@@ -1486,7 +1484,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Right-hand side of the ODE. Shape: (nvars, nx, ny, nz).
         """
         self.update_workspaces(t, u, self.base_scheme)
-        self.inplace_compute_fluxes(t, self.base_scheme)
+        self.compute_fluxes(t, self.base_scheme)
 
         if self.MOOD:
             self.MOOD_loop(t)
@@ -1538,7 +1536,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
 
         PAD_violations = self.arrays["buffer"][self.interior][..., 0]
-        MOOD.inplace_PAD_violations(
+        MOOD.detect_PAD_violations(
             xp,
             self.primitives_from_conservatives(unew),
             scheme.limiter_config.PAD_bounds,
@@ -1883,13 +1881,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.update_workspaces(t, u, scheme)
 
         # predictor step
-        self.inplace_reconstruct_muscl_faces(
+        self.reconstruct_muscl_faces(
             scheme, limit_primitives=limit_primitives, hancock=True, dt=dt
         )
 
         # corrector step
         for dim in self.active_dims:
-            self.inplace_integrate_fluxes(
+            self.integrate_fluxes(
                 dim, scheme, convert_to_primitives=not limit_primitives
             )
 
@@ -1898,7 +1896,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.increment_substepwise_logs()
 
-    def inplace_reconstruct_muscl_faces(
+    def reconstruct_muscl_faces(
         self,
         scheme: musclInterpolationScheme,
         *,

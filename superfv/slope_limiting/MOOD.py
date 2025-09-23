@@ -9,7 +9,7 @@ from superfv.slope_limiting import compute_dmp
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop
 
-from .smooth_extrema_detection import inplace_smooth_extrema_detector
+from .smooth_extrema_detection import smooth_extrema_detector
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
@@ -241,13 +241,13 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     # compute candidate solution
     u_new_interior = u_old_interior + dt * fv_solver.compute_RHS()
     u_new[interior] = u_new_interior
-    fv_solver.inplace_apply_bc(t, u_new, scheme=fv_solver.base_scheme)
+    fv_solver.apply_bc(t, u_new, scheme=fv_solver.base_scheme)
     w_new = fv_solver.primitives_from_conservatives(u_new)
     w_new_interior = w_new[interior]
 
     # compute NAD violations
     if NAD:
-        inplace_NAD_violations(
+        detect_NAD_violations(
             xp,
             (w_new if primitive_NAD else u_new)[lim_slc],
             (w_old if primitive_NAD else u_old)[lim_slc],
@@ -262,7 +262,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
     # compute smooth extrema
     if SED:
-        inplace_smooth_extrema_detector(
+        smooth_extrema_detector(
             xp,
             (w_new if primitive_NAD else u_new)[lim_slc],
             active_dims,
@@ -278,7 +278,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
     # compute PAD violations
     if PAD:
-        inplace_PAD_violations(
+        detect_PAD_violations(
             xp,
             w_new_interior,
             cast(ArrayLike, PAD_bounds),
@@ -322,7 +322,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     return n_revisable_troubled_cells, n_troubled_cells
 
 
-def inplace_NAD_violations(
+def detect_NAD_violations(
     xp: ModuleType,
     u_new: ArrayLike,
     u_old: ArrayLike,
@@ -369,7 +369,7 @@ def inplace_NAD_violations(
     out[...] = xp.minimum(u_new - lower_bound, upper_bound - u_new)
 
 
-def inplace_PAD_violations(
+def detect_PAD_violations(
     xp: ModuleType,
     u_new: ArrayLike,
     physical_ranges: ArrayLike,
@@ -425,7 +425,7 @@ def normalize_troubles_bc(
     )
 
 
-def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
+def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     """
     In-place revision of fluxes based on the current time step.
 
@@ -465,7 +465,7 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     # update the cascade scheme fluxes
     if not cascade_status[current_max_idx]:
         scheme = cascade[current_max_idx]
-        fv_solver.inplace_compute_fluxes(t, scheme)
+        fv_solver.compute_fluxes(t, scheme)
         cascade_status[current_max_idx] = True
 
         if "x" in active_dims:
@@ -478,21 +478,21 @@ def inplace_revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = F_mask[interior] == i
             xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = G_mask[interior] == i
             xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
             mask = H_mask[interior] == i
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
@@ -549,7 +549,7 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
 
     # compute fallback scheme fluxes
     if not cascade_status[1]:
-        fv_solver.inplace_compute_fluxes(t, fallback_scheme)
+        fv_solver.compute_fluxes(t, fallback_scheme)
         cascade_status[1] = True
 
         if "x" in active_dims:
@@ -562,27 +562,27 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
         mask = F_mask[interior]
         xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
         xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
         mask = G_mask[interior]
         xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
         xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        inplace_map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
         mask = H_mask[interior]
         xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
         xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
 
 
-def inplace_map_cells_values_to_face_values(
+def map_cells_values_to_face_values(
     xp: ModuleType, cv: ArrayLike, axis: int, *, out: ArrayLike
 ):
     """

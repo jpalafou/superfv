@@ -8,8 +8,8 @@ import numpy as np
 
 from .stencil import (
     conservative_interpolation_weights,
-    inplace_multistencil_sweep,
-    inplace_stencil_sweep,
+    multistencil_sweep,
+    stencil_sweep,
     uniform_quadrature_weights,
 )
 from .tools.device_management import ArrayLike
@@ -328,7 +328,7 @@ def _fv_interpolate_1sweep(
     coords1 = nodes[dim1]
 
     stencils1 = stencil_func(p, coords1)
-    modified = inplace_multistencil_sweep(xp, u, stencils1, DIM_TO_AXIS[dim1], out=out)
+    modified = multistencil_sweep(xp, u, stencils1, DIM_TO_AXIS[dim1], out=out)
     return modified
 
 
@@ -348,9 +348,7 @@ def _fv_interpolate_2sweeps(
 
     # fill buffer
     stencils1 = stencil_func(p, coords1)
-    modified1 = inplace_multistencil_sweep(
-        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer
-    )
+    modified1 = multistencil_sweep(xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer)
 
     # interpolate nodes from buffer
     stencils2 = stencil_func(p, coords2)
@@ -358,7 +356,7 @@ def _fv_interpolate_2sweeps(
         start_idx = index_3d_to_1d(i, 0, 0, layer2_len, 1)
         stop_idx = index_3d_to_1d(i, layer2_len, 0, layer2_len, 1)
         out_slc = slice(start_idx, stop_idx)
-        modified2 = inplace_multistencil_sweep(
+        modified2 = multistencil_sweep(
             xp,
             buffer[:, :, :, :, i],
             stencils2,
@@ -388,9 +386,7 @@ def _fv_interpolate_3sweeps(
 
     # fill buffer layer 1
     stencils1 = stencil_func(p, coords1)
-    modified1 = inplace_multistencil_sweep(
-        xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer
-    )
+    modified1 = multistencil_sweep(xp, u, stencils1, DIM_TO_AXIS[dim1], out=buffer)
 
     # fill buffer layer 2
     stencils2 = stencil_func(p, coords2)
@@ -401,7 +397,7 @@ def _fv_interpolate_3sweeps(
         out_slc = slice(start_idx, stop_idx)
 
         # perform the stencil sweep on the buffer
-        modified2 = inplace_multistencil_sweep(
+        modified2 = multistencil_sweep(
             xp,
             buffer[:, :, :, :, i],
             stencils2,
@@ -421,7 +417,7 @@ def _fv_interpolate_3sweeps(
         out_slc = slice(start_idx, stop_idx)
 
         # perform the stencil sweep
-        modified3 = inplace_multistencil_sweep(
+        modified3 = multistencil_sweep(
             xp,
             buffer[:, :, :, :, in_idx],
             stencil3,
@@ -493,7 +489,7 @@ def _fv_interpolate_recursive(
         Slice objects indicating the modified regions in the output array.
     """
     raise NotImplementedError(
-        "This function has not been refactored for `inplace_multistencil_sweep`."
+        "This function has not been refactored for `multistencil_sweep`."
     )
     coords = [_to_iter(nodes[dim]) for dim in nodes.keys()]
     modified = _fv_interpolate_recursive_helper(
@@ -546,9 +542,7 @@ def _fv_interpolate_recursive_helper(
             child_idx = _buffer_flat_index(layers, next_path)
             child = buffer[:, :, :, :, child_idx]
 
-        modified = inplace_stencil_sweep(
-            xp, parent, stencil, DIM_TO_AXIS[dim], out=child
-        )
+        modified = stencil_sweep(xp, parent, stencil, DIM_TO_AXIS[dim], out=child)
 
         if FOUND_NODE:
             child_slices.append(modified)

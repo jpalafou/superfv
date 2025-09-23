@@ -128,7 +128,7 @@ def uniform_quadrature_weights(xp: Any, p: int) -> np.ndarray:
     return xp.asarray(w)
 
 
-def inplace_stencil_sweep(
+def stencil_sweep(
     xp: ModuleType,
     arr: ArrayLike,
     stencil_weights: Union[Sequence[float], ArrayLike],
@@ -159,7 +159,7 @@ def inplace_stencil_sweep(
     return modified
 
 
-def inplace_multistencil_sweep_add_multiply(
+def multistencil_sweep_add_multiply(
     xp: ModuleType,
     arr: ArrayLike,
     stencils: ArrayLike,
@@ -207,7 +207,7 @@ def inplace_multistencil_sweep_add_multiply(
     return out_modified
 
 
-def inplace_multistencil_sweep(
+def multistencil_sweep(
     xp: ModuleType,
     arr: ArrayLike,
     stencils: ArrayLike,
