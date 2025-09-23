@@ -19,7 +19,6 @@ dependencies = [
     "pandas",
     "rationalpy",
     "stencilpal @ git+https://github.com/jpalafou/stencilpal.git",
-    "wtflux @ git+https://github.com/jpalafou/wtflux.git",
 ]
 
 [project.optional-dependencies]

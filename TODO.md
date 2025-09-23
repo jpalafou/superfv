@@ -12,12 +12,12 @@ changes:
 - [x] write solutions to disk
 - [x] ZS4 comparison with Teyssier for the 1D experiments
 - [x] timing file should print with \n at the end to make catting more pleasant
+- [x] rm wtflux backend for now
 
 todo:
 - [ ] rm 'inplace' from function names
 - [ ] in `FiniteVolumeSolver.run`, switch `q_max` to `mode: Optional[int] = None` and allow -1 for MUSCL-Hancock
 - [ ] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
-- [ ] rm wtflux backend for now
 - [ ] fix: hydro operators on nonsense ghost values
 - [ ] ZS + flux_recipe=2 doesn't converge
 - [ ] change terminology `transfer_to_device("cpu")` and `transfer_to_device("gpu")` to `transfer_to_host` and `transfer_to_device`

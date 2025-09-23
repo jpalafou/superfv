@@ -1,7 +1,5 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
-import wtflux
-
 from . import hydro, riemann_solvers
 from .boundary_conditions import DirichletBC
 from .finite_volume_solver import (
@@ -185,9 +183,6 @@ class EulerSolver(FiniteVolumeSolver):
         """
         # init hydro
         self.gamma = gamma
-        if cupy:
-            wtflux.backend.set_backend("cupy")
-        self.hydro = wtflux.hydro
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
