@@ -32,7 +32,6 @@ def test_interrupted_simulation():
         nx=N,
         ny=N,
         p=p,
-        log_every_step=False,
     )
     sim_part1 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=2, vy=1, xp=xp),
@@ -44,7 +43,6 @@ def test_interrupted_simulation():
         nx=N,
         ny=N,
         p=p,
-        log_every_step=False,
     )
 
     # run simulations

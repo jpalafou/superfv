@@ -58,7 +58,6 @@ class EulerSolver(FiniteVolumeSolver):
         PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
-        log_every_step: bool = True,
         gamma: float = 1.4,
     ):
         """
@@ -178,7 +177,6 @@ class EulerSolver(FiniteVolumeSolver):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
-            log_every_step: Whether to call `log_quantity` at the end of each timestep.
             gamma (float): Adiabatic index.
         """
         # init hydro
@@ -223,7 +221,6 @@ class EulerSolver(FiniteVolumeSolver):
             PAD_atol=PAD_atol,
             SED=SED,
             cupy=cupy,
-            log_every_step=log_every_step,
         )
 
     def define_vars(self) -> VariableIndexMap:

@@ -127,7 +127,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
-        log_every_step: bool = True,
     ):
         """
         Initialize the finite volume solver.
@@ -246,7 +245,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
-            log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
         self._init_active_dims(nx, ny, nz)
         self._init_ic_callables(ic, ic_passives)

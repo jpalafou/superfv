@@ -58,7 +58,6 @@ class AdvectionSolver(FiniteVolumeSolver):
         PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
-        log_every_step: bool = True,
     ):
         """
         Initialize the finite volume solver of the advection equation.
@@ -179,7 +178,6 @@ class AdvectionSolver(FiniteVolumeSolver):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
-            log_every_step: Whether to call `log_quantity` at the end of each timestep.
         """
         super().__init__(
             ic=ic,
@@ -221,7 +219,6 @@ class AdvectionSolver(FiniteVolumeSolver):
             PAD_atol=PAD_atol,
             SED=SED,
             cupy=cupy,
-            log_every_step=log_every_step,
         )
 
     def define_vars(self) -> VariableIndexMap:
