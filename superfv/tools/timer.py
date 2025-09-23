@@ -107,6 +107,14 @@ class Timer:
                 f"Cannot stop '{cat}' timer since it is not in progress."
             )
 
+    def stop_all(self):
+        """
+        Stop all running timers.
+        """
+        for cat in self.cats:
+            if self._running[cat]:
+                self.stop(cat)
+
     def to_dict(self, decimals: int = 2) -> dict:
         """
         Return the cumulative times for all categories as a dictionary.

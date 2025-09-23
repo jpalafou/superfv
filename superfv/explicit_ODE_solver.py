@@ -358,7 +358,7 @@ class ExplicitODESolver(ABC):
             else:
                 raise ValueError("Specify exactly one of 'T' or 'n'.")
         finally:
-            self.timer.stop("wall")
+            self.timer.stop_all()
 
     def _integrate_for_fixed_number_of_steps(
         self,
