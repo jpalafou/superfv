@@ -635,10 +635,53 @@ class ExplicitODESolver(ABC):
         """
         self.n_substeps += 1
 
-    def euler(self, *args, **kwargs) -> None:
+    def euler(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+    ):
+        """
+        Integrate the ODE system forward in time using the forward Euler method.
+
+        Args:
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
+        """
         self.integrator = "euler"
         self.stepper = self._euler_step
-        self.integrate(*args, **kwargs)
+        self.integrate(
+            T=T,
+            n=n,
+            snapshot_mode=snapshot_mode,
+            allow_overshoot=allow_overshoot,
+            verbose=verbose,
+            log_freq=log_freq,
+            path=path,
+            overwrite=overwrite,
+        )
 
     def _euler_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
@@ -650,10 +693,54 @@ class ExplicitODESolver(ABC):
         unew[...] = u + dt * k0
         self.increment_substepwise_logs()
 
-    def ssprk2(self, *args, **kwargs) -> None:
+    def ssprk2(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+    ):
+        """
+        Integrate the ODE system forward in time using the second-order
+        Strong Stability Preserving Runge-Kutta method (SSPRK2).
+
+        Args:
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
+        """
         self.integrator = "ssprk2"
         self.stepper = self._ssprk2_step
-        self.integrate(*args, **kwargs)
+        self.integrate(
+            T=T,
+            n=n,
+            snapshot_mode=snapshot_mode,
+            allow_overshoot=allow_overshoot,
+            verbose=verbose,
+            log_freq=log_freq,
+            path=path,
+            overwrite=overwrite,
+        )
 
     def _ssprk2_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
@@ -671,10 +758,54 @@ class ExplicitODESolver(ABC):
         unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
         self.increment_substepwise_logs()
 
-    def ssprk3(self, *args, **kwargs) -> None:
+    def ssprk3(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+    ):
+        """
+        Integrate the ODE system forward in time using the third-order
+        Strong Stability Preserving Runge-Kutta method (SSPRK3).
+
+        Args:
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
+        """
         self.integrator = "ssprk3"
         self.stepper = self._ssprk3_step
-        self.integrate(*args, **kwargs)
+        self.integrate(
+            T=T,
+            n=n,
+            snapshot_mode=snapshot_mode,
+            allow_overshoot=allow_overshoot,
+            verbose=verbose,
+            log_freq=log_freq,
+            path=path,
+            overwrite=overwrite,
+        )
 
     def _ssprk3_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]
@@ -697,10 +828,54 @@ class ExplicitODESolver(ABC):
         unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
         self.increment_substepwise_logs()
 
-    def rk4(self, *args, **kwargs):
+    def rk4(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+    ):
+        """
+        Integrate the ODE system forward in time using the fourth-order Runge-Kutta
+        method (RK4).
+
+        Args:
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
+        """
         self.integrator = "rk4"
         self.stepper = self._rk4_step
-        self.integrate(*args, **kwargs)
+        self.integrate(
+            T=T,
+            n=n,
+            snapshot_mode=snapshot_mode,
+            allow_overshoot=allow_overshoot,
+            verbose=verbose,
+            log_freq=log_freq,
+            path=path,
+            overwrite=overwrite,
+        )
 
     def _rk4_step(self, t: float, u: ArrayLike, dt: float):
         unew = self.arrays["unew"]

@@ -14,10 +14,9 @@ changes:
 - [x] timing file should print with \n at the end to make catting more pleasant
 - [x] rm wtflux backend for now
 - [x] rm: log_every_step argument
+- [x] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
 
 todo:
 - [ ] rm 'inplace' from function names
-- [ ] in `FiniteVolumeSolver.run`, switch `q_max` to `mode: Optional[int] = None` and allow -1 for MUSCL-Hancock
-- [ ] add `ExplicitODESolver` args and documentation to `FiniteVolumeSolver.run`
 - [ ] fix: hydro operators on nonsense ghost values
 - [ ] ZS + flux_recipe=2 doesn't converge

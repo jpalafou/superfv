@@ -1722,36 +1722,143 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             self.MOOD_state.increment_substep_hists()
 
-    def run(self, *args, q_max=3, **kwargs):
+    def run(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+        q_max: int = 3,
+    ):
         """
-        Solve the conservation law using a Runge-Kutta method whose order matches the
-        chosen polynomial degree for the spatial discretization, up to RK4.
+        Integrate the ODE system forward in time using a specified Runge-Kutta method.
 
         Args:
-            *args: Arguments to pass to the Runge-Kutta method.
-            q_max: Maximum degree of the Runge-Kutta method to use.
-            **kwargs: Keyword arguments to pass to the Runge-Kutta method.
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
+            q_max: Maximum polynomial degree of the Runge-Kutta method to use.
+                - 0: Forward Euler (1st order).
+                - 1: SSPRK2 (2nd order).
+                - 2: SSPRK3 (3rd order).
+                - 3: Classical RK4 (4th order).
         """
         q = min(self.p, q_max)
         match q:
             case 0:
-                self.euler(*args, **kwargs)
+                self.euler(
+                    T=T,
+                    n=n,
+                    snapshot_mode=snapshot_mode,
+                    allow_overshoot=allow_overshoot,
+                    verbose=verbose,
+                    log_freq=log_freq,
+                    path=path,
+                    overwrite=overwrite,
+                )
             case 1:
-                self.ssprk2(*args, **kwargs)
+                self.ssprk2(
+                    T=T,
+                    n=n,
+                    snapshot_mode=snapshot_mode,
+                    allow_overshoot=allow_overshoot,
+                    verbose=verbose,
+                    log_freq=log_freq,
+                    path=path,
+                    overwrite=overwrite,
+                )
             case 2:
-                self.ssprk3(*args, **kwargs)
+                self.ssprk3(
+                    T=T,
+                    n=n,
+                    snapshot_mode=snapshot_mode,
+                    allow_overshoot=allow_overshoot,
+                    verbose=verbose,
+                    log_freq=log_freq,
+                    path=path,
+                    overwrite=overwrite,
+                )
             case 3:
-                self.rk4(*args, **kwargs)
+                self.rk4(
+                    T=T,
+                    n=n,
+                    snapshot_mode=snapshot_mode,
+                    allow_overshoot=allow_overshoot,
+                    verbose=verbose,
+                    log_freq=log_freq,
+                    path=path,
+                    overwrite=overwrite,
+                )
             case _:
                 raise ValueError(f"Runge-Kutta method not implemented for {q=}")
 
-    def musclhancock(self, *args, **kwargs):
+    def musclhancock(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+    ):
         """
-        Apply the MUSCL-Hancock method for time integration.
+        Integrate the ODE system forward in time using a MUSCL-Hancock scheme.
+
+        Args:
+            T: Target simulation time(s).
+                - Single float: Integrate until this time.
+                - List of floats: Integrate until each listed time.
+                - None: `n` must be specified instead.
+            n: Number of steps to take. If None, `T` must be specified instead.
+            snapshot_mode: When to take snapshots.
+                - "target" (default):
+                    * If `T` is given: at t=0 and each target time. If multiple target
+                        times are crossed in a single step, only one snapshot is taken
+                        at the end of the step.
+                    * If `n` is given: at t=0 and the nth step.
+                - "none": no snapshots.
+                - "every": at t=0 and every step.
+            allow_overshoot: If True, the solver may overshoot target times
+                instead of shortening the last step to hit them exactly.
+            verbose: Whether to print progress information.
+            log_freq: Step interval between log updates (if verbose).
+            path: Directory to write snapshots. If None, snapshots are not written.
+            overwrite: Whether to overwrite `path` if it already exists.
         """
         self.integrator = "musclhancock"
         self.stepper = self._musclhancock_step
-        self.integrate(*args, **kwargs)
+        self.integrate(
+            T=T,
+            n=n,
+            snapshot_mode=snapshot_mode,
+            allow_overshoot=allow_overshoot,
+            verbose=verbose,
+            log_freq=log_freq,
+            path=path,
+            overwrite=overwrite,
+        )
 
     def _musclhancock_step(self, t: float, u: ArrayLike, dt: float):
         """
