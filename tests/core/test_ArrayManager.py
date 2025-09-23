@@ -42,15 +42,15 @@ def test_clear_arrays():
     assert len(manager.arrays) == 0
 
 
-def test_transfer_to_device():
+def test_transfer_to():
     if not CUPY_AVAILABLE:
         pytest.skip("CuPy is not available")
 
     manager = ArrayManager()
     manager.add("cpu_array", np.ones((5, 5)))
-    manager.transfer_to_device("gpu")
+    manager.transfer_to("gpu")
     assert isinstance(manager.arrays["cpu_array"], xp.ndarray)
-    manager.transfer_to_device("cpu")
+    manager.transfer_to("cpu")
     assert isinstance(manager.arrays["cpu_array"], np.ndarray)
 
 
@@ -93,5 +93,5 @@ def test_transfer_without_cupy():
     manager = ArrayManager()
     manager.add("data", np.array([1, 2, 3]))
     with pytest.warns(UserWarning, match="CuPy is not available"):
-        manager.transfer_to_device("gpu")  # Should warn and do nothing
+        manager.transfer_to("gpu")  # Should warn and do nothing
     assert isinstance(manager["data"], np.ndarray)  # Still a NumPy array

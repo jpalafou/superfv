@@ -69,9 +69,9 @@ class ArrayManager:
         if name in self.arrays:
             raise KeyError(f"Array with name '{name}' already exists.")
 
-    def transfer_to_device(self, device: Literal["cpu", "gpu"]):
+    def transfer_to(self, device: Literal["cpu", "gpu"]):
         """
-        Transfer all arrays to a specific device.
+        Transfer all arrays to a specific memory.
 
         Args:
             device: Device to transfer arrays to ("cpu" or "gpu").

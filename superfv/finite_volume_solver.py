@@ -405,8 +405,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays = ArrayManager()
         self.mesh_arrays = ArrayManager()
         if self.cupy:
-            self.arrays.transfer_to_device("gpu")
-            self.mesh_arrays.transfer_to_device("gpu")
+            self.arrays.transfer_to("gpu")
+            self.mesh_arrays.transfer_to("gpu")
 
     def _init_spatial_discretization(
         self,
@@ -877,7 +877,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_array_allocation(self):
         if self.cupy:
-            self.arrays.transfer_to_device("gpu")
+            self.arrays.transfer_to("gpu")
 
         idx = self.variable_index_map
         scheme = self.base_scheme
@@ -1971,13 +1971,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return
 
         if self.cupy:
-            self.mesh_arrays.transfer_to_device("cpu")
+            self.mesh_arrays.transfer_to("cpu")
 
         with open(self.path / "snapshots" / "mesh.pkl", "wb") as f:
             pickle.dump(self.mesh, f)
 
         if self.cupy:
-            self.mesh_arrays.transfer_to_device("gpu")
+            self.mesh_arrays.transfer_to("gpu")
 
     def to_dict(self) -> dict:
         """
@@ -2020,6 +2020,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.__dict__.update(state)
         if self.cupy:
             self.xp = xp
-            self.arrays.transfer_to_device("gpu")
+            self.arrays.transfer_to("gpu")
         else:
             self.xp = np
