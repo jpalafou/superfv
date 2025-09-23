@@ -1921,10 +1921,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         w4 = max(len("% time"), int(pd.Series(pct).str.len().max()))
 
         # Write string
-        out = f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}"
-        out += "\n" + f"{'-'*w1}  {'-'*w2}  {'-'*w3}  {'-'*w4}"
+        out = f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}\n"
+        out += f"{'-'*w1}  {'-'*w2}  {'-'*w3}  {'-'*w4}\n"
         for name, c, tot, p in zip(df["Routine"], calls, totals, pct):
-            out += "\n" + f"{name:<{w1}}  {c:>{w2}}  {tot:>{w3}}  {p:>{w4}}"
+            out += f"{name:<{w1}}  {c:>{w2}}  {tot:>{w3}}  {p:>{w4}}\n"
         return out
 
     def get_timings_df(self) -> pd.DataFrame:
