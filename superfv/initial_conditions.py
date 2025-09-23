@@ -3,11 +3,14 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 
+from .mesh import xyz_tup
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 
 
-def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
+def parse_xyz(
+    x: ArrayLike, y: ArrayLike, z: ArrayLike
+) -> Tuple[Literal["x", "y", "z"], ...]:
     """
     Returns a string with the dimensions of the input arrays.
 
@@ -22,7 +25,7 @@ def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> str:
     """
     if not x.shape == y.shape == z.shape:
         raise ValueError("x, y, and z must have the same shape.")
-    return "".join(dim for dim, size in zip("xyz", x.shape) if size > 1)
+    return tuple([dim for dim, size in zip(xyz_tup, x.shape) if size > 1])
 
 
 def _uninitialized(
@@ -197,15 +200,16 @@ def composite(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
-    if dims != "x":
-        raise ValueError("Composite profile only defined for x as the only active dim.")
+    if len(dims) > 1:
+        raise ValueError("Composite profile only defined in 1D.")
+    dim = dims[0]
 
     out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
         # advection case
-        r = {"x": x, "y": y, "z": z}[dims]
+        r = {"x": x, "y": y, "z": z}[dim]
         u = xp.zeros_like(r)
 
         gauss_part = (
@@ -342,17 +346,18 @@ def sod_shock_tube_1d(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.empty((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Sod shock tube initial condition only works in 1D.")
+        raise ValueError("Sod shock tube initial condition is only defined in 1D.")
+    dim1 = dims[0]
+
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
-        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dims]
+        r = {"x": x, "y": y, "z": z}[dim1]
+        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dim1]
         out[idx("rho")] = xp.where(r < pos1, rhol, rhor)
-        out[idx("v" + dims)] = xp.where(r < pos1, vl, vr)
+        out[idx("v" + dim1)] = xp.where(r < pos1, vl, vr)
         out[idx("v" + orth_dim1)] = 0
         out[idx("v" + orth_dim2)] = 0
         out[idx("P")] = xp.where(r < pos1, pl, pr)
@@ -392,17 +397,18 @@ def velocity_ramp(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.empty((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Velocity ramp initial condition only works in 1D.")
+        raise ValueError("Velocity ramp initial condition is only defined in 1D.")
+    dim1 = dims[0]
+
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
-        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dims]
+        r = {"x": x, "y": y, "z": z}[dim1]
+        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dim1]
         out[idx("rho")] = rho0
-        out[idx("v" + dims)] = H0 * (r - 0.5)
+        out[idx("v" + dim1)] = H0 * (r - 0.5)
         out[idx("v" + orth_dim1)] = 0
         out[idx("v" + orth_dim2)] = 0
         out[idx("P")] = P0
@@ -491,17 +497,18 @@ def toro1(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Toro initial condition only works in 1D.")
+        raise ValueError("Toro initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
+        r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = xp.where(r < 0.3, 1.0, 0.125)
-        out[idx("v" + dims)] = xp.where(r < 0.3, 0.75, 0.0)
+        out[idx("v" + dim)] = xp.where(r < 0.3, 0.75, 0.0)
         out[idx("P")] = xp.where(r < 0.3, 1.0, 0.1)
     else:
         raise NotImplementedError(
@@ -532,17 +539,18 @@ def toro2(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Toro initial condition only works in 1D.")
+        raise ValueError("Toro initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
+        r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = 1
-        out[idx("v" + dims)] = xp.where(r < 0.5, -2, 2)
+        out[idx("v" + dim)] = xp.where(r < 0.5, -2, 2)
         out[idx("P")] = 0.4
     else:
         raise NotImplementedError(
@@ -573,14 +581,15 @@ def toro3(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Toro initial condition only works in 1D.")
+        raise ValueError("Toro initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
+        r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = 1
         out[idx("P")] = xp.where(r < 0.5, 1000, 0.01)
@@ -613,18 +622,19 @@ def shu_osher(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Shu-Osher initial condition only works in 1D.")
+        raise ValueError("Shu-Osher initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
+        r = {"x": x, "y": y, "z": z}[dim]
 
         density_wave = 1 + 0.2 * xp.sin(2 * np.pi * 8 * r)
         out[idx("rho")] = xp.where(r < 0.125, 3.857143, density_wave)
-        out[idx("v" + dims)] = xp.where(r < 0.125, 2.629369, 0)
+        out[idx("v" + dim)] = xp.where(r < 0.125, 2.629369, 0)
         out[idx("P")] = xp.where(r < 0.125, 10.33333, 1)
     else:
         raise NotImplementedError(
@@ -655,14 +665,15 @@ def interacting_blast_wave_1d(
         xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
-
     if len(dims) != 1:
-        raise ValueError("Toro initial condition only works in 1D.")
+        raise ValueError("Toro initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
-        r = {"x": x, "y": y, "z": z}[dims]
+        r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = 1
         out[idx("P")] = xp.where(r < 0.1, 1000, np.where(r < 0.9, 0.01, 100))
@@ -701,8 +712,9 @@ def kelvin_helmholtz_2d(
 
     dims = parse_xyz(x, y, z)
     if len(dims) != 2:
-        raise ValueError("Kelvin-Helmholtz initial condition only works in 2D.")
-    dim1, dim2 = dims
+        raise ValueError("Kelvin-Helmholtz initial condition is only defined in 2D.")
+    dim1 = dims[0]
+    dim2 = dims[1]
 
     d1 = {"x": x, "y": y, "z": z}[dim1]
     d2 = {"x": x, "y": y, "z": z}[dim2]

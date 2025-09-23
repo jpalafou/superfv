@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.colorbar import Colorbar
+from matplotlib.contour import QuadContourSet
+from matplotlib.image import AxesImage
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
@@ -319,7 +322,7 @@ def plot_2d_slice(
     xlabel: bool = False,
     ylabel: bool = False,
     **kwargs,
-) -> Tuple[Union[plt.Imshow, plt.QuadContourSet], Optional[plt.Colorbar]]:
+) -> Tuple[Union[AxesImage, QuadContourSet], Optional[Colorbar]]:
     """
     Plot a 2D slice of a variable at a given time and coordinates.
 
@@ -349,9 +352,15 @@ def plot_2d_slice(
         ylabel: Whether to show the y-axis label.
         **kwargs: Keyword arguments for the plot.
 
+    Returns:
+        artist: The AxesImage or QuadContourSet created by the plot.
+        cbar: The Colorbar object if colorbar is True, else None.
+
     Raises:
         ValueError: If not exactly two of x, y, z is None or a tuple.
     """
+    artist: Union[AxesImage, QuadContourSet]
+
     # find the dimensions to plot
     is_valid = _is_None_or_tuple
     active_dims = fv_solver.active_dims
@@ -398,7 +407,7 @@ def plot_2d_slice(
             cast(float, y_arr[-1]),
         )
 
-        im = ax.imshow(f_arr, extent=extent, cmap=cmap, **kwargs)
+        artist = ax.imshow(f_arr, extent=extent, cmap=cmap, **kwargs)
 
         if overlay_troubles:
             troubles_arr = _extract_variable_data(
@@ -414,7 +423,7 @@ def plot_2d_slice(
                 vmax=1,
             )
     elif using == "contour":
-        im = ax.contour(x_arr, y_arr, f_arr, levels=levels, cmap=cmap, **kwargs)
+        artist = ax.contour(x_arr, y_arr, f_arr, levels=levels, cmap=cmap, **kwargs)
 
     # add colorbar
     if colorbar:
@@ -430,7 +439,7 @@ def plot_2d_slice(
     if ylabel:
         ax.set_ylabel(rf"${dim2}$")
 
-    return im, cbar
+    return artist, cbar
 
 
 def power_law(
