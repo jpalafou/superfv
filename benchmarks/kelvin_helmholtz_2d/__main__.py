@@ -46,18 +46,34 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
+    "MM3 NAD_rtol=0.1": dict(
+        riemann_solver="hllc",
+        flux_recipe=2,
+        lazy_primitives=True,
+        p=3,
+        MOOD=True,
+        cascade="muscl",
+        MUSCL_limiter="moncen",
+        max_MOOD_iters=1,
+        limiting_vars="actives",
+        NAD=True,
+        include_corners=True,
+        NAD_rtol=1e-1,
+        NAD_atol=1e-2,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
 }
 
 sims = {}
 for name, config in configs.items():
-    if overwrite != "all":
-        if name not in overwrite:
-            try:
-                sim = OutputLoader(path + name)
-                sims[name] = sim
-                continue
-            except FileNotFoundError:
-                pass
+    if overwrite != "all" and name not in overwrite:
+        try:
+            sim = OutputLoader(path + name)
+            sims[name] = sim
+            continue
+        except FileNotFoundError:
+            pass
 
     print(f"Running {name}...")
     sim = EulerSolver(
