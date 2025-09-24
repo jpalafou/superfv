@@ -42,6 +42,24 @@ def _get_nearest_index(
     return idx
 
 
+def _get_time_array(fv_solver: Union[FiniteVolumeSolver, OutputLoader]) -> np.ndarray:
+    """
+    Get the array of available snapshot times.
+
+    Args:
+        fv_solver: FiniteVolumeSolver or OutputLoader object.
+
+    Returns:
+        Array of available snapshot times.
+    """
+    if isinstance(fv_solver, OutputLoader):
+        t_list = list(fv_solver.file_index.values())
+    else:
+        t_list = fv_solver.snapshots.times()
+    t_array = np.sort(np.array(t_list))
+    return t_array
+
+
 def _parse_txyz_slices(
     fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     t: Optional[float],
@@ -73,11 +91,7 @@ def _parse_txyz_slices(
         ValueError: x, y, or z is not None, a float, or a tuple of length 2.
     """
     # get nearest time
-    if isinstance(fv_solver, OutputLoader):
-        t_list = list(fv_solver.file_index.values())
-    else:
-        t_list = fv_solver.snapshots.times()
-    t_array = np.sort(np.array(t_list))
+    t_array = _get_time_array(fv_solver)
     n = -1 if t is None else _get_nearest_index(t_array, t)
     nearest_t = t_array[n]
 
@@ -440,6 +454,103 @@ def plot_2d_slice(
         ax.set_ylabel(rf"${dim2}$")
 
     return artist, cbar
+
+
+def plot_spacetime(
+    fv_solver: Union[FiniteVolumeSolver, OutputLoader],
+    ax: Axes,
+    variable: str,
+    cell_averaged: bool = False,
+    theta: bool = False,
+    cmap: Optional[str] = None,
+    colorbar: bool = False,
+    overlay_troubles: bool = False,
+    troubles_cmap: str = "Reds",
+    troubles_alpha: float = 0.5,
+    xlabel: bool = False,
+    tlabel: bool = False,
+    **kwargs,
+) -> Tuple[AxesImage, Optional[Colorbar]]:
+    """
+    Plot a spacetime diagram of a variable.
+
+    Args:
+        fv_solver: FiniteVolumeSolver or OutputLoader object. Must be 1D.
+        ax: Matplotlib axes object.
+        variable: Name of the variable to plot.
+        cell_averaged: Whether to plot the cell average of the variable. If False, the
+            variable is plotted using its cell-centered values.
+        theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
+        cmap: Colormap to use for the plot. If None, no colormap is applied
+        colorbar: Whether to add a colorbar to the plot.
+        overlay_troubles: Whether to overlay troubled cells on top of the variable
+            plot. Only valid for solvers that use MOOD.
+        troubles_cmap: Colormap to use for the troubled cells overlay.
+        troubles_alpha: Alpha value for the troubled cells overlay.
+        xlabel: Whether to show the x-axis (vertical axis) label.
+        tlabel: Whether to show the t-axis (horizontal axis) label.
+        **kwargs: Keyword arguments for the plot.
+    """
+    active_dims = fv_solver.active_dims
+    if len(active_dims) != 1:
+        raise ValueError(
+            "Spacetime plots are only supported for 1D problems (exactly one active "
+            "dimension)."
+        )
+    dim = active_dims[0]
+
+    _, slices = _parse_txyz_slices(fv_solver, 0, None, None, None)
+    t_arr = _get_time_array(fv_solver)
+    x_arr = getattr(fv_solver.mesh, dim + "_centers")
+
+    f_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
+    for i, t in enumerate(t_arr):
+        f_arr[:, i] = _extract_variable_data(
+            fv_solver, t, variable, cell_averaged=cell_averaged, theta=theta
+        )[*slices]
+
+    extent = (
+        cast(float, t_arr[0]),
+        cast(float, t_arr[-1]),
+        cast(float, x_arr[0]),
+        cast(float, x_arr[-1]),
+    )
+    im = ax.imshow(
+        f_arr, extent=extent, cmap=cmap, origin="lower", aspect="auto", **kwargs
+    )
+
+    if overlay_troubles:
+        troubles_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
+        for i, t in enumerate(t_arr):
+            current_troubles = _extract_variable_data(
+                fv_solver, t, variable, troubles=True
+            )[*slices]
+            troubles_arr[:, i] = np.where(
+                current_troubles > 0, current_troubles, np.nan
+            )
+
+        ax.imshow(
+            troubles_arr,
+            extent=extent,
+            cmap=troubles_cmap,
+            alpha=troubles_alpha,
+            vmin=0,
+            vmax=1,
+            origin="lower",
+            aspect="auto",
+        )
+
+    if colorbar:
+        cbar = plt.colorbar(ax.images[0], ax=ax)
+    else:
+        cbar = None
+
+    if tlabel:
+        ax.set_xlabel(r"$t$")
+    if xlabel:
+        ax.set_ylabel(rf"${dim}$")
+
+    return im, cbar
 
 
 def power_law(

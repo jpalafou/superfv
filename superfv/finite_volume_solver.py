@@ -1609,18 +1609,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         }
 
         # include limiting arrays in snapshot dict
-        if using_ZS and self.n_substeps > 1:
+        if using_ZS:
             theta = self.arrays["theta_log"]
-            theta[...] = theta / self.n_substeps
+            theta[...] = theta / self.n_substeps if self.n_substeps > 1 else theta
 
             data["theta"] = self.arrays.get_numpy_copy("theta_log")
 
-        if self.MOOD and self.n_substeps > 1:
+        if self.MOOD:
             troubles = self.arrays["troubles_log"]
             cascade_idx = self.arrays["cascade_idx_log"]
 
-            troubles[...] = troubles / self.n_substeps
-            cascade_idx[...] = cascade_idx / self.n_substeps
+            if self.n_substeps > 1:
+                troubles[...] = troubles / self.n_substeps
+                cascade_idx[...] = cascade_idx / self.n_substeps
+            else:
+                troubles[...] = troubles
+                cascade_idx[...] = cascade_idx
 
             data["troubles"] = self.arrays.get_numpy_copy("troubles_log")
             data["cascade"] = self.arrays.get_numpy_copy("cascade_idx_log")
