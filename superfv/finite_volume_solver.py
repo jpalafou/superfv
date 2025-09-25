@@ -2093,7 +2093,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.cupy:
             self.mesh_arrays.transfer_to("cpu")
 
-        with open(self.path / "snapshots" / "mesh.pkl", "wb") as f:
+        with open(self.path / "mesh.pkl", "wb") as f:
             pickle.dump(self.mesh, f)
 
         if self.cupy:

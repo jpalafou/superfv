@@ -4,4 +4,4 @@
 - [ ] redo KH with 10 snapshots. show that they start similar and diverge.
 - [ ] show smooth convergence in 2D for good measure
 - [ ] double mach reflection
-- [ ] mesh should not be in snapshots
+- [x] mesh should not be in snapshots

@@ -39,7 +39,7 @@ class OutputLoader:
         """
         Load the mesh from 'output_dir/snapshots/mesh.pkl'.
         """
-        with open(self.base / "snapshots" / "mesh.pkl", "rb") as f:
+        with open(self.base / "mesh.pkl", "rb") as f:
             return pickle.load(f)
 
     def load_minisnapshots(self):
