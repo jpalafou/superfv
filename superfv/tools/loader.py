@@ -15,10 +15,10 @@ class OutputLoader:
         Args:
             base: The base directory for the simulation output.
         """
-        if not base.exists():
-            raise FileNotFoundError(f"Base directory {base} does not exist.")
-
         self.base = Path(base)
+
+        if not self.base.exists():
+            raise FileNotFoundError(f"Base directory {base} does not exist.")
 
         self.config = self.load_config()
 

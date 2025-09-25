@@ -1,6 +1,9 @@
 - [x] ignore initial condition in spacetime plot
 - [ ] interactive blast wave has strange rarefraction results. try again with 10% rtol. if this fails, go back to 1% and increase the resolution.
-- [ ] hydro version of composite profile, show how NAD_rtol varies
+- [ ] hydro version of advection of a square. show that some schemes are more robust for progressively smaller rho_min.
 - [ ] redo KH with 10 snapshots. show that they start similar and diverge.
-- [ ] show smooth convergence in 2D for good measure
+- [x] show smooth convergence in 2D for good measure
 - [ ] double mach reflection
+- [ ] nonlinear soundwave convergence
+- [ ] gresho vortex from David sequel paper
+- [ ] isothermal=True (to be ran 3D). overwrite density with rho * c**2 at the end of each step
