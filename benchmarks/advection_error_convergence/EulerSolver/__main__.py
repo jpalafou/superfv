@@ -10,7 +10,7 @@ from superfv.tools.norms import linf_norm as norm
 
 # solver parameters
 OUTPUT_NAME = "benchmarks/advection_error_convergence/EulerSolver/" + "plot.png"
-DIMS = "x"
+DIMS = "xy"
 N_LIST = [16, 32, 64, 128, 256]
 P_LIST = [0, 1, 2, 3]
 Q_MAX = 3
@@ -22,6 +22,7 @@ MUSCL_CONFIG = dict(
 )
 APRIORI_CONFIG = dict(
     ZS=True,
+    include_corners=True,
     adaptive_dt=True,
     PAD={"rho": (0, None), "P": (0, None)},
     SED=True,
@@ -33,8 +34,9 @@ APOSTERIORI_CONFIG = dict(
     max_MOOD_iters=1,
     limiting_vars="actives",
     NAD=True,
+    include_corners=True,
     NAD_rtol=1e-2,
-    NAD_atol=1e-7,
+    NAD_atol=1e-2,
     SED=True,
     riemann_solver="hllc",
 )
@@ -92,10 +94,10 @@ for (i, flux_recipe), (j, (config, config_name)) in product(
 
         # run solver
         try:
-            if config_name == "muscl-hancock":
-                sim.musclhancock(1.0, log_freq=10)
+            if config.get("MUSCL", False):
+                sim.musclhancock(1.0, verbose=False)
             else:
-                sim.run(1.0, log_freq=10, q_max=Q_MAX)
+                sim.run(1.0, verbose=False, q_max=Q_MAX)
         except RuntimeError as e:
             print(f"  -> simulation failed: {e}\n")
             error = np.nan
