@@ -304,6 +304,7 @@ class ExplicitODESolver(ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
     ):
         """
         Integrate the ODE system forward in time.
@@ -328,11 +329,13 @@ class ExplicitODESolver(ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         self.timer.start("wall")
 
         try:
-            self.prepare_output_directory(path, overwrite)
+            self.prepare_output_directory(path, overwrite, discard)
 
             if snapshot_mode not in ("target", "none", "every"):
                 raise ValueError(
@@ -518,7 +521,7 @@ class ExplicitODESolver(ABC):
         }
 
     def prepare_output_directory(
-        self, path: Optional[str] = None, overwrite: bool = False
+        self, path: Optional[str] = None, overwrite: bool = False, discard: bool = True
     ):
         """
         Create output directory if it doesn't exist and throw an error or overwrite it
@@ -527,6 +530,8 @@ class ExplicitODESolver(ABC):
         Args:
             path: Output path as a string.
             overwrite: Whether to completely delete the path if it exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         if path is None:
             return None
@@ -541,7 +546,9 @@ class ExplicitODESolver(ABC):
 
         os.makedirs(out_path)
         os.makedirs(out_path / "snapshots")
+
         self.path = out_path
+        self.discard = discard
 
         # write some metadata before anything runs
         self.write_metadata()
@@ -566,7 +573,7 @@ class ExplicitODESolver(ABC):
         self.snapshots.log(self.t, data)
 
         if self.path is not None:
-            self.snapshots.write(self.path / "snapshots", self.t)
+            self.snapshots.write(self.path / "snapshots", self.t, discard=self.discard)
 
         self.timer.stop("snapshot")
 
@@ -645,6 +652,7 @@ class ExplicitODESolver(ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
     ):
         """
         Integrate the ODE system forward in time using the forward Euler method.
@@ -669,6 +677,8 @@ class ExplicitODESolver(ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         self.integrator = "euler"
         self.stepper = self._euler_step
@@ -681,6 +691,7 @@ class ExplicitODESolver(ABC):
             log_freq=log_freq,
             path=path,
             overwrite=overwrite,
+            discard=discard,
         )
 
     def _euler_step(self, t: float, u: ArrayLike, dt: float):
@@ -703,6 +714,7 @@ class ExplicitODESolver(ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
     ):
         """
         Integrate the ODE system forward in time using the second-order
@@ -728,6 +740,8 @@ class ExplicitODESolver(ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         self.integrator = "ssprk2"
         self.stepper = self._ssprk2_step
@@ -740,6 +754,7 @@ class ExplicitODESolver(ABC):
             log_freq=log_freq,
             path=path,
             overwrite=overwrite,
+            discard=discard,
         )
 
     def _ssprk2_step(self, t: float, u: ArrayLike, dt: float):
@@ -768,6 +783,7 @@ class ExplicitODESolver(ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
     ):
         """
         Integrate the ODE system forward in time using the third-order
@@ -793,6 +809,8 @@ class ExplicitODESolver(ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         self.integrator = "ssprk3"
         self.stepper = self._ssprk3_step
@@ -805,6 +823,7 @@ class ExplicitODESolver(ABC):
             log_freq=log_freq,
             path=path,
             overwrite=overwrite,
+            discard=discard,
         )
 
     def _ssprk3_step(self, t: float, u: ArrayLike, dt: float):
@@ -838,6 +857,7 @@ class ExplicitODESolver(ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
     ):
         """
         Integrate the ODE system forward in time using the fourth-order Runge-Kutta
@@ -863,6 +883,8 @@ class ExplicitODESolver(ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         self.integrator = "rk4"
         self.stepper = self._rk4_step
@@ -875,6 +897,7 @@ class ExplicitODESolver(ABC):
             log_freq=log_freq,
             path=path,
             overwrite=overwrite,
+            discard=discard,
         )
 
     def _rk4_step(self, t: float, u: ArrayLike, dt: float):

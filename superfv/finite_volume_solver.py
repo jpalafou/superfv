@@ -1734,6 +1734,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
         q_max: int = 3,
     ):
         """
@@ -1759,6 +1760,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
             q_max: Maximum polynomial degree of the Runge-Kutta method to use.
                 - 0: Forward Euler (1st order).
                 - 1: SSPRK2 (2nd order).
@@ -1777,6 +1780,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     log_freq=log_freq,
                     path=path,
                     overwrite=overwrite,
+                    discard=discard,
                 )
             case 1:
                 self.ssprk2(
@@ -1788,6 +1792,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     log_freq=log_freq,
                     path=path,
                     overwrite=overwrite,
+                    discard=discard,
                 )
             case 2:
                 self.ssprk3(
@@ -1799,6 +1804,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     log_freq=log_freq,
                     path=path,
                     overwrite=overwrite,
+                    discard=discard,
                 )
             case 3:
                 self.rk4(
@@ -1810,6 +1816,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     log_freq=log_freq,
                     path=path,
                     overwrite=overwrite,
+                    discard=discard,
                 )
             case _:
                 raise ValueError(f"Runge-Kutta method not implemented for {q=}")
@@ -1824,6 +1831,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         log_freq: int = 100,
         path: Optional[str] = None,
         overwrite: bool = False,
+        discard: bool = True,
     ):
         """
         Integrate the ODE system forward in time using a MUSCL-Hancock scheme.
@@ -1848,6 +1856,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             log_freq: Step interval between log updates (if verbose).
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
+            discard: If True, discard the in-memory snapshot data after writing to
+                disk.
         """
         self.integrator = "musclhancock"
         self.stepper = self._musclhancock_step
@@ -1860,6 +1870,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             log_freq=log_freq,
             path=path,
             overwrite=overwrite,
+            discard=discard,
         )
 
     def _musclhancock_step(self, t: float, u: ArrayLike, dt: float):

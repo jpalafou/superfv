@@ -52,10 +52,7 @@ def _get_time_array(fv_solver: Union[FiniteVolumeSolver, OutputLoader]) -> np.nd
     Returns:
         Array of available snapshot times.
     """
-    if isinstance(fv_solver, OutputLoader):
-        t_list = list(fv_solver.file_index.values())
-    else:
-        t_list = fv_solver.snapshots.times()
+    t_list = fv_solver.snapshots.times()
     t_array = np.sort(np.array(t_list))
     return t_array
 
@@ -155,8 +152,6 @@ def _extract_variable_data(
     idx = fv_solver.variable_index_map
 
     # choose the snapshot with the nearest time
-    if isinstance(fv_solver, OutputLoader):
-        fv_solver.load_snapshot(nearest_t)
     snapshot = fv_solver.snapshots(nearest_t)
 
     # plot troubles/cascade
