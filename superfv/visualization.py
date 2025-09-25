@@ -464,6 +464,7 @@ def plot_spacetime(
     troubles_alpha: float = 0.5,
     xlabel: bool = False,
     tlabel: bool = False,
+    ignore_first: bool = True,
     **kwargs,
 ) -> Tuple[AxesImage, Optional[Colorbar]]:
     """
@@ -484,6 +485,7 @@ def plot_spacetime(
         troubles_alpha: Alpha value for the troubled cells overlay.
         xlabel: Whether to show the x-axis (vertical axis) label.
         tlabel: Whether to show the t-axis (horizontal axis) label.
+        ignore_first: Whether to ignore the first time snapshot.
         **kwargs: Keyword arguments for the plot.
     """
     active_dims = fv_solver.active_dims
@@ -497,6 +499,9 @@ def plot_spacetime(
     _, slices = _parse_txyz_slices(fv_solver, 0, None, None, None)
     t_arr = _get_time_array(fv_solver)
     x_arr = getattr(fv_solver.mesh, dim + "_centers")
+
+    if ignore_first:
+        t_arr = t_arr[1:]
 
     f_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
     for i, t in enumerate(t_arr):
