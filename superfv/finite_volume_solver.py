@@ -13,7 +13,6 @@ from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .fv import DIM_TO_AXIS
-from .initial_conditions import _uninitialized
 from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
 from .mesh import UniformFVMesh, xyz_tup
 from .slope_limiting import MOOD
@@ -29,7 +28,6 @@ from .slope_limiting.zhang_and_shu import (
     zhang_shu_operator,
 )
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
-from .tools.dummy_module import DummyModule
 from .tools.slicing import VariableIndexMap, crop, merge_slices
 from .tools.timer import MethodTimer
 from .visualization import plot_1d_slice, plot_2d_slice
@@ -2058,18 +2056,3 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         with open(self.path / "timings.txt", "w") as f:
             f.write(self.get_timings_message(total_time_spec))
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        state["xp"] = DummyModule
-        state["ic"] = _uninitialized
-        state["ic_passives"] = {}
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        if self.cupy:
-            self.xp = xp
-            self.arrays.transfer_to("gpu")
-        else:
-            self.xp = np

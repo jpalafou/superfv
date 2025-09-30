@@ -1,6 +1,5 @@
 - [ ] hydro version of advection of a square. show that some schemes are more robust for progressively smaller rho_min.
 - [ ] redo KH with 10 snapshots. show that they start similar and diverge.
-- [x] double mach reflection
 - [ ] nonlinear soundwave convergence
 - [ ] gresho vortex from David sequel paper
 - [ ] isothermal=True (to be ran 3D). overwrite density with rho * c**2 at the end of each step
@@ -12,4 +11,4 @@
 - [ ] inconsistent terminology between pad and slab
 - [ ] somehow the 1D advection of a square notebook gives a different result now
 - [ ] `replace_slice` and `insert_slice` have inconsistent APIs
-- [ ] fix or remove pickling
+- [x] fix or remove pickling
