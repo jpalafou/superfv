@@ -3,8 +3,7 @@
 - [ ] nonlinear soundwave convergence
 - [ ] gresho vortex from David sequel paper
 - [ ] isothermal=True (to be ran 3D). overwrite density with rho * c**2 at the end of each step
-- [x] yaml instead of json in output
-- [ ] include `.run()` args in config.yaml
+- [x] include `.run()` args in config.yaml
 - [ ] ic args after idx, x, y, z, t should be forced kwargs
 - [ ] ic docstrings should have "Returns:"
 - [ ] inconsistent terminology between pad and slab

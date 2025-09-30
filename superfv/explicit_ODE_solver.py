@@ -12,6 +12,7 @@ import pandas as pd
 from .tools.device_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
 from .tools.timer import Timer
+from .tools.yaml_helper import yaml_dump
 
 
 def clamp_dt(t: float, dt: float, target_time: Optional[float] = None) -> float:
@@ -382,6 +383,14 @@ class ExplicitODESolver(ABC):
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
         """
+        # write run args to file
+        self.write_run_args(
+            n=n,
+            snapshot_mode=snapshot_mode,
+            verbose=verbose,
+            log_freq=log_freq,
+        )
+
         # print initial message
         if verbose:
             status_print(self.build_opening_message())
@@ -439,6 +448,16 @@ class ExplicitODESolver(ABC):
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
         """
+        # write run args to file
+        self.write_run_args(
+            T=T,
+            snapshot_mode=snapshot_mode,
+            allow_overshoot=allow_overshoot,
+            verbose=verbose,
+            log_freq=log_freq,
+        )
+
+        # format target times
         target_times = self._get_target_time_list(T)
         T_max = max(target_times)
         target_time = target_times.pop(0)
@@ -562,6 +581,18 @@ class ExplicitODESolver(ABC):
         with open(self.path / "commit_details.txt", "w") as f:
             for key, value in self.commit_details.items():
                 f.write(f"{key}: {value}\n")
+
+    def write_run_args(self, **kwargs):
+        """
+        Write the arguments passed to the `run` method to a yaml file.
+
+        Args:
+            **kwargs: Arguments passed to the `run` method.
+        """
+        if self.path is None:
+            return
+        with open(self.path / "run.yaml", "w") as f:
+            f.write(yaml_dump(kwargs))
 
     def take_snapshot(self):
         """
