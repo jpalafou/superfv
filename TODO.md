@@ -10,5 +10,4 @@
 - [ ] does the header of the zhang shu module need annotations?
 - [ ] inconsistent terminology between pad and slab
 - [ ] somehow the 1D advection of a square notebook gives a different result now
-- [ ] `replace_slice` and `insert_slice` have inconsistent APIs
-- [x] fix or remove pickling
+- [x] `replace_slice` and `insert_slice` have inconsistent APIs

@@ -252,7 +252,9 @@ def _replace_slice(
 
 
 def insert_slice(
-    slc: Tuple[Union[int, slice], ...], new_slice: slice, axis: int
+    slc: Tuple[Union[int, slice], ...],
+    axis: int,
+    new_slice: Union[int, slice],
 ) -> Tuple[Union[int, slice], ...]:
     """
     Insert a new slice into a tuple of slices at a specified axis.
@@ -265,12 +267,12 @@ def insert_slice(
     Returns:
         A new tuple of slices with an additional slice inserted at the specified axis.
     """
-    return _insert_slice(slc, new_slice, axis)
+    return _insert_slice(slc, axis, new_slice)
 
 
 @lru_cache(maxsize=None)
 def _insert_slice(
-    slc: Tuple[Union[int, slice], ...], new_slice: slice, axis: int
+    slc: Tuple[Union[int, slice], ...], axis: int, new_slice: Union[int, slice]
 ) -> Tuple[Union[int, slice], ...]:
     if axis < 0 or axis >= len(slc):
         raise IndexError(

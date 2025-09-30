@@ -6,9 +6,11 @@ from superfv.tools.slicing import (
     _crop_to_center,
     crop,
     crop_to_center,
+    insert_slice,
     intersection_shape,
     merge_indices,
     merge_slices,
+    replace_slice,
 )
 
 # ---------- Tests for crop ----------
@@ -184,3 +186,58 @@ def test_merge_slices_step_is_ignored():
     result = merge_slices(s1, s2)
     assert result == (slice(5, 10),)  # step is intentionally ignored
     assert merge_slices(s1, s2, union=True) == (slice(0, 15),)  # step ignored in union
+
+
+# ---------- Tests for inserting and replacing slices ----------
+
+
+def test_replace_slice_with_slice():
+    slc = (slice(1, 4), slice(2, 5), slice(3, 6))
+    new_slice = slice(0, 3)
+    axis = 1
+    expected = (slice(1, 4), slice(0, 3), slice(3, 6))
+    result = replace_slice(slc, axis, new_slice)
+    assert result == expected
+
+
+def test_replace_slice_with_int():
+    slc = (slice(1, 4), slice(2, 5), slice(3, 6))
+    new_slice = 2
+    axis = 0
+    expected = (2, slice(2, 5), slice(3, 6))
+    result = replace_slice(slc, axis, new_slice)
+    assert result == expected
+
+
+def test_replace_slice_invalid_axis():
+    slc = (slice(1, 4), slice(2, 5))
+    new_slice = slice(0, 3)
+    axis = 2
+    with pytest.raises(IndexError):
+        replace_slice(slc, axis, new_slice)
+
+
+def test_insert_slice_with_slice():
+    slc = (slice(1, 4), slice(2, 5))
+    new_slice = slice(0, 3)
+    axis = 1
+    expected = (slice(1, 4), slice(0, 3), slice(2, 5))
+    result = insert_slice(slc, axis, new_slice)
+    assert result == expected
+
+
+def test_insert_slice_with_int():
+    slc = (slice(1, 4), slice(2, 5))
+    new_slice = 3
+    axis = 0
+    expected = (3, slice(1, 4), slice(2, 5))
+    result = insert_slice(slc, axis, new_slice)
+    assert result == expected
+
+
+def test_insert_slice_invalid_axis():
+    slc = (slice(1, 4), slice(2, 5))
+    new_slice = slice(0, 3)
+    axis = 3
+    with pytest.raises(IndexError):
+        insert_slice(slc, axis, new_slice)
