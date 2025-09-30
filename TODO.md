@@ -7,7 +7,6 @@
 - [ ] include `.run()` args in config.yaml
 - [ ] ic args after idx, x, y, z, t should be forced kwargs
 - [ ] ic docstrings should have "Returns:"
-- [ ] does the header of the zhang shu module need annotations?
+- [x] does the header of the zhang shu module need annotations?
 - [ ] inconsistent terminology between pad and slab
 - [ ] somehow the 1D advection of a square notebook gives a different result now
-- [x] `replace_slice` and `insert_slice` have inconsistent APIs

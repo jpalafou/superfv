@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Literal, Optional, cast
