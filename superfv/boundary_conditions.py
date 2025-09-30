@@ -1,390 +1,277 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from types import ModuleType
 from typing import Callable, Literal, Optional, Tuple, Union, cast
 
+from .field import MultivarField
 from .fv import AXIS_TO_DIM
 from .mesh import UniformFVMesh, xyz_tup
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap, crop
 
-# define custom type annotations
-Field = Callable[
-    [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-    ArrayLike,
-]
-DirichletBC = Union[Field, Tuple[Optional[Field], Optional[Field]]]
-FieldWrapper = Callable[[Field], Field]
+
+@dataclass
+class BCcontext:
+    axis: int
+    left: bool
+    slab_thickness: int
+    f: Optional[MultivarField] = None
+    variable_index_map: Optional[VariableIndexMap] = None
+    mesh: Optional[UniformFVMesh] = None
+    t: Optional[float] = None
+    p: Optional[int] = None
+    xp: Optional[ModuleType] = None
+
+
 BCs = Literal[
-    "none", "periodic", "dirichlet", "free", "symmetric", "reflective", "zeros", "ones"
+    "none",
+    "periodic",
+    "dirichlet",
+    "free",
+    "symmetric",
+    "reflective",
+    "zeros",
+    "ones",
+    "patch",
 ]
-FieldFunction = Callable[
-    [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-    ArrayLike,
-]
+PatchBC = Callable[[ArrayLike, BCcontext], None]
+CallableBC = Union[MultivarField, PatchBC]
 
 
 def apply_bc(
+    xp: ModuleType,
     _u_: ArrayLike,
     pad_width: Tuple[int, int, int],
     mode: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
-    dirichlet_mode: Optional[
-        Literal["fv-averages", "cell-centers", "face-nodes"]
-    ] = None,
     f: Tuple[
-        Tuple[Optional[FieldFunction], Optional[FieldFunction]],
-        Tuple[Optional[FieldFunction], Optional[FieldFunction]],
-        Tuple[Optional[FieldFunction], Optional[FieldFunction]],
+        Tuple[Optional[CallableBC], Optional[CallableBC]],
+        Tuple[Optional[CallableBC], Optional[CallableBC]],
+        Tuple[Optional[CallableBC], Optional[CallableBC]],
     ] = ((None, None), (None, None), (None, None)),
     variable_index_map: Optional[VariableIndexMap] = None,
     mesh: Optional[UniformFVMesh] = None,
     t: Optional[float] = None,
-    face_dim: Optional[Literal["x", "y", "z"]] = None,
-    face_pos: Optional[Literal["l", "r"]] = None,
     p: Optional[int] = None,
 ):
     """
     Apply boundary conditions to the array _u_.
 
     Args:
-        _u_: Array to which the boundary conditions are applied. Expected to be 4D
-            (nvars, nx, ny, nz) or 5D (nvars, nx, ny, nz, n_quadrature_points).
-        pad_width: Tuple of integers indicating the padding width for each dimension:
-            x (axis 1), y (axis 2), and z (axis 3).
-        mode: Tuple of tuples specifying the boundary conditions for each dimension.
-            Each inner tuple contains two strings for the left and right boundaries.
-            Supported boundary condition names include:
+        xp: Array module (e.g., numpy or cupy) for array operations.
+        _u_: Array to which the boundary conditions are applied.
+        pad_width: Tuple specifying the thickness of the boundary slabs in each
+            dimension (x, y, z). The same thickness is applied to both sides of each
+            dimension.
+        mode: Tuple specifying the type of boundary condition for each side of each
+            dimension. Supported types are:
             - "none": No boundary condition applied.
-            - "periodic": Apply periodic boundary conditions.
-            - "dirichlet": Apply Dirichlet boundary conditions.
-        dirichlet_mode: Optional argument for when mode is "dirichlet". Specifies how
-            the Dirichlet conditions are applied. Can be one of the following:
-            - "fv-averages": Apply finite-volume averages of the Dirichlet function.
-                _u_ is expected to be 4D (nvars, nx, ny, nz). p must be provided to
-                perform the quadrature.
-            - "cell-centers": Apply Dirichlet condition at cell centers. _u_ is
-                expected to be 5D (nvars, nx, ny, nz, 1).
-            - "face-nodes": Apply Dirichlet condition at face nodes. _u_ is expected to
-                be 5D (nvars, nx, ny, nz, n_quadrature_points).
-        f: Tuple of tuples containing functions defining the Dirichlet conditions for
-            each dimension. Each inner tuple contains two functions for the left and
-            right boundaries. If mode is "dirichlet", these functions must be provided,
-            otherwise they can be None. Each function must accept the following
-            arguments:
-            - variable_index_map: VariableIndexMap object.
-            - X: x-coordinate array. Has shape (nx, ny, nz).
-            - Y: y-coordinate array. Has shape (nx, ny, nz).
-            - Z: z-coordinate array. Has shape (nx, ny, nz).
-            - t: Optional time at which the Dirichlet condition is applied.
-        variable_index_map: Optional argument for when mode is "dirichlet" or
-            "reflective".
-        mesh: Optional argument for when mode is "dirichlet". If provided, it will be
-            used to access mesh properties.
-        t: Optional time at which the Dirichlet condition is applied. May be None if
-            the Dirichlet function does not depend on time.
-        face_dim: Optional argument for when dirichlet_mode is "face-nodes". If
-            provided, specifies the face dimension for quadrature points. Can be one of
-            "x", "y", or "z".
-        face_pos: Optional argument for when dirichlet_mode is "face-nodes". If
-            provided, specifies the face position for quadrature points. Can be one of
-            "l" (left) or "r" (right).
-        p: Optional argument for when mode is "dirichlet" and dirichlet_mode is
-            "fv-averages" or "face-nodes". Specifies the polynomial degree of the
-            quadrature rule used to evaluate the Dirichlet function.
+            - "periodic": Periodic boundary condition.
+            - "dirichlet": Dirichlet boundary condition, requires a function in `f`
+                to specify the boundary values.
+            - "free": Free boundary condition, no constraints applied.
+            - "symmetric": Symmetric boundary condition.
+            - "reflective": Reflective boundary condition, requires 'v' variable in
+                `variable_index_map`.
+            - "zeros": Sets the boundary values to zero.
+            - "ones": Sets the boundary values to one.
+            - "patch": Custom boundary condition, requires a function in `f` to
+                specify the boundary values.
+        f: Tuple of tuples containing functions for Dirichlet or patch boundary
+            conditions. Each function should match the `MultivarField` or `PatchBC`
+            protocol. The structure of `f` should correspond to `mode`.
+        variable_index_map: Optional VariableIndexMap object for indexing variables
+            in _u_. Required for Dirichlet and reflective boundary conditions.
+        mesh: Optional UniformFVMesh object representing the computational mesh.
+            Required for Dirichlet boundary conditions.
+        t: Optional time value to be passed to boundary condition functions.
+        p: Optional polynomial order for numerical integration in Dirichlet boundary
+            conditions.
     """
     for i, dim in enumerate(xyz_tup):
-        ip = i + 1
-        pad_i = pad_width[i]
         for j, pos in enumerate(("l", "r")):
-            left = not bool(j)
-            if mode[i][j] == "none" or pad_i == 0:
+            if mode[i][j] == "none" or pad_width[i] == 0:
                 continue
+
+            context = BCcontext(
+                axis=i + 1,
+                left=(j == 0),
+                slab_thickness=pad_width[i],
+                f=None if mode[i][j] == "patch" else cast(MultivarField, f[i][j]),
+                variable_index_map=variable_index_map,
+                mesh=mesh,
+                t=t,
+                p=p,
+                xp=xp,
+            )
+
             match mode[i][j]:
                 case "periodic":
-                    apply_periodic_bc(_u_, pad_i, ip, left)
+                    apply_periodic_bc(_u_, context)
                 case "dirichlet":
-                    fij = f[i][j]
-                    if dirichlet_mode is None:
-                        raise ValueError(
-                            "dirichlet_mode must be provided when applying Dirichlet BCs."
-                        )
-                    if fij is None:
-                        raise ValueError(
-                            "Function for Dirichlet condition must be provided."
-                        )
-                    if variable_index_map is None:
-                        raise ValueError(
-                            "VariableIndexMap must be provided for Dirichlet BCs."
-                        )
-                    if mesh is None:
-                        raise ValueError(
-                            "UniformFVMesh must be provided for Dirichlet BCs."
-                        )
-                    if dirichlet_mode in {"fv-averages", "face-nodes"} and p is None:
-                        raise ValueError(
-                            "Quadrature degree `p` must be provided for 'fv-averages' or 'face-nodes' mode."
-                        )
-                    apply_dirichlet_bc(
-                        _u_,
-                        pad_i,
-                        ip,
-                        left,
-                        dirichlet_mode,
-                        fij,
-                        variable_index_map,
-                        mesh,
-                        t,
-                        face_dim,
-                        face_pos,
-                        p,
-                    )
+                    apply_dirichlet_bc(_u_, context)
                 case "free":
-                    apply_free_bc(_u_, pad_i, ip, left)
+                    apply_free_bc(_u_, context)
                 case "symmetric":
-                    apply_symmetric_bc(_u_, pad_i, ip, left)
+                    apply_symmetric_bc(_u_, context)
                 case "reflective":
-                    if variable_index_map is None:
-                        raise ValueError(
-                            "VariableIndexMap must be provided for reflective BCs."
-                        )
-                    apply_reflective_bc(_u_, pad_i, ip, left, variable_index_map)
+                    apply_reflective_bc(_u_, context)
                 case "zeros":
-                    apply_uniform_bc(_u_, pad_i, ip, left, 0.0)
+                    apply_uniform_bc(_u_, context, 0.0)
                 case "ones":
-                    apply_uniform_bc(_u_, pad_i, ip, left, 1.0)
+                    apply_uniform_bc(_u_, context, 1.0)
+                case "patch":
+                    if f[i][j] is None:
+                        raise ValueError(
+                            "Patch boundary condition function is required to be passed"
+                            " to `f` for 'patch' mode."
+                        )
+                    patch = cast(PatchBC, f[i][j])
+                    patch(_u_, context)
                 case _:
                     raise ValueError(
                         f"Boundary condition '{mode[i][j]}' not implemented for {dim}{pos} boundary."
                     )
 
 
-def apply_periodic_bc(_u_: ArrayLike, slab_thickness: int, axis: int, left: bool):
+def apply_periodic_bc(_u_: ArrayLike, context: BCcontext):
     """
     Apply periodic boundary conditions to the array _u_ along the specified axis.
 
     Args:
         _u_: Array to which the boundary conditions are applied.
-        slab_thickness: Thickness of the slab (number of cells) to which the BC is
-            applied.
-        axis: Axis along which the BC is applied (1: x, 2: y, 3: z).
-        left: Whether the BC is applied to the left (True) or right (False) boundary.
+        context: BCcontext object containing parameters for applying the BC.
     """
-    st = slab_thickness
+    slab_thickness = context.slab_thickness
+    axis = context.axis
+    left = context.left
     if left:
-        outer_slice = crop(axis, (None, st))
-        inner_slice = crop(axis, (-2 * st, -st))
+        outer_slice = crop(axis, (None, slab_thickness))
+        inner_slice = crop(axis, (-2 * slab_thickness, -slab_thickness))
     else:
-        outer_slice = crop(axis, (-st, None))
-        inner_slice = crop(axis, (st, 2 * st))
+        outer_slice = crop(axis, (-slab_thickness, None))
+        inner_slice = crop(axis, (slab_thickness, 2 * slab_thickness))
     _u_[outer_slice] = _u_[inner_slice]
 
 
-def apply_dirichlet_bc(
-    _u_: ArrayLike,
-    slab_thickness: int,
-    axis: int,
-    left: bool,
-    dirichlet_mode: Literal["fv-averages", "cell-centers", "face-nodes"],
-    f: Field,
-    variable_index_map: VariableIndexMap,
-    mesh: UniformFVMesh,
-    t: Optional[float],
-    face_dim: Optional[Literal["x", "y", "z"]] = None,
-    face_pos: Optional[Literal["l", "r"]] = None,
-    p: Optional[int] = None,
-):
+def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     """
     Apply Dirichlet boundary conditions to the array _u_ along the specified axis.
 
     Args:
         _u_: Array to which the boundary conditions are applied.
-        slab_thickness: Thickness of the slab (number of cells) to which the BC is
-            applied.
-        axis: Axis along which the BC is applied (1: x, 2: y, 3: z).
-        left: Whether the BC is applied to the left (True) or right (False) boundary.
-        dirichlet_mode: Specifies how the Dirichlet conditions are applied. Can be one
-            of the following:
-            - "fv-averages": Apply finite-volume averages of the Dirichlet function.
-                _u_ is expected to be 4D (nvars, nx, ny, nz). p must be provided to
-                perform the quadrature.
-            - "cell-centers": Apply Dirichlet condition at cell centers. _u_ is
-                expected to be 5D (nvars, nx, ny, nz, 1).
-            - "face-nodes": Apply Dirichlet condition at face nodes. _u_ is expected to
-                be 5D (nvars, nx, ny, nz, n_quadrature_points).
-        f: Functions defining the Dirichlet conditions for the specified slab. The
-            function must accept the following arguments:
-            - variable_index_map: VariableIndexMap object.
-            - X: x-coordinate array. Has shape (nx, ny, nz).
-            - Y: y-coordinate array. Has shape (nx, ny, nz).
-            - Z: z-coordinate array. Has shape (nx, ny, nz).
-            - t: Optional time at which the Dirichlet condition is applied.
-        variable_index_map: VariableIndexMap object for mapping variable indices.
-        mesh: UniformFVMesh object for accessing mesh properties.
-        t: Optional time at which the Dirichlet condition is applied. May be None if
-            the Dirichlet function does not depend on time.
-        face_dim: Optional argument for when dirichlet_mode is "face-nodes". If
-            provided, specifies the face dimension for quadrature points. Can be one of
-            "x", "y", or "z".
-        face_pos: Optional argument for when dirichlet_mode is "face-nodes". If
-            provided, specifies the face position for quadrature points. Can be one of
-            "l" (left) or "r" (right).
-        p: Optional argument for when dirichlet_mode is "fv-averages" or "face-nodes".
-            Specifies the polynomial degree of the quadrature rule used to evaluate the
-            Dirichlet function.
+        context: BCcontext object containing parameters for applying the BC.
     """
-    st = slab_thickness
-    slab_dim = AXIS_TO_DIM[axis]
-    slab_pos = "l" if left else "r"
-    slab_region = f"{slab_dim}{slab_pos}"
-    outer_slice = crop(axis, (None, st) if left else (-st, None), ndim=4)
+    slab_thickness = context.slab_thickness
+    axis = context.axis
+    left = context.left
+    f = cast(MultivarField, context.f)
+    idx = cast(VariableIndexMap, context.variable_index_map)
+    mesh = cast(UniformFVMesh, context.mesh)
+    t = context.t
+    p = cast(int, context.p)
+    xp = cast(ModuleType, context.xp)
 
-    # Validate quadrature degree
-    if dirichlet_mode in {"fv-averages", "face-nodes"} and p is None:
-        raise ValueError(
-            f"Quadrature degree `p` must be provided for '{dirichlet_mode}' mode."
-        )
+    if left:
+        outer_slice = crop(axis, (None, slab_thickness), ndim=4)
+    else:
+        outer_slice = crop(axis, (-slab_thickness, None), ndim=4)
 
-    # Apply BC based on mode
-    if dirichlet_mode == "fv-averages":
-        if _u_.ndim != 4:
-            raise ValueError(
-                "In 'fv-averages' mode, _u_ must be 4D (nvars, nx, ny, nz)."
-            )
-        f_eval = mesh.perform_GaussLegendre_quadrature(
-            lambda X, Y, Z: f(variable_index_map, X, Y, Z, t),
-            node_axis=4,
-            mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
-            cell_region="interior",
-            p=cast(int, p),
-        )
-        _u_[outer_slice] = f_eval
-        return
+    slab_region = AXIS_TO_DIM[axis] + ("l" if left else "r")
 
-    elif dirichlet_mode == "cell-centers":
-        if _u_.ndim != 5 or _u_.shape[-1] != 1:
-            raise ValueError(
-                "In 'cell-centers' mode, _u_ must be 5D with shape (..., 1)."
-            )
-
-        X, Y, Z = mesh.get_cell_centers(
-            cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region)
-        )
-        f_eval = f(variable_index_map, X, Y, Z, t)
-        _u_[outer_slice + (0,)] = f_eval
-        return
-
-    elif dirichlet_mode == "face-nodes":
-        if _u_.ndim != 5:
-            raise ValueError(
-                "In 'face-nodes' mode, _u_ must be 5D (nvars, nx, ny, nz, n_qp)."
-            )
-        if face_dim is None or face_pos is None:
-            raise ValueError(
-                "In 'face-nodes' mode, `face_dim` and `face_pos` must be provided."
-            )
-
-        cell_region = f"{face_dim}{face_pos}"
-        X, Y, Z, _ = mesh.get_GaussLegendre_quadrature(
-            mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
-            cell_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], cell_region),
-            p=cast(int, p),
-        )
-        f_eval = f(variable_index_map, X, Y, Z, t)
-        _u_[outer_slice + (slice(None),)] = f_eval
-        return
-
-    raise ValueError(
-        f"Unsupported dirichlet_mode '{dirichlet_mode}'. "
-        "Supported modes: 'fv-averages', 'cell-centers', 'face-nodes'."
+    f_eval = mesh.perform_GaussLegendre_quadrature(
+        lambda X, Y, Z: f(idx, X, Y, Z, t, xp=xp),
+        node_axis=4,
+        mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
+        cell_region="interior",
+        p=p,
     )
+    _u_[outer_slice] = f_eval
 
 
-def apply_free_bc(_u_: ArrayLike, slab_thickness: int, axis: int, left: bool):
+def apply_free_bc(_u_: ArrayLike, context: BCcontext):
     """
     Apply free boundary conditions to the array _u_ along the specified axis.
 
     Args:
         _u_: Array to which the boundary conditions are applied.
-        slab_thickness: Thickness of the slab (number of cells) to which the BC is
-            applied.
-        axis: Axis along which the BC is applied (1: x, 2: y, 3: z).
-        left: Whether the BC is applied to the left (True) or right (False) boundary.
+        context: BCcontext object containing parameters for applying the BC.
     """
-    st = slab_thickness
+    slab_thickness = context.slab_thickness
+    axis = context.axis
+    left = context.left
     if left:
-        outer_slice = crop(axis, (None, st))
-        inner_slice = crop(axis, (st, st + 1))
+        outer_slice = crop(axis, (None, slab_thickness))
+        inner_slice = crop(axis, (slab_thickness, slab_thickness + 1))
     else:
-        outer_slice = crop(axis, (-st, None))
-        inner_slice = crop(axis, (-st - 1, -st))
+        outer_slice = crop(axis, (-slab_thickness, None))
+        inner_slice = crop(axis, (-slab_thickness - 1, -slab_thickness))
     _u_[outer_slice] = _u_[inner_slice]
 
 
-def apply_symmetric_bc(_u_: ArrayLike, slab_thickness: int, axis: int, left: bool):
+def apply_symmetric_bc(_u_: ArrayLike, context: BCcontext):
     """
     Apply symmetric boundary conditions to the array _u_ along the specified axis.
 
     Args:
         _u_: Array to which the boundary conditions are applied.
-        slab_thickness: Thickness of the slab (number of cells) to which the BC is
-            applied.
-        axis: Axis along which the BC is applied (1: x, 2: y, 3: z).
-        left: Whether the BC is applied to the left (True) or right (False) boundary.
+        context: BCcontext object containing parameters for applying the BC.
     """
-    st = slab_thickness
+    slab_thickness = context.slab_thickness
+    axis = context.axis
+    left = context.left
     flipper_slice = crop(axis, (None, None), step=-1)
     if left:
-        outer_slice = crop(axis, (None, st))
-        inner_slice = crop(axis, (st, 2 * st))
+        outer_slice = crop(axis, (None, slab_thickness))
+        inner_slice = crop(axis, (slab_thickness, 2 * slab_thickness))
     else:
-        outer_slice = crop(axis, (-st, None))
-        inner_slice = crop(axis, (-2 * st, -st))
+        outer_slice = crop(axis, (-slab_thickness, None))
+        inner_slice = crop(axis, (-2 * slab_thickness, -slab_thickness))
     _u_[outer_slice] = _u_[inner_slice][flipper_slice]
 
 
-def apply_reflective_bc(
-    _u_: ArrayLike,
-    slab_thickness: int,
-    axis: int,
-    left: bool,
-    variable_index_map: VariableIndexMap,
-):
+def apply_reflective_bc(_u_: ArrayLike, context: BCcontext):
     """
     Apply reflective boundary conditions to the array _u_ along the specified axis.
 
     Args:
         _u_: Array to which the boundary conditions are applied.
-        slab_thickness: Thickness of the slab (number of cells) to which the BC is
-            applied.
-        axis: Axis along which the BC is applied (1: x, 2: y, 3: z).
-        left: Whether the BC is applied to the left (True) or right (False) boundary.
-        variable_index_map: VariableIndexMap object for mapping variable indices.
+        context: BCcontext object containing parameters for applying the BC.
     """
-    st = slab_thickness
-    outer_slice = crop(axis, (None, st) if left else (-st, None))
+    slab_thickness = context.slab_thickness
+    axis = context.axis
+    left = context.left
+    idx = cast(VariableIndexMap, context.variable_index_map)
+
+    outer_slice = crop(
+        axis, (None, slab_thickness) if left else (-slab_thickness, None)
+    )
     dim = AXIS_TO_DIM[axis]
 
     velocity = "v" + dim
-    if velocity not in variable_index_map.var_names:
+    if velocity not in idx.var_names:
         raise ValueError(
             "VariableIndexMap must contain 'v' variable for reflective boundary conditions."
         )
 
-    apply_symmetric_bc(_u_, slab_thickness, axis, left)
-    _u_[outer_slice][variable_index_map(velocity)] *= -1
+    apply_symmetric_bc(_u_, context)
+    _u_[outer_slice][idx(velocity)] *= -1
 
 
-def apply_uniform_bc(
-    _u_: ArrayLike, slab_thickness: int, axis: int, left: bool, value: float
-):
+def apply_uniform_bc(_u_: ArrayLike, context: BCcontext, value: float):
     """
     Apply uniform boundary conditions to the array _u_ along the specified axis.
 
     Args:
         _u_: Array to which the boundary conditions are applied.
-        slab_thickness: Thickness of the slab (number of cells) to which the BC is
-            applied.
-        axis: Axis along which the BC is applied (1: x, 2: y, 3: z).
-        left: Whether the BC is applied to the left (True) or right (False) boundary.
-        value: Uniform value to apply at the boundary.
+        context: BCcontext object containing parameters for applying the BC.
+        value: Uniform value to set in the boundary region.
     """
-    st = slab_thickness
-    outer_slice = crop(axis, (None, st) if left else (-st, None))
-    _u_[outer_slice] = value
+    slab_thickness = context.slab_thickness
+    axis = context.axis
+    left = context.left
+
+    if left:
+        _u_[crop(axis, (None, slab_thickness))] = value
+    else:
+        _u_[crop(axis, (-slab_thickness, None))] = value

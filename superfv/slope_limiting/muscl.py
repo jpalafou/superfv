@@ -6,7 +6,7 @@ from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, modify_slices
+from superfv.tools.slicing import crop, replace_slice
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,14 +109,14 @@ def compute_limited_slopes(
     slc_c = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
     slc_r = crop(DIM_TO_AXIS[face_dim], (2, None), ndim=4)
     buff_slc = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=5)
-    out_slc = modify_slices(buff_slc, 4, 0)
+    out_slc = replace_slice(buff_slc, 4, 0)
 
     # allocate arrays
-    dlft = buffer[modify_slices(buff_slc, 4, 0)]
-    drgt = buffer[modify_slices(buff_slc, 4, 1)]
-    dcen = buffer[modify_slices(buff_slc, 4, 2)]
-    dsgn = buffer[modify_slices(buff_slc, 4, 3)]
-    dslp = buffer[modify_slices(buff_slc, 4, 4)]
+    dlft = buffer[replace_slice(buff_slc, 4, 0)]
+    drgt = buffer[replace_slice(buff_slc, 4, 1)]
+    dcen = buffer[replace_slice(buff_slc, 4, 2)]
+    dsgn = buffer[replace_slice(buff_slc, 4, 3)]
+    dslp = buffer[replace_slice(buff_slc, 4, 4)]
     alpha = buffer[..., 5:6]
     abuff = buffer[..., 6:]
 
@@ -126,7 +126,7 @@ def compute_limited_slopes(
             xp, u, active_dims, out=alpha, buffer=abuff
         )
     else:
-        out_modified = modify_slices(buff_slc, 4, slice(0, 1))
+        out_modified = replace_slice(buff_slc, 4, slice(0, 1))
 
     # write slopes to `out` array
     if limiter == "minmod":

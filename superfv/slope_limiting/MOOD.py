@@ -290,6 +290,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     # update troubles workspace
     _troubles_[interior] = troubles
     apply_bc(
+        xp,
         _troubles_,
         pad_width=fv_solver.bc_pad_width,
         mode=normalize_troubles_bc(fv_solver.bc_mode),

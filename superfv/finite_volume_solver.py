@@ -3,25 +3,15 @@ import pickle
 import warnings
 from abc import ABC, abstractmethod
 from types import ModuleType
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Protocol,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from . import fv
-from .boundary_conditions import BCs, DirichletBC, Field, apply_bc
+from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
+from .field import MultivarField, UnivarField
 from .fv import DIM_TO_AXIS
 from .initial_conditions import _uninitialized
 from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
@@ -51,35 +41,6 @@ Directions = Literal["x", "y", "z"]
 Faces = Literal["xl", "xr", "yl", "yr", "zl", "zr"]
 
 
-class FieldFunction(Protocol):
-    def __call__(
-        self,
-        idx: VariableIndexMap,
-        x: ArrayLike,
-        y: ArrayLike,
-        z: ArrayLike,
-        t: Optional[float] = None,
-        *,
-        xp: ModuleType,
-    ) -> ArrayLike: ...
-
-    def __name__(self) -> str: ...
-
-
-class PassiveFieldFunction(Protocol):
-    def __call__(
-        self,
-        x: ArrayLike,
-        y: ArrayLike,
-        z: ArrayLike,
-        t: Optional[float] = None,
-        *,
-        xp: ModuleType,
-    ) -> ArrayLike: ...
-
-    def __name__(self) -> str: ...
-
-
 class FiniteVolumeSolver(ExplicitODESolver, ABC):
     """
     Solve a nonlinear conservation law using the finite volume method in up to three
@@ -88,14 +49,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def __init__(
         self,
-        ic: FieldFunction,
-        ic_passives: Optional[Dict[str, PassiveFieldFunction]] = None,
+        ic: MultivarField,
+        ic_passives: Optional[Dict[str, UnivarField]] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        x_dirichlet: Optional[DirichletBC] = None,
-        y_dirichlet: Optional[DirichletBC] = None,
-        z_dirichlet: Optional[DirichletBC] = None,
+        bcx_callable: Optional[Tuple[MultivarField, PatchBC]] = None,
+        bcy_callable: Optional[Tuple[MultivarField, PatchBC]] = None,
+        bcz_callable: Optional[Tuple[MultivarField, PatchBC]] = None,
         xlim: Tuple[float, float] = (0, 1),
         ylim: Tuple[float, float] = (0, 1),
         zlim: Tuple[float, float] = (0, 1),
@@ -153,17 +114,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 the lower and upper (left and right) boundaries, respectively.
                 Supported boundary condition names include: "periodic", "dirichlet",
                 "free", "reflective", "zeros", and "ones".
-            x_dirichlet, y_dirichlet, z_dirichlet: Additional argument for "dirichlet"
-                boundary conditions. Must be a callable that takes following arguments:
+            bcx_callable, bcy_callable, bcz_callable: Additional argument for
+                "dirichlet" or "patch" boundary conditions. If "dirichlet" is used,
+                the corresponding entry in the tuple must be a callable that takes the
+                following arguments:
                 - idx: VariableIndexMap object.
-                - x: x-coordinate array. Has shape (nx, ny, nz).
-                - y: y-coordinate array. Has shape (nx, ny, nz).
-                - z: z-coordinate array. Has shape (nx, ny, nz).
+                - x: x-coordinate array.
+                - y: y-coordinate array.
+                - z: z-coordinate array.
                 - t: Optional time at which the boundary condition is applied.
-                And returns an array with shape (nvars, nx, ny, nz). Can also be given
-                as a tuple of two callables, one for the left and one for the right
-                boundary condition. If a single callable is provided, it will be used
-                for both boundaries.
+                And returns an array with shape as x, y, and z. If "patch" is used, the
+                corresponding entry in the tuple must be a callable that takes the
+                following arguments:
+                - _u_: Array to which the boundary condition is applied.
+                - context: BCcontext object containing parameters for applying the BC.
+                and modifies _u_ in place.
             xlim, ylim, zlim: Limits of the domain in the x, y, and z-directions.
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
@@ -274,7 +239,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             SED,
         )
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
-        self._init_bc(bcx, bcy, bcz, x_dirichlet, y_dirichlet, z_dirichlet)
+        self._init_bc(bcx, bcy, bcz, bcx_callable, bcy_callable, bcz_callable)
         self._init_array_allocation()
         self._init_timer()
         self._init_riemann_solver(riemann_solver)
@@ -285,8 +250,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_ic_callables(
         self,
-        ic: FieldFunction,
-        ic_passives: Optional[Dict[str, PassiveFieldFunction]],
+        ic: MultivarField,
+        ic_passives: Optional[Dict[str, UnivarField]],
     ):
         # Define the following attributes:
         self.variable_index_map: VariableIndexMap
@@ -294,11 +259,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_passive_vars: int
         self.active_vars: Set[str]
         self.passive_vars: Set[str]
-        self.ic: FieldFunction
-        self.callable_ic: Callable[
-            [VariableIndexMap, ArrayLike, ArrayLike, ArrayLike, Optional[float]],
-            ArrayLike,
-        ]
+        self.ic: MultivarField
+        self.callable_ic: MultivarField
 
         # Define variable index map
         idx = self.define_vars()
@@ -310,87 +272,79 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     idx.add_var(v, idx.nvars)
             idx.add_var_to_group("passives", ic_passives.keys())
             self.ic_passives = ic_passives
-            self.callable_ic = self._callable_ic_with_passives
+            self.callable_ic = self._make_callable_ic_with_passives()
         else:
-            self.callable_ic = self._callable_ic
+            self.callable_ic = self._make_callable_ic()
 
         self.variable_index_map = idx
         self.nvars = idx.nvars
         self.n_passive_vars = len(np.arange(self.nvars)[idx("passives")])
 
-    def _callable_ic(
-        self,
-        idx: VariableIndexMap,
-        x: ArrayLike,
-        y: ArrayLike,
-        z: ArrayLike,
-        t: Optional[float],
-    ) -> ArrayLike:
+    def _make_callable_ic(self) -> MultivarField:
         """
-        Helper function to call the initial condition function.
+        Returns a MultivarField callable for the initial condition function.
+        """
+
+        def f(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+            *,
+            xp: ModuleType,
+        ) -> ArrayLike:
+            return self.ic(idx, x, y, z, t, xp=xp)
+
+        return f
+
+    def _make_callable_ic_with_passives(self) -> MultivarField:
+        """
+        Returns a MultivarField callable for the initial condition function with
+        passive variables.
+        """
+
+        def f(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+            *,
+            xp: ModuleType,
+        ) -> ArrayLike:
+            out = self.ic(idx, x, y, z, t, xp=xp)
+            if hasattr(self, "ic_passives"):
+                for v, func in self.ic_passives.items():
+                    out[idx(v)] = func(x, y, z, t, xp=xp)
+            return out
+
+        return f
+
+    def _make_conservative_field(self, f: MultivarField) -> MultivarField:
+        """
+        Returns a MultivarField callable that converts a primitive variable field to
+        conservative variables.
 
         Args:
-            idx: VariableIndexMap object.
-            x: x-coordinate array. Has shape (nx, ny, nz).
-            y: y-coordinate array. Has shape (nx, ny, nz).
-            z: z-coordinate array. Has shape (nx, ny, nz).
-            t: Optional time at which the initial condition is evaluated.
+            f: MultivarField callable that returns primitive variables.
 
         Returns:
-            Array of initial conditions with shape (nvars, nx, ny, nz).
+            A MultivarField callable that returns conservative variables.
         """
-        return self.ic(idx, x, y, z, t, xp=self.xp)
 
-    def _callable_ic_with_passives(
-        self,
-        idx: VariableIndexMap,
-        x: ArrayLike,
-        y: ArrayLike,
-        z: ArrayLike,
-        t: Optional[float],
-    ) -> ArrayLike:
-        """
-        Helper function to call the initial condition function with passive variables.
+        def g(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+            *,
+            xp: ModuleType,
+        ) -> ArrayLike:
+            return self.conservatives_from_primitives(f(idx, x, y, z, t, xp=xp))
 
-        Args:
-            idx: VariableIndexMap object.
-            x: x-coordinate array. Has shape (nx, ny, nz).
-            y: y-coordinate array. Has shape (nx, ny, nz).
-            z: z-coordinate array. Has shape (nx, ny, nz).
-            t: Optional time at which the initial condition is evaluated.
-
-        Returns:
-            Array of initial conditions with shape (nvars, nx, ny, nz).
-        """
-        out = self.ic(idx, x, y, z, t, xp=self.xp)
-        if hasattr(self, "ic_passives"):
-            for v, f in self.ic_passives.items():
-                out[idx(v)] = f(x, y, z, t, xp=self.xp)
-        return out
-
-    def conservative_callable_ic(
-        self,
-        idx: VariableIndexMap,
-        x: ArrayLike,
-        y: ArrayLike,
-        z: ArrayLike,
-        t: Optional[float],
-    ) -> ArrayLike:
-        """
-        Callable for initial conditions as conservative variables.
-
-        Args:
-            idx: VariableIndexMap object.
-            x: x-coordinate array. Has shape (nx, ny, nz).
-            y: y-coordinate array. Has shape (nx, ny, nz).
-            z: z-coordinate array. Has shape (nx, ny, nz).
-            t: Optional time at which the initial condition is evaluated.
-
-        Returns:
-            Array of initial conditions in conservative variables with shape
-                (nvars, nx, ny, nz).
-        """
-        return self.conservatives_from_primitives(self.callable_ic(idx, x, y, z, t))
+        return g
 
     def _init_array_management(self, cupy: bool):
         # init cupy boolean and numpy namespace
@@ -746,9 +700,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         bcx: Union[str, Tuple[str, str]],
         bcy: Union[str, Tuple[str, str]],
         bcz: Union[str, Tuple[str, str]],
-        x_dirichlet: Optional[DirichletBC],
-        y_dirichlet: Optional[DirichletBC],
-        z_dirichlet: Optional[DirichletBC],
+        bcx_callable: Optional[Tuple[MultivarField, PatchBC]],
+        bcy_callable: Optional[Tuple[MultivarField, PatchBC]],
+        bcz_callable: Optional[Tuple[MultivarField, PatchBC]],
     ):
         def as_pair(x: Union[Any, Tuple[Any, Any]]) -> Tuple[Any, Any]:
             if isinstance(x, tuple):
@@ -758,73 +712,61 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return (x, x)
 
         mode_list: List[Tuple[BCs, BCs]] = []
-        primitive_dirichlet_list: List[Tuple[Optional[Field], Optional[Field]]] = []
-
-        def f0(
-            idx: VariableIndexMap,
-            x: ArrayLike,
-            y: ArrayLike,
-            z: ArrayLike,
-            t: Optional[float],
-        ) -> ArrayLike:
-            return self.callable_ic(idx, x, y, z, 0.0)
+        callable_bc_list: List[
+            Tuple[
+                Optional[Union[MultivarField, PatchBC]],
+                Optional[Union[MultivarField, PatchBC]],
+            ]
+        ] = []
 
         for dim, bci, fi in zip(
-            xyz_tup, (bcx, bcy, bcz), (x_dirichlet, y_dirichlet, z_dirichlet)
+            xyz_tup, (bcx, bcy, bcz), (bcx_callable, bcy_callable, bcz_callable)
         ):
-            mode_list_i: List[BCs] = []
-            prim_drch_list_i: List[Optional[Field]] = []
+            mode_pair: List[BCs] = []
+            callable_bc_pair: List[Optional[Union[MultivarField, PatchBC]]] = []
 
             if dim not in self.active_dims:
                 mode_list.append(("none", "none"))
-                primitive_dirichlet_list.append((None, None))
+                callable_bc_list.append((None, None))
                 continue
 
             for j, (bc, f) in enumerate(zip(as_pair(bci), as_pair(fi))):
                 if bc == "ic":
-                    mode_list_i.append("dirichlet")
-                    prim_drch_list_i.append(f0)
+                    mode_pair.append("dirichlet")
+                    callable_bc_pair.append(
+                        self._make_conservative_field(self.callable_ic)
+                    )
                 else:
-                    mode_list_i.append(bc)
-                    prim_drch_list_i.append(f)
+                    mode_pair.append(bc)
+                    callable_bc_pair.append(
+                        self._make_conservative_field(f) if bc == "dirichlet" else f
+                    )
 
-            mode_list.append((mode_list_i[0], mode_list_i[1]))
-            primitive_dirichlet_list.append((prim_drch_list_i[0], prim_drch_list_i[1]))
+            mode_list.append((mode_pair[0], mode_pair[1]))
+            callable_bc_list.append((callable_bc_pair[0], callable_bc_pair[1]))
 
-        def normalize_conservative_dirichlet(f: Optional[Field]) -> Optional[Field]:
-            if f is None:
-                return None
-
-            def f_conservative(
-                idx: VariableIndexMap,
-                x: ArrayLike,
-                y: ArrayLike,
-                z: ArrayLike,
-                t: Optional[float],
-            ):
-                return self.conservatives_from_primitives(f(idx, x, y, z, t))
-
-            return f_conservative
-
-        mode = (mode_list[0], mode_list[1], mode_list[2])
-        primitive_dirichlet_arg = (
-            primitive_dirichlet_list[0],
-            primitive_dirichlet_list[1],
-            primitive_dirichlet_list[2],
+        self.bc_mode: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]] = (
+            mode_list[0],
+            mode_list[1],
+            mode_list[2],
         )
-        conservative_dirichlet_arg = (
-            (
-                normalize_conservative_dirichlet(primitive_dirichlet_arg[0][0]),
-                normalize_conservative_dirichlet(primitive_dirichlet_arg[0][1]),
-            ),
-            (
-                normalize_conservative_dirichlet(primitive_dirichlet_arg[1][0]),
-                normalize_conservative_dirichlet(primitive_dirichlet_arg[1][1]),
-            ),
-            (
-                normalize_conservative_dirichlet(primitive_dirichlet_arg[2][0]),
-                normalize_conservative_dirichlet(primitive_dirichlet_arg[2][1]),
-            ),
+        self.bc_callables: Tuple[
+            Tuple[
+                Optional[Union[MultivarField, PatchBC]],
+                Optional[Union[MultivarField, PatchBC]],
+            ],
+            Tuple[
+                Optional[Union[MultivarField, PatchBC]],
+                Optional[Union[MultivarField, PatchBC]],
+            ],
+            Tuple[
+                Optional[Union[MultivarField, PatchBC]],
+                Optional[Union[MultivarField, PatchBC]],
+            ],
+        ] = (
+            callable_bc_list[0],
+            callable_bc_list[1],
+            callable_bc_list[2],
         )
 
         mesh = self.mesh
@@ -834,18 +776,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mesh.y_slab_depth,
             mesh.z_slab_depth,
         )
-        self.bc_mode: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]] = mode
-        self.bc_f: Dict[
-            str,
-            Tuple[
-                Tuple[Optional[Field], Optional[Field]],
-                Tuple[Optional[Field], Optional[Field]],
-                Tuple[Optional[Field], Optional[Field]],
-            ],
-        ] = {
-            "primitive": primitive_dirichlet_arg,
-            "conservative": conservative_dirichlet_arg,
-        }
 
     def _init_riemann_solver(self, riemann_solver: str):
         if not hasattr(self, riemann_solver):
@@ -883,6 +813,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         scheme = self.base_scheme
         mesh = self.mesh
         arrays = self.arrays
+        xp = self.xp
 
         # initialize regular mesh arrays
         nvars, nx, ny, nz = self.nvars, mesh.nx, mesh.ny, mesh.nz
@@ -938,8 +869,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.flux_names = {"x": "F", "y": "G", "z": "H"}
 
         # initialize the ODE solver with the initial condition array
+        u0 = self._make_conservative_field(self.callable_ic)
         ic_arr = mesh.perform_GaussLegendre_quadrature(
-            lambda x, y, z: self.conservative_callable_ic(idx, x, y, z, 0.0),
+            lambda x, y, z: u0(idx, x, y, z, 0.0, xp=xp),
             node_axis=4,
             mesh_region="core",
             cell_region="interior",
@@ -1188,16 +1120,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 applied.
         """
         apply_bc(
+            xp=self.xp,
             _u_=u,
             pad_width=self.bc_pad_width,
             mode=self.bc_mode,
-            dirichlet_mode="fv-averages",
-            f=self.bc_f["conservative"],
+            f=self.bc_callables,
             variable_index_map=self.variable_index_map,
             mesh=self.mesh,
             t=t,
-            face_dim=None,
-            face_pos=None,
             p=scheme.p,
         )
 

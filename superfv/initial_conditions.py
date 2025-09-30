@@ -744,3 +744,56 @@ def kelvin_helmholtz_2d(
     out[idx("P")] = P
 
     return out
+
+
+def double_mach_reflection(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the double Mach reflection initial condition on the domain [0,4]
+    in the first active dimension (x, for example) and [0,1] in the second active
+    dimension (y, for example).
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError(
+            "Kelvin-Helmholtz initial condition requires all hydro variables."
+        )
+
+    dims = parse_xyz(x, y, z)
+    if set(dims) != {"x", "y"}:
+        raise ValueError(
+            "Double Mach reflection initial condition is only defined in 2D for x and y."
+        )
+
+    dx = x - y / np.tan(np.pi / 3)
+
+    rho = xp.where(dx < 1 / 6, 8.0, 1.4)
+    vx = xp.where(dx < 1 / 6, 7.145, 0.0)
+    vy = xp.where(dx < 1 / 6, -4.125, 0.0)
+    P = xp.where(dx < 1 / 6, 116.5, 1.0)
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    out[idx("rho")] = rho
+    out[idx("vx")] = vx
+    out[idx("vy")] = vy
+    out[idx("P")] = P
+
+    return out

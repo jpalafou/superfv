@@ -8,7 +8,7 @@ from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import modify_slices
+from superfv.tools.slicing import replace_slice
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +137,7 @@ def compute_theta(
     )
 
     # assign theta
-    out_modified = modify_slices(dmp_modified, axis=4, new_slice=0)
+    out_modified = replace_slice(dmp_modified, axis=4, new_slice=0)
     out[out_modified] = theta[out_modified[:-1]]
 
     # relax theta using a smooth extrema detector
@@ -152,7 +152,7 @@ def compute_theta(
         )
         out[modified] = xp.where(alpha[modified] < 1, out[modified], 1)
     else:
-        modified = modify_slices(out_modified, axis=4, new_slice=slice(None, 1))
+        modified = replace_slice(out_modified, axis=4, new_slice=slice(None, 1))
 
     return modified
 

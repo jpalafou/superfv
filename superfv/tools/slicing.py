@@ -223,7 +223,7 @@ def _merge_slices(*args: Tuple[slice, ...], union: bool = False) -> Tuple[slice,
     return tuple(result)
 
 
-def modify_slices(
+def replace_slice(
     slc: Tuple[Union[int, slice], ...], axis: int, new_slice: Union[int, slice]
 ) -> Tuple[Union[int, slice], ...]:
     """
@@ -237,11 +237,11 @@ def modify_slices(
     Returns:
         A new tuple of slices with the specified axis replaced by the new slice.
     """
-    return _modify_slices(slc, axis, new_slice)
+    return _replace_slice(slc, axis, new_slice)
 
 
 @lru_cache(maxsize=None)
-def _modify_slices(
+def _replace_slice(
     slc: Tuple[Union[int, slice], ...], axis: int, new_slice: slice
 ) -> Tuple[Union[int, slice], ...]:
     if axis < 0 or axis >= len(slc):
@@ -249,6 +249,34 @@ def _modify_slices(
             f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
         )
     return slc[:axis] + (new_slice,) + slc[axis + 1 :]
+
+
+def insert_slice(
+    slc: Tuple[Union[int, slice], ...], new_slice: slice, axis: int
+) -> Tuple[Union[int, slice], ...]:
+    """
+    Insert a new slice into a tuple of slices at a specified axis.
+
+    Args:
+        slc: Tuple of slices.
+        axis: Axis index to assign new slice.
+        new_slice: Slice to insert at the specified axis.
+
+    Returns:
+        A new tuple of slices with an additional slice inserted at the specified axis.
+    """
+    return _insert_slice(slc, new_slice, axis)
+
+
+@lru_cache(maxsize=None)
+def _insert_slice(
+    slc: Tuple[Union[int, slice], ...], new_slice: slice, axis: int
+) -> Tuple[Union[int, slice], ...]:
+    if axis < 0 or axis >= len(slc):
+        raise IndexError(
+            f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
+        )
+    return slc[:axis] + (new_slice,) + slc[axis:]
 
 
 @dataclass

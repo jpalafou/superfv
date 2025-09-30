@@ -1,12 +1,9 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
 from . import riemann_solvers
-from .boundary_conditions import DirichletBC
-from .finite_volume_solver import (
-    FieldFunction,
-    FiniteVolumeSolver,
-    PassiveFieldFunction,
-)
+from .boundary_conditions import PatchBC
+from .field import MultivarField, UnivarField
+from .finite_volume_solver import FiniteVolumeSolver
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -19,14 +16,14 @@ class AdvectionSolver(FiniteVolumeSolver):
 
     def __init__(
         self,
-        ic: FieldFunction,
-        ic_passives: Optional[Dict[str, PassiveFieldFunction]] = None,
+        ic: MultivarField,
+        ic_passives: Optional[Dict[str, UnivarField]] = None,
         bcx: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcy: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
         bcz: Union[str, Tuple[str, str]] = ("periodic", "periodic"),
-        x_dirichlet: Optional[DirichletBC] = None,
-        y_dirichlet: Optional[DirichletBC] = None,
-        z_dirichlet: Optional[DirichletBC] = None,
+        bcx_callable: Optional[Tuple[MultivarField, PatchBC]] = None,
+        bcy_callable: Optional[Tuple[MultivarField, PatchBC]] = None,
+        bcz_callable: Optional[Tuple[MultivarField, PatchBC]] = None,
         xlim: Tuple[float, float] = (0, 1),
         ylim: Tuple[float, float] = (0, 1),
         zlim: Tuple[float, float] = (0, 1),
@@ -84,17 +81,21 @@ class AdvectionSolver(FiniteVolumeSolver):
                 the lower and upper (left and right) boundaries, respectively.
                 Supported boundary condition names include: "periodic", "dirichlet",
                 "free", "reflective", "zeros", and "ones".
-            x_dirichlet, y_dirichlet, z_dirichlet: Additional argument for "dirichlet"
-                boundary conditions. Must be a callable that takes following arguments:
+            bcx_callable, bcy_callable, bcz_callable: Additional argument for
+                "dirichlet" or "patch" boundary conditions. If "dirichlet" is used,
+                the corresponding entry in the tuple must be a callable that takes the
+                following arguments:
                 - idx: VariableIndexMap object.
-                - x: x-coordinate array. Has shape (nx, ny, nz).
-                - y: y-coordinate array. Has shape (nx, ny, nz).
-                - z: z-coordinate array. Has shape (nx, ny, nz).
+                - x: x-coordinate array.
+                - y: y-coordinate array.
+                - z: z-coordinate array.
                 - t: Optional time at which the boundary condition is applied.
-                And returns an array with shape (nvars, nx, ny, nz). Can also be given
-                as a tuple of two callables, one for the left and one for the right
-                boundary condition. If a single callable is provided, it will be used
-                for both boundaries.
+                And returns an array with shape as x, y, and z. If "patch" is used, the
+                corresponding entry in the tuple must be a callable that takes the
+                following arguments:
+                - _u_: Array to which the boundary condition is applied.
+                - context: BCcontext object containing parameters for applying the BC.
+                and modifies _u_ in place.
             xlim, ylim, zlim: Limits of the domain in the x, y, and z-directions.
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
@@ -185,9 +186,9 @@ class AdvectionSolver(FiniteVolumeSolver):
             bcx=bcx,
             bcy=bcy,
             bcz=bcz,
-            x_dirichlet=x_dirichlet,
-            y_dirichlet=y_dirichlet,
-            z_dirichlet=z_dirichlet,
+            bcx_callable=bcx_callable,
+            bcy_callable=bcy_callable,
+            bcz_callable=bcz_callable,
             xlim=xlim,
             ylim=ylim,
             zlim=zlim,

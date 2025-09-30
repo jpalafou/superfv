@@ -2,7 +2,7 @@ from typing import Any, Literal, Tuple
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, merge_slices, modify_slices
+from superfv.tools.slicing import crop, merge_slices, replace_slice
 from superfv.tools.stability import avoid0
 
 
@@ -73,12 +73,12 @@ def smooth_extema_detector_1d(
     alpha = xp.minimum(alpha_l, alpha_r)
 
     # take min of neighbors and return
-    out_modified = modify_slices(crop(axis, (3, -3), ndim=5), axis=4, new_slice=0)
+    out_modified = replace_slice(crop(axis, (3, -3), ndim=5), axis=4, new_slice=0)
     out[out_modified] = xp.minimum(
         alpha[crop(axis, (4, -2))], alpha[crop(axis, (3, -3))]
     )
     out[out_modified] = xp.minimum(alpha[crop(axis, (2, -4))], out[out_modified])
-    modified = modify_slices(out_modified, axis=4, new_slice=slice(None, 1))
+    modified = replace_slice(out_modified, axis=4, new_slice=slice(None, 1))
     return modified
 
 
