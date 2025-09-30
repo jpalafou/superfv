@@ -75,7 +75,7 @@ def sinus(
         P: Pressure.
 
     Returns:
-        ArrayLike: Array with the initial conditions for the hydro variables.
+        ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
     out = xp.empty((len(idx.idxs), *x.shape))
@@ -138,7 +138,7 @@ def square(
         P: Pressure.
 
     Returns:
-        ArrayLike: Array with the initial conditions for the hydro variables.
+        ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
     out = xp.empty((len(idx.idxs), *x.shape))
@@ -200,7 +200,7 @@ def composite(
         P: Pressure.
 
     Returns:
-        ArrayLike: Array with the initial conditions for the hydro variables.
+        ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) > 1:
@@ -281,6 +281,9 @@ def slotted_disk(
         P: Pressure.
         rotation: Rotation direction of the disk: "cw" for clockwise, "ccw" for
             counter-clockwise.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the given variables.
     """
     out = xp.empty((len(idx.idxs), *x.shape))
 
@@ -347,6 +350,9 @@ def sod_shock_tube_1d(
         vr: Velocity on the right side of the discontinuity.
         pl: Pressure on the left side of the discontinuity.
         pr: Pressure on the right side of the discontinuity.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -398,6 +404,9 @@ def velocity_ramp(
         rho0: Initial uniform density.
         P0: Initial uniform pressure.
         H0: Initial uniform velocity gradient.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -450,6 +459,9 @@ def sedov(
         h: Mesh size. Assumed to be the same in all dimensions.
         rho0: Initial uniform density.
         P0: Background pressure.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if gamma is None or h is None:
         raise ValueError("Sedov initial condition requires `gamma` and `h` to be set.")
@@ -498,6 +510,9 @@ def toro1(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -540,6 +555,9 @@ def toro2(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -582,6 +600,9 @@ def toro3(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -623,6 +644,9 @@ def shu_osher(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -666,6 +690,9 @@ def interacting_blast_wave_1d(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -707,6 +734,9 @@ def kelvin_helmholtz_2d(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
         raise ValueError(
