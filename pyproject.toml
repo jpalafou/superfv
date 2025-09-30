@@ -22,8 +22,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["nox", "pandas-stubs", "pre-commit"]
-typecheck = ["mypy", "types-tqdm"]
+dev = ["nox", "pre-commit"]
+typecheck = ["mypy", "pandas-stubs", "types-PyYAML", "types-tqdm"]
 test = ["pytest"]
 
 [tool.setuptools]

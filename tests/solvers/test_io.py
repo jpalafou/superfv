@@ -64,13 +64,24 @@ def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: 
             path=TEST_PATH / "out",
             overwrite=True,
         )
+    sim.variable_index_map.clear_cache()
 
     loader = OutputLoader(TEST_PATH / "out")
 
+    assert sim.active_dims == loader.active_dims
+    assert sim.variable_index_map == loader.variable_index_map
     assert np.array_equal(sim.mesh.X, loader.mesh.X)
     assert np.array_equal(sim.mesh.Y, loader.mesh.Y)
     assert np.array_equal(sim.mesh.Z, loader.mesh.Z)
-    assert np.array_equal(sim.snapshots[0]["u"], loader.snapshots[0]["u"])
-    assert np.array_equal(sim.snapshots[-1]["u"], loader.snapshots[-1]["u"])
+
+    for key in sim.minisnapshots.keys():
+        assert np.array_equal(
+            np.array(sim.minisnapshots[key]),
+            np.array(loader.minisnapshots[key]),
+            equal_nan=True,
+        )
+
+    for i in range(len(sim.snapshots.data)):
+        assert np.array_equal(sim.snapshots[i]["u"], loader.snapshots[i]["u"])
 
     shutil.rmtree(TEST_PATH / "out")

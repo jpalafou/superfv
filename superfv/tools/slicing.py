@@ -293,7 +293,7 @@ class VariableIndexMap:
 
     Attributes:
         all_names: A set of all variable and group names.
-        idxs: A numpy array of unique indices for the variables.
+        idxs: A sorted list of unique variable indices.
         nvars: The number of unique variables.
     """
 
@@ -301,7 +301,7 @@ class VariableIndexMap:
     group_var_map: Dict[str, List[str]] = field(default_factory=dict)
     var_names: Set[str] = field(init=False)
     all_names: Set[str] = field(init=False)
-    idxs: np.ndarray[Any, np.dtype[np.int_]] = field(init=False)
+    idxs: List[int] = field(init=False)
     nvars: int = field(init=False)
     _cache: Dict[Tuple[str, bool], IndexLike] = field(default_factory=dict, init=False)
 
@@ -314,13 +314,13 @@ class VariableIndexMap:
         self.all_names: Set[str] = set(self.var_idx_map.keys()) | set(
             self.group_var_map.keys()
         )
-        self.idxs: np.ndarray[Any, np.dtype[np.int_]] = np.array(
-            sorted(set(self.var_idx_map.values()))
-        )
+        self.idxs: List[int] = sorted(set(self.var_idx_map.values()))
         self.nvars: int = len(self.idxs)
 
         # indices must be contiguous starting from 0
-        if self.idxs.size > 0 and not np.array_equal(self.idxs, np.arange(self.nvars)):
+        if len(self.idxs) > 0 and not np.array_equal(
+            np.array(self.idxs), np.arange(self.nvars)
+        ):
             raise ValueError(
                 "Variable indices must be contiguous starting from 0. "
                 f"Current indices: {self.idxs}"
@@ -439,6 +439,9 @@ class VariableIndexMap:
 
         self._cache[key] = out
         return out
+
+    def clear_cache(self):
+        self._invalidate_cache()
 
     def __contains__(self, name: str) -> bool:
         """

@@ -1,4 +1,3 @@
-import json
 import pickle
 import warnings
 from abc import ABC, abstractmethod
@@ -30,6 +29,7 @@ from .slope_limiting.zhang_and_shu import (
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import VariableIndexMap, crop, merge_slices
 from .tools.timer import MethodTimer
+from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -2003,13 +2003,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def write_config(self):
         """
-        Write `self.to_dict()` to 'config.json'.
+        Write `self.to_dict()` to 'config.yaml'.
         """
         if self.path is None:
             return
 
-        with open(self.path / "config.json", "w") as f:
-            json.dump(self.to_dict(), f, indent=4)
+        with open(self.path / "config.yaml", "w") as f:
+            f.write(yaml_dump(self.to_dict()))
 
     def write_mesh(self):
         """

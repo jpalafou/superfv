@@ -3,10 +3,9 @@
 - [ ] nonlinear soundwave convergence
 - [ ] gresho vortex from David sequel paper
 - [ ] isothermal=True (to be ran 3D). overwrite density with rho * c**2 at the end of each step
-- [ ] yaml instead of json in output
+- [x] yaml instead of json in output
 - [ ] include `.run()` args in config.yaml
 - [ ] ic args after idx, x, y, z, t should be forced kwargs
 - [ ] ic docstrings should have "Returns:"
-- [x] does the header of the zhang shu module need annotations?
 - [ ] inconsistent terminology between pad and slab
 - [ ] somehow the 1D advection of a square notebook gives a different result now

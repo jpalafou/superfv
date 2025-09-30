@@ -1,9 +1,9 @@
-import json
 import pickle
 from pathlib import Path
 
 from .slicing import VariableIndexMap
 from .snapshots import Snapshots
+from .yaml_helper import yaml_load
 
 
 class OutputLoader:
@@ -32,8 +32,8 @@ class OutputLoader:
         print(f'Successfully read simulation output from "{self.base}"')
 
     def load_config(self):
-        with open(self.base / "config.json", "r") as f:
-            return json.load(f)
+        with open(self.base / "config.yaml", "r") as f:
+            return yaml_load(f)
 
     def load_mesh(self):
         """
