@@ -3,6 +3,5 @@
 - [ ] nonlinear soundwave convergence
 - [ ] gresho vortex from David sequel paper
 - [ ] isothermal=True (to be ran 3D). overwrite density with rho * c**2 at the end of each step
-- [x] ic docstrings should have "Returns:"
 - [ ] inconsistent terminology between pad and slab
-- [ ] somehow the 1D advection of a square notebook gives a different result now
+- [x] somehow the 1D advection of a square notebook gives a different result now

@@ -260,21 +260,20 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             include_corners=include_corners,
         )
 
-    # compute smooth extrema
-    if SED:
-        smooth_extrema_detector(
-            xp,
-            (w_new if primitive_NAD else u_new)[lim_slc],
-            active_dims,
-            out=alpha,
-            buffer=buffer[lim_slc],
-        )
-        troubles[lim_slc] = xp.logical_and(
-            NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
-        )
-
-    else:
-        troubles[lim_slc] = NAD_violations[interior]
+        # compute smooth extrema
+        if SED:
+            smooth_extrema_detector(
+                xp,
+                (w_new if primitive_NAD else u_new)[lim_slc],
+                active_dims,
+                out=alpha,
+                buffer=buffer[lim_slc],
+            )
+            troubles[lim_slc] = xp.logical_and(
+                NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
+            )
+        else:
+            troubles[lim_slc] = NAD_violations[interior]
 
     # compute PAD violations
     if PAD:
