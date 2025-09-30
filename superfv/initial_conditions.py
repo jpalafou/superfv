@@ -49,13 +49,13 @@ def sinus(
     y: ArrayLike,
     z: ArrayLike,
     t: float = 0.0,
+    *,
+    xp: ModuleType,
     bounds: Tuple[float, float] = (0, 1),
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
     P: float = 1,
-    *,
-    xp: ModuleType,
 ) -> ArrayLike:
     """
     Returns array for sinusoidal initial condition that is periodic on the interval
@@ -67,12 +67,15 @@ def sinus(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         bounds: Bounds of the density sinusoidal function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
         P: Pressure.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).s
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
     """
     dims = parse_xyz(x, y, z)
     out = xp.empty((len(idx.idxs), *x.shape))
@@ -109,13 +112,13 @@ def square(
     y: ArrayLike,
     z: ArrayLike,
     t: float = 0.0,
+    *,
+    xp: ModuleType,
     bounds: Tuple[float, float] = (0, 1),
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
     P: float = 1,
-    *,
-    xp: ModuleType,
 ) -> ArrayLike:
     """
     Returns array for the square wave initial condition that is periodic on the
@@ -127,12 +130,12 @@ def square(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         bounds: Bounds of the density square function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
         P: Pressure.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).
 
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
@@ -174,12 +177,12 @@ def composite(
     y: ArrayLike,
     z: ArrayLike,
     t: float = 0.0,
+    *,
+    xp: ModuleType,
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
     P: float = 1,
-    *,
-    xp: ModuleType,
 ) -> ArrayLike:
     """
     Returns array for the 1D composite profile.
@@ -190,11 +193,11 @@ def composite(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable. Unused.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
         P: Pressure.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).
 
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
@@ -258,11 +261,11 @@ def slotted_disk(
     y: ArrayLike,
     z: ArrayLike,
     t: float = 0.0,
-    rho_min_max: Tuple[float, float] = (0.0, 1.0),
-    rotation: Literal["cw", "ccw"] = "ccw",
-    P: float = 1,
     *,
     xp: ModuleType,
+    rho_min_max: Tuple[float, float] = (0.0, 1.0),
+    P: float = 1,
+    rotation: Literal["cw", "ccw"] = "ccw",
 ) -> ArrayLike:
     """
     Returns array for the slotted disk initial condition.
@@ -273,11 +276,11 @@ def slotted_disk(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         rho_min_max: Minimum and maximum values of the density.
+        P: Pressure.
         rotation: Rotation direction of the disk: "cw" for clockwise, "ccw" for
             counter-clockwise.
-        P: Pressure.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     out = xp.empty((len(idx.idxs), *x.shape))
 
@@ -317,6 +320,8 @@ def sod_shock_tube_1d(
     y: ArrayLike,
     z: ArrayLike,
     t: Optional[float] = None,
+    *,
+    xp: ModuleType,
     pos1: float = 0.5,
     rhol: float = 1.0,
     rhor: float = 0.125,
@@ -324,8 +329,6 @@ def sod_shock_tube_1d(
     vr: float = 0,
     pl: float = 1.0,
     pr: float = 0.1,
-    *,
-    xp: ModuleType,
 ) -> ArrayLike:
     """
     Returns array for the Sod shock tube initial condition.
@@ -336,6 +339,7 @@ def sod_shock_tube_1d(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         pos1: Position of the discontinuity.
         rhol: Density on the left side of the discontinuity.
         rhor: Density on the right side of the discontinuity.
@@ -343,7 +347,6 @@ def sod_shock_tube_1d(
         vr: Velocity on the right side of the discontinuity.
         pl: Pressure on the left side of the discontinuity.
         pr: Pressure on the right side of the discontinuity.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -375,11 +378,11 @@ def velocity_ramp(
     y: ArrayLike,
     z: ArrayLike,
     t: Optional[float] = None,
+    *,
+    xp: ModuleType,
     rho0: float = 1,
     P0: float = 1,
     H0: float = 1,
-    *,
-    xp: ModuleType,
 ) -> ArrayLike:
     """
     Returns array for the velocity ramp initial condition with a uniform density and
@@ -391,10 +394,10 @@ def velocity_ramp(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         rho0: Initial uniform density.
         P0: Initial uniform pressure.
         H0: Initial uniform velocity gradient.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     dims = parse_xyz(x, y, z)
     if len(dims) != 1:
@@ -426,12 +429,12 @@ def sedov(
     y: ArrayLike,
     z: ArrayLike,
     t: Optional[float] = None,
+    *,
+    xp: ModuleType,
     gamma: Optional[float] = None,
     h: Optional[float] = None,
     rho0: float = 1,
     P0: float = 0,
-    *,
-    xp: ModuleType,
 ) -> ArrayLike:
     """
     Returns array for the Sedov blast wave initial condition.
@@ -442,11 +445,11 @@ def sedov(
         y: y-coordinate array. Has shape (nx, ny, nz).
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
         gamma: Ratio of specific heats.
         h: Mesh size. Assumed to be the same in all dimensions.
         rho0: Initial uniform density.
         P0: Background pressure.
-        xp: NumPy namespace module (e.g., `np` or `cupy`).
     """
     if gamma is None or h is None:
         raise ValueError("Sedov initial condition requires `gamma` and `h` to be set.")
