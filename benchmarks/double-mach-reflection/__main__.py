@@ -41,21 +41,20 @@ def patch_bc(_u_, context):
     xp = context.xp
 
     slab_thickness = context.slab_thickness
-    axis = context.axis
     mesh = context.mesh
 
     X, _, _ = mesh.get_cell_centers()
     x = X[:, 0, 0]
     idx = xp.max(xp.where(x < 1 / 6)[0]) + slab_thickness
 
-    section1 = crop(axis, (None, idx), ndim=4)
-    section2 = crop(axis, (None, idx), ndim=4)
+    section1 = crop(1, (None, idx), ndim=4)
+    section2 = crop(1, (idx, None), ndim=4)
 
     apply_free_bc(_u_[section1], context)
     apply_reflective_bc(_u_[section2], context)
 
 
-N = 64
+Nx = 256
 
 sim = EulerSolver(
     ic=double_mach_reflection,
@@ -64,12 +63,12 @@ sim = EulerSolver(
     bcx_callable=(dirichlet_x0, None),
     bcy_callable=(patch_bc, dirichlet_y1),
     xlim=(0, 4),
-    nx=4 * N,
-    ny=N,
+    nx=Nx,
+    ny=Nx // 4,
     p=0,
 )
 
-sim.run(0.2)
+sim.run(0.2, log_freq=10)
 
 
 fig, ax = plt.subplots()
