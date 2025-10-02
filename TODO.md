@@ -1,7 +1,4 @@
-- [ ] hydro version of advection of a square. show that some schemes are more robust for progressively smaller rho_min.
-- [ ] redo KH with 10 snapshots. show that they start similar and diverge.
 - [ ] nonlinear soundwave convergence
 - [ ] gresho vortex from David sequel paper
 - [ ] isothermal=True (to be ran 3D). overwrite density with rho * c**2 at the end of each step
 - [ ] clean up slice syntax using `insert_slice` and `replace_slices` in the limiter and SED functions
-- [ ] i don't think the double mach lower boundary looks right
