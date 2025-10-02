@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple, cast
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
+from superfv.slope_limiting import gather_neighbor_slices
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, replace_slice
+from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +20,7 @@ class musclConfig(LimiterConfig):
         SED: Whether to use the smooth extrema detector to relax the limiter.
     """
 
-    limiter: Optional[Literal["minmod", "moncen"]]
+    limiter: Optional[Literal["minmod", "moncen", "PP2D"]]
     SED: bool
 
     def key(self) -> str:
@@ -78,7 +79,7 @@ def compute_limited_slopes(
     *,
     out: ArrayLike,
     buffer: ArrayLike,
-    limiter: Optional[Literal["minmod", "moncen"]] = None,
+    limiter: Optional[Literal["minmod", "moncen", "PP2D"]] = None,
     SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
@@ -129,29 +130,118 @@ def compute_limited_slopes(
         out_modified = replace_slice(buff_slc, 4, slice(0, 1))
 
     # write slopes to `out` array
-    if limiter == "minmod":
-        dlft[...] = u[slc_c] - u[slc_l]
-        drgt[...] = u[slc_r] - u[slc_c]
-        dcen[...] = 0.5 * (dlft + drgt)
-        dsgn[...] = xp.sign(dlft)
-        dslp[...] = dsgn * xp.minimum(xp.abs(dlft), xp.abs(drgt))
-        out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
-        if SED:
-            out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
-    elif limiter == "moncen":
-        dlft[...] = u[slc_c] - u[slc_l]
-        drgt[...] = u[slc_r] - u[slc_c]
-        dcen[...] = 0.5 * (dlft + drgt)
-        dsgn[...] = xp.sign(dcen)
-        dslp[...] = dsgn * xp.minimum(
-            xp.minimum(xp.abs(2 * dlft), 2 * xp.abs(drgt)), xp.abs(dcen)
-        )
-        out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
-        if SED:
-            out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
-    elif limiter is None:
-        out[out_slc] = 0.5 * (u[slc_r] - u[slc_l])
-    else:
-        raise ValueError(f"Unknown limiter: {limiter}.")
+    match limiter:
+        case "minmod":
+            dlft[...] = u[slc_c] - u[slc_l]
+            drgt[...] = u[slc_r] - u[slc_c]
+            dcen[...] = 0.5 * (dlft + drgt)
+            dsgn[...] = xp.sign(dlft)
+            dslp[...] = dsgn * xp.minimum(xp.abs(dlft), xp.abs(drgt))
+            out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
+            if SED:
+                out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
+        case "moncen":
+            dlft[...] = u[slc_c] - u[slc_l]
+            drgt[...] = u[slc_r] - u[slc_c]
+            dcen[...] = 0.5 * (dlft + drgt)
+            dsgn[...] = xp.sign(dcen)
+            dslp[...] = dsgn * xp.minimum(
+                xp.minimum(xp.abs(2 * dlft), 2 * xp.abs(drgt)), xp.abs(dcen)
+            )
+            out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
+            if SED:
+                out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
+        case "PP2D":
+            raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
+        case None:
+            out[out_slc] = 0.5 * (u[slc_r] - u[slc_l])
+        case _:
+            raise ValueError(f"Unknown limiter: {limiter}.")
 
     return out_modified
+
+
+def compute_PP2D_slopes(
+    xp: ModuleType,
+    u: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    *,
+    Sx: ArrayLike,
+    Sy: ArrayLike,
+    buffer: ArrayLike,
+    eps: float = 1e-20,
+    SED: bool = False,
+) -> Tuple[slice, ...]:
+    """
+    Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to compute slopes from, has shape
+            (nvars, nx, ny, nz).
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            interpolation of nodes along the face of a cell on a two-dimensional grid.
+        Sx: Output array to store the limited slopes in the first active dimension. Has
+            shape (nvars, nx, ny, nz, 1).
+        Sy: Output array to store the limited slopes in the second active dimension.
+            Has shape (nvars, nx, ny, nz, 1).
+        buffer: Array to store intermediate results. Has shape
+            (nvars, nx, ny, nz, >=10).
+        eps: Small number to avoid division by zero.
+        SED: Whether to use the smooth extrema detector to relax the limiter.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    if len(active_dims) != 2:
+        raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
+
+    # allocate arrays
+    alpha = buffer[..., 2:3]
+    abuff = buffer[..., 3:]
+    V_min_neighbors = xp.empty((8,) + u.shape)
+    V_max_neighbors = xp.empty((8,) + u.shape)
+    _Sx = Sx[..., 0]
+    _Sy = Sy[..., 0]
+
+    # compute second-order slopes
+    axis1 = DIM_TO_AXIS[active_dims[0]]
+    axis2 = DIM_TO_AXIS[active_dims[1]]
+    slc1_l = crop(axis1, (None, -2), ndim=4)
+    slc1_c = crop(axis1, (1, -1), ndim=4)
+    slc1_r = crop(axis1, (2, None), ndim=4)
+    slc2_l = crop(axis2, (None, -2), ndim=4)
+    slc2_c = crop(axis2, (1, -1), ndim=4)
+    slc2_r = crop(axis2, (2, None), ndim=4)
+    modified = merge_slices(slc1_c, slc2_c)
+    _Sx[slc1_c] = 0.5 * (u[slc1_r] - u[slc1_l])
+    _Sy[slc2_c] = 0.5 * (u[slc2_r] - u[slc2_l])
+
+    # compute PPD2 limiter
+    neighbor_slices = gather_neighbor_slices(active_dims, include_corners=True)
+    c_slc = neighbor_slices[0]
+
+    V_min_neighbors[insert_slice(c_slc, 0, slice(None))] = xp.array(
+        [u[slc] - u[c_slc] for slc in neighbor_slices[1:]]
+    )
+    V_min = xp.minimum(xp.min(V_min_neighbors, axis=0), -eps)
+
+    V_max_neighbors[insert_slice(c_slc, 0, slice(None))] = xp.array(
+        [u[slc] - u[c_slc] for slc in neighbor_slices[1:]]
+    )
+    V_max = xp.maximum(xp.max(V_max_neighbors, axis=0), eps)
+
+    V = 2 * xp.minimum(xp.abs(V_min), xp.abs(V_max)) / (xp.abs(_Sx) + xp.abs(_Sy))
+    theta = xp.minimum(V, 1)
+
+    # apply SED if requested
+    if SED:
+        modified = smooth_extrema_detector(xp, u, active_dims, out=alpha, buffer=abuff)
+        theta[...] = xp.where(alpha[..., 0] < 1, theta, 1.0)
+
+    # write limited slopes to `Sx` and `Sy` arrays
+    _Sx[...] = theta * _Sx[...]
+    _Sy[...] = theta * _Sy[...]
+
+    return cast(Tuple[slice, ...], insert_slice(modified, 4, slice(0, 2)))

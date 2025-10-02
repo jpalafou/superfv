@@ -274,7 +274,7 @@ def insert_slice(
 def _insert_slice(
     slc: Tuple[Union[int, slice], ...], axis: int, new_slice: Union[int, slice]
 ) -> Tuple[Union[int, slice], ...]:
-    if axis < 0 or axis >= len(slc):
+    if axis < 0 or axis > len(slc):
         raise IndexError(
             f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
         )

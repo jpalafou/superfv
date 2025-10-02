@@ -228,9 +228,16 @@ def test_insert_slice_with_slice():
 
 def test_insert_slice_with_int():
     slc = (slice(1, 4), slice(2, 5))
+
     new_slice = 3
     axis = 0
     expected = (3, slice(1, 4), slice(2, 5))
+    result = insert_slice(slc, axis, new_slice)
+    assert result == expected
+
+    new_slice = 3
+    axis = 2
+    expected = (slice(1, 4), slice(2, 5), 3)
     result = insert_slice(slc, axis, new_slice)
     assert result == expected
 

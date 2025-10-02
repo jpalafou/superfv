@@ -18,6 +18,7 @@ from .slope_limiting import MOOD
 from .slope_limiting.MOOD import MOODConfig, MOODState
 from .slope_limiting.muscl import (
     compute_limited_slopes,
+    compute_PP2D_slopes,
     musclConfig,
     musclInterpolationScheme,
 )
@@ -68,7 +69,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: bool = False,
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
-        MUSCL_limiter: Literal["minmod", "moncen"] = "minmod",
+        MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
@@ -163,6 +164,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 scheme or the MOOD cascade. Options include:
                 - "minmod"
                 - "moncen"
+                - "PP2D": Only valid for 2D problems.
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
@@ -367,7 +369,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         GL: bool,
         lazy_primitives: bool,
         MUSCL: bool,
-        MUSCL_limiter: Literal["minmod", "moncen"],
+        MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         ZS: bool,
         adaptive_dt: bool,
         max_dt_revisions: int,
@@ -466,7 +468,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         p: int,
         flux_recipe: Literal[1, 2, 3],
-        MUSCL_limiter: Optional[Literal["minmod", "moncen"]],
+        MUSCL_limiter: Optional[Literal["minmod", "moncen", "PP2D"]],
         SED: bool,
     ):
         if p != 1:
@@ -514,7 +516,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self,
         cascade: Literal["first-order", "muscl", "full"],
         blend: bool,
-        MUSCL_limiter: Literal["minmod", "moncen"],
+        MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         max_MOOD_iters: int,
         NAD: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
@@ -1859,6 +1861,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         xp = self.xp
         mesh = self.mesh
+        active_dims = self.active_dims
         arrays = self.arrays
 
         # allocate arrays
@@ -1873,19 +1876,33 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         buffer = arrays["buffer"][..., 4:]
 
         # compute limited slopes
-        for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-            if dim not in self.active_dims:
-                continue
-            compute_limited_slopes(
+        if scheme.limiter_config.limiter == "PP2D":
+            dw1 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[0]]
+            dw2 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[1]]
+
+            compute_PP2D_slopes(
                 xp,
                 w_center,
-                dim,
-                self.active_dims,
-                out=slope_arr,
+                active_dims,
+                Sx=dw1,
+                Sy=dw2,
                 buffer=buffer,
-                limiter=scheme.limiter_config.limiter,
                 SED=scheme.limiter_config.SED,
             )
+        else:
+            for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
+                if dim not in active_dims:
+                    continue
+                compute_limited_slopes(
+                    xp,
+                    w_center,
+                    dim,
+                    active_dims,
+                    out=slope_arr,
+                    buffer=buffer,
+                    limiter=scheme.limiter_config.limiter,
+                    SED=scheme.limiter_config.SED,
+                )
 
         # evolve the cell-center by 1/2 dt
         if hancock:
@@ -1896,7 +1913,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             w_center_for_nodes[...] = w_center
             for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-                if dim not in self.active_dims:
+                if dim not in active_dims:
                     continue
                 h = getattr(mesh, "h" + dim)
                 ds = self.flux_jvp(
@@ -1910,7 +1927,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for node_arr, slope_arr, dim in zip(
             [x_nodes, y_nodes, z_nodes], [dwx, dwy, dwz], xyz_tup
         ):
-            if dim not in self.active_dims:
+            if dim not in active_dims:
                 continue
             node_arr[..., 0] = w_center_for_nodes - slope_arr[..., 0] / 2
             node_arr[..., 1] = w_center_for_nodes + slope_arr[..., 0] / 2
