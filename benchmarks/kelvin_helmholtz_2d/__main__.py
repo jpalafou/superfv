@@ -2,10 +2,10 @@ from superfv import EulerSolver, OutputLoader
 from superfv.initial_conditions import kelvin_helmholtz_2d
 
 N = 2048
-T = 0.8
+T = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 gamma = 1.4
 
-path = "/scratch/gpfs/jp7427/out/kelvin-helmholtz_N=2048/"
+path = "/scratch/gpfs/jp7427/out/kelvin-helmholtz/"
 overwrite = []
 
 configs = {
@@ -29,6 +29,16 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
+    "ZS3-T": dict(
+        riemann_solver="hllc",
+        flux_recipe=2,
+        lazy_primitives=True,
+        p=3,
+        ZS=True,
+        include_corners=True,
+        adaptive_dt=False,
+        SED=True,
+    ),
     "MM3": dict(
         riemann_solver="hllc",
         flux_recipe=2,
@@ -46,7 +56,7 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "MM3 NAD_rtol=0.1": dict(
+    "MM3_rtol0.1": dict(
         riemann_solver="hllc",
         flux_recipe=2,
         lazy_primitives=True,
@@ -65,12 +75,10 @@ configs = {
     ),
 }
 
-sims = {}
 for name, config in configs.items():
     if overwrite != "all" and name not in overwrite:
         try:
             sim = OutputLoader(path + name)
-            sims[name] = sim
             continue
         except FileNotFoundError:
             pass
@@ -100,7 +108,6 @@ for name, config in configs.items():
                 log_freq=20,
             )
         sim.write_timings()
-        sims[name] = sim
     except Exception as e:
         print(f"Failed: {e}")
         continue
