@@ -187,14 +187,23 @@ def fv_interpolate(
             coordinates to interpolate along the respective dimension on [-1, 1].
         p: Polynomial degree of the interpolation stencil.
         out: Output array to store the interpolated values. Has shape
-            (nvars, nx, ny, nz).
+            (nvars, nx, ny, nz, nout). Result is written in out[..., :n_nodes] where
+            n_nodes is the total number of coordinates provided in `nodes`.
         buffer: Optional array to store intermediate results for double or triple-sweep
             interpolations, is ignored for single-sweep interpolations. Has shape
             (nvars, nx, ny, nz, nbuffer).
 
     Returns:
         Slice objects indicating the modified regions in the output array.
+
+    Note:
+        For p=0 or p=1 with all zero coordinates, the output is simply a copy of the
+        input array `u`.
     """
+    if p == 0 or (p == 1 and _all_zero_coords(nodes)):
+        n = _get_number_of_coords(nodes)
+        out[..., :n] = u[..., np.newaxis]
+        return (slice(None), slice(None), slice(None), slice(None), slice(0, n))
     return _fv_interpolate_direct(
         xp,
         lambda p, x: gather_multistencils(xp, "conservative-interpolation", p, x),
@@ -226,14 +235,20 @@ def fv_integrate(
             and cannot be empty or contain duplicates.
         p: Polynomial degree of the interpolation stencil.
         out: Output array to store the integrated values. Has shape
-            (nvars, nx, ny, nz).
+            (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
         buffer: Optional array to store intermediate results for double or triple-sweep
             integrations, is ignored for single-sweep integrations. Has shape
             (nvars, nx, ny, nz, nbuffer).
 
     Returns:
         Slice objects indicating the modified regions in the output array.
+
+    Note:
+        For p=0 or p=1, the output is simply a copy of the input array `u`.
     """
+    if p in (0, 1):
+        out[..., 0] = u
+        return (slice(None), slice(None), slice(None), slice(None), slice(0, 1))
     return _fv_interpolate_direct(
         xp,
         lambda p, x: gather_multistencils(xp, "uniform-quadrature", p),
@@ -243,6 +258,49 @@ def fv_integrate(
         out=out,
         buffer=buffer,
     )
+
+
+def _get_number_of_coords(
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]]
+) -> int:
+    """
+    Get the total number of coordinates specified in the nodes dictionary.
+
+    Args:
+        nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.
+            Each value may be a scalar or a tuple of scalars.
+
+    Returns:
+        int: Total number of coordinates specified in the nodes dictionary.
+    """
+    n_coords = 1
+    for v in nodes.values():
+        if type(v) is tuple:
+            n_coords *= len(v)
+    return n_coords
+
+
+def _all_zero_coords(
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]]
+) -> bool:
+    """
+    Check if all coordinates in the nodes dictionary are zero.
+
+    Args:
+        nodes: Dictionary with keys 'x', 'y', 'z' and values as the nodal coordinates.
+            Each value may be a scalar or a tuple of scalars.
+
+    Returns:
+        bool: True if all coordinates are zero, False otherwise.
+    """
+    for v in nodes.values():
+        if type(v) is tuple:
+            if any(v):
+                return False
+        else:
+            if v:
+                return False
+    return True
 
 
 def _fv_interpolate_direct(
