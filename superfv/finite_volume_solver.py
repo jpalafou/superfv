@@ -1065,16 +1065,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p = scheme.p
         xp = self.xp
 
-        # determine if lazy primitives should be used
-        if isinstance(scheme, polyInterpolationScheme):
-            use_lazy_primitives = False
-            if scheme.p in (0, 1) or scheme.lazy_primitives:
-                use_lazy_primitives = True
-        elif isinstance(scheme, musclInterpolationScheme):
-            use_lazy_primitives = True
-        else:
-            raise ValueError("Unknown scheme type.")
-
+        # allocate arrays
         _u_ = self.arrays["_u_"]
         _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
@@ -1091,7 +1082,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
         # 2) primitive FV averages
-        if use_lazy_primitives:
+        if getattr(scheme, "lazy_primitives", False):
             _tmp_[..., 0] = self.primitives_from_conservatives(_u_)
         else:
             fv.integrate_fv_averages(

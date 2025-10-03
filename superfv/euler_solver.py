@@ -1,12 +1,10 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
-from superfv.slope_limiting.muscl import musclInterpolationScheme
-
 from . import fv, hydro, riemann_solvers
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
-from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
+from .interpolation_schemes import InterpolationScheme
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -510,16 +508,6 @@ class EulerSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
         active_dims = self.active_dims
 
-        # determine if lazy primitives should be used
-        if isinstance(scheme, polyInterpolationScheme):
-            use_lazy_primitives = False
-            if scheme.p in (0, 1) or scheme.lazy_primitives:
-                use_lazy_primitives = True
-        elif isinstance(scheme, musclInterpolationScheme):
-            use_lazy_primitives = True
-        else:
-            raise ValueError("Unknown scheme type.")
-
         # allocate arrays
         _u_ = self.arrays["_u_"]
         _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
@@ -541,7 +529,7 @@ class EulerSolver(FiniteVolumeSolver):
         _wcc_[idx("P")] = Pcc
         _ucc_[idx("E")] = Kcc + Pcc / (self.gamma - 1)
 
-        if use_lazy_primitives:
+        if getattr(scheme, "lazy_primitives", False):
             # compute cell-averaged kinetic energy
             rho = _w_[idx("rho")]
             vx = _w_[idx("vx")] if "x" in active_dims else 0.0
