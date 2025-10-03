@@ -1,1 +1,3 @@
-notebooks/* linguist-vendored
+*.slurm linguist-detectable=false
+benchmarks/*.ipynb linguist-vendored
+notebooks/*.ipynb linguist-vendored
