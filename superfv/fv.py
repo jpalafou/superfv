@@ -15,8 +15,8 @@ from .stencil import (
 from .tools.device_management import ArrayLike
 from .tools.slicing import merge_slices
 
-InterpCoord = Union[int, float]
-InterpCoords = Sequence[InterpCoord]
+SingleInterpCoord = Union[int, float]
+MultiInterpCoords = Tuple[SingleInterpCoord, ...]
 StencilWeights = Union[Sequence[float], np.ndarray]
 
 AXIS_TO_DIM = {1: "x", 2: "y", 3: "z"}
@@ -125,7 +125,7 @@ def gather_multistencils(
     xp: ModuleType,
     stencil_type: Literal["conservative-interpolation", "uniform-quadrature"],
     p: int,
-    x: Optional[Tuple[InterpCoord, ...]] = None,
+    x: Optional[MultiInterpCoords] = None,
 ) -> ArrayLike:
     """
     Gather multistencils for finite volume interpolation or integration.
@@ -153,7 +153,7 @@ def _gather_multistencils(
     xp: ModuleType,
     stencil_type: Literal["conservative-interpolation", "uniform-quadrature"],
     p: int,
-    x: Optional[Tuple[InterpCoord, ...]] = None,
+    x: Optional[MultiInterpCoords] = None,
 ) -> ArrayLike:
     if stencil_type == "conservative-interpolation":
         if x is None:
@@ -169,7 +169,7 @@ def _gather_multistencils(
 def fv_interpolate(
     xp: ModuleType,
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]],
     p: int,
     *,
     out: ArrayLike,
@@ -247,9 +247,9 @@ def fv_integrate(
 
 def _fv_interpolate_direct(
     xp: ModuleType,
-    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
+    stencil_func: Callable[[int, MultiInterpCoords], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]],
     p: int,
     *,
     out: ArrayLike,
@@ -317,9 +317,9 @@ def _ensure_tuple(x):
 
 def _fv_interpolate_1sweep(
     xp: ModuleType,
-    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
+    stencil_func: Callable[[int, MultiInterpCoords], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Tuple[InterpCoord, ...]],
+    nodes: Dict[Literal["x", "y", "z"], MultiInterpCoords],
     p: int,
     *,
     out: ArrayLike,
@@ -334,9 +334,9 @@ def _fv_interpolate_1sweep(
 
 def _fv_interpolate_2sweeps(
     xp: ModuleType,
-    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
+    stencil_func: Callable[[int, MultiInterpCoords], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Tuple[InterpCoord, ...]],
+    nodes: Dict[Literal["x", "y", "z"], MultiInterpCoords],
     p: int,
     *,
     out: ArrayLike,
@@ -372,9 +372,9 @@ def _fv_interpolate_2sweeps(
 
 def _fv_interpolate_3sweeps(
     xp: ModuleType,
-    stencil_func: Callable[[int, Tuple[InterpCoord, ...]], ArrayLike],
+    stencil_func: Callable[[int, MultiInterpCoords], ArrayLike],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Tuple[InterpCoord, ...]],
+    nodes: Dict[Literal["x", "y", "z"], MultiInterpCoords],
     p: int,
     *,
     out: ArrayLike,
@@ -456,9 +456,9 @@ def _to_iter(x):
 
 def _fv_interpolate_recursive(
     xp: ModuleType,
-    stencil_func: Callable[[int, InterpCoord], StencilWeights],
+    stencil_func: Callable[[int, SingleInterpCoord], StencilWeights],
     u: ArrayLike,
-    nodes: Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]],
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]],
     p: int,
     *,
     out: ArrayLike,
@@ -508,7 +508,7 @@ def _fv_interpolate_recursive(
 
 def _fv_interpolate_recursive_helper(
     xp: ModuleType,
-    stencil_func: Callable[[int, InterpCoord], StencilWeights],
+    stencil_func: Callable[[int, SingleInterpCoord], StencilWeights],
     u: ArrayLike,
     dims: List[str],
     coords: List[List[float]],
@@ -768,7 +768,10 @@ def _get_GaussLegendre_nodes_and_weights(
     face_dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
-) -> Tuple[Dict[Literal["x", "y", "z"], Union[InterpCoord, InterpCoords]], np.ndarray]:
+) -> Tuple[
+    Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]],
+    np.ndarray,
+]:
     """
     Get Gauss-Legendre nodes and weights for two opposing cells along a specified face
     dimension.
@@ -796,13 +799,13 @@ def _get_GaussLegendre_nodes_and_weights(
         raise ValueError(
             f"face_dim '{face_dim}' must be one of the active dimensions: {active_dims}"
         )
-    nodes = {face_dim: cast(Union[InterpCoord, InterpCoords], [-1, 1])}
+    nodes = {face_dim: cast(Union[SingleInterpCoord, MultiInterpCoords], (-1, 1))}
     weights = {face_dim: xp.array([1, 1])}
     for dim in active_dims:
         if dim == face_dim:
             continue
         x, w = np.polynomial.legendre.leggauss(-(-(p + 1) // 2))
-        nodes[dim] = x.tolist()
+        nodes[dim] = tuple(x.tolist())
         weights[dim] = xp.asarray(w) / 2  # scale to [-0.5, 0.5] interval
     wmesh = xp.meshgrid(*weights.values(), indexing="ij")
     flattened_weights = xp.prod(xp.array(wmesh), axis=0).reshape(1, 1, 1, 1, -1)
@@ -845,8 +848,7 @@ def interpolate_face_centers(
     return fv_interpolate(
         xp,
         u,
-        {face_dim: cast(Union[InterpCoord, InterpCoords], [-1, 1])}
-        | {d: 0 for d in transverse_dims},
+        {face_dim: cast(MultiInterpCoords, (-1, 1))} | {d: 0 for d in transverse_dims},
         p,
         out=out,
         buffer=buffer,
