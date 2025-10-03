@@ -830,3 +830,48 @@ def double_mach_reflection(
     out[idx("P")] = P
 
     return out
+
+
+def decaying_turbulence_1d(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+    M: float = 10.0,
+    seed: Optional[int] = None,
+) -> ArrayLike:
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError(
+            "Decaying turbulence 1D initial condition requires all hydro variables."
+        )
+
+    dims = parse_xyz(x, y, z)
+    if dims != ("x",):
+        raise ValueError(
+            "Decaying turbulence 1D initial condition is only defined along the x-axis."
+        )
+
+    if seed is not None:
+        xp.random.seed(seed)
+
+    rho = xp.full_like(x, 1.0)
+    P = xp.full_like(x, 1.0)
+
+    vx_mag = xp.random.normal(size=x.shape)
+    vx_phase = xp.random.uniform(0, 2 * np.pi, size=x.shape)
+    vx_hat = vx_mag * xp.exp(1j * vx_phase)
+
+    vx = xp.fft.ifft(vx_hat).real
+
+    sigma = xp.std(vx)
+    vx = vx / sigma * M
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+    out[idx("rho")] = rho
+    out[idx("vx")] = vx
+    out[idx("P")] = P
+
+    return out

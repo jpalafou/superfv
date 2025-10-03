@@ -1,9 +1,12 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
-from . import hydro, riemann_solvers
+from superfv.slope_limiting.muscl import musclInterpolationScheme
+
+from . import fv, hydro, riemann_solvers
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
+from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -56,6 +59,7 @@ class EulerSolver(FiniteVolumeSolver):
         SED: bool = False,
         cupy: bool = False,
         gamma: float = 1.4,
+        isothermal: bool = False,
     ):
         """
         Initialize the finite volume solver for the Euler equations.
@@ -180,9 +184,13 @@ class EulerSolver(FiniteVolumeSolver):
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
             gamma (float): Adiabatic index.
+            isothermal (bool): If True, use an isothermal equation of state where
+                pressure is directly proportional to density. If True, the `gamma`
+                parameter is ignored.
         """
         # init hydro
         self.gamma = gamma
+        self.isothermal = isothermal
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -471,6 +479,90 @@ class EulerSolver(FiniteVolumeSolver):
         message += f" | min(rho)={min_rho:.2e}, min(P)={min_P:.2e}"
 
         return message
+
+    def update_workspaces(
+        self,
+        t: float,
+        u: ArrayLike,
+        scheme: InterpolationScheme,
+    ):
+        """
+        Update the workspace arrays `_u_`, '_ucc_', '_wcc_', and `_w_` based on the
+        provided conservative variables `u` and the interpolation scheme.
+
+        Args:
+            t: Time value.
+            u: Array of conservative, cell-averaged values. Has shape
+                (nvars, nx, ny, nz).
+            scheme: Interpolation scheme to use.
+
+        Returns:
+            None. The workspace arrays `_u_` and maybe `_w_` are updated in place.
+        """
+        super().update_workspaces(t, u, scheme)
+
+        if not self.isothermal:
+            return
+
+        active_dims = self.active_dims
+        p = scheme.p
+        xp = self.xp
+        idx = self.variable_index_map
+        active_dims = self.active_dims
+
+        # determine if lazy primitives should be used
+        if isinstance(scheme, polyInterpolationScheme):
+            use_lazy_primitives = False
+            if scheme.p in (0, 1) or scheme.lazy_primitives:
+                use_lazy_primitives = True
+        elif isinstance(scheme, musclInterpolationScheme):
+            use_lazy_primitives = True
+        else:
+            raise ValueError("Unknown scheme type.")
+
+        # allocate arrays
+        _u_ = self.arrays["_u_"]
+        _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
+        _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
+        _w_ = self.arrays["_w_"]  # shape (..., 1)
+        _tmp_ = self.arrays["buffer"][..., :1]
+        buffer = self.arrays["buffer"][..., 1:]
+
+        # compute cell-centered kinetic energy
+        rhocc = _wcc_[idx("rho")]
+        vxcc = _wcc_[idx("vx")] if "x" in active_dims else 0.0
+        vycc = _wcc_[idx("vy")] if "y" in active_dims else 0.0
+        vzcc = _wcc_[idx("vz")] if "z" in active_dims else 0.0
+        Kcc = 0.5 * rhocc * (vxcc**2 + vycc**2 + vzcc**2)
+        Pcc = rhocc
+
+        # overwrite pressure and total energy for all arrays (u, _u_, _ucc_, _wcc_, _w_)
+        _w_[idx("P")] = _w_[idx("rho")]
+        _wcc_[idx("P")] = Pcc
+        _ucc_[idx("E")] = Kcc + Pcc / (self.gamma - 1)
+
+        if use_lazy_primitives:
+            # compute cell-averaged kinetic energy
+            rho = _w_[idx("rho")]
+            vx = _w_[idx("vx")] if "x" in active_dims else 0.0
+            vy = _w_[idx("vy")] if "y" in active_dims else 0.0
+            vz = _w_[idx("vz")] if "z" in active_dims else 0.0
+            K = 0.5 * rho * (vx**2 + vy**2 + vz**2)
+            P = rho
+
+            _tmp_[idx("E")][..., 0] = K + P / (self.gamma - 1)
+        else:
+            fv.fv_integrate(
+                xp,
+                _ucc_[idx("E", keepdims=True)][..., 0],
+                active_dims,
+                p,
+                out=_tmp_[idx("E", keepdims=True)],
+                buffer=buffer[:1, ...],
+            )
+        _u_[idx("E")] = _tmp_[idx("E")][..., 0]
+        self.apply_bc(t, _u_, scheme)  # reapply boundary condition with new energy
+        u[idx("E")] = _u_[self.interior][idx("E")]  # update u with new energy
 
     def to_dict(self) -> dict:
         """

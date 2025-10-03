@@ -1079,7 +1079,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
         _w_ = self.arrays["_w_"]  # shape (..., 1)
-        _wbf_ = self.arrays["buffer"][..., :1]
+        _tmp_ = self.arrays["buffer"][..., :1]
         buffer = self.arrays["buffer"][..., 1:]
 
         # 0) conservatives FV averages + BC
@@ -1092,12 +1092,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # 2) primitive FV averages
         if use_lazy_primitives:
-            _wbf_[..., 0] = self.primitives_from_conservatives(_u_)
+            _tmp_[..., 0] = self.primitives_from_conservatives(_u_)
         else:
             fv.integrate_fv_averages(
-                xp, _wcc_, active_dims, p, out=_wbf_, buffer=buffer
+                xp, _wcc_, active_dims, p, out=_tmp_, buffer=buffer
             )
-        _w_[...] = _wbf_[..., 0]
+        _w_[...] = _tmp_[..., 0]
 
     @MethodTimer(cat="apply_bc")
     def apply_bc(
