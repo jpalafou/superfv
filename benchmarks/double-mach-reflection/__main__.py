@@ -1,12 +1,83 @@
-import matplotlib.pyplot as plt
 import numpy as np
 
-from superfv import EulerSolver, plot_2d_slice
+from superfv import EulerSolver, OutputLoader
 from superfv.boundary_conditions import apply_free_bc, apply_reflective_bc
 from superfv.initial_conditions import double_mach_reflection
 from superfv.tools.slicing import crop
 
+Nx = 3200
+T = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2]
 gamma = 1.4
+
+path = "/scratch/gpfs/jp7427/out/double-mach-reflection/"
+overwrite = []
+
+configs = {
+    "MUSCL-Hancock": dict(
+        riemann_solver="hllc",
+        flux_recipe=2,
+        p=1,
+        MUSCL=True,
+        MUSCL_limiter="PP2D",
+        SED=True,
+    ),
+    "ZS7": dict(
+        GL=True,
+        riemann_solver="hllc",
+        flux_recipe=2,
+        lazy_primitives=True,
+        p=7,
+        ZS=True,
+        include_corners=True,
+        adaptive_dt=False,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
+    "ZS7-T": dict(
+        riemann_solver="hllc",
+        flux_recipe=2,
+        lazy_primitives=True,
+        p=7,
+        ZS=True,
+        include_corners=True,
+        adaptive_dt=False,
+        SED=True,
+    ),
+    "MM7(0.1)": dict(
+        riemann_solver="hllc",
+        flux_recipe=2,
+        lazy_primitives=True,
+        p=7,
+        MOOD=True,
+        cascade="muscl",
+        MUSCL_limiter="PP2D",
+        max_MOOD_iters=1,
+        limiting_vars="actives",
+        NAD=True,
+        include_corners=True,
+        NAD_rtol=1e-1,
+        NAD_atol=1e-8,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
+    "MM7(0.01)": dict(
+        riemann_solver="hllc",
+        flux_recipe=2,
+        lazy_primitives=True,
+        p=7,
+        MOOD=True,
+        cascade="muscl",
+        MUSCL_limiter="PP2D",
+        max_MOOD_iters=1,
+        limiting_vars="actives",
+        NAD=True,
+        include_corners=True,
+        NAD_rtol=1e-2,
+        NAD_atol=1e-8,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
+}
 
 
 def dirichlet_x0(idx, x, y, z, t, xp):
@@ -20,7 +91,7 @@ def dirichlet_x0(idx, x, y, z, t, xp):
 
 def dirichlet_y1(idx, x, y, z, t, xp):
     theta = np.pi / 3
-    dx = (10 * t / np.sin(theta)) + (1 / 6) + (y / np.tan(theta))
+    dx = (10 * t / xp.sin(theta)) + (1 / 6) + (y / xp.tan(theta))
 
     rho = xp.where(x < dx, 8.0, gamma)
     vx = xp.where(x < dx, 7.145, 0.0)
@@ -45,7 +116,7 @@ def patch_bc(_u_, context):
 
     X, _, _ = mesh.get_cell_centers()
     x = X[:, 0, 0]
-    idx = xp.max(xp.where(x < 1 / 6)[0]) + slab_thickness
+    idx = xp.max(xp.where(x < 1 / 6)[0]).item() + slab_thickness
 
     section1 = crop(1, (None, idx), ndim=4)
     section2 = crop(1, (idx, None), ndim=4)
@@ -54,26 +125,44 @@ def patch_bc(_u_, context):
     apply_reflective_bc(_u_[section2], context)
 
 
-Nx = 256
+for name, config in configs.items():
+    if overwrite != "all" and name not in overwrite:
+        try:
+            sim = OutputLoader(path + name)
+            continue
+        except FileNotFoundError:
+            pass
 
-sim = EulerSolver(
-    ic=double_mach_reflection,
-    bcx=("dirichlet", "free"),
-    bcy=("patch", "dirichlet"),
-    bcx_callable=(dirichlet_x0, None),
-    bcy_callable=(patch_bc, dirichlet_y1),
-    xlim=(0, 4),
-    nx=Nx,
-    ny=Nx // 4,
-    p=0,
-)
+    print(f"Running {name}...")
+    sim = EulerSolver(
+        gamma=gamma,
+        ic=double_mach_reflection,
+        bcx=("dirichlet", "free"),
+        bcy=("patch", "dirichlet"),
+        bcx_callable=(dirichlet_x0, None),
+        bcy_callable=(patch_bc, dirichlet_y1),
+        xlim=(0, 4),
+        nx=Nx,
+        ny=Nx // 4,
+        cupy=True,
+        **config,
+    )
 
-sim.run(0.2, log_freq=10)
-
-
-fig, ax = plt.subplots()
-ax.set_xlim(0, 3)
-
-plot_2d_slice(sim, ax, "rho", cell_averaged=True, cmap="GnBu_r", colorbar=True)
-
-fig.savefig("benchmarks/double-mach-reflection/plot.png", dpi=300)
+    try:
+        if config.get("MUSCL", False):
+            sim.musclhancock(
+                T, allow_overshoot=True, path=path + name, overwrite=True, log_freq=20
+            )
+        else:
+            sim.run(
+                T,
+                q_max=2,
+                allow_overshoot=True,
+                path=path + name,
+                overwrite=True,
+                log_freq=20,
+            )
+        sim.write_timings()
+    except Exception as e:
+        print(f"Failed: {e}")
+        continue
