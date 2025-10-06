@@ -46,6 +46,7 @@ class EulerSolver(FiniteVolumeSolver):
         cascade: Literal["first-order", "muscl", "full"] = "first-order",
         blend: bool = False,
         max_MOOD_iters: int = 1,
+        skip_trouble_counts: bool = False,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "actives",
         NAD: bool = False,
         NAD_rtol: float = 1.0,
@@ -154,6 +155,7 @@ class EulerSolver(FiniteVolumeSolver):
                 and "muscl" cascades.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
+            skip_trouble_counts: Whether to skip counting the number of troubled cells.
             limiting_vars: Specifies which variables are subject to slope limiting.
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
@@ -219,6 +221,7 @@ class EulerSolver(FiniteVolumeSolver):
             cascade=cascade,
             blend=blend,
             max_MOOD_iters=max_MOOD_iters,
+            skip_trouble_counts=skip_trouble_counts,
             limiting_vars=limiting_vars,
             NAD=NAD,
             NAD_rtol=NAD_rtol,

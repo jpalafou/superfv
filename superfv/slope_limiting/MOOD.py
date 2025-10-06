@@ -51,6 +51,10 @@ class MOODConfig(LimiterConfig):
                 umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
         include_corners: Whether to include corner cells when computing the local
             minima and maxima.
+        skip_trouble_counts: Whether to skip counting the number of troubled cells. If
+            True, `detect_troubled_cells` will return (1, 1) always. This can be used
+            to avoid CUDA synchronization overhead when the troubled cell count is not
+            needed.
     """
 
     cascade: List[InterpolationScheme]
@@ -65,6 +69,7 @@ class MOODConfig(LimiterConfig):
     PAD_bounds: Optional[ArrayLike] = None
     absolute_dmp: bool = False
     include_corners: bool = False
+    skip_trouble_counts: bool = False
 
     def __post_init__(self):
         if self.PAD and self.PAD_bounds is None:
@@ -213,6 +218,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     PAD_bounds = MOOD_config.PAD_bounds
     PAD_atol = MOOD_config.PAD_atol
     SED = MOOD_config.SED
+    skip_trouble_counts = MOOD_config.skip_trouble_counts
 
     # determine limiting style
     primitive_NAD = scheme.flux_recipe in (2, 3)
@@ -296,12 +302,18 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     )
 
     # trouble counts
-    _any_troubles_[...] = xp.any(_troubles_, axis=0, keepdims=True)
-    any_troubles = _any_troubles_[interior]
+    if skip_trouble_counts:
+        n_troubled_cells = -1
+        n_revisable_troubled_cells = -1
+    else:
+        _any_troubles_[...] = xp.any(_troubles_, axis=0, keepdims=True)
+        any_troubles = _any_troubles_[interior]
 
-    n_troubled_cells = xp.sum(any_troubles).item()
-    revisable_troubled_cells = any_troubles & (_cascade_idx_array_[interior] < max_idx)
-    n_revisable_troubled_cells = xp.sum(revisable_troubled_cells).item()
+        n_troubled_cells = xp.sum(any_troubles).item()
+        revisable_troubled_cells = any_troubles & (
+            _cascade_idx_array_[interior] < max_idx
+        )
+        n_revisable_troubled_cells = xp.sum(revisable_troubled_cells).item()
 
     # early escape for no revisable troubles
     if n_revisable_troubled_cells == 0:

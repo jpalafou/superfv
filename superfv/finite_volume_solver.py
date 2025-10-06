@@ -77,6 +77,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         cascade: Literal["first-order", "muscl", "full"] = "first-order",
         blend: bool = False,
         max_MOOD_iters: int = 1,
+        skip_trouble_counts: bool = False,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = False,
         NAD_rtol: float = 1.0,
@@ -183,6 +184,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 and "muscl" cascades.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
+            skip_trouble_counts: Whether to skip counting the number of troubled cells.
             limiting_vars: Specifies which variables are subject to slope limiting.
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
@@ -228,6 +230,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cascade,
             blend,
             max_MOOD_iters,
+            skip_trouble_counts,
             limiting_vars,
             NAD,
             NAD_atol,
@@ -377,6 +380,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         cascade: Literal["first-order", "muscl", "full"],
         blend: bool,
         max_MOOD_iters: int,
+        skip_trouble_counts: bool,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
         NAD_atol: float,
@@ -435,6 +439,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 blend,
                 MUSCL_limiter,
                 max_MOOD_iters,
+                skip_trouble_counts,
                 NAD,
                 PAD,
                 SED,
@@ -518,6 +523,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         blend: bool,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         max_MOOD_iters: int,
+        skip_trouble_counts: bool,
         NAD: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         SED: bool,
@@ -589,6 +595,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD_bounds=None if PAD is None else self.arrays["PAD_bounds"],
             absolute_dmp=absolute_dmp,
             include_corners=include_corners,
+            skip_trouble_counts=skip_trouble_counts,
         )
         self.MOOD_state = MOODState(config=MOOD_config)
 
@@ -1345,7 +1352,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
             self.timer.stop("detect_troubled_cells")
 
-            if n_revisable > 0:
+            if n_revisable != 0:
                 self.timer.start("revise_fluxes")
                 MOOD.revise_fluxes(self, t)
                 self.timer.stop("revise_fluxes")
