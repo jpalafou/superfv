@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
 
+from line_profiler import profile
+
 from superfv.boundary_conditions import BCs, apply_bc
 from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import LimiterConfig
@@ -181,6 +183,7 @@ class MOODState:
         return self.config.to_dict()
 
 
+@profile
 def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int, int]:
     """
     Detect troubled cells in the finite volume solver.
@@ -437,6 +440,7 @@ def normalize_troubles_bc(
     )
 
 
+@profile
 def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     """
     In-place revision of fluxes based on the current time step.
@@ -510,6 +514,7 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 
+@profile
 def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     """
     In-place revision of fluxes based on the current time step using a fallback scheme.

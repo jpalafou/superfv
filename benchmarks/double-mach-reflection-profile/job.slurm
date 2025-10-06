@@ -14,4 +14,4 @@ module purge
 module load anaconda3/2025.6
 conda activate superfv
 
-python benchmarks/double-mach-reflection-profile
+LINE_PROFILE=1 python benchmarks/double-mach-reflection-profile
