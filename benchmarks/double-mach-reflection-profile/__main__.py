@@ -21,23 +21,23 @@ configs = {
         MUSCL_limiter="PP2D",
         SED=True,
     ),
-    "ZS7": dict(
+    "ZS3": dict(
         GL=True,
         riemann_solver="hllc",
         flux_recipe=2,
         lazy_primitives=True,
-        p=7,
+        p=3,
         ZS=True,
         include_corners=True,
         adaptive_dt=False,
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS7-T": dict(
+    "ZS3-T": dict(
         riemann_solver="hllc",
         flux_recipe=2,
         lazy_primitives=True,
-        p=7,
+        p=3,
         ZS=True,
         include_corners=True,
         adaptive_dt=False,
@@ -59,6 +59,7 @@ configs = {
         NAD_atol=1e-8,
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
+        skip_trouble_counts=True,
     ),
     "MM3(0.01)": dict(
         riemann_solver="hllc",
@@ -76,6 +77,7 @@ configs = {
         NAD_atol=1e-8,
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
+        skip_trouble_counts=True,
     ),
 }
 
