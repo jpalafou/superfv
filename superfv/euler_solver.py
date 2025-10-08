@@ -418,7 +418,11 @@ class EulerSolver(FiniteVolumeSolver):
         out[_vy_] = w[_v1_] * vec[_vy_]
         out[_vz_] = w[_v1_] * vec[_vz_]
         out[_v1_] += (1 / w[_rho_]) * vec[_P_]
-        out[_P_] = gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
+        out[_P_] = (
+            self.iso_cs**2 * out[_rho_]
+            if self.isothermal
+            else gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
+        )
         if _passives_ is not None:
             out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
 
