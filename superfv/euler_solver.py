@@ -56,6 +56,7 @@ class EulerSolver(FiniteVolumeSolver):
         PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        profile: bool = False,
         gamma: float = 1.4,
         isothermal: bool = False,
     ):
@@ -182,6 +183,8 @@ class EulerSolver(FiniteVolumeSolver):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            profile: Whether to synchronize the GPU after each timed method call if
+                using CuPy. This ensures accurate timing measurements when profiling.
             gamma (float): Adiabatic index.
             isothermal (bool): If True, use an isothermal equation of state where
                 pressure is directly proportional to density. If True, the `gamma`
@@ -231,6 +234,7 @@ class EulerSolver(FiniteVolumeSolver):
             PAD_atol=PAD_atol,
             SED=SED,
             cupy=cupy,
+            profile=profile,
         )
 
     def define_vars(self) -> VariableIndexMap:

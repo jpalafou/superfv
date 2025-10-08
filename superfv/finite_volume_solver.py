@@ -88,6 +88,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        profile: bool = False,
     ):
         """
         Initialize the finite volume solver.
@@ -212,6 +213,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            profile: Whether to synchronize the GPU after each timed method call if
+                using CuPy. This ensures accurate timing measurements when profiling.
         """
         self._init_active_dims(nx, ny, nz)
         self._init_ic_callables(ic, ic_passives)
@@ -244,7 +247,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
         self._init_bc(bcx, bcy, bcz, bcx_callable, bcy_callable, bcz_callable)
         self._init_array_allocation()
-        self._init_timer()
+        self._init_timer(profile)
         self._init_riemann_solver(riemann_solver)
 
     def _init_active_dims(self, nx: int, ny: int, nz: int):
@@ -920,7 +923,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
         return 1
 
-    def _init_timer(self):
+    def _init_timer(self, profile: bool):
+        self.profile = profile
+
         new_timer_cats = [
             "compute_dt",
             "apply_bc",
@@ -929,9 +934,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "MOOD_loop",
             "detect_troubled_cells",
             "revise_fluxes",
-            "cuda_sync",
         ]
-
         for cat in new_timer_cats:
             self.timer.add_cat(cat)
 
@@ -1501,22 +1504,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         raise RuntimeError(
             f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations with dt={dt}."
         )
-
-    def called_at_end_of_step(self):
-        """
-        Overwrite `called_at_end_of_step` of the ODE solver to synchronize the GPU if
-        using CuPy, and to perform any additional cleanup or logging.
-        """
-        if self.cupy:
-            self.cuda_sync()
-        super().called_at_end_of_step()
-
-    @MethodTimer(cat="cuda_sync")
-    def cuda_sync(self):
-        """
-        Synchronize the GPU.
-        """
-        self.xp.cuda.Device().synchronize()
 
     def prepare_snapshot_data(self) -> Dict[str, np.ndarray]:
         """

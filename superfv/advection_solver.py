@@ -56,6 +56,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         PAD_atol: float = 1e-15,
         SED: bool = False,
         cupy: bool = False,
+        profile: bool = False,
     ):
         """
         Initialize the finite volume solver of the advection equation.
@@ -182,6 +183,8 @@ class AdvectionSolver(FiniteVolumeSolver):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             cupy: Whether to use CuPy for array operations.
+            profile: Whether to synchronize the GPU after each timed method call if
+                using CuPy. This ensures accurate timing measurements when profiling.
         """
         super().__init__(
             ic=ic,
@@ -224,6 +227,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             PAD_atol=PAD_atol,
             SED=SED,
             cupy=cupy,
+            profile=profile,
         )
 
     def define_vars(self) -> VariableIndexMap:
