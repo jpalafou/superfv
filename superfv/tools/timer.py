@@ -3,8 +3,6 @@ from typing import Dict, Iterable, Set, cast
 
 import numpy as np
 
-from .device_management import xp
-
 
 class Timer:
     """
@@ -178,7 +176,7 @@ class MethodTimer:
             instance.timer.start(self.cat)
             result = method(instance, *args, **kwargs)
             if instance.profile and instance.cupy:
-                xp.cuda.Device().synchronize()
+                instance.xp.cuda.Device().synchronize()
             instance.timer.stop(self.cat)
             return result
 
