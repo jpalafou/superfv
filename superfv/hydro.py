@@ -75,6 +75,8 @@ def cons_to_prim(
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
 ) -> ArrayLike:
     """
     Convert conservative variables to primitive variables.
@@ -85,6 +87,8 @@ def cons_to_prim(
         u: Array of conservative variables. Has shape (nvars, nx, ny, nz, ...).
         active_dims: Tuple of active dimensions (e.g., ("x", "y", "z")).
         gamma: Adiabatic index.
+        isothermal: Whether the equation of state is isothermal.
+        iso_cs: Isothermal sound speed (used if isothermal is True).
 
     Returns:
         w: Array with primitive variables. Has shape (nvars, nx, ny, nz, ...).
@@ -106,7 +110,7 @@ def cons_to_prim(
     w[idx("vx")] = vx if "x" in active_dims else 0.0
     w[idx("vy")] = vy if "y" in active_dims else 0.0
     w[idx("vz")] = vz if "z" in active_dims else 0.0
-    w[idx("P")] = (gamma - 1) * (E - K)
+    w[idx("P")] = rho * iso_cs**2 if isothermal else (gamma - 1) * (E - K)
 
     if "passives" in idx:
         w[idx("passives")] = u[idx("passives")] / rho
