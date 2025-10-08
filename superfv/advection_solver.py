@@ -241,10 +241,9 @@ class AdvectionSolver(FiniteVolumeSolver):
         return VariableIndexMap(
             {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
             group_var_map={
-                "v": ["v" + dim for dim in self.active_dims],
+                "v": ["vx", "vy", "vz"],
                 "primitives": ["rho", "v"],
                 "conservatives": [],
-                "passives": ["v" + dim for dim in self.inactive_dims],
             },
         )
 

@@ -258,12 +258,10 @@ class EulerSolver(FiniteVolumeSolver):
                 "E": 4,
             },
             group_var_map={
-                "v": ["v" + dim for dim in self.active_dims],
-                "m": ["m" + dim for dim in self.active_dims],
+                "v": ["vx", "vy", "vz"],
+                "m": ["mx", "my", "mz"],
                 "primitives": ["rho", "v", "P"],
                 "conservatives": ["rho", "m", "E"],
-                "passives": ["v" + dim for dim in self.inactive_dims]
-                + ["m" + dim for dim in self.inactive_dims],
             },
         )
 
@@ -277,9 +275,7 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of conservative variables.
         """
-        return hydro.prim_to_cons(
-            self.xp, self.variable_index_map, w, self.active_dims, self.gamma
-        )
+        return hydro.prim_to_cons(self.xp, self.variable_index_map, w, self.gamma)
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
         """
@@ -291,9 +287,7 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of primitive variables.
         """
-        return hydro.cons_to_prim(
-            self.xp, self.variable_index_map, u, self.active_dims, self.gamma
-        )
+        return hydro.cons_to_prim(self.xp, self.variable_index_map, u, self.gamma)
 
     def log_quantity(self) -> Dict[str, float]:
         """
@@ -430,7 +424,6 @@ class EulerSolver(FiniteVolumeSolver):
             wl,
             wr,
             dim,
-            self.active_dims,
             self.gamma,
         )
 
@@ -449,7 +442,6 @@ class EulerSolver(FiniteVolumeSolver):
             wl,
             wr,
             dim,
-            self.active_dims,
             self.gamma,
         )
 
@@ -462,13 +454,14 @@ class EulerSolver(FiniteVolumeSolver):
         """
         HLLC Teyssier implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
+        if self.mesh.ndim > 1:
+            raise NotImplementedError("HLLCT is only implemented for 1D problems.")
         return riemann_solvers.hllct(
             self.xp,
             self.variable_index_map,
             wl,
             wr,
             dim,
-            self.active_dims,
             self.gamma,
         )
 

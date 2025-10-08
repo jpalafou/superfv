@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Literal, Tuple
+from typing import Literal
 
 from .hydro import fluxes, prim_to_cons, sound_speed
 from .tools.device_management import ArrayLike
@@ -53,7 +53,6 @@ def llf(
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
     gamma: float,
 ) -> ArrayLike:
     """
@@ -67,21 +66,20 @@ def llf(
         wr: Array of the right state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
-        active_dims: Tuple of active dimensions (e.g., ("x", "y", "z")).
         gamma: Adiabatic index.
 
     Returns:
         F: Flux array. Has shape (nvars, nx, ny, nz, ...).
     """
-    ul = prim_to_cons(xp, idx, wl, active_dims, gamma)
-    ur = prim_to_cons(xp, idx, wr, active_dims, gamma)
+    ul = prim_to_cons(xp, idx, wl, gamma)
+    ur = prim_to_cons(xp, idx, wr, gamma)
 
     sl = sound_speed(xp, idx, wl, gamma) + xp.abs(wl[idx("v" + dim)])
     sr = sound_speed(xp, idx, wr, gamma) + xp.abs(wr[idx("v" + dim)])
     smax = xp.maximum(sl, sr)
 
-    Fl = fluxes(xp, idx, wl, dim, active_dims, gamma)
-    Fr = fluxes(xp, idx, wr, dim, active_dims, gamma)
+    Fl = fluxes(xp, idx, wl, dim, gamma)
+    Fr = fluxes(xp, idx, wr, dim, gamma)
 
     F = 0.5 * (Fl + Fr - smax * (ur - ul))
 
@@ -94,7 +92,6 @@ def hllc(
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
     gamma: float,
 ) -> ArrayLike:
     """
@@ -108,7 +105,6 @@ def hllc(
         wr: Array of the right state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
-        active_dims: Tuple of active dimensions (e.g., ("x", "y", "z")).
         gamma: Adiabatic index.
 
     Returns:
@@ -117,19 +113,19 @@ def hllc(
     d1 = dim
     d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
 
-    ul = prim_to_cons(xp, idx, wl, active_dims, gamma)
-    ur = prim_to_cons(xp, idx, wr, active_dims, gamma)
+    ul = prim_to_cons(xp, idx, wl, gamma)
+    ur = prim_to_cons(xp, idx, wr, gamma)
 
     rhol = wl[idx("rho")]
     v1l = wl[idx("v" + d1)]
-    v2l = wl[idx("v" + d2)] if d2 in active_dims else 0.0
-    v3l = wl[idx("v" + d3)] if d3 in active_dims else 0.0
+    v2l = wl[idx("v" + d2)]
+    v3l = wl[idx("v" + d3)]
     Pl = wl[idx("P")]
     El = ul[idx("E")]
     rhor = wr[idx("rho")]
     v1r = wr[idx("v" + d1)]
-    v2r = wr[idx("v" + d2)] if d2 in active_dims else 0.0
-    v3r = wr[idx("v" + d3)] if d3 in active_dims else 0.0
+    v2r = wr[idx("v" + d2)]
+    v3r = wr[idx("v" + d3)]
     Pr = wr[idx("P")]
     Er = ur[idx("E")]
 
@@ -163,12 +159,8 @@ def hllc(
     F[idx("rho")] = rhogdv * v1gdv
     F[idx("m" + d1)] = F[idx("rho")] * v1gdv + Pgdv
     F[idx("E")] = v1gdv * (Egdv + Pgdv)
-    F[idx("m" + d2)] = (
-        F[idx("rho")] * xp.where(vstar > 0, v2l, v2r) if d2 in active_dims else 0.0
-    )
-    F[idx("m" + d3)] = (
-        F[idx("rho")] * xp.where(vstar > 0, v3l, v3r) if d3 in active_dims else 0.0
-    )
+    F[idx("m" + d2)] = F[idx("rho")] * xp.where(vstar > 0, v2l, v2r)
+    F[idx("m" + d3)] = F[idx("rho")] * xp.where(vstar > 0, v3l, v3r)
     if "passives" in idx.group_var_map:
         F[idx("passives")] = F[idx("rho")] * xp.where(
             vstar > 0, wl[idx("passives")], wr[idx("passives")]
@@ -214,7 +206,6 @@ def hllct(
     wl: ArrayLike,
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
     gamma: float,
 ) -> ArrayLike:
     """
@@ -226,19 +217,16 @@ def hllct(
         wl: Left primitive state [rho, v*, ..., P, passives?].
         wr: Right primitive state.
         dim: Flux direction ("x", "y", or "z").
-        active_dims: Tuple of active spatial dims.
         gamma: Adiabatic index.
 
     Returns:
         F: Flux array with same shape as wl (nvars, ...).
     """
     d1 = dim
-    if len(active_dims) > 1:
-        raise ValueError("HLLC flux is only implemented for 1D problems.")
 
     flux = 0.0 * wl
-    uleft = prim_to_cons(xp, idx, wl, active_dims, gamma)
-    uright = prim_to_cons(xp, idx, wr, active_dims, gamma)
+    uleft = prim_to_cons(xp, idx, wl, gamma)
+    uright = prim_to_cons(xp, idx, wr, gamma)
     # left state
     dl = wl[idx("rho")]
     vl = wl[idx("v" + d1)]

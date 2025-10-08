@@ -280,6 +280,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.ic_passives = ic_passives
             self.callable_ic = self._make_callable_ic_with_passives()
         else:
+            idx.add_var_to_group("passives", [])
             self.callable_ic = self._make_callable_ic()
 
         self.variable_index_map = idx
