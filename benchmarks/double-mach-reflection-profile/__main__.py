@@ -145,6 +145,7 @@ for name, config in configs.items():
         nx=Nx,
         ny=Nx // 4,
         cupy=True,
+        profile=True,
         **config,
     )
 
