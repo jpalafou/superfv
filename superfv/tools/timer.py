@@ -2,7 +2,8 @@ import time
 from typing import Dict, Iterable, Set, cast
 
 import numpy as np
-from device_management import xp
+
+from .device_management import xp
 
 
 class Timer:
