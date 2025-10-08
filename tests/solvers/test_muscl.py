@@ -137,10 +137,7 @@ def test_advection_of_a_1d_square(limiter: str, dim: str, predictor_corrector: b
         MUSCL_limiter=limiter,
         **{"n" + dim: N},
     )
-    if predictor_corrector:
-        sim.musclhancock(n=n)
-    else:
-        sim.ssprk2(n=n)
+    sim.run(n=n, muscl_hancock=predictor_corrector)
 
     assert np.min(sim.minisnapshots["min_rho"]) >= 0
     assert np.min(sim.minisnapshots["max_rho"]) <= 1
@@ -163,10 +160,7 @@ def test_advection_of_a_2d_square_minmod(dim1_dim2: tuple, predictor_corrector: 
         MUSCL_limiter="minmod",
         **{"n" + dim1: N, "n" + dim2: N},
     )
-    if predictor_corrector:
-        sim.musclhancock(n=n)
-    else:
-        sim.ssprk2(n=n)
+    sim.run(n=n, muscl_hancock=predictor_corrector)
 
     assert np.min(sim.minisnapshots["min_rho"]) >= 0
     assert np.min(sim.minisnapshots["max_rho"]) <= 1
@@ -211,10 +205,7 @@ def test_advection_of_a_3d_square(limiter: str, predictor_corrector: bool):
         ny=N,
         nz=N,
     )
-    if predictor_corrector:
-        sim.musclhancock(n=n)
-    else:
-        sim.ssprk2(n=n)
+    sim.run(n=n, muscl_hancock=predictor_corrector)
 
     assert np.min(sim.minisnapshots["min_rho"]) >= 0
     assert np.min(sim.minisnapshots["max_rho"]) <= 1

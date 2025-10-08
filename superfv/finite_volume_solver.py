@@ -1664,9 +1664,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         overwrite: bool = False,
         discard: bool = True,
         q_max: int = 3,
+        muscl_hancock: bool = False,
     ):
         """
-        Integrate the ODE system forward in time using a specified Runge-Kutta method.
+        Integrate the ODE system forward in time using a specified time integrator,
+        either a Runge-Kutta method of order up to 4, or a MUSCL-Hancock scheme.
 
         Args:
             T: Target simulation time(s).
@@ -1695,8 +1697,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - 1: SSPRK2 (2nd order).
                 - 2: SSPRK3 (3rd order).
                 - 3: Classical RK4 (4th order).
+            muscl_hancock: If True, use a MUSCL-Hancock scheme instead of a
+                Runge-Kutta method. This option overrides `q_max`. The base scheme must
+                be a `musclInterpolationScheme`, otherwise a ValueError is raised.
         """
         q = min(self.p, q_max)
+        if muscl_hancock:
+            self.musclhancock(
+                T=T,
+                n=n,
+                snapshot_mode=snapshot_mode,
+                allow_overshoot=allow_overshoot,
+                verbose=verbose,
+                log_freq=log_freq,
+                path=path,
+                overwrite=overwrite,
+                discard=discard,
+            )
+            return
         match q:
             case 0:
                 self.euler(
