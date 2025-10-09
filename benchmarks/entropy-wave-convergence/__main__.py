@@ -55,23 +55,23 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    # "ZS3-FR3": dict(
-    #     riemann_solver="hllc",
-    #     p=3,
-    #     ZS=True,
-    #     flux_recipe=3,
-    #     PAD={"rho": (0, None), "P": (0, None)},
-    #     SED=True,
-    # ),
-    # "ZS3-FR3-lazy": dict(
-    #     riemann_solver="hllc",
-    #     p=3,
-    #     ZS=True,
-    #     flux_recipe=3,
-    #     lazy_primitives=True,
-    #     PAD={"rho": (0, None), "P": (0, None)},
-    #     SED=True,
-    # ),
+    "ZS7-FR2": dict(
+        riemann_solver="hllc",
+        p=7,
+        ZS=True,
+        flux_recipe=2,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
+    "ZS7-FR2-lazy": dict(
+        riemann_solver="hllc",
+        p=7,
+        ZS=True,
+        flux_recipe=2,
+        lazy_primitives=True,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
 }
 
 # remove old output
@@ -87,7 +87,7 @@ for N, (name, config) in product(N_LIST, configs.items()):
     # run solver
     sim = EulerSolver(ic=entropy_wave, nx=N, gamma=gamma, **config)
     try:
-        sim.run(T, muscl_hancock=config.get("MUSCL", False))
+        sim.run(T, reduce_CFL=True, muscl_hancock=config.get("MUSCL", False))
     except RuntimeError as e:
         print(f"  Failed: {e}")
         continue

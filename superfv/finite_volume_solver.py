@@ -1652,6 +1652,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         overwrite: bool = False,
         discard: bool = True,
         q_max: int = 3,
+        reduce_CFL: bool = False,
         muscl_hancock: bool = False,
     ):
         """
@@ -1685,6 +1686,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - 1: SSPRK2 (2nd order).
                 - 2: SSPRK3 (3rd order).
                 - 3: Classical RK4 (4th order).
+            reduce_CFL: If True, reduceseduce the CFL to emulate a higher-order time
+                integrator matching the order of the spatial discretization.
             muscl_hancock: If True, use a MUSCL-Hancock scheme instead of a
                 Runge-Kutta method. This option overrides `q_max`. The base scheme must
                 be a `musclInterpolationScheme`, otherwise a ValueError is raised.
@@ -1705,6 +1708,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             return
         match q:
             case 0:
+                if reduce_CFL:
+                    self.reduce_CFL(0)
                 self.euler(
                     T=T,
                     n=n,
@@ -1717,6 +1722,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     discard=discard,
                 )
             case 1:
+                if reduce_CFL:
+                    self.reduce_CFL(1)
                 self.ssprk2(
                     T=T,
                     n=n,
@@ -1729,6 +1736,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     discard=discard,
                 )
             case 2:
+                if reduce_CFL:
+                    self.reduce_CFL(2)
                 self.ssprk3(
                     T=T,
                     n=n,
@@ -1741,6 +1750,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     discard=discard,
                 )
             case 3:
+                if reduce_CFL:
+                    self.reduce_CFL(3)
                 self.rk4(
                     T=T,
                     n=n,
@@ -1935,6 +1946,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 continue
             node_arr[..., 0] = w_center_for_nodes - slope_arr[..., 0] / 2
             node_arr[..., 1] = w_center_for_nodes + slope_arr[..., 0] / 2
+
+    def reduce_CFL(self, q: int):
+        """
+        Reduce the CFL to emulate a higher-order time integrator matching the order of
+        the spatial discretization.
+
+        Args:
+            q: The polynomial degree of the time integrator being used.
+        """
+        mesh = self.mesh
+        p = self.base_scheme.p
+
+        if p <= q:
+            return
+
+        hx, hy, hz = mesh.hx, mesh.hy, mesh.hz
+        Lx = mesh.xlim[1] - mesh.xlim[0]
+        Ly = mesh.ylim[1] - mesh.ylim[0]
+        Lz = mesh.zlim[1] - mesh.zlim[0]
+        self.CFL *= min(hx / Lx, hy / Ly, hz / Lz) ** ((p - q) / (q + 1))
 
     def plot_1d_slice(self, *args, **kwargs):
         return plot_1d_slice(self, *args, **kwargs)
