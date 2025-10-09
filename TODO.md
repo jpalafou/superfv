@@ -1,4 +1,5 @@
-- [x] nonlinear soundwave convergence
-- [ ] gresho vortex from David sequel paper
-- [ ] isothermal=True (to be ran 3D). do whatever you can to get P=rho
+- [ ] Gresho Vortex from David sequel paper. demonstrate value of high-order
+- [ ] Decaying supersonic turbulence in 2D with `isothermal=True`
 - [ ] clean up slice syntax using `insert_slice` and `replace_slices` in the limiter and SED functions
+- [ ] adaptively fall back to w0 or wp in the Zhang-Shu limiter
+- [ ] Toro Test 3. demonstrate value of high-order

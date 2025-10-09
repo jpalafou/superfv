@@ -173,7 +173,7 @@ class MethodTimer:
 
     def __call__(self, method):
         def wrapped(instance, *args, **kwargs):
-            sync = instance.profile and instance.cupy
+            sync = instance.cupy and instance.sync_timing
             if sync:
                 instance.xp.cuda.Device().synchronize()
 
