@@ -72,6 +72,8 @@ def cons_to_prim(
     idx: VariableIndexMap,
     u: ArrayLike,
     gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
 ) -> ArrayLike:
     """
     Convert conservative variables to primitive variables.
@@ -81,6 +83,8 @@ def cons_to_prim(
         idx: VariableIndexMap object with indices for hydro variables.
         u: Array of conservative variables. Has shape (nvars, nx, ny, nz, ...).
         gamma: Adiabatic index.
+        isothermal: Whether the equation of state is isothermal.
+        iso_cs: Isothermal sound speed (used if isothermal is True).
 
     Returns:
         w: Array with primitive variables. Has shape (nvars, nx, ny, nz, ...).

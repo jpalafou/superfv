@@ -78,7 +78,7 @@ def sinus(
         ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMaps
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -141,7 +141,7 @@ def square(
         ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
-    out = xp.zeros((len(idx.idxs), *x.shape))
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -207,7 +207,7 @@ def composite(
         raise ValueError("Composite profile only defined in 1D.")
     dim = dims[0]
 
-    out = xp.zeros((len(idx.idxs), *x.shape))
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -285,7 +285,7 @@ def slotted_disk(
     Returns:
         ArrayLike: Array with the initial conditions for the given variables.
     """
-    out = xp.zeros((len(idx.idxs), *x.shape))
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
         # angular velocity
@@ -359,7 +359,7 @@ def sod_shock_tube_1d(
         raise ValueError("Sod shock tube initial condition is only defined in 1D.")
     dim1 = dims[0]
 
-    out = xp.zeros((len(idx.idxs), *x.shape))
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
@@ -413,7 +413,7 @@ def velocity_ramp(
         raise ValueError("Velocity ramp initial condition is only defined in 1D.")
     dim1 = dims[0]
 
-    out = xp.zeros((len(idx.idxs), *x.shape))
+    out = xp.empty((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
@@ -840,6 +840,7 @@ def decaying_turbulence_1d(
     t: Optional[float] = None,
     *,
     xp: ModuleType,
+    h: float,
     M: float = 10.0,
     seed: Optional[int] = None,
 ) -> ArrayLike:
@@ -860,18 +861,53 @@ def decaying_turbulence_1d(
     rho = xp.full_like(x, 1.0)
     P = xp.full_like(x, 1.0)
 
-    vx_mag = xp.random.normal(size=x.shape)
-    vx_phase = xp.random.uniform(0, 2 * np.pi, size=x.shape)
-    vx_hat = vx_mag * xp.exp(1j * vx_phase)
+    # --- Spectral construction with power-law envelope ---
+    slope = -4.0
+    N = x.size
+    if N < 2:
+        raise ValueError("x must have at least two points.")
 
-    vx = xp.fft.ifft(vx_hat).real
+    N = x.shape[0]
+    kpos = N // 2 + 1  # rfft size
+    dx = h
 
-    sigma = xp.std(vx)
-    vx = vx / sigma * M
+    # rfftfreq gives cycles/unit; convert to angular wavenumber if you like (constant cancels in ratios)
+    k = xp.fft.rfftfreq(N, d=dx)  # shape (kpos,)
+    # Avoid division by zero; set DC to 0 weight below
+    # amplitude |v̂| ∝ k^{slope/2}; for slope=-2 => amplitude ∝ k^{-1}
+    amp_env = xp.zeros_like(k)
+    if kpos > 1:
+        # normalize relative to the first nonzero mode
+        kref = k[1]
+        amp_env[1:] = (k[1:] / kref) ** (slope / 2.0)
+
+    # random complex phases (Hermitian handled by irfft conventions)
+    phases = xp.random.uniform(0.0, 2.0 * np.pi, size=kpos)
+    rand_amp = xp.random.standard_normal(size=kpos)  # white noise base
+
+    vx_hat = (rand_amp * amp_env) * xp.exp(1j * phases)
+
+    # Zero DC to avoid net momentum
+    vx_hat[0] = 0.0
+
+    # Nyquist bin (if present) must be purely real for Hermitian symmetry
+    if N % 2 == 0:
+        vx_hat[-1] = vx_hat[-1].real
+
+    # Back to real space
+    vx = xp.fft.irfft(vx_hat, n=N)
+
+    # Normalize to target Mach number (c_s = 1 here)
+    vx = vx - vx.mean()
+    sigma = vx.std()
+    if sigma > 0:
+        vx = vx / sigma * M
+    else:
+        vx = xp.zeros_like(vx)
 
     out = xp.zeros((len(idx.idxs), *x.shape))
     out[idx("rho")] = rho
-    out[idx("vx")] = vx
+    out[idx("vx")] = vx.reshape((-1,) + (1,) * (x.ndim - 1))
     out[idx("P")] = P
 
     return out

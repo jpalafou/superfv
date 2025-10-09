@@ -59,6 +59,7 @@ class EulerSolver(FiniteVolumeSolver):
         sync_timing: bool = True,
         gamma: float = 1.4,
         isothermal: bool = False,
+        iso_cs: float = 1.0,
     ):
         """
         Initialize the finite volume solver for the Euler equations.
@@ -189,10 +190,12 @@ class EulerSolver(FiniteVolumeSolver):
             isothermal (bool): If True, use an isothermal equation of state where
                 pressure is directly proportional to density. If True, the `gamma`
                 parameter is ignored.
+            iso_cs (float): Isothermal sound speed. Used only if `isothermal=True`.
         """
         # init hydro
         self.gamma = gamma
         self.isothermal = isothermal
+        self.iso_cs = iso_cs
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -287,7 +290,14 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of primitive variables.
         """
-        return hydro.cons_to_prim(self.xp, self.variable_index_map, u, self.gamma)
+        return hydro.cons_to_prim(
+            self.xp,
+            self.variable_index_map,
+            u,
+            self.gamma,
+            self.isothermal,
+            self.iso_cs,
+        )
 
     def log_quantity(self) -> Dict[str, float]:
         """
@@ -341,7 +351,11 @@ class EulerSolver(FiniteVolumeSolver):
         sum_of_s_over_h = self.arrays["sum_of_s_over_h"]
 
         w = self.primitives_from_conservatives(u)
-        c = hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
+        c = (
+            self.iso_cs
+            if self.isothermal
+            else hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
+        )
 
         sum_of_s_over_h[...] = 0.0
         for dim in self.active_dims:
@@ -403,7 +417,11 @@ class EulerSolver(FiniteVolumeSolver):
         out[_vy_] = w[_v1_] * vec[_vy_]
         out[_vz_] = w[_v1_] * vec[_vz_]
         out[_v1_] += (1 / w[_rho_]) * vec[_P_]
-        out[_P_] = gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
+        out[_P_] = (
+            self.iso_cs**2 * out[_rho_]
+            if self.isothermal
+            else gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
+        )
         if _passives_ is not None:
             out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
 
