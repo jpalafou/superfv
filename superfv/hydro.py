@@ -106,7 +106,7 @@ def cons_to_prim(
     w[idx("vx")] = vx
     w[idx("vy")] = vy
     w[idx("vz")] = vz
-    w[idx("P")] = (gamma - 1) * (E - K)
+    w[idx("P")] = rho * iso_cs**2 if isothermal else (gamma - 1) * (E - K)
 
     if "passives" in idx:
         w[idx("passives")] = u[idx("passives")] / rho
