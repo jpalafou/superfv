@@ -2,4 +2,4 @@
 - [ ] Decaying supersonic turbulence in 2D with `isothermal=True`
 - [ ] clean up slice syntax using `insert_slice` and `replace_slices` in the limiter and SED functions
 - [ ] adaptively fall back to w0 or wp in the Zhang-Shu limiter
-- [ ] Toro Test 3. demonstrate value of high-order
+- [x] Toro Test 2. demonstrate value of high-order
