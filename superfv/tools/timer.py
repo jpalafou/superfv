@@ -173,9 +173,14 @@ class MethodTimer:
 
     def __call__(self, method):
         def wrapped(instance, *args, **kwargs):
+            sync = instance.profile and instance.cupy
+            if sync:
+                instance.xp.cuda.Device().synchronize()
+
             instance.timer.start(self.cat)
             result = method(instance, *args, **kwargs)
-            if instance.profile and instance.cupy:
+
+            if sync:
                 instance.xp.cuda.Device().synchronize()
             instance.timer.stop(self.cat)
             return result
