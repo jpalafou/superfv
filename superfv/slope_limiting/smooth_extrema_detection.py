@@ -73,12 +73,10 @@ def smooth_extema_detector_1d(
     alpha = xp.minimum(alpha_l, alpha_r)
 
     # take min of neighbors and return
-    out_modified = replace_slice(crop(axis, (3, -3), ndim=5), axis=4, new_slice=0)
-    out[out_modified] = xp.minimum(
-        alpha[crop(axis, (4, -2))], alpha[crop(axis, (3, -3))]
-    )
-    out[out_modified] = xp.minimum(alpha[crop(axis, (2, -4))], out[out_modified])
-    modified = replace_slice(out_modified, axis=4, new_slice=slice(None, 1))
+    inner = replace_slice(crop(axis, (3, -3), ndim=5), 4, 0)
+    out[inner] = xp.minimum(alpha[crop(axis, (4, -2))], alpha[crop(axis, (3, -3))])
+    out[inner] = xp.minimum(alpha[crop(axis, (2, -4))], out[inner])
+    modified = replace_slice(inner, 4, slice(None, 1))
     return modified
 
 

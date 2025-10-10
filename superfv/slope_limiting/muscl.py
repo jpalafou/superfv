@@ -109,25 +109,23 @@ def compute_limited_slopes(
     slc_l = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
     slc_c = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
     slc_r = crop(DIM_TO_AXIS[face_dim], (2, None), ndim=4)
-    buff_slc = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=5)
-    out_slc = replace_slice(buff_slc, 4, 0)
+    inner = insert_slice(slc_c, 4, 0)
 
     # allocate arrays
-    dlft = buffer[replace_slice(buff_slc, 4, 0)]
-    drgt = buffer[replace_slice(buff_slc, 4, 1)]
-    dcen = buffer[replace_slice(buff_slc, 4, 2)]
-    dsgn = buffer[replace_slice(buff_slc, 4, 3)]
-    dslp = buffer[replace_slice(buff_slc, 4, 4)]
+    dlft = buffer[replace_slice(inner, 4, 0)]
+    drgt = buffer[replace_slice(inner, 4, 1)]
+    dcen = buffer[replace_slice(inner, 4, 2)]
+    dsgn = buffer[replace_slice(inner, 4, 3)]
+    dslp = buffer[replace_slice(inner, 4, 4)]
     alpha = buffer[..., 5:6]
     abuff = buffer[..., 6:]
 
     # compute smooth extrema detector if requested
-    if SED:
-        out_modified = smooth_extrema_detector(
-            xp, u, active_dims, out=alpha, buffer=abuff
-        )
-    else:
-        out_modified = replace_slice(buff_slc, 4, slice(0, 1))
+    modified = (
+        smooth_extrema_detector(xp, u, active_dims, out=alpha, buffer=abuff)
+        if SED
+        else cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
+    )
 
     # write slopes to `out` array
     match limiter:
@@ -137,9 +135,9 @@ def compute_limited_slopes(
             dcen[...] = 0.5 * (dlft + drgt)
             dsgn[...] = xp.sign(dlft)
             dslp[...] = dsgn * xp.minimum(xp.abs(dlft), xp.abs(drgt))
-            out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
+            out[inner] = xp.where(dlft * drgt <= 0, 0, dslp)
             if SED:
-                out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
+                out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
         case "moncen":
             dlft[...] = u[slc_c] - u[slc_l]
             drgt[...] = u[slc_r] - u[slc_c]
@@ -148,17 +146,17 @@ def compute_limited_slopes(
             dslp[...] = dsgn * xp.minimum(
                 xp.minimum(xp.abs(2 * dlft), 2 * xp.abs(drgt)), xp.abs(dcen)
             )
-            out[out_slc] = xp.where(dlft * drgt <= 0, 0, dslp)
+            out[inner] = xp.where(dlft * drgt <= 0, 0, dslp)
             if SED:
-                out[out_slc] = xp.where(alpha[out_slc] < 1, out[out_slc], dcen)
+                out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
         case "PP2D":
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
         case None:
-            out[out_slc] = 0.5 * (u[slc_r] - u[slc_l])
+            out[inner] = 0.5 * (u[slc_r] - u[slc_l])
         case _:
             raise ValueError(f"Unknown limiter: {limiter}.")
 
-    return out_modified
+    return modified
 
 
 def compute_PP2D_slopes(

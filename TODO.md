@@ -1,6 +1,6 @@
 - [ ] Gresho Vortex from David sequel paper. demonstrate value of high-order
 - [ ] Decaying supersonic turbulence in 2D with `isothermal=True`
-- [ ] clean up slice syntax using `insert_slice` and `replace_slices` in the limiter and SED functions
+- [x] clean up slice syntax using `insert_slice` and `replace_slices` in the limiter and SED functions
 - [ ] adaptively fall back to w0 or wp in the Zhang-Shu limiter
 - [x] Toro Test 2. demonstrate value of high-order
 - [x] `"passives" in idx` might be triggered where it shouldn't be

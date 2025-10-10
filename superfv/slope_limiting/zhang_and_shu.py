@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Literal, Optional, cast
+from typing import Literal, Optional, Tuple, cast
 
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
@@ -76,7 +76,7 @@ def compute_theta(
     out: ArrayLike,
     buffer: ArrayLike,
     config: ZhangShuConfig,
-):
+) -> Tuple[slice, ...]:
     """
     Compute Zhang and Shu's a priori slope limiting parameter theta based on arrays of
     finite-volume nodes and averages.
@@ -135,8 +135,8 @@ def compute_theta(
     )
 
     # assign theta
-    out_modified = replace_slice(dmp_modified, axis=4, new_slice=0)
-    out[out_modified] = theta[out_modified[:-1]]
+    inner = replace_slice(dmp_modified, 4, 0)
+    out[inner] = theta[inner[:-1]]
 
     # relax theta using a smooth extrema detector
     if SED:
@@ -150,7 +150,7 @@ def compute_theta(
         )
         out[modified] = xp.where(alpha[modified] < 1, out[modified], 1)
     else:
-        modified = replace_slice(out_modified, axis=4, new_slice=slice(None, 1))
+        modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(0, 1)))
 
     return modified
 
