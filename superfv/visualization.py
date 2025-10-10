@@ -173,7 +173,7 @@ def _extract_variable_data(
         key = "u"
     elif variable in idx.group_var_map["primitives"]:
         key = "w"
-    elif variable in idx.group_var_map["passives"]:
+    elif "passives" in idx and variable in idx.group_var_map["passives"]:
         key = "w"
     else:
         raise ValueError(

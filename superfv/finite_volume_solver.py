@@ -280,12 +280,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.ic_passives = ic_passives
             self.callable_ic = self._make_callable_ic_with_passives()
         else:
-            idx.add_var_to_group("passives", [])
             self.callable_ic = self._make_callable_ic()
 
         self.variable_index_map = idx
         self.nvars = idx.nvars
-        self.n_passive_vars = len(np.arange(self.nvars)[idx("passives")])
+        self.n_passive_vars = (
+            len(np.arange(self.nvars)[idx("passives")]) if "passives" in idx else 0
+        )
 
     def _make_callable_ic(self) -> MultivarField:
         """
