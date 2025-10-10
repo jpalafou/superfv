@@ -54,6 +54,8 @@ def llf(
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
     gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
 ) -> ArrayLike:
     """
     Compute the LLF flux for the Euler equations in the specified dimension.
@@ -67,6 +69,8 @@ def llf(
             (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
         gamma: Adiabatic index.
+        isothermal: Whether to use isothermal sound speed.
+        iso_cs: Isothermal sound speed (if isothermal is True).
 
     Returns:
         F: Flux array. Has shape (nvars, nx, ny, nz, ...).
@@ -74,8 +78,10 @@ def llf(
     ul = prim_to_cons(xp, idx, wl, gamma)
     ur = prim_to_cons(xp, idx, wr, gamma)
 
-    sl = sound_speed(xp, idx, wl, gamma) + xp.abs(wl[idx("v" + dim)])
-    sr = sound_speed(xp, idx, wr, gamma) + xp.abs(wr[idx("v" + dim)])
+    csl = iso_cs if isothermal else sound_speed(xp, idx, wl, gamma)
+    csr = iso_cs if isothermal else sound_speed(xp, idx, wr, gamma)
+    sl = csl + xp.abs(wl[idx("v" + dim)])
+    sr = csr + xp.abs(wr[idx("v" + dim)])
     smax = xp.maximum(sl, sr)
 
     Fl = fluxes(xp, idx, wl, dim, gamma)
@@ -93,6 +99,8 @@ def hllc(
     wr: ArrayLike,
     dim: Literal["x", "y", "z"],
     gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
 ) -> ArrayLike:
     """
     Compute the HLLC flux for the Euler equations in the specified dimension.
@@ -106,6 +114,8 @@ def hllc(
             (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
         gamma: Adiabatic index.
+        isothermal: Whether to use isothermal sound speed.
+        iso_cs: Isothermal sound speed (if isothermal is True).
 
     Returns:
         F: Flux array. Has shape (nvars, nx, ny, nz, ...).
@@ -129,8 +139,8 @@ def hllc(
     Pr = wr[idx("P")]
     Er = ur[idx("E")]
 
-    cl = sound_speed(xp, idx, wl, gamma) + xp.abs(v1l)
-    cr = sound_speed(xp, idx, wr, gamma) + xp.abs(v1r)
+    cl = iso_cs if isothermal else sound_speed(xp, idx, wl, gamma)
+    cr = iso_cs if isothermal else sound_speed(xp, idx, wr, gamma)
     cmax = xp.maximum(cl, cr)
 
     sl = xp.minimum(v1l, v1r) - cmax

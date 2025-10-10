@@ -443,6 +443,8 @@ class EulerSolver(FiniteVolumeSolver):
             wr,
             dim,
             self.gamma,
+            self.isothermal,
+            self.iso_cs,
         )
 
     def hllc(
@@ -461,6 +463,8 @@ class EulerSolver(FiniteVolumeSolver):
             wr,
             dim,
             self.gamma,
+            self.isothermal,
+            self.iso_cs,
         )
 
     def hllct(

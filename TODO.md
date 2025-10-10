@@ -3,3 +3,4 @@
 - [ ] clean up slice syntax using `insert_slice` and `replace_slices` in the limiter and SED functions
 - [ ] adaptively fall back to w0 or wp in the Zhang-Shu limiter
 - [x] Toro Test 2. demonstrate value of high-order
+- [ ] `"passives" in idx` might be triggered where it shouldn't be
