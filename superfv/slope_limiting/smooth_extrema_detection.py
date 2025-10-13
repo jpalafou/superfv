@@ -1,8 +1,8 @@
-from typing import Any, Literal, Tuple
+from typing import Any, Literal, Tuple, cast
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, merge_slices, replace_slice
+from superfv.tools.slicing import crop, insert_slice, merge_slices
 from superfv.tools.stability import avoid0
 
 
@@ -73,10 +73,14 @@ def smooth_extema_detector_1d(
     alpha = xp.minimum(alpha_l, alpha_r)
 
     # take min of neighbors and return
-    inner = replace_slice(crop(axis, (3, -3), ndim=5), 4, 0)
-    out[inner] = xp.minimum(alpha[crop(axis, (4, -2))], alpha[crop(axis, (3, -3))])
-    out[inner] = xp.minimum(alpha[crop(axis, (2, -4))], out[inner])
-    modified = replace_slice(inner, 4, slice(None, 1))
+    lft_slc = crop(axis, (2, -4), ndim=4)
+    cen_slc = crop(axis, (3, -3), ndim=4)
+    rgt_slc = crop(axis, (4, -2), ndim=4)
+    modified0 = insert_slice(cen_slc, 4, 0)
+    modified = cast(Tuple[slice, ...], insert_slice(cen_slc, 4, slice(None, 1)))
+
+    out[modified0] = xp.minimum(alpha[lft_slc], alpha[cen_slc])
+    out[modified0] = xp.minimum(alpha[cen_slc], alpha[rgt_slc])
     return modified
 
 
@@ -100,7 +104,7 @@ def smooth_extema_detector_2d(
             detector: ("x", "y"), ("x", "z"), or ("y", "z").
         buffer: Array to which temporary values are assigned. Has shape
             (nvars, nx, ny, nz, >=6).
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
@@ -141,7 +145,7 @@ def smooth_extema_detector_3d(
             (nvars, nx, ny, nz).
         buffer: Array to which temporary values are assigned. Has shape
             (nvars, nx, ny, nz, >=7).
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
@@ -190,7 +194,7 @@ def smooth_extrema_detector(
             (nvars, nx, ny, nz).
         active_dims: Tuple of dimensions along which to compute the smooth extrema
             detector. Has length 1, 2, or 3 with possible values "x", "y", "z".
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz).
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
         buffer: Array to which temporary values are assigned. Has shape
             (nvars, nx, ny, nz, >=4) for 1D,
             (nvars, nx, ny, nz, >=6) for 2D,

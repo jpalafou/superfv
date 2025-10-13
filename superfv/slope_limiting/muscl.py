@@ -237,9 +237,11 @@ def compute_PP2D_slopes(
     if SED:
         modified = smooth_extrema_detector(xp, u, active_dims, out=alpha, buffer=abuff)
         theta[...] = xp.where(alpha[..., 0] < 1, theta, 1.0)
+    else:
+        modified = cast(Tuple[slice, ...], insert_slice(c_slc, 4, slice(None, 1)))
 
     # write limited slopes to `Sx` and `Sy` arrays
     _Sx[...] = theta * _Sx[...]
     _Sy[...] = theta * _Sy[...]
 
-    return cast(Tuple[slice, ...], insert_slice(modified, 4, slice(0, 2)))
+    return modified

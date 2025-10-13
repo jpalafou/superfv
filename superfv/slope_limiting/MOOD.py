@@ -346,7 +346,7 @@ def detect_NAD_violations(
     atol: float = 0.0,
     absolute_dmp: bool = False,
     include_corners: bool = False,
-):
+) -> Tuple[slice, ...]:
     """
     Compute the numerical admissibility detection (NAD) violations.
 
@@ -366,10 +366,16 @@ def detect_NAD_violations(
             - `absolute_dmp=True`:
                 umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
         include_corners: Whether to include corner values in the DMP computation.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
     """
     dmp = buffer[..., :2]
     dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
-    compute_dmp(xp, u_old, active_dims, out=dmp, include_corners=include_corners)
+    dmp_modified = compute_dmp(
+        xp, u_old, active_dims, out=dmp, include_corners=include_corners
+    )
+    modified = dmp_modified[:-1]
 
     if absolute_dmp:
         upper_bound = dmp_max + rtol * xp.abs(dmp_max) + atol
@@ -378,7 +384,9 @@ def detect_NAD_violations(
         dmp_range = dmp_max - dmp_min
         upper_bound = dmp_max + rtol * dmp_range + atol
         lower_bound = dmp_min - rtol * dmp_range - atol
-    out[...] = xp.minimum(u_new - lower_bound, upper_bound - u_new)
+    out[modified] = xp.minimum(u_new - lower_bound, upper_bound - u_new)[modified]
+
+    return modified
 
 
 def detect_PAD_violations(
@@ -555,7 +563,10 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     if MOOD_state.config.blend:
         _blended_cascade_idx_array_[...] = _cascade_idx_array_
         blend_troubled_cells(
-            xp, _blended_cascade_idx_array_, active_dims, buffer=troubles_buffer
+            xp,
+            _blended_cascade_idx_array_,
+            active_dims,
+            buffer=troubles_buffer,
         )
         _cascade_idx_array_ = _blended_cascade_idx_array_
 
@@ -596,7 +607,7 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
 
 def map_cells_values_to_face_values(
     xp: ModuleType, cv: ArrayLike, axis: int, *, out: ArrayLike
-):
+) -> Tuple[slice, ...]:
     """
     Map cell values to face values by taking the maximum of adjacent cell values.
 
@@ -615,14 +626,14 @@ def map_cells_values_to_face_values(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    lft = crop(axis, (None, -1))
-    rgt = crop(axis, (1, None))
-    ctr = crop(axis, (1, -1))
+    lft_slc = crop(axis, (None, -1), ndim=4)
+    rgt_slc = crop(axis, (1, None), ndim=4)
+    modified = crop(axis, (1, -1), ndim=4)
 
-    out[ctr] = cv[lft]
-    xp.maximum(out[ctr], cv[rgt], out=out[ctr])
+    out[modified] = cv[lft_slc]
+    xp.maximum(out[modified], cv[rgt_slc], out=out[modified])
 
-    return ctr
+    return modified
 
 
 def blend_troubled_cells(
@@ -631,10 +642,10 @@ def blend_troubled_cells(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
     buffer: ArrayLike,
-):
+    out: Optional[ArrayLike] = None,
+) -> Tuple[slice, ...]:
     """
-    Overwrite the troubled cells array `troubles` with a blended value based on
-    neighboring troubled cells.
+    Compute the blended troubled cell indicators.
 
     Args:
         xp: `np` namespace or equivalent.
@@ -643,6 +654,12 @@ def blend_troubled_cells(
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
         buffer: Buffer array with shape (1, nx, ny, nz, >= 1) to store intermediate
             values.
+        out: Output array to store the blended troubled cell indicators. If None,
+            the `troubles` array will be modified in place. Has shape
+            (1, nx, ny, nz).
+
+    Returns:
+        Slice objects indicating the modified regions in the troubles array.
     """
     theta = buffer[..., 0]
     ndim = len(active_dims)
@@ -652,8 +669,9 @@ def blend_troubled_cells(
 
     if ndim == 1:
         axis = DIM_TO_AXIS[active_dims[0]]
-        lft_slc = crop(axis, (None, -1))
-        rgt_slc = crop(axis, (1, None))
+        lft_slc = crop(axis, (None, -1), ndim=4)
+        rgt_slc = crop(axis, (1, None), ndim=4)
+        modified = crop(axis, (1, -1), ndim=4)
 
         # First neighbors
         theta[lft_slc] = xp.maximum(0.75 * troubles[rgt_slc], theta[lft_slc])
@@ -667,4 +685,9 @@ def blend_troubled_cells(
     elif ndim == 3:
         raise NotImplementedError("3D blending is not implemented yet.")
 
-    troubles[...] = theta
+    if out is None:
+        troubles[modified] = theta[modified]
+    else:
+        out[modified] = theta[modified]
+
+    return modified

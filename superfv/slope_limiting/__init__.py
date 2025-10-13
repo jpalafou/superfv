@@ -1,13 +1,13 @@
 from functools import lru_cache
 from itertools import product
-from typing import Any, Callable, List, Literal, Tuple
+from typing import Any, Callable, List, Literal, Tuple, cast
 
 import numpy as np
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.stencil import get_symmetric_slices
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, merge_slices
+from superfv.tools.slicing import crop, insert_slice, merge_slices
 
 
 def minmod(
@@ -142,11 +142,12 @@ def compute_dmp(
     stacked = xp.stack(all_views, axis=0)
 
     # compute min an max
-    out[inner_slice + (0,)] = xp.min(stacked, axis=0)
-    out[inner_slice + (1,)] = xp.max(stacked, axis=0)
+    out[insert_slice(inner_slice, 4, 0)] = xp.min(stacked, axis=0)
+    out[insert_slice(inner_slice, 4, 1)] = xp.max(stacked, axis=0)
 
     # return inner slice
-    return inner_slice + (slice(None, 2),)
+    modified = cast(Tuple[slice, ...], insert_slice(inner_slice, 4, slice(None, 2)))
+    return modified
 
 
 def muscl(
