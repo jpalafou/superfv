@@ -832,82 +832,121 @@ def double_mach_reflection(
     return out
 
 
-def decaying_turbulence_1d(
+def decaying_turbulence(
     idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float = 0.0,  # unused; included to match IC signature
     *,
     xp: ModuleType,
-    h: float,
     M: float = 10.0,
-    seed: Optional[int] = None,
+    slope: float = -4.0,  # spectral slope for |v̂| ∝ k^{slope/2}
+    seed: "int | None" = None,
 ) -> ArrayLike:
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Decaying turbulence 1D initial condition requires all hydro variables."
+    """
+    Decaying turbulence IC generalized to 1D–3D with the same interface style as `square`.
+
+    - Requires {'rho','vx','vy','vz'}; 'P' is optional and set to 1 if present.
+    - Builds independent 1D random power-law spectra along each present axis,
+      broadcasts to the full grid, and rescales so that the domain RMS speed equals M.
+    - Assumes periodicity and uniform spacing `h` (float) or per-axis spacing (hx, hy, hz).
+
+    Args:
+        idx: VariableIndexMap with indices for variables.
+        x, y, z: coordinate arrays with shape (nx, ny, nz); unused dims may be dummy.
+        t: time (ignored; included for API symmetry).
+        xp: NumPy-like module (np or cupy).
+        h: grid spacing (float) or tuple (hx, hy, hz).
+        M: target RMS Mach number (c_s = 1).
+        slope: power-law slope for the spectrum envelope (default -4).
+        seed: RNG seed for reproducibility.
+    """
+    # --- Validate variables like your `square` IC ---
+    if not {"rho", "vx", "vy", "vz"} <= idx.var_names:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_names}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
 
-    dims = parse_xyz(x, y, z)
-    if dims != ("x",):
-        raise ValueError(
-            "Decaying turbulence 1D initial condition is only defined along the x-axis."
-        )
+    # Normalize dims and spacings
+    dims = parse_xyz(x, y, z)  # e.g., ('x',), ('x','y'), ('x','y','z')
+    hx = x[1, 0, 0, 0] - x[0, 0, 0, 0] if "x" in dims else 1.0
+    hy = y[0, 1, 0, 0] - y[0, 0, 0, 0] if "y" in dims else 1.0
+    hz = z[0, 0, 1, 0] - z[0, 0, 0, 0] if "z" in dims else 1.0
 
     if seed is not None:
-        xp.random.seed(seed)
+        xp.random.seed(int(seed))
 
-    rho = xp.full_like(x, 1.0)
-    P = xp.full_like(x, 1.0)
+    # Helpers ---------------------------------------------------------------
+    def _spectral_1d(N: int, dx: float) -> "ArrayLike":
+        """1D real field from rFFT with power-law envelope and random phases."""
+        if N < 2:
+            raise ValueError("Grid size must be at least 2 along a turbulent axis.")
+        kpos = N // 2 + 1
+        k = xp.fft.rfftfreq(N, d=dx)  # cycles per unit
+        amp_env = xp.zeros_like(k)
+        if kpos > 1:
+            kref = k[1]
+            # amplitude ∝ (k/kref)^(slope/2); DC stays zero
+            amp_env[1:] = (k[1:] / kref) ** (slope / 2.0)
 
-    # --- Spectral construction with power-law envelope ---
-    slope = -4.0
-    N = x.size
-    if N < 2:
-        raise ValueError("x must have at least two points.")
+        phases = xp.random.uniform(0.0, 2.0 * xp.pi, size=kpos)
+        rand_amp = xp.random.standard_normal(size=kpos)
+        vhat = (rand_amp * amp_env) * xp.exp(1j * phases)
 
-    N = x.shape[0]
-    kpos = N // 2 + 1  # rfft size
-    dx = h
+        # Zero DC and enforce real Nyquist if even N
+        vhat[0] = 0.0
+        if N % 2 == 0:
+            vhat[-1] = vhat[-1].real
 
-    # rfftfreq gives cycles/unit; convert to angular wavenumber if you like (constant cancels in ratios)
-    k = xp.fft.rfftfreq(N, d=dx)  # shape (kpos,)
-    # Avoid division by zero; set DC to 0 weight below
-    # amplitude |v̂| ∝ k^{slope/2}; for slope=-2 => amplitude ∝ k^{-1}
-    amp_env = xp.zeros_like(k)
-    if kpos > 1:
-        # normalize relative to the first nonzero mode
-        kref = k[1]
-        amp_env[1:] = (k[1:] / kref) ** (slope / 2.0)
+        v = xp.fft.irfft(vhat, n=N)
+        # zero-mean, unit-std guard
+        v = v - v.mean()
+        std = v.std()
+        return v / std if std > 0 else xp.zeros_like(v)
 
-    # random complex phases (Hermitian handled by irfft conventions)
-    phases = xp.random.uniform(0.0, 2.0 * np.pi, size=kpos)
-    rand_amp = xp.random.standard_normal(size=kpos)  # white noise base
+    # Build per-axis components (independent spectra) ----------------------
+    nx = x.shape[0]
+    ny = y.shape[1]
+    nz = x.shape[2]
+    vx = xp.zeros_like(x, dtype=float)
+    vy = xp.zeros_like(x, dtype=float)
+    vz = xp.zeros_like(x, dtype=float)
 
-    vx_hat = (rand_amp * amp_env) * xp.exp(1j * phases)
+    if "x" in dims:
+        vx1d = _spectral_1d(nx, hx)
+        vx = vx1d.reshape(nx, *([1] * (x.ndim - 1))).astype(float) + vx
+    if "y" in dims:
+        vy1d = _spectral_1d(ny, hy)
+        vy = vy1d.reshape(1, ny, *([1] * (x.ndim - 2))).astype(float) + vy
+    if "z" in dims:
+        vz1d = _spectral_1d(nz, hz)
+        # reshape to broadcast along z
+        if x.ndim == 3:
+            vz = vz1d.reshape(1, 1, nz).astype(float) + vz
+        else:
+            # if ndim<3 but 'z' present in dims, your coords likely carry a dummy axis
+            # still reshape safely:
+            reshape = (1,) * (x.ndim - 1) + (nz,)
+            vz = vz1d.reshape(*reshape).astype(float) + vz
 
-    # Zero DC to avoid net momentum
-    vx_hat[0] = 0.0
+    # Global RMS rescale to target Mach number -----------------------------
+    u2 = vx * vx + vy * vy + vz * vz
+    u_rms = xp.sqrt(u2.mean())
+    if u_rms > 0:
+        scale = M / float(u_rms)
+        vx *= scale
+        vy *= scale
+        vz *= scale
 
-    # Nyquist bin (if present) must be purely real for Hermitian symmetry
-    if N % 2 == 0:
-        vx_hat[-1] = vx_hat[-1].real
-
-    # Back to real space
-    vx = xp.fft.irfft(vx_hat, n=N)
-
-    # Normalize to target Mach number (c_s = 1 here)
-    vx = vx - vx.mean()
-    sigma = vx.std()
-    if sigma > 0:
-        vx = vx / sigma * M
-    else:
-        vx = xp.zeros_like(vx)
-
-    out = xp.zeros((len(idx.idxs), *x.shape))
-    out[idx("rho")] = rho
-    out[idx("vx")] = vx.reshape((-1,) + (1,) * (x.ndim - 1))
-    out[idx("P")] = P
+    # State assembly --------------------------------------------------------
+    out = xp.empty((len(idx.idxs), *x.shape), dtype=float)
+    out[idx("rho")] = xp.ones_like(x, dtype=float)  # uniform density
+    out[idx("vx")] = vx
+    out[idx("vy")] = vy
+    out[idx("vz")] = vz
+    if "P" in idx.var_names:
+        out[idx("P")] = xp.ones_like(x, dtype=float)  # uniform pressure = 1
 
     return out
