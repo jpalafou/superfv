@@ -150,6 +150,7 @@ def _extract_variable_data(
         ValueError: Variable not found in snapshots.
     """
     idx = fv_solver.variable_index_map
+    active_dims = fv_solver.active_dims
 
     # choose the snapshot with the nearest time
     snapshot = fv_solver.snapshots(nearest_t)
@@ -182,6 +183,21 @@ def _extract_variable_data(
 
     if not theta and not cell_averaged:
         key += "cc"
+
+    if variable in ("v", "m"):
+        return np.sqrt(
+            (np.square(snapshot[key][idx(variable + "x")]) if "x" in active_dims else 0)
+            + (
+                np.square(snapshot[key][idx(variable + "y")])
+                if "y" in active_dims
+                else 0
+            )
+            + (
+                np.square(snapshot[key][idx(variable + "z")])
+                if "z" in active_dims
+                else 0
+            )
+        )
 
     # extract the data
     return snapshot[key][idx(variable)]

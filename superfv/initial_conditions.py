@@ -832,45 +832,51 @@ def double_mach_reflection(
     return out
 
 
-def decaying_turbulence(
+def decaying_isotropic_turbulence(
     idx: VariableIndexMap,
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,  # unused; included to match IC signature
+    t: float = 0.0,  # unused; API symmetry
     *,
     xp: ModuleType,
     M: float = 10.0,
-    slope: float = -4.0,  # spectral slope for |v̂| ∝ k^{slope/2}
-    seed: "int | None" = None,
-) -> ArrayLike:
+    slope: float = -4.0,  # amplitude |v̂| ∝ k^{slope/2}; energy ~ k^{slope}
+    seed: Optional[int] = None,
+    solenoidal: bool = True,  # project to ∇·v = 0 in Fourier space
+) -> "ArrayLike":
     """
-    Decaying turbulence IC generalized to 1D–3D with the same interface style as `square`.
-
-    - Requires {'rho','vx','vy','vz'}; 'P' is optional and set to 1 if present.
-    - Builds independent 1D random power-law spectra along each present axis,
-      broadcasts to the full grid, and rescales so that the domain RMS speed equals M.
-    - Assumes periodicity and uniform spacing `h` (float) or per-axis spacing (hx, hy, hz).
+    Physically isotropic decaying-turbulence IC.
 
     Args:
-        idx: VariableIndexMap with indices for variables.
-        x, y, z: coordinate arrays with shape (nx, ny, nz); unused dims may be dummy.
-        t: time (ignored; included for API symmetry).
-        xp: NumPy-like module (np or cupy).
-        h: grid spacing (float) or tuple (hx, hy, hz).
-        M: target RMS Mach number (c_s = 1).
-        slope: power-law slope for the spectrum envelope (default -4).
-        seed: RNG seed for reproducibility.
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz, ...).
+        y: y-coordinate array. Has shape (nx, ny, nz, ...).
+        z: z-coordinate array. Has shape (nx, ny, nz, ...).
+        t: Time variable. Unused.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+        M: Desired RMS Mach number of the velocity field.
+        slope: Power-law slope of the velocity power spectrum. The velocity amplitude
+            scales as |v̂| ∝ k^(slope/2), so the kinetic energy spectrum scales as
+            E(k) ∝ k^slope. A slope of -4 is typical of supersonic turbulence.
+        seed: Random number seed for reproducibility. If None, use random seed.
+        solenoidal: If True, project the velocity field to be divergence-free in
+            Fourier space.
     """
-    # --- Validate variables like your `square` IC ---
+    # --- variable check (mirror your style) ---
     if not {"rho", "vx", "vy", "vz"} <= idx.var_names:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
 
-    # Normalize dims and spacings
-    dims = parse_xyz(x, y, z)  # e.g., ('x',), ('x','y'), ('x','y','z')
+    if x.ndim != 4:
+        raise ValueError("Input coordinate arrays must have 4 dimensions.")
+
+    dims = parse_xyz(x, y, z)
+    axes = tuple({"x": 0, "y": 1, "z": 2}[d] for d in dims)
+
+    # spacings
     hx = x[1, 0, 0, 0] - x[0, 0, 0, 0] if "x" in dims else 1.0
     hy = y[0, 1, 0, 0] - y[0, 0, 0, 0] if "y" in dims else 1.0
     hz = z[0, 0, 1, 0] - z[0, 0, 0, 0] if "z" in dims else 1.0
@@ -878,75 +884,103 @@ def decaying_turbulence(
     if seed is not None:
         xp.random.seed(int(seed))
 
-    # Helpers ---------------------------------------------------------------
-    def _spectral_1d(N: int, dx: float) -> "ArrayLike":
-        """1D real field from rFFT with power-law envelope and random phases."""
-        if N < 2:
-            raise ValueError("Grid size must be at least 2 along a turbulent axis.")
-        kpos = N // 2 + 1
-        k = xp.fft.rfftfreq(N, d=dx)  # cycles per unit
-        amp_env = xp.zeros_like(k)
-        if kpos > 1:
-            kref = k[1]
-            # amplitude ∝ (k/kref)^(slope/2); DC stays zero
-            amp_env[1:] = (k[1:] / kref) ** (slope / 2.0)
+    # shapes & FFT axes
+    full_shape = x.shape
 
-        phases = xp.random.uniform(0.0, 2.0 * xp.pi, size=kpos)
-        rand_amp = xp.random.standard_normal(size=kpos)
-        vhat = (rand_amp * amp_env) * xp.exp(1j * phases)
+    # ----- build wave-number grids (cycles per unit) -----
+    kxs = (
+        xp.fft.fftfreq(full_shape[0], d=hx)
+        if "x" in dims
+        else xp.array([0.0], dtype=float)
+    )
+    kys = (
+        xp.fft.fftfreq(full_shape[1], d=hy)
+        if "y" in dims
+        else xp.array([0.0], dtype=float)
+    )
+    kzs = (
+        xp.fft.fftfreq(full_shape[2], d=hz)
+        if "z" in dims
+        else xp.array([0.0], dtype=float)
+    )
 
-        # Zero DC and enforce real Nyquist if even N
-        vhat[0] = 0.0
-        if N % 2 == 0:
-            vhat[-1] = vhat[-1].real
+    # meshgrid with spatial dims first, then broadcast over trailing dims
+    KX = (
+        kxs.reshape((full_shape[0], 1, 1, 1))
+        if "x" in dims
+        else xp.zeros((full_shape[0], 1, 1, 1), dtype=float)
+    )
+    KY = (
+        kys.reshape((1, full_shape[1], 1, 1))
+        if "y" in dims
+        else xp.zeros((1, full_shape[1], 1, 1), dtype=float)
+    )
+    KZ = (
+        kzs.reshape((1, 1, full_shape[2], 1))
+        if "z" in dims
+        else xp.zeros((1, 1, full_shape[2], 1), dtype=float)
+    )
 
-        v = xp.fft.irfft(vhat, n=N)
-        # zero-mean, unit-std guard
-        v = v - v.mean()
-        std = v.std()
-        return v / std if std > 0 else xp.zeros_like(v)
+    K2 = KX * KX + KY * KY + KZ * KZ
+    K = xp.sqrt(K2)
 
-    # Build per-axis components (independent spectra) ----------------------
-    nx = x.shape[0]
-    ny = y.shape[1]
-    nz = x.shape[2]
-    vx = xp.zeros_like(x, dtype=float)
-    vy = xp.zeros_like(x, dtype=float)
-    vz = xp.zeros_like(x, dtype=float)
+    # ----- start from real-space white noise to preserve Hermitian symmetry -----
+    def _rand_like():
+        return xp.random.standard_normal(full_shape[:3] + (1,))
 
-    if "x" in dims:
-        vx1d = _spectral_1d(nx, hx)
-        vx = vx1d.reshape(nx, *([1] * (x.ndim - 1))).astype(float) + vx
-    if "y" in dims:
-        vy1d = _spectral_1d(ny, hy)
-        vy = vy1d.reshape(1, ny, *([1] * (x.ndim - 2))).astype(float) + vy
-    if "z" in dims:
-        vz1d = _spectral_1d(nz, hz)
-        # reshape to broadcast along z
-        if x.ndim == 3:
-            vz = vz1d.reshape(1, 1, nz).astype(float) + vz
-        else:
-            # if ndim<3 but 'z' present in dims, your coords likely carry a dummy axis
-            # still reshape safely:
-            reshape = (1,) * (x.ndim - 1) + (nz,)
-            vz = vz1d.reshape(*reshape).astype(float) + vz
+    vx0 = _rand_like()
+    vy0 = _rand_like()
+    vz0 = _rand_like()
 
-    # Global RMS rescale to target Mach number -----------------------------
+    # FFT to spectral space along spatial axes
+    Vx = xp.fft.fftn(vx0, axes=axes)
+    Vy = xp.fft.fftn(vy0, axes=axes)
+    Vz = xp.fft.fftn(vz0, axes=axes)
+
+    # isotropic power-law envelope (relative to first nonzero k)
+    # amplitude ∝ (k / kref)^(slope/2)
+    k_nonzero = K[K > 0]
+    kref = float(k_nonzero.min()) if k_nonzero.size else 1.0
+    ENV = xp.where(K > 0, (K / kref) ** (slope / 2.0), 0.0)
+
+    Vx *= ENV
+    Vy *= ENV
+    Vz *= ENV
+
+    # optional solenoidal projection: V <- (I - k k^T / |k|^2) V
+    if solenoidal:
+        # avoid division by zero by masking k=0
+        invK2 = xp.where(K2 > 0.0, 1.0 / K2, 0.0)
+        kdotV = KX * Vx + KY * Vy + KZ * Vz
+        Vx = Vx - KX * (kdotV * invK2)
+        Vy = Vy - KY * (kdotV * invK2)
+        Vz = Vz - KZ * (kdotV * invK2)
+
+    # zero the DC mode
+    Vx[0, 0, 0, slice(None)] = 0.0
+    Vy[0, 0, 0, slice(None)] = 0.0
+    Vz[0, 0, 0, slice(None)] = 0.0
+
+    # back to real space
+    vx = xp.fft.ifftn(Vx, axes=axes).real if "x" in dims else 0.0
+    vy = xp.fft.ifftn(Vy, axes=axes).real if "y" in dims else 0.0
+    vz = xp.fft.ifftn(Vz, axes=axes).real if "z" in dims else 0.0
+
+    # global RMS speed -> target M (c_s = 1)
     u2 = vx * vx + vy * vy + vz * vz
-    u_rms = xp.sqrt(u2.mean())
-    if u_rms > 0:
-        scale = M / float(u_rms)
-        vx *= scale
-        vy *= scale
-        vz *= scale
+    u_rms = float(xp.sqrt(u2.mean()))
+    if u_rms > 0.0:
+        s = M / u_rms
+        vx *= s
+        vy *= s
+        vz *= s
 
-    # State assembly --------------------------------------------------------
-    out = xp.empty((len(idx.idxs), *x.shape), dtype=float)
-    out[idx("rho")] = xp.ones_like(x, dtype=float)  # uniform density
+    # assemble state like your other ICs
+    out = xp.empty((len(idx.idxs), *full_shape), dtype=float)
+    out[idx("rho")] = xp.ones_like(x, dtype=float)
     out[idx("vx")] = vx
     out[idx("vy")] = vy
     out[idx("vz")] = vz
     if "P" in idx.var_names:
-        out[idx("P")] = xp.ones_like(x, dtype=float)  # uniform pressure = 1
-
+        out[idx("P")] = xp.ones_like(x, dtype=float)
     return out
