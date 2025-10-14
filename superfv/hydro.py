@@ -1,6 +1,9 @@
 from types import ModuleType
 from typing import Literal
 
+import numpy as np
+
+from .mesh import UniformFVMesh
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 
@@ -157,3 +160,92 @@ def fluxes(
         F[idx("passives")] = rho * v1 * w[idx("passives")]
 
     return F
+
+
+def turbulent_power_specta(
+    xp: ModuleType,
+    idx: VariableIndexMap,
+    w: ArrayLike,
+    mesh: UniformFVMesh,
+    nbins: int,
+    binmode: Literal["linear", "log"] = "linear",
+) -> ArrayLike:
+    """
+    Compute the turbulent kinetic energy power spectrum from the velocity field.
+
+    Args:
+        xp: ModuleType for the array operations (e.g., numpy or cupy).
+        idx: VariableIndexMap object with indices for hydro variables.
+        w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
+        mesh: UniformFVMesh object defining the computational mesh.
+        nbins: Number of bins for the power spectrum.
+        binmode: Bin spacing mode, either "linear" or "log".
+
+    Returns:
+        k_centers: Array of shape (nbins,) with the center of each wavenumber bin.
+        E_k: Array of shape (nbins,) with the energy in each wavenumber bin.
+    """
+    nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
+    dx, dy, dz = mesh.hx, mesh.hy, mesh.hz
+    active_dims = mesh.active_dims
+
+    N = nx * ny * nz
+    active_axes = tuple({"x": 0, "y": 1, "z": 2}[d] for d in active_dims)
+
+    vx = w[idx("vx")] - w[idx("vx")].mean()
+    vy = w[idx("vy")] - w[idx("vy")].mean()
+    vz = w[idx("vz")] - w[idx("vz")].mean()
+
+    Vx = xp.fft.fftn(vx, axes=active_axes, norm="ortho")
+    Vy = xp.fft.fftn(vy, axes=active_axes, norm="ortho")
+    Vz = xp.fft.fftn(vz, axes=active_axes, norm="ortho")
+
+    # Per-mode kinetic energy (per *sum* convention). We'll rescale for "mean" below.
+    P = 0.5 * (xp.abs(Vx) ** 2 + xp.abs(Vy) ** 2 + xp.abs(Vz) ** 2)
+    P = P / N  # rescale to get mean(|v|^2) = sum P
+
+    # Angular wavenumbers (rad/length)
+    kx = (
+        2.0 * np.pi * xp.fft.fftfreq(nx, d=dx)
+        if "x" in active_dims
+        else xp.array([0.0])
+    )
+    ky = (
+        2.0 * np.pi * xp.fft.fftfreq(ny, d=dy)
+        if "y" in active_dims
+        else xp.array([0.0])
+    )
+    kz = (
+        2.0 * np.pi * xp.fft.fftfreq(nz, d=dz)
+        if "z" in active_dims
+        else xp.array([0.0])
+    )
+    KX, KY, KZ = xp.meshgrid(kx, ky, kz, indexing="ij")
+    Kmag = xp.sqrt(KX**2 + KY**2 + KZ**2)
+
+    k = Kmag.ravel()
+    p = P.ravel()
+
+    mask = k > 0
+    k = k[mask]
+    p = p[mask]
+
+    if binmode == "linear":
+        edges = xp.linspace(k.min(), k.max(), nbins + 1)
+        k_centers = 0.5 * (edges[:-1] + edges[1:])
+    elif binmode == "log":
+        edges = xp.logspace(xp.log10(k.min()), xp.log10(k.max()), nbins + 1)
+        k_centers = xp.sqrt(edges[:-1] * edges[1:])
+    else:
+        raise ValueError("binmode must be 'linear' or 'log'")
+
+    bin_idx = xp.digitize(k, edges) - 1
+    valid = (bin_idx >= 0) & (bin_idx < nbins)
+    bin_idx = bin_idx[valid]
+    p = p[valid]
+
+    E_shell = xp.bincount(bin_idx, weights=p, minlength=nbins)
+    widths = edges[1:] - edges[:-1]
+    E_k = E_shell / widths
+
+    return k_centers, E_k

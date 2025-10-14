@@ -874,6 +874,7 @@ def decaying_isotropic_turbulence(
         raise ValueError("Input coordinate arrays must have 4 dimensions.")
 
     dims = parse_xyz(x, y, z)
+    ndim = len(dims)
     axes = tuple({"x": 0, "y": 1, "z": 2}[d] for d in dims)
 
     # spacings
@@ -941,7 +942,7 @@ def decaying_isotropic_turbulence(
     # amplitude ∝ (k / kref)^(slope/2)
     k_nonzero = K[K > 0]
     kref = float(k_nonzero.min()) if k_nonzero.size else 1.0
-    ENV = xp.where(K > 0, (K / kref) ** (slope / 2.0), 0.0)
+    ENV = xp.where(K > 0, (K / kref) ** ((slope - (ndim - 1)) / 2), 0.0)
 
     Vx *= ENV
     Vy *= ENV

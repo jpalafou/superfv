@@ -364,6 +364,40 @@ class UniformFVMesh:
         f_eval = f(X, Y, Z)
         return _xp.sum(f_eval * w, axis=node_axis)
 
+    def get_wavenumber_grid(self) -> ArrayLike:
+        """
+        Compute the wavenumber grid for the core mesh.
+
+        Returns:
+            Kmag: 3D array of the magnitude of the wavenumber vector at each
+                grid point in the core mesh. Has shape (nx, ny, nz).
+        """
+        _xp = xp if self.array_manager.device == "gpu" else np
+
+        hx, hy, hz = self.hx, self.hy, self.hz
+        nx, ny, nz = self.nx, self.ny, self.nz
+
+        kx = (
+            2 * np.pi * _xp.fft.fftfreq(nx, d=hx)
+            if self.x_is_active
+            else _xp.array([0.0])
+        )
+        ky = (
+            2 * np.pi * _xp.fft.fftfreq(ny, d=hy)
+            if self.y_is_active
+            else _xp.array([0.0])
+        )
+        kz = (
+            2 * np.pi * _xp.fft.fftfreq(nz, d=hz)
+            if self.z_is_active
+            else _xp.array([0.0])
+        )
+
+        Kx, Ky, Kz = _xp.meshgrid(kx, ky, kz, indexing="ij")
+        Kmag = _xp.sqrt(Kx**2 + Ky**2 + Kz**2)
+
+        return Kmag
+
     def to_dict(self) -> dict:
         return dict(
             nx=self.nx,
