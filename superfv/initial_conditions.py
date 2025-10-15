@@ -963,9 +963,9 @@ def decaying_isotropic_turbulence(
     Vz[0, 0, 0, slice(None)] = 0.0
 
     # back to real space
-    vx = xp.fft.ifftn(Vx, axes=axes).real if "x" in dims else 0.0
-    vy = xp.fft.ifftn(Vy, axes=axes).real if "y" in dims else 0.0
-    vz = xp.fft.ifftn(Vz, axes=axes).real if "z" in dims else 0.0
+    vx = xp.fft.ifftn(Vx, axes=axes).real if "x" in dims else xp.zeros_like(x)
+    vy = xp.fft.ifftn(Vy, axes=axes).real if "y" in dims else xp.zeros_like(x)
+    vz = xp.fft.ifftn(Vz, axes=axes).real if "z" in dims else xp.zeros_like(x)
 
     # global RMS speed -> target M (c_s = 1)
     u2 = vx * vx + vy * vy + vz * vz

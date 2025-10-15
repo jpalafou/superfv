@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Literal
+from typing import Literal, Tuple
 
 import numpy as np
 
@@ -169,7 +169,7 @@ def turbulent_power_specta(
     mesh: UniformFVMesh,
     nbins: int,
     binmode: Literal["linear", "log"] = "linear",
-) -> ArrayLike:
+) -> Tuple[ArrayLike, ArrayLike]:
     """
     Compute the turbulent kinetic energy power spectrum from the velocity field.
 
