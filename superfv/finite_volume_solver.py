@@ -244,6 +244,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD_atol,
             SED,
         )
+        self._init_snapshots()
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
         self._init_bc(bcx, bcy, bcz, bcx_callable, bcy_callable, bcz_callable)
         self._init_array_allocation()
@@ -618,6 +619,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD_bounds, axis=(1, 2, 3)
         )  # shape (nvars, 1, 1, 1, 2)
         self.arrays.add("PAD_bounds", PAD_bounds)
+
+    def _init_snapshots(self):
+        self.step_log: Dict[str, List[float]] = {}
+
+        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
+            self.step_log["nfine(1-theta)"] = []
 
     def _init_mesh(
         self,
@@ -1564,6 +1571,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             }
         )
 
+        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
+            data.update(
+                {
+                    "n(1-theta)": sum(self.step_log["nfine(1-theta)"]),
+                    "nfine(1-theta)": self.step_log["nfine(1-theta)"],
+                }
+            )
+
         if self.MOOD:
             state = self.MOOD_state
 
@@ -1610,6 +1625,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             self.arrays["theta_log"].fill(0.0)
+            self.step_log["nfine(1-theta)"].clear()
 
         if self.MOOD:
             self.arrays["troubles_log"].fill(0)
@@ -1629,6 +1645,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             theta = self.arrays["theta"][self.interior][..., 0]
             theta_log = self.arrays["theta_log"]
             xp.add(theta_log, theta, out=theta_log)
+
+            n = xp.sum(xp.mean(1 - theta, axis=0)).item()
+            self.step_log["nfine(1-theta)"].append(n)
 
         if self.MOOD:
             troubles = self.arrays["troubles"]
