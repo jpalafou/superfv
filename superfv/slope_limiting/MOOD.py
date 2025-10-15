@@ -279,7 +279,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
             )
         else:
-            troubles[lim_slc] = NAD_violations[interior]
+            troubles[lim_slc] = NAD_violations[interior] < 0
 
     # compute PAD violations
     if PAD:

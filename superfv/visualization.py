@@ -156,12 +156,16 @@ def _extract_variable_data(
     snapshot = fv_solver.snapshots(nearest_t)
 
     # plot troubles/cascade
-    if troubles:
-        # troubled to be overlaid on variable plot
-        return snapshot["troubles"][idx(variable)]
-    if variable == "troubles":
-        # troubles to be plotted as their own variable
-        return np.max(snapshot["troubles"], axis=0)
+    if troubles or variable == "troubles":
+        if variable == "troubles":
+            troubles_arr = snapshot["troubles"]
+        else:
+            troubles_arr = snapshot["troubles"][idx(variable)]
+        if troubles_arr.ndim == 3:
+            return troubles_arr
+        elif troubles_arr.ndim == 4:
+            return np.max(troubles_arr, axis=0)
+        raise ValueError("Invalid shape for troubles array.")
     if variable == "cascade":
         return snapshot["cascade"][0]
 
