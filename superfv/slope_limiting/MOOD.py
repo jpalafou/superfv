@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cast
 
 from superfv.boundary_conditions import BCs, apply_bc
 from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import LimiterConfig
-from superfv.slope_limiting import compute_dmp
+from superfv.slope_limiting import compute_dmp, compute_vis
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop
 
@@ -203,6 +203,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     interior = fv_solver.interior
     dt = fv_solver.substep_dt
     MOOD_state = fv_solver.MOOD_state
+    vis_rtol = fv_solver.vis_rtol
+    vis_atol = fv_solver.vis_atol
 
     # gather MOOD parameters
     iter_idx = MOOD_state.iter_idx
@@ -237,6 +239,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     troubles = arrays["troubles"]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
+    dmp = arrays["dmp"][lim_slc]
+    visualize = arrays["visualize"][lim_slc]
+    troubles_vis = arrays["troubles_vis"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
 
     # reset troubles / cascade index array
@@ -259,27 +264,36 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             (w_old if primitive_NAD else u_old)[lim_slc],
             active_dims,
             out=NAD_violations,
-            buffer=buffer[lim_slc],
+            dmp=dmp[lim_slc],
             rtol=NAD_rtol,
             atol=NAD_atol,
             absolute_dmp=absolute_dmp,
             include_corners=include_corners,
         )
+    else:
+        # if not using NAD, still need DMP for visualization
+        compute_dmp(
+            xp,
+            (w_old if primitive_NAD else u_old)[lim_slc],
+            active_dims,
+            out=dmp,
+            include_corners=include_corners,
+        )
 
-        # compute smooth extrema
-        if SED:
-            smooth_extrema_detector(
-                xp,
-                (w_new if primitive_NAD else u_new)[lim_slc],
-                active_dims,
-                out=alpha,
-                buffer=buffer[lim_slc],
-            )
-            troubles[lim_slc] = xp.logical_and(
-                NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
-            )
-        else:
-            troubles[lim_slc] = NAD_violations[interior] < 0
+    # compute smooth extrema
+    if SED:
+        smooth_extrema_detector(
+            xp,
+            (w_new if primitive_NAD else u_new)[lim_slc],
+            active_dims,
+            out=alpha,
+            buffer=buffer[lim_slc],
+        )
+        troubles[lim_slc] = xp.logical_and(
+            NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
+        )
+    else:
+        troubles[lim_slc] = NAD_violations[interior] < 0
 
     # compute PAD violations
     if PAD:
@@ -331,6 +345,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             arrays["H_" + scheme_key][...] = arrays["H"].copy()
         cascade_status[0] = True
 
+    # determine which troubled cells should be visualized
+    troubles_vis[...] = troubles
+    compute_vis(xp, dmp[interior], vis_rtol, vis_atol, out=visualize)
+    troubles_vis[lim_slc] = xp.where(visualize, troubles[lim_slc], False)
+
     return n_revisable_troubled_cells, n_troubled_cells
 
 
@@ -341,7 +360,7 @@ def detect_NAD_violations(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
     out: ArrayLike,
-    buffer: ArrayLike,
+    dmp: ArrayLike,
     rtol: float = 1.0,
     atol: float = 0.0,
     absolute_dmp: bool = False,
@@ -356,7 +375,8 @@ def detect_NAD_violations(
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
-        buffer: Buffer array with shape (nvars, nx, ny, nz, >= 2).
+        dmp: Array to store the local minima and maxima. Has shape
+            (nvars, nx, ny, nz, >=2).
         rtol: Relative tolerance for the NAD violations.
         atol: Absolute tolerance for the NAD violations.
         absolute_dmp: Whether to use the absolute values of the DMP instead of the
@@ -370,7 +390,6 @@ def detect_NAD_violations(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    dmp = buffer[..., :2]
     dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
     dmp_modified = compute_dmp(
         xp, u_old, active_dims, out=dmp, include_corners=include_corners
@@ -691,3 +710,156 @@ def blend_troubled_cells(
         out[modified] = theta[modified]
 
     return modified
+
+
+def init_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
+    """
+    Initialize troubled cell statistics in the finite volume solver's step log.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+    """
+    idx = fv_solver.variable_index_map
+    step_log = fv_solver.step_log  # gets mutated
+
+    step_log["nfine_troubles_real_mean"] = []
+    step_log["nfine_troubles_real_max"] = []
+    step_log["nfine_troubles_vis_mean"] = []
+    step_log["nfine_troubles_vis_max"] = []
+
+    for var in idx.var_idx_map.keys():
+        step_log[f"nfine_troubles_real_{var}"] = []
+        step_log[f"nfine_troubles_vis_{var}"] = []
+
+
+def clear_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
+    """
+    Clear troubled cell statistics in the finite volume solver's step log.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+    """
+    idx = fv_solver.variable_index_map
+    step_log = fv_solver.step_log  # gets mutated
+
+    step_log["nfine_troubles_real_mean"].clear()
+    step_log["nfine_troubles_real_max"].clear()
+    step_log["nfine_troubles_vis_mean"].clear()
+    step_log["nfine_troubles_vis_max"].clear()
+
+    for var in idx.var_idx_map.keys():
+        step_log[f"nfine_troubles_real_{var}"].clear()
+        step_log[f"nfine_troubles_vis_{var}"].clear()
+
+
+def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
+    """
+    Append troubled cell statistics from the finite volume solver's arrays to the step
+    log. Specifically, log the sum of cells with 1 - theta > 0 using various criteria:
+        `nfine_troubles_real_mean`: Real values, mean over all variables.
+        `nfine_troubles_real_max`: Real values, max over all variables.
+        `nfine_troubles_vis_mean`: Visualized values, mean over all variables.
+        `nfine_troubles_vis_max`: Visualized values, max over all variables.
+        `nfine_troubles_real_{var}`: Real values for variable `var`.
+        `nfine_troubles_vis_{var}`: Visualized values for variable `var`.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+    """
+    xp = fv_solver.xp
+    arrays = fv_solver.arrays
+    interior = fv_solver.interior
+    idx = fv_solver.variable_index_map
+    nvars = fv_solver.nvars
+    step_log = fv_solver.step_log  # gets mutated
+
+    troubles = arrays["troubles"]
+    troubles_vis = arrays["troubles_vis"]
+    buffer = arrays["buffer"]
+
+    if nvars < 4:
+        raise ValueError("Troubled cell logging requires at least 4 variable slots.")
+    mean_troubles_real = buffer[interior][0, ..., 0]
+    max_troubles_real = buffer[interior][1, ..., 0]
+    mean_troubles_vis = buffer[interior][2, ..., 0]
+    max_troubles_vis = buffer[interior][3, ..., 0]
+
+    # track scalar quantities
+    mean_troubles_real[...] = xp.mean(troubles, axis=0)
+    max_troubles_real[...] = xp.max(troubles, axis=0)
+
+    mean_troubles_vis[...] = xp.mean(troubles_vis, axis=0)
+    max_troubles_vis[...] = xp.max(troubles_vis, axis=0)
+
+    n_real_mean = xp.sum(mean_troubles_real).item()
+    n_real_max = xp.sum(max_troubles_real).item()
+    n_vis_mean = xp.sum(mean_troubles_vis).item()
+    n_vis_max = xp.sum(max_troubles_vis).item()
+
+    step_log["nfine_troubles_real_mean"].append(n_real_mean)
+    step_log["nfine_troubles_real_max"].append(n_real_max)
+    step_log["nfine_troubles_vis_mean"].append(n_vis_mean)
+    step_log["nfine_troubles_vis_max"].append(n_vis_max)
+
+    for var in idx.var_idx_map.keys():
+        n_real = xp.sum(troubles[idx(var), ...]).item()
+        n_vis = xp.sum(troubles_vis[idx(var), ...]).item()
+
+        step_log[f"nfine_troubles_real_{var}"].append(n_real)
+        step_log[f"nfine_troubles_vis_{var}"].append(n_vis)
+
+
+def log_troubled_cell_scalar_statistics(
+    fv_solver: FiniteVolumeSolver, data: Dict[str, Any]
+):
+    """
+    Log troubled cell statistics from the finite volume solver's step log into the
+    provided data dictionary.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+        data: The dictionary to which statistics are logged.
+    """
+    step_log = fv_solver.step_log
+    idx = fv_solver.variable_index_map
+    state = fv_solver.MOOD_state
+
+    new_data = {
+        "nfine_troubles_real_mean": step_log["nfine_troubles_real_mean"],
+        "nfine_troubles_real_max": step_log["nfine_troubles_real_max"],
+        "nfine_troubles_vis_mean": step_log["nfine_troubles_vis_mean"],
+        "nfine_troubles_vis_max": step_log["nfine_troubles_vis_max"],
+        "n_troubles_real_mean": sum(step_log["nfine_troubles_real_mean"]),
+        "n_troubles_real_max": sum(step_log["nfine_troubles_real_max"]),
+        "n_troubles_vis_mean": sum(step_log["nfine_troubles_vis_mean"]),
+        "n_troubles_vis_max": sum(step_log["nfine_troubles_vis_max"]),
+    }
+
+    for var in idx.var_idx_map.keys():
+        new_data[f"nfine_troubles_real_{var}"] = step_log[f"nfine_troubles_real_{var}"]
+        new_data[f"nfine_troubles_vis_{var}"] = step_log[f"nfine_troubles_vis_{var}"]
+        new_data[f"n_troubles_real_{var}"] = sum(step_log[f"nfine_troubles_real_{var}"])
+        new_data[f"n_troubles_vis_{var}"] = sum(step_log[f"nfine_troubles_vis_{var}"])
+
+    data.update(new_data)
+
+    # some more MOOD statistics from the MOOD state
+    if sum(state.iter_count_hist) != state.iter_count:
+        raise ValueError(
+            "MOOD iteration count mismatch: "
+            f"{state.iter_count_hist} != {state.iter_count}"
+        )
+    nfine = state.troubled_cell_count_hist
+    if sum(nfine) != state.troubled_cell_count:
+        raise ValueError(
+            "MOOD troubled cell count mismatch: "
+            f"{nfine} != {state.troubled_cell_count}"
+        )
+    if nfine != step_log["nfine_troubles_real_max"]:
+        raise ValueError(
+            "MOOD troubled cell history mismatch: "
+            f"{nfine} != {step_log['nfine_troubles_real_max']}"
+        )
+    data.update(
+        {"n_MOOD_iters": state.iter_count, "nfine_MOOD_iters": state.iter_count_hist}
+    )

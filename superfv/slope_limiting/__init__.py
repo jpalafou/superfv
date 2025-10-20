@@ -1,51 +1,11 @@
 from functools import lru_cache
 from itertools import product
-from typing import Any, Callable, List, Literal, Tuple, cast
-
-import numpy as np
+from types import ModuleType
+from typing import List, Literal, Tuple, cast
 
 from superfv.fv import DIM_TO_AXIS
-from superfv.stencil import get_symmetric_slices
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
-
-
-def minmod(
-    xp: Any, du_left: ArrayLike, du_right: ArrayLike, tol: float = 1e-16
-) -> ArrayLike:
-    """
-    Args:
-        xp (Any): `np` namespace.
-        du_left (ArrayLike): Left differences. Has shape (nvars, nx, ny, nz, ...).
-        du_right (ArrayLike): Right difference. Has shape (nvars, nx, ny, nz, ...).
-        tol (float): Tolerance.
-    Returns:
-        ArrayLike: Minmod of left and right differences. Has shape
-            (nvars, nx, ny, nz, ...).
-    """
-    ratio = du_right / np.where(
-        du_left > 0,
-        xp.where(du_left > tol, du_left, tol),
-        xp.where(du_left < -tol, du_left, -tol),
-    )
-    ratio = xp.where(ratio < 1, ratio, 1)
-    return xp.where(ratio > 0, ratio, 0) * du_left
-
-
-def moncen(xp: Any, du_left: ArrayLike, du_right: ArrayLike) -> ArrayLike:
-    """
-    Args:
-        xp (Any): `np` namespace.
-        du_left (ArrayLike): Left differences. Has shape (nvars, nx, ny, nz, ...).
-        du_right (ArrayLike): Right difference. Has shape (nvars, nx, ny, nz, ...).
-    Returns:
-        ArrayLike: Moncen of left and right differences. Has shape
-            (nvars, nx, ny, nz, ...).
-    """
-    du_central = 0.5 * (du_left + du_right)
-    slope = xp.minimum(xp.abs(2 * du_left), xp.abs(2 * du_right))
-    slope = xp.sign(du_central) * xp.minimum(slope, xp.abs(du_central))
-    return xp.where(du_left * du_right >= 0, slope, 0)
 
 
 def gather_neighbor_slices(
@@ -111,7 +71,7 @@ def _gather_neighbor_slices(
 
 
 def compute_dmp(
-    xp: Any,
+    xp: ModuleType,
     arr: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
@@ -123,13 +83,14 @@ def compute_dmp(
     specified dimensions.
 
     Args:
-        xp (Any): `np` namespace.
-        arr (ArrayLike): Array. First axis is assumed to be variable axis. Has shape
+        xp: `np` namespace.
+        arr: Array. First axis is assumed to be variable axis. Has shape
             (nvars, nx, ny, nz).
-        active_dims (Tuple[Literal["x", "y", "z"], ...]): Dimensions to check.
-        out (ArrayLike): Output array to store the results. Should have shape
-            (nvars, nx, ny, nz, >=2).
-        include_corners (bool): Whether to include corners.
+        active_dims: Dimensions to check. Must be a subset of ("x", "y", "z").
+        out: Output array to store the results. Should have shape
+            (nvars, nx, ny, nz, >=2). The DMP min will be stored in the last axis at
+            index 0, and the DMP max at index 1.
+        include_corners: Whether to include corners.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -150,35 +111,25 @@ def compute_dmp(
     return modified
 
 
-def muscl(
-    xp: Any,
-    averages: ArrayLike,
-    dim: Literal["x", "y", "z"],
-    slope_limiter: Callable[[Any, ArrayLike, ArrayLike], ArrayLike],
-) -> Tuple[ArrayLike, ArrayLike]:
+def compute_vis(
+    xp: ModuleType, dmp: ArrayLike, rtol: float, atol: float, *, out: ArrayLike
+):
     """
-    Computes the MUSCL reconstruction of an array along the 2nd, 3rd, and/or 4th axes.
+    Compute a boolean array indicating where the local DMP spread is significant and
+    should be visualized. A cell is flagged True where:
+
+    |dmp_max - dmp_min| > atol + rtol * max(|dmp_max|, |dmp_min|)
 
     Args:
-        xp (Any): `np` namespace.
-        averages (ArrayLike): Array. First axis is assumed to be variable axis. Has
-            shape (nvars, nx, ny, nz).
-        dim (str): Dimension to check. Must be a subset of "xyz".
-        slope_limiter (Callable[[ArrayLike, ArrayLike], ArrayLike]): Slope
-            limiter. Must take two arguments (left and right differences) and
-            return an array of the same shape.
-
-    Returns:
-        Tuple[ArrayLike, ArrayLike]: Left and right face values. Each has shape
-            (nvars, <=nx, <=ny, <=nz, 1) where the axis corresponding to `dim` is
-            shortened by 2 (1 on each side).
+        xp: `np` namespace.
+        dmp: Array containing the discrete maximum principle values. Has shape
+            (nvars, nx, ny, nz, >=2), where the last axis contains the min and max
+            values.
+        rtol: Relative tolerance.
+        atol: Absolute tolerance.
+        out: Output boolean array to store the results. Should have shape
+            (nvars, nx, ny, nz).
     """
-    l_slc, c_slc, r_slc = get_symmetric_slices(
-        ndim=4, nslices=3, axis="xyz".index(dim) + 1
-    )
-    l_daverages = averages[c_slc] - averages[l_slc]
-    r_daverages = averages[r_slc] - averages[c_slc]
-    limited_daverages = slope_limiter(xp, l_daverages, r_daverages)
-    left_face = averages[c_slc] - 0.5 * limited_daverages
-    right_face = averages[c_slc] + 0.5 * limited_daverages
-    return left_face[..., np.newaxis], right_face[..., np.newaxis]
+    m = dmp[..., 0]
+    M = dmp[..., 1]
+    out[...] = M - m > atol + rtol * xp.maximum(xp.abs(m), xp.abs(M))

@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
 
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import replace_slice
+
+if TYPE_CHECKING:
+    from superfv.finite_volume_solver import FiniteVolumeSolver
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +79,7 @@ def compute_theta(
     z_nodes: Optional[ArrayLike],
     *,
     out: ArrayLike,
+    dmp: ArrayLike,
     buffer: ArrayLike,
     config: ZhangShuConfig,
 ) -> Tuple[slice, ...]:
@@ -87,8 +93,11 @@ def compute_theta(
         center_nodes: Array of central node values. Has shape (nvars, nx, ny, nz, 1).
         x_nodes, y_nodes, z_nodes: Optional array of x,y,z-face node values. Has shape
             (nvars, nx, ny, nz, 2*n_nodes). If None, the x,y,z face is not considered.
-        out: Array to which theta is written. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which intermediate values are written.
+        out: Array to which theta is written. Has shape (nvars, nx, ny, nz, >=1).
+        dmp: Array to which the discrete maximum principle is written. Has shape
+            (nvars, nx, ny, nz, >=2).
+        buffer: Array to which intermediate values are written. Has shape
+            (nvars, nx, ny, nz, >=3).
         config: Configuration for the Zhang-Shu limiter.
 
     Returns:
@@ -99,8 +108,8 @@ def compute_theta(
     tol = config.tol
 
     # allocate arrays
-    dmp = buffer[..., :2]
-    node_mp = buffer[..., 2:4]
+    node_mp = buffer[..., :2]
+    alpha = buffer[..., 2:3]
 
     # compute discrete maximum principle
     active_dims = tuple(
@@ -140,7 +149,6 @@ def compute_theta(
 
     # relax theta using a smooth extrema detector
     if SED:
-        alpha = buffer[..., :1]
         modified = smooth_extrema_detector(
             xp,
             u,
@@ -168,3 +176,144 @@ def zhang_shu_operator(u_ho: ArrayLike, u_fo: ArrayLike, theta: ArrayLike) -> Ar
         ArrayLike: Array of limited values.
     """
     return theta * (u_ho - u_fo) + u_fo
+
+
+def init_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
+    """
+    Initialize Zhang-Shu limiter statistics in the finite volume solver's step log.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+    """
+    idx = fv_solver.variable_index_map
+    step_log = fv_solver.step_log  # gets mutated
+
+    step_log["nfine_1-theta_real_mean"] = []
+    step_log["nfine_1-theta_real_max"] = []
+    step_log["nfine_1-theta_vis_mean"] = []
+    step_log["nfine_1-theta_vis_max"] = []
+
+    for var in idx.var_idx_map.keys():
+        step_log[f"nfine_1-theta_real_{var}"] = []
+        step_log[f"nfine_1-theta_vis_{var}"] = []
+
+
+def clear_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
+    """
+    Clear Zhang-Shu limiter statistics in the finite volume solver's step log.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+    """
+    idx = fv_solver.variable_index_map
+    step_log = fv_solver.step_log  # gets mutated
+
+    step_log["nfine_1-theta_real_mean"].clear()
+    step_log["nfine_1-theta_real_max"].clear()
+    step_log["nfine_1-theta_vis_mean"].clear()
+    step_log["nfine_1-theta_vis_max"].clear()
+
+    for var in idx.var_idx_map.keys():
+        step_log[f"nfine_1-theta_real_{var}"].clear()
+        step_log[f"nfine_1-theta_vis_{var}"].clear()
+
+
+def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
+    """
+    Append Zhang-Shu limiter statistics from the finite volume solver's arrays to the
+    step log. Specifically, log the sum of cells with 1 - theta > 0 using various
+    criteria:
+        nfine_1-theta_real_mean: Real values, mean over all variables.
+        nfine_1-theta_real_max: Real values, max over all variables.
+        nfine_1-theta_vis_mean: Visualized values, mean over all variables.
+        nfine_1-theta_vis_max: Visualized values, max over all variables.
+        nfine_1-theta_{var}_real: Real values for variable `var`.
+        nfine_1-theta_{var}_vis: Visualized values for variable `var`.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+    """
+    xp = fv_solver.xp
+    arrays = fv_solver.arrays
+    interior = fv_solver.interior
+    idx = fv_solver.variable_index_map
+    nvars = fv_solver.nvars
+    step_log = fv_solver.step_log  # gets mutated
+
+    # allocate arrays
+    theta = arrays["theta"][interior][..., 0]
+    theta_vis = arrays["theta_vis"]
+    buffer = arrays["buffer"]
+
+    if nvars < 4:
+        raise ValueError(
+            "Zhang-Shu limiter logging requires at least 4 variable slots."
+        )
+
+    one_minus_theta_real = buffer[interior][..., 0]
+    one_minus_theta_vis = buffer[interior][..., 1]
+    mean_one_minus_theta_real = buffer[interior][0, ..., 2]
+    max_one_minus_theta_real = buffer[interior][1, ..., 2]
+    mean_one_minus_theta_vis = buffer[interior][2, ..., 2]
+    max_one_minus_theta_vis = buffer[interior][3, ..., 2]
+
+    # track scalar quantities
+    one_minus_theta_real[...] = 1 - theta
+    one_minus_theta_vis[...] = 1 - theta_vis
+
+    xp.mean(one_minus_theta_real, axis=0, out=mean_one_minus_theta_real)
+    xp.max(one_minus_theta_real, axis=0, out=max_one_minus_theta_real)
+
+    xp.mean(one_minus_theta_vis, axis=0, out=mean_one_minus_theta_vis)
+    xp.max(one_minus_theta_vis, axis=0, out=max_one_minus_theta_vis)
+
+    n_real_mean = xp.sum(mean_one_minus_theta_real).item()
+    n_real_max = xp.sum(max_one_minus_theta_real).item()
+    n_vis_mean = xp.sum(mean_one_minus_theta_vis).item()
+    n_vis_max = xp.sum(max_one_minus_theta_vis).item()
+
+    step_log["nfine_1-theta_real_mean"].append(n_real_mean)
+    step_log["nfine_1-theta_real_max"].append(n_real_max)
+    step_log["nfine_1-theta_vis_mean"].append(n_vis_mean)
+    step_log["nfine_1-theta_vis_max"].append(n_vis_max)
+
+    for var in idx.var_idx_map.keys():
+        n_real = xp.sum(one_minus_theta_real[idx(var), ...]).item()
+        n_vis = xp.sum(one_minus_theta_vis[idx(var), ...]).item()
+
+        step_log[f"nfine_1-theta_real_{var}"].append(n_real)
+        step_log[f"nfine_1-theta_vis_{var}"].append(n_vis)
+
+
+def log_zhang_shu_scalar_statistics(
+    fv_solver: FiniteVolumeSolver, data: Dict[str, Any]
+):
+    """
+    Log Zhang-Shu limiter statistics from the finite volume solver's step log into the
+    provided data dictionary.
+
+    Args:
+        fv_solver: The finite volume solver instance.
+        data: The dictionary to which statistics are logged.
+    """
+    step_log = fv_solver.step_log
+    idx = fv_solver.variable_index_map
+
+    new_data = {
+        "nfine_1-theta_real_mean": step_log["nfine_1-theta_real_mean"],
+        "nfine_1-theta_real_max": step_log["nfine_1-theta_real_max"],
+        "nfine_1-theta_vis_mean": step_log["nfine_1-theta_vis_mean"],
+        "nfine_1-theta_vis_max": step_log["nfine_1-theta_vis_max"],
+        "n_1-theta_real_mean": sum(step_log["nfine_1-theta_real_mean"]),
+        "n_1-theta_real_max": sum(step_log["nfine_1-theta_real_max"]),
+        "n_1-theta_vis_mean": sum(step_log["nfine_1-theta_vis_mean"]),
+        "n_1-theta_vis_max": sum(step_log["nfine_1-theta_vis_max"]),
+    }
+
+    for var in idx.var_idx_map.keys():
+        new_data[f"nfine_1-theta_real_{var}"] = step_log[f"nfine_1-theta_real_{var}"]
+        new_data[f"nfine_1-theta_vis_{var}"] = step_log[f"nfine_1-theta_vis_{var}"]
+        new_data[f"n_1-theta_real_{var}"] = sum(step_log[f"nfine_1-theta_real_{var}"])
+        new_data[f"n_1-theta_vis_{var}"] = sum(step_log[f"nfine_1-theta_vis_{var}"])
+
+    data.update(new_data)

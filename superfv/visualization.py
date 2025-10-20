@@ -132,6 +132,7 @@ def _extract_variable_data(
     cell_averaged: bool = False,
     theta: bool = False,
     troubles: bool = False,
+    visualization: bool = True,
 ) -> np.ndarray:
     """
     Extract the data for a given variable at the nearest time.
@@ -143,6 +144,9 @@ def _extract_variable_data(
         cell_averaged: Whether to extract the cell-averaged data. If False, the
             variable is extracted using its cell-centered values.
         theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
+        troubles: Whether to plot the troubles/cascade array.
+        visualization: Whether to use the post-processed values of `theta` or
+            `troubles` for visualization (True) or the raw values (False).
     Returns:
         Array of data for the variable at the nearest time.
 
@@ -156,14 +160,25 @@ def _extract_variable_data(
     snapshot = fv_solver.snapshots(nearest_t)
 
     # plot troubles/cascade
-    if troubles or variable == "troubles":
-        if variable == "troubles":
-            troubles_arr = snapshot["troubles"]
+    if troubles:
+        key = "troubles_vis" if visualization else "troubles"
+
+        if variable == "mean":
+            troubles_arr = np.mean(snapshot[key], axis=0)
+        elif variable == "min":
+            troubles_arr = np.min(snapshot[key], axis=0)
+        elif variable == "max":
+            troubles_arr = np.max(snapshot[key], axis=0)
         else:
-            troubles_arr = snapshot["troubles"][idx(variable)]
+            troubles_arr = snapshot[key][idx(variable)]
+
         if troubles_arr.ndim == 3:
             return troubles_arr
         elif troubles_arr.ndim == 4:
+            warnings.warn(
+                f"Multiple variables found in troubles array for group {variable}. "
+                "Using the maximum trouble level over all variables."
+            )
             return np.max(troubles_arr, axis=0)
         raise ValueError("Invalid shape for troubles array.")
     if variable == "cascade":
@@ -171,9 +186,27 @@ def _extract_variable_data(
 
     # determine the key for the variable
     if theta:
-        if "theta" not in snapshot:
-            raise ValueError("Theta not found in snapshots.")
-        key = "theta"
+        key = "theta_vis" if visualization else "theta"
+
+        if variable == "mean":
+            theta_arr = np.mean(snapshot[key], axis=0)
+        elif variable == "min":
+            theta_arr = np.min(snapshot[key], axis=0)
+        elif variable == "max":
+            theta_arr = np.max(snapshot[key], axis=0)
+        else:
+            theta_arr = snapshot[key][idx(variable)]
+
+        if theta_arr.ndim == 3:
+            return theta_arr
+        elif theta_arr.ndim == 4:
+            warnings.warn(
+                f"Multiple variables found in theta array for group {variable}. "
+                "Using the minimum theta over all variables."
+            )
+            return np.min(theta_arr, axis=0)
+        raise ValueError("Invalid shape for theta array.")
+
     elif variable in idx.group_var_map["conservatives"]:
         key = "u"
     elif variable in idx.group_var_map["primitives"]:
@@ -231,6 +264,7 @@ def plot_1d_slice(
     trouble_marker: Optional[str] = None,
     trouble_color: str = "red",
     trouble_size_rate: float = 0.5,
+    visualization: bool = True,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -257,6 +291,8 @@ def plot_1d_slice(
             trouble level. A value of 1 makes the smallest trouble markers vanish
             (size 0) and the largest match the size of the variable markers.
             Intermediate values interpolate linearly between these extremes.
+        visualization: Whether to use the post-processed values of `theta` or
+            `troubles` for visualization (True) or the raw values (False).
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -297,6 +333,7 @@ def plot_1d_slice(
         variable,
         cell_averaged=cell_averaged,
         theta=theta,
+        visualization=visualization,
     )[slices[0], slices[1], slices[2]]
 
     # plot
@@ -309,7 +346,7 @@ def plot_1d_slice(
         trouble_size_rate = trouble_size_rate * ms
 
         troubles_arr = _extract_variable_data(
-            fv_solver, nearest_t, variable, troubles=True
+            fv_solver, nearest_t, variable, troubles=True, visualization=visualization
         )[slices[0], slices[1], slices[2]]
         trouble_levels = np.unique(troubles_arr)
 
@@ -338,6 +375,7 @@ def plot_2d_slice(
     variable: str,
     cell_averaged: bool = False,
     theta: bool = False,
+    troubles: bool = False,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -348,6 +386,7 @@ def plot_2d_slice(
     overlay_troubles: bool = False,
     troubles_cmap: str = "Reds",
     troubles_alpha: float = 0.5,
+    visualization: bool = True,
     xlabel: bool = False,
     ylabel: bool = False,
     **kwargs,
@@ -361,7 +400,12 @@ def plot_2d_slice(
         variable: Name of the variable to plot.
         cell_averaged: Whether to plot the cell average of the variable. If False, the
             variable is plotted using its cell-centered values.
-        theta: Whether to plot the Zhang-Shu slope limiter of a specific variable.
+        theta: Whether to plot the Zhang-Shu slope limiter of a specific variable, for
+            the mean over all variables (`variable="mean"`), or the max over all
+            variables (`variable="max"`).
+        troubles: Whether to plot the troubled cells of a specific variable, for the
+            mean over all variables (`variable="mean"`), or the max over all variables
+            (`variable="max"`).
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -377,6 +421,8 @@ def plot_2d_slice(
             plot. Only valid for solvers that use MOOD.
         troubles_cmap: Colormap to use for the troubled cells overlay.
         troubles_alpha: Alpha value for the troubled cells overlay.
+        visualization: Whether to use the post-processed values of `theta` or
+            `troubles` for visualization (True) or the raw values (False).
         xlabel: Whether to show the x-axis label.
         ylabel: Whether to show the y-axis label.
         **kwargs: Keyword arguments for the plot.
@@ -418,7 +464,13 @@ def plot_2d_slice(
         x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
         y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
     f_arr = _extract_variable_data(
-        fv_solver, nearest_t, variable, cell_averaged=cell_averaged, theta=theta
+        fv_solver,
+        nearest_t,
+        variable,
+        cell_averaged=cell_averaged,
+        theta=theta,
+        troubles=troubles,
+        visualization=visualization,
     )[slices[0], slices[1], slices[2]]
 
     # rotate for imshow
@@ -440,7 +492,11 @@ def plot_2d_slice(
 
         if overlay_troubles:
             troubles_arr = _extract_variable_data(
-                fv_solver, nearest_t, variable, troubles=True
+                fv_solver,
+                nearest_t,
+                variable,
+                troubles=True,
+                visualization=visualization,
             )[slices[0], slices[1], slices[2]]
             troubles_arr = np.rot90(troubles_arr, 1)
             ax.imshow(
@@ -482,6 +538,7 @@ def plot_spacetime(
     overlay_troubles: bool = False,
     troubles_cmap: str = "Reds",
     troubles_alpha: float = 0.5,
+    visualization: bool = True,
     xlabel: bool = False,
     tlabel: bool = False,
     ignore_first: bool = True,
@@ -503,6 +560,8 @@ def plot_spacetime(
             plot. Only valid for solvers that use MOOD.
         troubles_cmap: Colormap to use for the troubled cells overlay.
         troubles_alpha: Alpha value for the troubled cells overlay.
+        visualization: Whether to use the post-processed values of `theta` or
+            `troubles` for visualization (True) or the raw values (False).
         xlabel: Whether to show the x-axis (vertical axis) label.
         tlabel: Whether to show the t-axis (horizontal axis) label.
         ignore_first: Whether to ignore the first time snapshot.
@@ -526,7 +585,12 @@ def plot_spacetime(
     f_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
     for i, t in enumerate(t_arr):
         f_arr[:, i] = _extract_variable_data(
-            fv_solver, t, variable, cell_averaged=cell_averaged, theta=theta
+            fv_solver,
+            t,
+            variable,
+            cell_averaged=cell_averaged,
+            theta=theta,
+            visualization=visualization,
         )[*slices]
 
     extent = (
@@ -543,7 +607,7 @@ def plot_spacetime(
         troubles_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
         for i, t in enumerate(t_arr):
             current_troubles = _extract_variable_data(
-                fv_solver, t, variable, troubles=True
+                fv_solver, t, variable, troubles=True, visualization=visualization
             )[*slices]
             troubles_arr[:, i] = np.where(
                 current_troubles > 0, current_troubles, np.nan

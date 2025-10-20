@@ -14,8 +14,15 @@ from .field import MultivarField, UnivarField
 from .fv import DIM_TO_AXIS
 from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
 from .mesh import UniformFVMesh, xyz_tup
-from .slope_limiting import MOOD
-from .slope_limiting.MOOD import MOODConfig, MOODState
+from .slope_limiting import MOOD, compute_vis
+from .slope_limiting.MOOD import (
+    MOODConfig,
+    MOODState,
+    append_troubled_cell_scalar_statistics,
+    clear_troubled_cell_scalar_statistics,
+    init_troubled_cell_scalar_statistics,
+    log_troubled_cell_scalar_statistics,
+)
 from .slope_limiting.muscl import (
     compute_limited_slopes,
     compute_PP2D_slopes,
@@ -24,11 +31,15 @@ from .slope_limiting.muscl import (
 )
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
+    append_zhang_shu_scalar_statistics,
+    clear_zhang_shu_scalar_statistics,
     compute_theta,
+    init_zhang_shu_scalar_statistics,
+    log_zhang_shu_scalar_statistics,
     zhang_shu_operator,
 )
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
-from .tools.slicing import VariableIndexMap, crop, merge_slices
+from .tools.slicing import VariableIndexMap, crop, insert_slice, merge_slices
 from .tools.timer import MethodTimer
 from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
@@ -87,6 +98,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
         SED: bool = False,
+        vis_rtol: float = 1e-1,
+        vis_atol: float = 1e-10,
         cupy: bool = False,
         sync_timing: bool = True,
     ):
@@ -212,6 +225,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
+            vis_rtol, vis_atol: Relative and absolute tolerances for the visualization
+                threshold. See `compute_vis`.
             cupy: Whether to use CuPy for array operations.
             sync_timing: Whether to synchronize the GPU after each timed method call if
                 using CuPy. This ensures accurate timing measurements when profiling.
@@ -250,6 +265,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_array_allocation()
         self._init_timer(sync_timing)
         self._init_riemann_solver(riemann_solver)
+        self._init_visualization(vis_rtol, vis_atol)
 
     def _init_active_dims(self, nx: int, ny: int, nz: int):
         self.active_dims = tuple(d for d, n in zip(xyz_tup, (nx, ny, nz)) if n > 1)
@@ -624,7 +640,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.step_log: Dict[str, List[float]] = {}
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            self.step_log["nfine(1-theta)"] = []
+            init_zhang_shu_scalar_statistics(self)
+
+        if self.MOOD:
+            init_troubled_cell_scalar_statistics(self)
 
     def _init_mesh(
         self,
@@ -690,7 +709,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # interior workspace view
         self.interior = merge_slices(
             *[
-                crop(DIM_TO_AXIS[dim], (self.mesh.slab_depth, -self.mesh.slab_depth))
+                crop(
+                    DIM_TO_AXIS[dim],
+                    (self.mesh.slab_depth, -self.mesh.slab_depth),
+                    ndim=4,
+                )
                 for dim in self.active_dims
             ]
         )
@@ -801,6 +824,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
         self.riemann_func = getattr(self, riemann_solver)
 
+    def _init_visualization(self, vis_rtol: float, vis_atol: float):
+        self.vis_rtol = vis_rtol
+        self.vis_atol = vis_atol
+
     @MethodTimer(cat="riemann_solver")
     def riemann_solver(
         self,
@@ -863,13 +890,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
         arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
+        # General slope-limiting arrays
+        arrays.add("dmp", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
+        arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
+
         # Zhang-Shu limiter arrays
-        arrays.add("theta", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("theta_log", np.zeros((nvars, nx, ny, nz)))
+        arrays.add("theta", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta_vis", np.ones((nvars, nx, ny, nz)))
+        arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
+        arrays.add("theta_vis_log", np.ones((nvars, nx, ny, nz)))
 
         # MOOD arrays
         arrays.add("troubles", np.zeros((nvars, nx, ny, nz), dtype=bool))
+        arrays.add("troubles_vis", np.zeros((nvars, nx, ny, nz), dtype=bool))
         arrays.add("troubles_log", np.zeros((nvars, nx, ny, nz)))
+        arrays.add("troubles_vis_log", np.zeros((nvars, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
         for scheme in self.MOOD_state.config.cascade:
@@ -1205,6 +1240,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         xp = self.xp
         mesh = self.mesh
+        interior = self.interior
 
         # define array references
         average = self.arrays["_w_"] if primitives else self.arrays["_u_"]
@@ -1213,6 +1249,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         y = self.arrays["y_nodes"] if mesh.y_is_active else None
         z = self.arrays["z_nodes"] if mesh.z_is_active else None
         theta = self.arrays["theta"]
+        theta_vis = self.arrays["theta_vis"]
+        dmp = self.arrays["dmp"]
+        visualize = self.arrays["visualize"]
         buffer = self.arrays["buffer"]
 
         # compute centroid and theta
@@ -1224,6 +1263,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             y,
             z,
             out=theta,
+            dmp=dmp,
             buffer=buffer,
             config=scheme.limiter_config,
         )
@@ -1235,6 +1275,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             y[...] = zhang_shu_operator(y, average[..., np.newaxis], theta)
         if z is not None:
             z[...] = zhang_shu_operator(z, average[..., np.newaxis], theta)
+
+        # compute theta for visualization (ignore cells with small dmp ranges)
+        compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
+        theta_vis[...] = xp.where(visualize, theta[insert_slice(interior, 4, 0)], 1.0)
 
     def integrate_fluxes(
         self,
@@ -1520,7 +1564,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         interior = self.interior
         interior0 = interior + (0,)
-        using_ZS = isinstance(self.base_scheme.limiter_config, ZhangShuConfig)
 
         self.update_workspaces(self.t, self.arrays["u"], self.base_scheme)
 
@@ -1532,25 +1575,31 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "w": self.arrays.get_numpy_copy("_w_")[interior],
         }
 
+        def normalize_across_substeps(x: ArrayLike) -> ArrayLike:
+            return x / self.n_substeps if self.n_substeps > 1 else x
+
         # include limiting arrays in snapshot dict
-        if using_ZS:
+        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             theta = self.arrays["theta_log"]
-            theta[...] = theta / self.n_substeps if self.n_substeps > 1 else theta
+            theta_vis = self.arrays["theta_vis_log"]
+
+            theta[...] = normalize_across_substeps(theta)
+            theta_vis[...] = normalize_across_substeps(theta_vis)
 
             data["theta"] = self.arrays.get_numpy_copy("theta_log")
+            data["theta_vis"] = self.arrays.get_numpy_copy("theta_vis_log")
 
         if self.MOOD:
             troubles = self.arrays["troubles_log"]
+            troubles_vis = self.arrays["troubles_vis_log"]
             cascade_idx = self.arrays["cascade_idx_log"]
 
-            if self.n_substeps > 1:
-                troubles[...] = troubles / self.n_substeps
-                cascade_idx[...] = cascade_idx / self.n_substeps
-            else:
-                troubles[...] = troubles
-                cascade_idx[...] = cascade_idx
+            troubles[...] = normalize_across_substeps(troubles)
+            troubles_vis[...] = normalize_across_substeps(troubles_vis)
+            cascade_idx[...] = normalize_across_substeps(cascade_idx)
 
             data["troubles"] = self.arrays.get_numpy_copy("troubles_log")
+            data["troubles_vis"] = self.arrays.get_numpy_copy("troubles_vis_log")
             data["cascade"] = self.arrays.get_numpy_copy("cascade_idx_log")
 
         return data
@@ -1572,35 +1621,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            data.update(
-                {
-                    "n(1-theta)": sum(self.step_log["nfine(1-theta)"]),
-                    "nfine(1-theta)": self.step_log["nfine(1-theta)"],
-                }
-            )
+            log_zhang_shu_scalar_statistics(self, data)
 
         if self.MOOD:
-            state = self.MOOD_state
-
-            if sum(state.iter_count_hist) != state.iter_count:
-                raise ValueError(
-                    "MOOD iteration count mismatch: "
-                    f"{state.iter_count_hist} != {state.iter_count}"
-                )
-            if sum(state.troubled_cell_count_hist) != state.troubled_cell_count:
-                raise ValueError(
-                    "MOOD troubled cell count mismatch: "
-                    f"{state.troubled_cell_count_hist} != {state.troubled_cell_count}"
-                )
-
-            data.update(
-                {
-                    "n_MOOD_iters": state.iter_count,
-                    "nfine_MOOD_iters": state.iter_count_hist,
-                    "n_troubled_cells": state.troubled_cell_count,
-                    "nfine_troubled_cells": state.troubled_cell_count_hist,
-                }
-            )
+            log_troubled_cell_scalar_statistics(self, data)
 
         data.update(self.log_quantity())
 
@@ -1625,11 +1649,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             self.arrays["theta_log"].fill(0.0)
-            self.step_log["nfine(1-theta)"].clear()
+            self.arrays["theta_vis_log"].fill(0.0)
+            clear_zhang_shu_scalar_statistics(self)
 
         if self.MOOD:
             self.arrays["troubles_log"].fill(0)
+            self.arrays["troubles_vis_log"].fill(0)
             self.arrays["cascade_idx_log"].fill(0)
+            clear_troubled_cell_scalar_statistics(self)
 
     def increment_substepwise_logs(self):
         """
@@ -1643,22 +1670,30 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             theta = self.arrays["theta"][self.interior][..., 0]
+            theta_vis = self.arrays["theta_vis"]
             theta_log = self.arrays["theta_log"]
-            xp.add(theta_log, theta, out=theta_log)
+            theta_vis_log = self.arrays["theta_vis_log"]
 
-            n = xp.sum(xp.mean(1 - theta, axis=0)).item()
-            self.step_log["nfine(1-theta)"].append(n)
+            xp.add(theta_log, theta, out=theta_log)
+            xp.add(theta_vis_log, theta_vis, out=theta_vis_log)
+
+            append_zhang_shu_scalar_statistics(self)
 
         if self.MOOD:
             troubles = self.arrays["troubles"]
+            troubles_vis = self.arrays["troubles_vis"]
             troubles_log = self.arrays["troubles_log"]
+            troubles_vis_log = self.arrays["troubles_vis_log"]
             cascade_idx = self.arrays["_cascade_idx_array_"][self.interior]
             cascade_idx_log = self.arrays["cascade_idx_log"]
 
             xp.add(troubles_log, troubles, out=troubles_log)
+            xp.add(troubles_vis_log, troubles_vis, out=troubles_vis_log)
             xp.add(cascade_idx_log, cascade_idx, out=cascade_idx_log)
 
             self.MOOD_state.increment_substep_hists()
+
+            append_troubled_cell_scalar_statistics(self)
 
     def run(
         self,

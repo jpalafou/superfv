@@ -55,6 +55,8 @@ class EulerSolver(FiniteVolumeSolver):
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
         SED: bool = False,
+        vis_rtol: float = 1e-1,
+        vis_atol: float = 1e-10,
         cupy: bool = False,
         sync_timing: bool = True,
         gamma: float = 1.4,
@@ -183,6 +185,8 @@ class EulerSolver(FiniteVolumeSolver):
             PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
+            vis_rtol, vis_atol: Relative and absolute tolerances for the visualization
+                threshold. See `compute_vis`.
             cupy: Whether to use CuPy for array operations.
             sync_timing: Whether to synchronize the GPU after each timed method call if
                 using CuPy. This ensures accurate timing measurements when profiling.
@@ -236,6 +240,8 @@ class EulerSolver(FiniteVolumeSolver):
             PAD=PAD,
             PAD_atol=PAD_atol,
             SED=SED,
+            vis_rtol=vis_rtol,
+            vis_atol=vis_atol,
             cupy=cupy,
             sync_timing=sync_timing,
         )
