@@ -676,6 +676,10 @@ def plot_timeseries(
     fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     ax: Axes,
     variable: str,
+    one_minus_theta: bool = False,
+    troubles: bool = False,
+    fine: bool = True,
+    visualization: bool = True,
     **kwargs,
 ):
     """
@@ -685,18 +689,42 @@ def plot_timeseries(
         fv_solver: FiniteVolumeSolver or OutputLoader object.
         ax: Matplotlib axes object.
         variable: Name of the variable to plot.
+        one_minus_theta: Whether to plot 1 - theta of a specific variable. Set
+            `variable="max"` or `variable="mean"` to plot the max or mean over all
+            variables, respectively.
+        troubles: Whether to plot the troubles/cascade of a specific variable. Set
+            `variable="max"` or `variable="mean"` to plot the max or mean over all
+            variables, respectively.
+        fine: Whether to plot the fine-grained timeseries logged at every substep
+            (True) or the coarse-grained timeseries logged at every full timestep
+            (False). Only valid if `one_minus_theta` or `troubles` is True.
+        visualization: Whether to use the post-processed values of `theta` or
+            `troubles` for visualization (True) or the raw values (False).
         **kwargs: Keyword arguments for the plot.
 
     Raises:
         ValueError: `variable` is not in `fv_solver.minisnapshots`.
     """
-    if variable not in fv_solver.minisnapshots:
+    if one_minus_theta:
+        if visualization:
+            key = "n" + ("fine" if fine else "") + "_1-theta_vis_" + variable
+        else:
+            key = "n" + ("fine" if fine else "") + "_1-theta_real_" + variable
+    elif troubles:
+        if visualization:
+            key = "n" + ("fine" if fine else "") + "_troubles_vis_" + variable
+        else:
+            key = "n" + ("fine" if fine else "") + "_troubles_real_" + variable
+    else:
+        key = variable
+
+    if key not in fv_solver.minisnapshots:
         raise ValueError(
-            f"Variable {variable} not found in `FiniteVolumeSolver.minisnapshots`."
+            f"Variable {key} not found in `FiniteVolumeSolver.minisnapshots`."
         )
 
     t = fv_solver.minisnapshots["t"]
-    f = fv_solver.minisnapshots[variable]
+    f = fv_solver.minisnapshots[key]
 
     # unpack the data and plot along substeps if it is a list of lists
     if isinstance(f[0], list):

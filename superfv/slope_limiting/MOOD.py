@@ -824,22 +824,25 @@ def log_troubled_cell_scalar_statistics(
     idx = fv_solver.variable_index_map
     state = fv_solver.MOOD_state
 
+    def zero_max(lst: list[float]) -> float:
+        return max(lst) if lst else 0.0
+
     new_data = {
-        "nfine_troubles_real_mean": step_log["nfine_troubles_real_mean"],
-        "nfine_troubles_real_max": step_log["nfine_troubles_real_max"],
-        "nfine_troubles_vis_mean": step_log["nfine_troubles_vis_mean"],
-        "nfine_troubles_vis_max": step_log["nfine_troubles_vis_max"],
-        "n_troubles_real_mean": sum(step_log["nfine_troubles_real_mean"]),
-        "n_troubles_real_max": sum(step_log["nfine_troubles_real_max"]),
-        "n_troubles_vis_mean": sum(step_log["nfine_troubles_vis_mean"]),
-        "n_troubles_vis_max": sum(step_log["nfine_troubles_vis_max"]),
+        "nfine_troubles_real_mean": step_log["nfine_troubles_real_mean"].copy(),
+        "nfine_troubles_real_max": step_log["nfine_troubles_real_max"].copy(),
+        "nfine_troubles_vis_mean": step_log["nfine_troubles_vis_mean"].copy(),
+        "nfine_troubles_vis_max": step_log["nfine_troubles_vis_max"].copy(),
+        "n_troubles_real_mean": zero_max(step_log["nfine_troubles_real_mean"]),
+        "n_troubles_real_max": zero_max(step_log["nfine_troubles_real_max"]),
+        "n_troubles_vis_mean": zero_max(step_log["nfine_troubles_vis_mean"]),
+        "n_troubles_vis_max": zero_max(step_log["nfine_troubles_vis_max"]),
     }
 
     for var in idx.var_idx_map.keys():
-        new_data[f"nfine_troubles_real_{var}"] = step_log[f"nfine_troubles_real_{var}"]
-        new_data[f"nfine_troubles_vis_{var}"] = step_log[f"nfine_troubles_vis_{var}"]
-        new_data[f"n_troubles_real_{var}"] = sum(step_log[f"nfine_troubles_real_{var}"])
-        new_data[f"n_troubles_vis_{var}"] = sum(step_log[f"nfine_troubles_vis_{var}"])
+        keys = ["troubles_real", "troubles_vis"]
+        for key in keys:
+            new_data[f"nfine_{key}_{var}"] = step_log[f"nfine_{key}_{var}"].copy()
+            new_data[f"n_{key}_{var}"] = zero_max(step_log[f"nfine_{key}_{var}"])
 
     data.update(new_data)
 
