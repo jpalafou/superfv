@@ -315,17 +315,21 @@ class EulerSolver(FiniteVolumeSolver):
             - "max_rho": Maximum density.
             - "min_P": Minimum pressure.
             - "max_P": Maximum pressure.
+            - "total_rho": Total density.
+            - "total_E": Total energy.
         """
-        min_rho, max_rho, min_P, max_P = self.get_physical_scalars()
+        min_rho, max_rho, min_P, max_P, total_rho, total_E = self.get_physical_scalars()
 
         return {
             "min_rho": min_rho,
             "max_rho": max_rho,
             "min_P": min_P,
             "max_P": max_P,
+            "total_rho": total_rho,
+            "total_E": total_E,
         }
 
-    def get_physical_scalars(self) -> Tuple[float, float, float, float]:
+    def get_physical_scalars(self) -> Tuple[float, float, float, float, float, float]:
         """
         Compute global physical scalars from the "_w_" array.
 
@@ -335,16 +339,23 @@ class EulerSolver(FiniteVolumeSolver):
             - max_rho: Maximum density.
             - min_P: Minimum pressure.
             - max_P: Maximum pressure.
+            - total_rho: Total density.
+            - total_E: Total energy.
         """
         idx = self.variable_index_map
         interior = self.interior
 
-        min_rho = self.arrays["_w_"][interior][idx("rho")].min().item()
-        max_rho = self.arrays["_w_"][interior][idx("rho")].max().item()
-        min_P = self.arrays["_w_"][interior][idx("P")].min().item()
-        max_P = self.arrays["_w_"][interior][idx("P")].max().item()
+        u = self.arrays["_u_"][interior]
+        w = self.arrays["_w_"][interior]
 
-        return min_rho, max_rho, min_P, max_P
+        min_rho = u[idx("rho")].min().item()
+        max_rho = u[idx("rho")].max().item()
+        min_P = w[idx("P")].min().item()
+        max_P = w[idx("P")].max().item()
+        total_rho = u[idx("rho")].sum().item()
+        total_E = u[idx("E")].sum().item()
+
+        return min_rho, max_rho, min_P, max_P, total_rho, total_E
 
     @MethodTimer(cat="compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
@@ -507,7 +518,7 @@ class EulerSolver(FiniteVolumeSolver):
         Build the update message for the FV solver, including the minimum density and
         pressure.
         """
-        min_rho, _, min_P, _ = self.get_physical_scalars()
+        min_rho, _, min_P, _, _, _ = self.get_physical_scalars()
 
         message = super().build_update_message()
         message += f" | min(rho)={min_rho:.2e}, min(P)={min_P:.2e}"
