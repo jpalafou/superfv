@@ -7,7 +7,7 @@ from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp, compute_vis
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop
+from superfv.tools.slicing import crop, merge_slices
 
 from .smooth_extrema_detection import smooth_extrema_detector
 
@@ -700,7 +700,39 @@ def blend_troubled_cells(
         theta[lft_slc] = xp.maximum(0.25 * (theta[rgt_slc] > 0), theta[lft_slc])
         theta[rgt_slc] = xp.maximum(0.25 * (theta[lft_slc] > 0), theta[rgt_slc])
     elif ndim == 2:
-        raise NotImplementedError("2D blending is not implemented yet.")
+        axis1 = DIM_TO_AXIS[active_dims[0]]
+        axis2 = DIM_TO_AXIS[active_dims[1]]
+
+        lft_slc1 = crop(axis1, (None, -1), ndim=4)
+        rgt_slc1 = crop(axis1, (1, None), ndim=4)
+        lft_slc2 = crop(axis2, (None, -1), ndim=4)
+        rgt_slc2 = crop(axis2, (1, None), ndim=4)
+        lft_lft = merge_slices(lft_slc1, lft_slc2)
+        lft_rgt = merge_slices(lft_slc1, rgt_slc2)
+        rgt_lft = merge_slices(rgt_slc1, lft_slc2)
+        rgt_rgt = merge_slices(rgt_slc1, rgt_slc2)
+        modified = merge_slices(
+            crop(axis1, (1, -1), ndim=4), crop(axis2, (1, -1), ndim=4)
+        )
+
+        # First neighbors
+        theta[lft_slc1] = xp.maximum(0.75 * troubles[rgt_slc1], theta[lft_slc1])
+        theta[rgt_slc1] = xp.maximum(0.75 * troubles[lft_slc1], theta[rgt_slc1])
+        theta[lft_slc2] = xp.maximum(0.75 * troubles[rgt_slc2], theta[lft_slc2])
+        theta[rgt_slc2] = xp.maximum(0.75 * troubles[lft_slc2], theta[rgt_slc2])
+
+        # Second neighbors
+        theta[lft_lft] = xp.maximum(0.5 * troubles[rgt_rgt], theta[lft_lft])
+        theta[lft_rgt] = xp.maximum(0.5 * troubles[rgt_lft], theta[lft_rgt])
+        theta[rgt_lft] = xp.maximum(0.5 * troubles[lft_rgt], theta[rgt_lft])
+        theta[rgt_rgt] = xp.maximum(0.5 * troubles[lft_lft], theta[rgt_rgt])
+
+        # Third neighbors
+        theta[lft_slc2] = xp.maximum(0.25 * (theta[rgt_slc2] > 0), theta[lft_slc2])
+        theta[rgt_slc2] = xp.maximum(0.25 * (theta[lft_slc2] > 0), theta[rgt_slc2])
+        theta[lft_slc1] = xp.maximum(0.25 * (theta[rgt_slc1] > 0), theta[lft_slc1])
+        theta[rgt_slc1] = xp.maximum(0.25 * (theta[lft_slc1] > 0), theta[rgt_slc1])
+
     elif ndim == 3:
         raise NotImplementedError("3D blending is not implemented yet.")
 
