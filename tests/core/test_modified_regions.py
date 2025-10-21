@@ -62,7 +62,7 @@ def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: b
         unew,
         tuple(dims),
         out=out,
-        buffer=buffer,
+        dmp=buffer,
         absolute_dmp=absolute_dmp,
         include_corners=include_corners,
     )
@@ -110,10 +110,15 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
 @pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_theta(dims: str, SED: bool, include_corners: bool):
-    u, buffer, out = sample_data(dims, nout=1)
+    u, dmp_buffer, out = sample_data(dims, nout=1)
     nodes, _, _ = sample_data(dims, nout=1)
     nodes = nodes[..., np.newaxis]
+
+    dmp = dmp_buffer[..., :2]
+    buffer = dmp_buffer[..., 2:]
+
     config = ZhangShuConfig(SED, False, 0, include_corners)
+
     modified = compute_theta(
         np,
         u,
@@ -122,6 +127,7 @@ def test_compute_theta(dims: str, SED: bool, include_corners: bool):
         nodes if "y" in dims else None,
         nodes if "z" in dims else None,
         out=out,
+        dmp=dmp,
         buffer=buffer,
         config=config,
     )
