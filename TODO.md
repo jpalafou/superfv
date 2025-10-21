@@ -4,3 +4,4 @@
 - [ ] args of visualization functions are inconsistent
 - [ ] evolve trouble/theta as passive scalars using Runge-Kutta methods instead of taking the average across substeps
 - [ ] do i need all those step log element copies? can't i just copy the step log at the top?
+- [ ] fix: nonzero unused velocity component, "mag" mode in `_gather_group` should use `np.sqrt(np.sum(np.square(group), axis=0))`
