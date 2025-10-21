@@ -170,6 +170,7 @@ def _extract_variable_data(
         raise ValueError("Only one of theta, troubles, or cascade can be True.")
 
     idx = fv_solver.variable_index_map
+    active_dims = fv_solver.active_dims
 
     # choose the snapshot with the nearest time
     snapshot = fv_solver.snapshots(t)
@@ -181,6 +182,8 @@ def _extract_variable_data(
             return np.min(group, axis=0)
         elif op == "max":
             return np.max(group, axis=0)
+        elif op == "mag":
+            return np.sqrt(np.sum(np.square(group), axis=0))
         else:
             raise ValueError(f"Invalid operation {op} for group variable.")
 
@@ -215,10 +218,8 @@ def _extract_variable_data(
         if variable in ("mean", "min", "max"):
             y = _gather_group(data, variable)
         elif variable in ("v", "m"):
-            y = np.zeros_like(data[0, ...])
-            for dim in fv_solver.active_dims:
-                y += np.square(data[idx(variable + dim), ...])
-            y = np.sqrt(y)
+            group = np.array([data[idx(variable + d), ...] for d in active_dims])
+            y = _gather_group(group, "mag")
         elif variable in idx.var_idx_map:
             y = data[idx(variable), ...]
         else:
@@ -228,6 +229,9 @@ def _extract_variable_data(
             )
     else:
         raise ValueError(f"Unexpected number of dimensions {data.ndim} in data array.")
+
+    if variable == "v" and theta:
+        assert not np.all(y == 1)
 
     # apply optional function
     return func(y) if func is not None else y
