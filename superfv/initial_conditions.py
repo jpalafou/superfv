@@ -985,3 +985,79 @@ def decaying_isotropic_turbulence(
     if "P" in idx.var_names:
         out[idx("P")] = xp.ones_like(x, dtype=float)
     return out
+
+
+def gresho_vortex(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: Optional[float] = None,
+    *,
+    xp: ModuleType,
+    gamma: float,
+    M_max: float,
+    v0: float,
+) -> ArrayLike:
+    """
+    Returns array for the Gresho vortex in the first active dimension
+    (x, for example) and [0,1] in the second active dimension (y, for example).
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+        gamma: Ratio of specific heats.
+        M_max: Maximum Mach number scaling factor.
+        v0: Uniform background velocity added to the vortex along the first active
+            dimension.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError(
+            "Gresho vortex initial condition requires all hydro variables."
+        )
+
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Gresho vortex initial condition is only defined in 2D.")
+
+    dim1 = dims[0]
+    dim2 = dims[1]
+
+    rho = 1.0
+
+    # compute r
+    xc = {"x": x, "y": y, "z": z}[dim1] - 0.5
+    yc = {"x": x, "y": y, "z": z}[dim2] - 0.5
+    r = xp.sqrt(xc**2 + yc**2)
+
+    zone1 = r < 0.2
+    zone2 = xp.logical_and(r >= 0.2, r < 0.4)
+    zone3 = r >= 0.4
+
+    v_phi = xp.zeros_like(x)
+    v_phi[zone1] = 5.0 * r[zone1]
+    v_phi[zone2] = 2.0 - 5.0 * r[zone2]
+    vx = -v_phi * yc / r + v0
+    vy = v_phi * xc / r
+
+    P = xp.full_like(x, xp.nan)
+    P[zone1] = (25 / 2) * r[zone1] ** 2
+    P[zone2] = 4 * xp.log(5 * r[zone2]) + 4 - 20 * r[zone2] + (25 / 2) * r[zone2] ** 2
+    P[zone3] = 4 * xp.log(2) - 2.0
+    P[...] = (1 / (gamma * M_max**2)) - 0.5 + P
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    out[idx("rho")] = rho
+    out[idx("v" + dim1)] = vx
+    out[idx("v" + dim2)] = vy
+    out[idx("P")] = P
+
+    return out

@@ -10,12 +10,17 @@ from matplotlib.colorbar import Colorbar
 from matplotlib.contour import QuadContourSet
 from matplotlib.image import AxesImage
 
+from superfv.mesh import UniformFVMesh
+from superfv.tools.slicing import VariableIndexMap
+
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
 from .tools.loader import OutputLoader
 
 warnings.simplefilter("always")
+
+MultivarFunc = Callable[[VariableIndexMap, UniformFVMesh, np.ndarray], np.ndarray]
 
 
 def _get_nearest_index(
@@ -135,6 +140,7 @@ def _extract_variable_data(
     cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    multivar_func: Optional[MultivarFunc] = None,
 ) -> np.ndarray:
     """
     Extract the data for a given variable at the nearest time.
@@ -156,6 +162,9 @@ def _extract_variable_data(
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
+        multivar_func: Optional function to apply to multiple variables at once. If
+            provided, `variable` must provide the name of the snapshot array to pass,
+            such as "u", "ucc", "w", "wcc", "theta", or "troubles".
 
     Returns:
         Array of data for the variable at the nearest time.
@@ -174,6 +183,16 @@ def _extract_variable_data(
 
     # choose the snapshot with the nearest time
     snapshot = fv_solver.snapshots(t)
+
+    if multivar_func is not None:
+        data = snapshot[variable]
+        y = multivar_func(idx, fv_solver.mesh, data)
+        if y.ndim != 3:
+            raise ValueError(
+                f"Multivariable function did not reduce data to three dimensions; "
+                f"got {y.ndim} dimensions instead."
+            )
+        return y
 
     def _gather_group(group: np.ndarray, op: str) -> np.ndarray:
         if op == "mean":
@@ -263,6 +282,7 @@ def plot_1d_slice(
     cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    multivar_func: Optional[MultivarFunc] = None,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -293,6 +313,9 @@ def plot_1d_slice(
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
+        multivar_func: Optional function to apply to multiple variables at once. If
+            provided, `variable` must provide the name of the snapshot array to pass,
+            such as "u", "ucc", "w", "wcc", "theta", or "troubles".
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Defaults to
@@ -341,6 +364,7 @@ def plot_1d_slice(
         cascade,
         visualization,
         func,
+        multivar_func,
     )[slices[0], slices[1], slices[2]]
 
     # plot
@@ -387,6 +411,7 @@ def plot_2d_slice(
     cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    multivar_func: Optional[MultivarFunc] = None,
     t: Optional[float] = None,
     x: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
     y: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None,
@@ -421,6 +446,9 @@ def plot_2d_slice(
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
+        multivar_func: Optional function to apply to multiple variables at once. If
+            provided, `variable` must provide the name of the snapshot array to pass,
+            such as "u", "ucc", "w", "wcc", "theta", or "troubles".
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         x, y, z : Desired spatial location(s) along the x, y, or z axis. Each can be:
@@ -486,6 +514,7 @@ def plot_2d_slice(
         cascade,
         visualization,
         func,
+        multivar_func,
     )[slices[0], slices[1], slices[2]]
 
     # rotate for imshow
@@ -553,6 +582,7 @@ def plot_spacetime(
     cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    multivar_func: Optional[MultivarFunc] = None,
     t: Optional[float] = None,
     ignore_first: bool = True,
     cmap: Optional[str] = None,
@@ -584,6 +614,9 @@ def plot_spacetime(
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
+        multivar_func: Optional function to apply to multiple variables at once. If
+            provided, `variable` must provide the name of the snapshot array to pass,
+            such as "u", "ucc", "w", "wcc", "theta", or "troubles".
         t: Desired time. If provided, the snapshot with the closest time will be
             selected. If None, the latest available snapshot is used.
         ignore_first: Whether to ignore the first time snapshot when plotting.
@@ -631,6 +664,7 @@ def plot_spacetime(
             cascade,
             visualization,
             func,
+            multivar_func,
         )[*slices]
 
     extent = (
