@@ -1492,7 +1492,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         Build the closing message for the FV solver.
         """
-        return self.build_update_message() + " | (done)"
+        runtime = self.timer.cum_time["wall"]
+        return self.build_update_message() + f" | (ran in {runtime:.2f}s)"
 
     def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
         """

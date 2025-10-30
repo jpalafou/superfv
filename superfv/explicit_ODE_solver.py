@@ -335,6 +335,10 @@ class ExplicitODESolver(ABC):
         """
         self.timer.start("wall")
 
+        # print initial message
+        if verbose:
+            status_print(self.build_opening_message())
+
         try:
             self.prepare_output_directory(path, overwrite, discard)
 
@@ -364,6 +368,10 @@ class ExplicitODESolver(ABC):
         finally:
             self.timer.stop_all()
 
+        # print closing message
+        if verbose:
+            status_print(self.build_closing_message(), closing=True)
+
     def _integrate_for_fixed_number_of_steps(
         self,
         n: int,
@@ -391,10 +399,6 @@ class ExplicitODESolver(ABC):
             log_freq=log_freq,
         )
 
-        # print initial message
-        if verbose:
-            status_print(self.build_opening_message())
-
         # take initial snapshots
         if self.t not in self.minisnapshots["t"]:
             if snapshot_mode != "none":
@@ -417,10 +421,6 @@ class ExplicitODESolver(ABC):
 
         # wrap up snapshots
         self.postprocess_snapshots()
-
-        # print closing message
-        if verbose:
-            status_print(self.build_closing_message(), closing=True)
 
     def _integrate_until_target_time_is_reached(
         self,
@@ -462,10 +462,6 @@ class ExplicitODESolver(ABC):
         T_max = max(target_times)
         target_time = target_times.pop(0)
 
-        # setup progress bar
-        if verbose:
-            status_print(self.build_opening_message())
-
         # initial snapshot
         if self.t not in self.minisnapshots["t"]:
             if snapshot_mode != "none":
@@ -499,10 +495,6 @@ class ExplicitODESolver(ABC):
 
         # wrap up snapshots
         self.postprocess_snapshots()
-
-        # print closing message
-        if verbose:
-            status_print(self.build_closing_message(), closing=True)
 
     def _get_target_time_list(self, T: Union[float, List[float]]) -> List[float]:
         """
