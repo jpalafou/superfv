@@ -35,6 +35,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = True,
+        adaptive_lazy: bool = False,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
@@ -127,6 +128,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                     primitive flux nodes.
                 Defaults to `True` for the advection solver since the transformation is
                 trivial.
+            adaptive_lazy: Write stuff here.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,

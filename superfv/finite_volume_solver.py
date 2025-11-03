@@ -33,6 +33,7 @@ from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     append_zhang_shu_scalar_statistics,
     clear_zhang_shu_scalar_statistics,
+    compute_lazy_theta,
     compute_theta,
     init_zhang_shu_scalar_statistics,
     log_zhang_shu_scalar_statistics,
@@ -78,6 +79,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = False,
+        adaptive_lazy: bool = False,
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
@@ -168,6 +170,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - `flux_recipe=2`: The lazy primitives become the fallback option.
                 - `flux_recipe=3`: The lazy primitives are used to interpolate the
                     primitive flux nodes.
+            adaptive_lazy: Write stuff here.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
@@ -239,6 +242,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             flux_recipe,
             GL,
             lazy_primitives,
+            adaptive_lazy,
             MUSCL,
             MUSCL_limiter,
             ZS,
@@ -393,6 +397,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         flux_recipe: Literal[1, 2, 3],
         GL: bool,
         lazy_primitives: bool,
+        adaptive_lazy: bool,
         MUSCL: bool,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         ZS: bool,
@@ -441,6 +446,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 flux_recipe,
                 GL,
                 lazy_primitives,
+                adaptive_lazy,
                 include_corners,
                 PAD,
                 SED,
@@ -489,6 +495,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter_config=None,
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
+            adaptive_lazy=False,
         )
 
     def _init_muscl_scheme(
@@ -516,6 +523,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         flux_recipe: Literal[1, 2, 3],
         GL: bool,
         lazy_primitives: bool,
+        adaptive_lazy: bool,
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         SED: bool,
@@ -537,6 +545,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
+            adaptive_lazy=adaptive_lazy,
         )
 
     def _init_MOOD(
@@ -569,6 +578,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     flux_recipe=base_scheme.flux_recipe,
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
+                    adaptive_lazy=base_scheme.adaptive_lazy,
                 )
             ]
         elif cascade in ("muscl", "muscl1"):
@@ -590,6 +600,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         flux_recipe=base_scheme.flux_recipe,
                         gauss_legendre=base_scheme.gauss_legendre,
                         lazy_primitives=base_scheme.lazy_primitives,
+                        adaptive_lazy=base_scheme.adaptive_lazy,
                     )
                 ]
         elif cascade == "full":
@@ -599,6 +610,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     flux_recipe=base_scheme.flux_recipe,
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
+                    adaptive_lazy=base_scheme.adaptive_lazy,
                 )
                 for p in range(base_scheme.p - 1, -1, -1)
             ]
@@ -677,6 +689,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiting_cost = 0
             if isinstance(bs.limiter_config, ZhangShuConfig):
                 limiting_cost = 3 if bs.limiter_config.SED else 1
+                if bs.adaptive_lazy:
+                    limiting_cost += 2 * s
             if self.MOOD:
                 NAD_cost = 1
                 if self.MOOD_state.config.SED:
@@ -1124,12 +1138,42 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
         _w_ = self.arrays["_w_"]  # shape (..., 1)
-        _tmp_ = self.arrays["buffer"][..., :1]
+        _wp_ = self.arrays["buffer"][..., :1]
         buffer = self.arrays["buffer"][..., 1:]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
         self.apply_bc(t, _u_, scheme=scheme)
+
+        if getattr(scheme, "adaptive_lazy", False):
+            eta_threshold = 0.05
+            eps = 1e-15
+
+            fv.interpolate_cell_centers(
+                xp, _u_, active_dims, p, out=_ucc_, buffer=buffer
+            )
+            _w_[...] = self.primitives_from_conservatives(
+                _u_
+            )  # lazy primitive averages
+
+            lazy_theta = xp.ones((1,) + _wcc_.shape[1:])
+            compute_lazy_theta(
+                xp,
+                _w_,
+                active_dims,
+                eta_threshold,
+                out=lazy_theta,
+                buffer=buffer,
+                eps=eps,
+            )
+            # lazy_theta[...] = 1.0
+
+            # recompute all quantities
+            _ucc_[..., 0] = xp.where(lazy_theta[..., 0], _ucc_[..., 0], _u_)
+            _wcc_[...] = self.primitives_from_conservatives(_ucc_)
+            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
+            _w_[...] = xp.where(lazy_theta[..., 0], _wp_[..., 0], _w_)
+            return
 
         # 1) conservative and primitive centroids
         fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=buffer)
@@ -1137,12 +1181,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # 2) primitive FV averages
         if getattr(scheme, "lazy_primitives", False):
-            _tmp_[..., 0] = self.primitives_from_conservatives(_u_)
+            _w_[...] = self.primitives_from_conservatives(_u_)
         else:
-            fv.integrate_fv_averages(
-                xp, _wcc_, active_dims, p, out=_tmp_, buffer=buffer
-            )
-        _w_[...] = _tmp_[..., 0]
+            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
+            _w_[...] = _wp_[..., 0]
 
     @MethodTimer(cat="apply_bc")
     def apply_bc(

@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
 
+import numpy as np
+
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
+from superfv.stencil import stencil_sweep
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import replace_slice
 
@@ -320,3 +323,85 @@ def log_zhang_shu_scalar_statistics(
             new_data[f"n_{key}_{var}"] = zero_max(step_log[f"nfine_{key}_{var}"])
 
     data.update(new_data)
+
+
+def compute_lazy_theta_in_1D(
+    xp: ModuleType,
+    wp: ArrayLike,
+    eta_threshold: float,
+    axis: int,
+    *,
+    out: ArrayLike,
+    buffer: ArrayLike,
+    eps: float = 1e-10,
+):
+    delta1 = xp.zeros_like(wp)
+    delta2 = xp.zeros_like(wp)
+    delta3 = xp.zeros_like(wp)
+    delta4 = xp.zeros_like(wp)
+
+    stencil1 = 0.5 * xp.array([-1.0, 0.0, 1.0])
+    stencil2 = xp.array([1.0, -2.0, 1.0])
+    stencil3 = 0.5 * xp.array([-1.0, 2.0, 0.0, -2.0, 1.0])
+    stencil4 = xp.array([1.0, -4.0, 6.0, -4.0, 1.0])
+
+    stencil_sweep(xp, wp, stencil1, axis, out=delta1)
+    stencil_sweep(xp, wp, stencil2, axis, out=delta2)
+    stencil_sweep(xp, wp, stencil3, axis, out=delta3)
+    stencil_sweep(xp, wp, stencil4, axis, out=delta4)
+
+    eta_odd = xp.abs(delta3) / (xp.abs(wp) + xp.abs(delta1) + xp.abs(delta3) + eps)
+    eta_even = xp.abs(delta4) / (xp.abs(wp) + xp.abs(delta2) + xp.abs(delta4) + eps)
+    multivar_eta_c = xp.maximum(eta_odd, eta_even)[..., np.newaxis]
+    eta_c = xp.max(multivar_eta_c, axis=0, keepdims=True)
+
+    out[...] = xp.where(eta_c < eta_threshold, 1.0, 0.0)
+
+
+def compute_lazy_theta(
+    xp: ModuleType,
+    wp: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    eta_threshold: float,
+    *,
+    out: ArrayLike,
+    buffer: ArrayLike,
+    eps: float = 1e-10,
+):
+    out[...] = 1.0
+    if "x" in active_dims:
+        eta_x = xp.zeros_like(out)
+        compute_lazy_theta_in_1D(
+            xp,
+            wp,
+            eta_threshold,
+            axis=1,
+            out=eta_x,
+            buffer=buffer,
+            eps=eps,
+        )
+        xp.minimum(out, eta_x, out=out)
+    if "y" in active_dims:
+        eta_y = xp.zeros_like(out)
+        compute_lazy_theta_in_1D(
+            xp,
+            wp,
+            eta_threshold,
+            axis=2,
+            out=eta_y,
+            buffer=buffer,
+            eps=eps,
+        )
+        xp.minimum(out, eta_y, out=out)
+    if "z" in active_dims:
+        eta_z = xp.zeros_like(out)
+        compute_lazy_theta_in_1D(
+            xp,
+            wp,
+            eta_threshold,
+            axis=3,
+            out=eta_z,
+            buffer=buffer,
+            eps=eps,
+        )
+        xp.minimum(out, eta_z, out=out)

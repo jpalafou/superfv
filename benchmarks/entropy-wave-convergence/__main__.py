@@ -46,7 +46,7 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS3-FR2-lazy": dict(
+    "ZS3-FR2-full-lazy": dict(
         riemann_solver="hllc",
         p=3,
         ZS=True,
@@ -55,23 +55,32 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS7-FR2": dict(
+    "ZS3-FR2-adaptive-lazy": dict(
         riemann_solver="hllc",
-        p=7,
+        p=3,
         ZS=True,
         flux_recipe=2,
+        adaptive_lazy=True,
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS7-FR2-lazy": dict(
-        riemann_solver="hllc",
-        p=7,
-        ZS=True,
-        flux_recipe=2,
-        lazy_primitives=True,
-        PAD={"rho": (0, None), "P": (0, None)},
-        SED=True,
-    ),
+    # "ZS7-FR2": dict(
+    #     riemann_solver="hllc",
+    #     p=7,
+    #     ZS=True,
+    #     flux_recipe=2,
+    #     PAD={"rho": (0, None), "P": (0, None)},
+    #     SED=True,
+    # ),
+    # "ZS7-FR2-lazy": dict(
+    #     riemann_solver="hllc",
+    #     p=7,
+    #     ZS=True,
+    #     flux_recipe=2,
+    #     lazy_primitives=True,
+    #     PAD={"rho": (0, None), "P": (0, None)},
+    #     SED=True,
+    # ),
 }
 
 # remove old output

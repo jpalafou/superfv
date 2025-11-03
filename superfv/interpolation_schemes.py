@@ -78,6 +78,7 @@ class polyInterpolationScheme(InterpolationScheme):
         gauss_legendre: Whether to use Gauss-Legendre quadrature.
         lazy_primitives: Whether to use the second-order evaluation for primitive cell
             averages (W_ave = W(U_ave)).
+        adaptive_lazy: Write stuff here.
     """
 
     p: int
@@ -85,6 +86,7 @@ class polyInterpolationScheme(InterpolationScheme):
     limiter_config: Optional[LimiterConfig] = None
     gauss_legendre: bool = False
     lazy_primitives: bool = False
+    adaptive_lazy: bool = False
 
     def key(self) -> str:
         return f"poly{self.p}"

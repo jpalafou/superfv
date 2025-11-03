@@ -35,6 +35,7 @@ class EulerSolver(FiniteVolumeSolver):
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
         lazy_primitives: bool = False,
+        adaptive_lazy: bool = False,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
@@ -128,6 +129,7 @@ class EulerSolver(FiniteVolumeSolver):
                 - `flux_recipe=2`: The lazy primitives become the fallback option.
                 - `flux_recipe=3`: The lazy primitives are used to interpolate the
                     primitive flux nodes.
+            adaptive_lazy: Write stuff here.
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
@@ -221,6 +223,7 @@ class EulerSolver(FiniteVolumeSolver):
             riemann_solver=riemann_solver,
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
+            adaptive_lazy=adaptive_lazy,
             MUSCL=MUSCL,
             MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,
