@@ -170,7 +170,7 @@ def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
 
 @pytest.mark.parametrize("p", [0, 3, 7])
 @pytest.mark.parametrize("flux_recipe", [1, 2, 3])
-@pytest.mark.parametrize("lazy_primitives", [False, True])
+@pytest.mark.parametrize("lazy_primitives", ["none", "full", "adaptive"])
 @pytest.mark.parametrize("limiting", ["a priori", "a posteriori"])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z")])
 def test_Sod_shock_tube_symmetry_1D(
@@ -183,6 +183,11 @@ def test_Sod_shock_tube_symmetry_1D(
     """
     Assert that the 1D Sod shock tube solution is the same along each solver dimension.
     """
+    if lazy_primitives == "adaptive" and (p < 1 or limiting != "a priori"):
+        pytest.skip(
+            "Adaptive lazy primitives only implemented for a posteriori limiting."
+        )
+
     dim1, dim2 = dim1_dim2
     N = 64
 

@@ -1176,6 +1176,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         elif lazy_primitives == "full":
             _w_[...] = self.primitives_from_conservatives(_u_)
         elif lazy_primitives == "adaptive":
+            if not isinstance(scheme, polyInterpolationScheme):
+                raise ValueError(
+                    "Adaptive lazy primitives can only be used with polyInterpolationScheme."
+                )
+            if scheme.eta_max is None:
+                raise ValueError(
+                    "Adaptive lazy primitives require eta_max to be set in the scheme."
+                )
+
             fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
             _w_[...] = self.primitives_from_conservatives(_u_)
 

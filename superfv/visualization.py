@@ -656,7 +656,7 @@ def plot_spacetime(
     for i, t in enumerate(t_arr):
         f_arr[:, i] = _extract_variable_data(
             fv_solver,
-            t,
+            cast(float, t),
             variable,
             cell_averaged,
             theta,
@@ -681,7 +681,11 @@ def plot_spacetime(
         troubles_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
         for i, t in enumerate(t_arr):
             current_troubles = _extract_variable_data(
-                fv_solver, t, variable, troubles=True, visualization=visualization
+                fv_solver,
+                cast(float, t),
+                variable,
+                troubles=True,
+                visualization=visualization,
             )[*slices]
             troubles_arr[:, i] = np.where(
                 current_troubles > 0, current_troubles, np.nan
