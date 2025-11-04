@@ -261,7 +261,7 @@ def fv_integrate(
 
 
 def _get_number_of_coords(
-    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]]
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]],
 ) -> int:
     """
     Get the total number of coordinates specified in the nodes dictionary.
@@ -281,7 +281,7 @@ def _get_number_of_coords(
 
 
 def _all_zero_coords(
-    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]]
+    nodes: Dict[Literal["x", "y", "z"], Union[SingleInterpCoord, MultiInterpCoords]],
 ) -> bool:
     """
     Check if all coordinates in the nodes dictionary are zero.

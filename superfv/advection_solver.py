@@ -34,8 +34,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
-        lazy_primitives: bool = True,
-        adaptive_lazy: bool = False,
+        lazy_primitives: Literal["none", "full", "adaptive"] = "full",
+        eta_max: float = 0.025,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
@@ -119,16 +119,18 @@ class AdvectionSolver(FiniteVolumeSolver):
                     intermittently or transforming directly with `lazy_primitives=True`.
                     Interpolate primitive nodes from primitive cell averages.
                     Apply slope limiting to the primitive nodes.
-            lazy_primitives: Whether to transform conservative cell averages
-                directly to primitive cell averages. Note that this is a second order
-                operation. If
-                - `flux_recipe=1`: This argument is ignored.
-                - `flux_recipe=2`: The lazy primitives become the fallback option.
-                - `flux_recipe=3`: The lazy primitives are used to interpolate the
-                    primitive flux nodes.
+            lazy_primitives: Option for lazy evaluation of primitive variables.
+                Possible values include:
+                - "none": Do not use second-order evaluation for primitive cell
+                    averages.
+                - "full": Always use second-order evaluation for primitive cell
+                    averages.
+                - "adaptive": Based on a shock-detection criterion, adaptively reduce
+                    the order of conservative cell centers, primitive cell centers, and
+                    primitive cell averages to second order.
                 Defaults to `True` for the advection solver since the transformation is
                 trivial.
-            adaptive_lazy: Write stuff here.
+            eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
@@ -212,6 +214,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             GL=GL,
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
+            eta_max=eta_max,
             riemann_solver=riemann_solver,
             MUSCL=MUSCL,
             MUSCL_limiter=MUSCL_limiter,

@@ -76,17 +76,29 @@ class polyInterpolationScheme(InterpolationScheme):
             limit primitive nodes -> compute fluxes
         limiter_config: The limiter configuration to use.
         gauss_legendre: Whether to use Gauss-Legendre quadrature.
-        lazy_primitives: Whether to use the second-order evaluation for primitive cell
-            averages (W_ave = W(U_ave)).
-        adaptive_lazy: Write stuff here.
+        lazy_primitives:
+            - "none": Do not use second-order evaluation for primitive cell averages.
+            - "full": Always use second-order evaluation for primitive cell averages.
+            - "adaptive": Based on a shock-detection criterion, adaptively reduce the
+                order of conservative cell centers, primitive cell centers, and
+                primitive cell averages to second order.
+        eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
     """
 
-    p: int
-    flux_recipe: Literal[1, 2, 3]
-    limiter_config: Optional[LimiterConfig] = None
     gauss_legendre: bool = False
-    lazy_primitives: bool = False
-    adaptive_lazy: bool = False
+    lazy_primitives: Literal["none", "full", "adaptive"] = "none"
+    eta_max: Optional[float] = None
+
+    def __post_init__(self):
+        InterpolationScheme.__post_init__(self)
+        if self.lazy_primitives not in ("none", "full", "adaptive"):
+            raise ValueError(
+                'Invalid lazy_primitives option. Must be "none", "full", or "adaptive".'
+            )
+        if self.lazy_primitives == "adaptive" and self.eta_max is None:
+            raise ValueError(
+                "eta_max must be provided when lazy_primitives is set to 'adaptive'."
+            )
 
     def key(self) -> str:
         return f"poly{self.p}"

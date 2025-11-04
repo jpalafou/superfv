@@ -34,8 +34,8 @@ class EulerSolver(FiniteVolumeSolver):
         CFL: float = 0.8,
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
-        lazy_primitives: bool = False,
-        adaptive_lazy: bool = False,
+        lazy_primitives: Literal["none", "full", "adaptive"] = "none",
+        eta_max: float = 0.025,
         riemann_solver: Literal["llf", "hllc"] = "llf",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
@@ -122,14 +122,16 @@ class EulerSolver(FiniteVolumeSolver):
                     intermittently or transforming directly with `lazy_primitives=True`.
                     Interpolate primitive nodes from primitive cell averages.
                     Apply slope limiting to the primitive nodes.
-            lazy_primitives: Whether to transform conservative cell averages
-                directly to primitive cell averages. Note that this is a second order
-                operation. If
-                - `flux_recipe=1`: This argument is ignored.
-                - `flux_recipe=2`: The lazy primitives become the fallback option.
-                - `flux_recipe=3`: The lazy primitives are used to interpolate the
-                    primitive flux nodes.
-            adaptive_lazy: Write stuff here.
+            lazy_primitives: Option for lazy evaluation of primitive variables.
+                Possible values include:
+                - "none": Do not use second-order evaluation for primitive cell
+                    averages.
+                - "full": Always use second-order evaluation for primitive cell
+                    averages.
+                - "adaptive": Based on a shock-detection criterion, adaptively reduce
+                    the order of conservative cell centers, primitive cell centers, and
+                    primitive cell averages to second order.
+            eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
@@ -223,7 +225,7 @@ class EulerSolver(FiniteVolumeSolver):
             riemann_solver=riemann_solver,
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
-            adaptive_lazy=adaptive_lazy,
+            eta_max=eta_max,
             MUSCL=MUSCL,
             MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,

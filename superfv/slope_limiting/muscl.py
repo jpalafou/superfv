@@ -53,6 +53,7 @@ class musclInterpolationScheme(InterpolationScheme):
     limiter_config: musclConfig = musclConfig(limiter="minmod", SED=False)
 
     def __post_init__(self):
+        InterpolationScheme.__post_init__(self)
         if self.p != 1:
             raise ValueError("musclInterpolationScheme must have p=1")
         if not isinstance(self.limiter_config, musclConfig):

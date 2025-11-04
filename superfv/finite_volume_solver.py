@@ -33,7 +33,7 @@ from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     append_zhang_shu_scalar_statistics,
     clear_zhang_shu_scalar_statistics,
-    compute_lazy_theta,
+    compute_shock_detector,
     compute_theta,
     init_zhang_shu_scalar_statistics,
     log_zhang_shu_scalar_statistics,
@@ -78,8 +78,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         CFL: float = 0.8,
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 1,
-        lazy_primitives: bool = False,
-        adaptive_lazy: bool = False,
+        lazy_primitives: Literal["none", "full", "adaptive"] = "none",
+        eta_max: float = 0.025,
         riemann_solver: str = "dummy_riemann_solver",
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
@@ -159,18 +159,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     Transform to primitive variables. Apply slope limiting to the
                     primitive nodes.
                 - 3: Interpolate primitive cell averages from conservative cell
-                    averages, either by interpolating to cell-centered values
-                    intermittently or transforming directly with `lazy_primitives=True`.
-                    Interpolate primitive nodes from primitive cell averages.
-                    Apply slope limiting to the primitive nodes.
-            lazy_primitives: Whether to transform conservative cell averages
-                directly to primitive cell averages. Note that this is a second order
-                operation. If
-                - `flux_recipe=1`: This argument is ignored.
-                - `flux_recipe=2`: The lazy primitives become the fallback option.
-                - `flux_recipe=3`: The lazy primitives are used to interpolate the
-                    primitive flux nodes.
-            adaptive_lazy: Write stuff here.
+                    averages (see `lazy_primitives` below). Interpolate primitive nodes
+                    from primitive cell averages. Apply slope limiting to the primitive
+                    nodes.
+            lazy_primitives: Option for lazy evaluation of primitive variables.
+                Possible values include:
+                - "none": Do not use second-order evaluation for primitive cell
+                    averages.
+                - "full": Always use second-order evaluation for primitive cell
+                    averages.
+                - "adaptive": Based on a shock-detection criterion, adaptively reduce
+                    the order of conservative cell centers, primitive cell centers, and
+                    primitive cell averages to second order.
+            eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
@@ -242,7 +243,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             flux_recipe,
             GL,
             lazy_primitives,
-            adaptive_lazy,
+            eta_max,
             MUSCL,
             MUSCL_limiter,
             ZS,
@@ -396,8 +397,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         flux_recipe: Literal[1, 2, 3],
         GL: bool,
-        lazy_primitives: bool,
-        adaptive_lazy: bool,
+        lazy_primitives: Literal["none", "full", "adaptive"],
+        eta_max: float,
         MUSCL: bool,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         ZS: bool,
@@ -446,7 +447,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 flux_recipe,
                 GL,
                 lazy_primitives,
-                adaptive_lazy,
+                eta_max,
                 include_corners,
                 PAD,
                 SED,
@@ -486,8 +487,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         idx.add_var_to_group("limiting", limiting_vars)
 
     def _init_unlimited_scheme(
-        self, p: int, flux_recipe: Literal[1, 2, 3], GL: bool, lazy_primitives: bool
+        self,
+        p: int,
+        flux_recipe: Literal[1, 2, 3],
+        GL: bool,
+        lazy_primitives: Literal["none", "full", "adaptive"],
     ):
+        if lazy_primitives == "adaptive":
+            raise ValueError("Cannot use adaptive lazy primitives without ZS limiter.")
         self.p = p
         self.base_scheme = polyInterpolationScheme(
             p=p,
@@ -495,7 +502,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter_config=None,
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
-            adaptive_lazy=False,
+            eta_max=None,
         )
 
     def _init_muscl_scheme(
@@ -522,8 +529,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p: int,
         flux_recipe: Literal[1, 2, 3],
         GL: bool,
-        lazy_primitives: bool,
-        adaptive_lazy: bool,
+        lazy_primitives: Literal["none", "full", "adaptive"],
+        eta_max: float,
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         SED: bool,
@@ -545,7 +552,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
-            adaptive_lazy=adaptive_lazy,
+            eta_max=eta_max,
         )
 
     def _init_MOOD(
@@ -576,9 +583,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 polyInterpolationScheme(
                     p=0,
                     flux_recipe=base_scheme.flux_recipe,
+                    limiter_config=None,
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
-                    adaptive_lazy=base_scheme.adaptive_lazy,
+                    eta_max=None,
                 )
             ]
         elif cascade in ("muscl", "muscl1"):
@@ -598,9 +606,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     polyInterpolationScheme(
                         p=0,
                         flux_recipe=base_scheme.flux_recipe,
+                        limiter_config=None,
                         gauss_legendre=base_scheme.gauss_legendre,
                         lazy_primitives=base_scheme.lazy_primitives,
-                        adaptive_lazy=base_scheme.adaptive_lazy,
+                        eta_max=None,
                     )
                 ]
         elif cascade == "full":
@@ -608,9 +617,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 polyInterpolationScheme(
                     p=p,
                     flux_recipe=base_scheme.flux_recipe,
+                    limiter_config=None,
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
-                    adaptive_lazy=base_scheme.adaptive_lazy,
+                    eta_max=None,
                 )
                 for p in range(base_scheme.p - 1, -1, -1)
             ]
@@ -681,16 +691,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         elif isinstance(bs, polyInterpolationScheme):
             s = -(-p // 2)  # ghost cell cost of stencil with degree 0
 
-            if bs.lazy_primitives:
+            if bs.lazy_primitives == "full":
                 node_cost = s
             else:
                 node_cost = 3 * s if bs.flux_recipe == 3 else 2 * s
+            if bs.lazy_primitives == "adaptive":
+                node_cost += 2
 
             limiting_cost = 0
             if isinstance(bs.limiter_config, ZhangShuConfig):
                 limiting_cost = 3 if bs.limiter_config.SED else 1
-                if bs.adaptive_lazy:
-                    limiting_cost += 2 * s
             if self.MOOD:
                 NAD_cost = 1
                 if self.MOOD_state.config.SED:
@@ -904,6 +914,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
         arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
+        # Lazy primitive array
+        arrays.add("theta_for_shocks", np.ones((1, _nx_, _ny_, _nz_)))
+
         # General slope-limiting arrays
         arrays.add("dmp", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
@@ -971,6 +984,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             buffer_size = max((buffer_size, MOOD_buffer_size, MUSCL_buffer_size))
         elif isinstance(scheme, musclInterpolationScheme):
             buffer_size = max(buffer_size, MUSCL_buffer_size)
+
+        if getattr(scheme, "lazy_primitives", "none") == "adaptive":
+            buffer_size = max(buffer_size, 12)
 
         return buffer_size
 
@@ -1133,11 +1149,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p = scheme.p
         xp = self.xp
 
+        # configure lazy primitives
+        lazy_primitives = getattr(scheme, "lazy_primitives", "none")
+
         # allocate arrays
         _u_ = self.arrays["_u_"]
         _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
         _w_ = self.arrays["_w_"]  # shape (..., 1)
+        _theta_for_shocks_ = self.arrays["theta_for_shocks"]
         _wp_ = self.arrays["buffer"][..., :1]
         buffer = self.arrays["buffer"][..., 1:]
 
@@ -1145,46 +1165,32 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _u_[self.interior] = u
         self.apply_bc(t, _u_, scheme=scheme)
 
-        if getattr(scheme, "adaptive_lazy", False):
-            eta_threshold = 0.05
-            eps = 1e-15
-
-            fv.interpolate_cell_centers(
-                xp, _u_, active_dims, p, out=_ucc_, buffer=buffer
-            )
-            _w_[...] = self.primitives_from_conservatives(
-                _u_
-            )  # lazy primitive averages
-
-            lazy_theta = xp.ones((1,) + _wcc_.shape[1:])
-            compute_lazy_theta(
-                xp,
-                _w_,
-                active_dims,
-                eta_threshold,
-                out=lazy_theta,
-                buffer=buffer,
-                eps=eps,
-            )
-            # lazy_theta[...] = 1.0
-
-            # recompute all quantities
-            _ucc_[..., 0] = xp.where(lazy_theta[..., 0], _ucc_[..., 0], _u_)
-            _wcc_[...] = self.primitives_from_conservatives(_ucc_)
-            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
-            _w_[...] = xp.where(lazy_theta[..., 0], _wp_[..., 0], _w_)
-            return
-
         # 1) conservative and primitive centroids
         fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=buffer)
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
         # 2) primitive FV averages
-        if getattr(scheme, "lazy_primitives", False):
-            _w_[...] = self.primitives_from_conservatives(_u_)
-        else:
+        if lazy_primitives == "none":
             fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
             _w_[...] = _wp_[..., 0]
+        elif lazy_primitives == "full":
+            _w_[...] = self.primitives_from_conservatives(_u_)
+        elif lazy_primitives == "adaptive":
+            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
+            _w_[...] = self.primitives_from_conservatives(_u_)
+
+            compute_shock_detector(
+                xp,
+                _w_,
+                active_dims,
+                scheme.eta_max,
+                out=_theta_for_shocks_,
+                buffer=buffer,
+            )
+
+            _w_[...] = xp.where(_theta_for_shocks_, _wp_[..., 0], _w_)
+        else:
+            raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
     @MethodTimer(cat="apply_bc")
     def apply_bc(

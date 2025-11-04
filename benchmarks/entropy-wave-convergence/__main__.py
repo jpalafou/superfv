@@ -1,5 +1,6 @@
 import os
 from itertools import product
+from typing import Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,7 +39,7 @@ configs = {
         flux_recipe=2,
         SED=True,
     ),
-    "ZS3-FR2": dict(
+    "ZS3-FR2-nolazy": dict(
         riemann_solver="hllc",
         p=3,
         ZS=True,
@@ -46,41 +47,50 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS3-FR2-full-lazy": dict(
+    "ZS3-FR2-fulllazy": dict(
         riemann_solver="hllc",
         p=3,
         ZS=True,
         flux_recipe=2,
-        lazy_primitives=True,
+        lazy_primitives="full",
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS3-FR2-adaptive-lazy": dict(
+    "ZS3-FR2-adaptivelazy": dict(
         riemann_solver="hllc",
         p=3,
         ZS=True,
         flux_recipe=2,
-        adaptive_lazy=True,
+        lazy_primitives="adaptive",
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    # "ZS7-FR2": dict(
-    #     riemann_solver="hllc",
-    #     p=7,
-    #     ZS=True,
-    #     flux_recipe=2,
-    #     PAD={"rho": (0, None), "P": (0, None)},
-    #     SED=True,
-    # ),
-    # "ZS7-FR2-lazy": dict(
-    #     riemann_solver="hllc",
-    #     p=7,
-    #     ZS=True,
-    #     flux_recipe=2,
-    #     lazy_primitives=True,
-    #     PAD={"rho": (0, None), "P": (0, None)},
-    #     SED=True,
-    # ),
+    "ZS7-FR2-nolazy": dict(
+        riemann_solver="hllc",
+        p=7,
+        ZS=True,
+        flux_recipe=2,
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
+    "ZS7-FR2-fulllazy": dict(
+        riemann_solver="hllc",
+        p=7,
+        ZS=True,
+        flux_recipe=2,
+        lazy_primitives="full",
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
+    "ZS7-FR2-adaptivelazy": dict(
+        riemann_solver="hllc",
+        p=7,
+        ZS=True,
+        flux_recipe=2,
+        lazy_primitives="adaptive",
+        PAD={"rho": (0, None), "P": (0, None)},
+        SED=True,
+    ),
 }
 
 # remove old output
@@ -120,25 +130,12 @@ ax.set_yscale("log")
 ax.grid()
 
 
-hits = {}
+hits: Dict[int, int] = {}
 
 
 def style_resolver(p, base_linestyle="-", base_marker="o"):
-    color = plt.get_cmap("viridis")(p / 3)
-
-    nhits = hits.get(color, 0)
-    hits[(color)] = nhits + 1
-
-    # if nhits == 0:
-    #     style = dict(color=color, linestyle=base_linestyle, marker=base_marker)
-    # elif nhits == 1:
-    #     style = dict(color=color, linestyle="--", marker=base_marker)
-    # elif nhits == 2:
-    #     style = dict(color=color, linestyle=base_linestyle, marker="*")
-    # elif nhits == 3:
-    #     style = dict(color=color, linestyle=base_linestyle, marker="s")
-    # else:
-    #     raise ValueError("Too many hits for p={p}")
+    nhits = hits.get(p, 0)
+    hits[(p)] = nhits + 1
 
     if nhits == 0:
         style = dict(linestyle=base_linestyle, marker=base_marker)
