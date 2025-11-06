@@ -5,3 +5,5 @@
 - [ ] can the solver args be organized?
 - [ ] refactor `_compute_buffer_size`
 - [ ] improve performance of shock detection
+- [ ] a posteriori is not high-order for the entropy wave problem
+- [ ] MOOD.py: `dmp[lim_slc]` should be dmp on line 267

@@ -806,7 +806,7 @@ def double_mach_reflection(
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
         raise ValueError(
-            "Kelvin-Helmholtz initial condition requires all hydro variables."
+            "Double Mach reflection initial condition requires all hydro variables."
         )
 
     dims = parse_xyz(x, y, z)
@@ -1059,5 +1059,57 @@ def gresho_vortex(
     out[idx("v" + dim1)] = vx
     out[idx("v" + dim2)] = vy
     out[idx("P")] = P
+
+    return out
+
+
+def entropy_wave(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float = 0.0,
+    *,
+    xp: ModuleType,
+    gamma: float,
+    passive_dim: Literal["x", "y", "z"] = "z",
+) -> ArrayLike:
+    """
+    Returns array for the entropy wave initial condition.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+        gamma: Ratio of specific heats.
+        passive_dim: The dimension in which the velocity of the entropy wave varies.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError("Entropy wave initial condition requires all hydro variables.")
+
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 1:
+        raise ValueError("Entropy wave initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    if passive_dim not in ["x", "y", "z"]:
+        raise ValueError("The passive dimension must be one of 'x', 'y', or 'z'.")
+    if dim == passive_dim:
+        raise ValueError(
+            "The passive dimension cannot be the same as the active dimension."
+        )
+
+    out = xp.zeros((idx.nvars, *x.shape))
+
+    out[idx("rho")] = 1.0
+    out[idx("P")] = 1.0 / gamma
+    out[idx("v" + dim)] = 1.0
+    out[idx("v" + passive_dim)] = xp.sin(2 * np.pi * x)
 
     return out

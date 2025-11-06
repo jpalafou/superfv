@@ -1,32 +1,18 @@
 import os
+from functools import partial
 from itertools import product
 from typing import Dict
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 from superfv import EulerSolver
+from superfv.initial_conditions import entropy_wave
 from superfv.tools.norms import linf_norm
 
 gamma = 5 / 3
 T = 1.0
 
-
-def entropy_wave(idx, x, y, z, t, *, xp):
-
-    out = xp.zeros((idx.nvars, *x.shape))
-
-    out[idx("rho")] = 1.0
-    out[idx("P")] = 1.0 / gamma
-    out[idx("vx")] = 1.0
-    out[idx("vy")] = 0.0
-    out[idx("vz")] = xp.sin(2 * np.pi * x)
-
-    return out
-
-
-# problem inputs
 OUTPUT_NAME = "benchmarks/entropy-wave-convergence/" + "plot.png"
 N_LIST = [32, 64, 128]
 configs = {
@@ -39,24 +25,7 @@ configs = {
         flux_recipe=2,
         SED=True,
     ),
-    "ZS3-FR2-nolazy": dict(
-        riemann_solver="hllc",
-        p=3,
-        ZS=True,
-        flux_recipe=2,
-        PAD={"rho": (0, None), "P": (0, None)},
-        SED=True,
-    ),
-    "ZS3-FR2-fulllazy": dict(
-        riemann_solver="hllc",
-        p=3,
-        ZS=True,
-        flux_recipe=2,
-        lazy_primitives="full",
-        PAD={"rho": (0, None), "P": (0, None)},
-        SED=True,
-    ),
-    "ZS3-FR2-adaptivelazy": dict(
+    "ZS3": dict(
         riemann_solver="hllc",
         p=3,
         ZS=True,
@@ -65,32 +34,45 @@ configs = {
         PAD={"rho": (0, None), "P": (0, None)},
         SED=True,
     ),
-    "ZS7-FR2-nolazy": dict(
+    # "ZS7": dict(
+    #     riemann_solver="hllc",
+    #     p=7,
+    #     ZS=True,
+    #     flux_recipe=2,
+    #     lazy_primitives="adaptive",
+    #     PAD={"rho": (0, None), "P": (0, None)},
+    #     SED=True,
+    # ),
+    "MM3": dict(
         riemann_solver="hllc",
-        p=7,
-        ZS=True,
+        p=3,
         flux_recipe=2,
-        PAD={"rho": (0, None), "P": (0, None)},
+        lazy_primitives="none",
+        MOOD=True,
+        cascade="muscl",
+        MUSCL_limiter="moncen",
+        max_MOOD_iters=1,
+        blend=True,
+        NAD=True,
+        NAD_rtol=1e-2,
+        NAD_atol=1e-8,
         SED=True,
     ),
-    "ZS7-FR2-fulllazy": dict(
-        riemann_solver="hllc",
-        p=7,
-        ZS=True,
-        flux_recipe=2,
-        lazy_primitives="full",
-        PAD={"rho": (0, None), "P": (0, None)},
-        SED=True,
-    ),
-    "ZS7-FR2-adaptivelazy": dict(
-        riemann_solver="hllc",
-        p=7,
-        ZS=True,
-        flux_recipe=2,
-        lazy_primitives="adaptive",
-        PAD={"rho": (0, None), "P": (0, None)},
-        SED=True,
-    ),
+    # "MM7": dict(
+    #     riemann_solver="hllc",
+    #     p=7,
+    #     flux_recipe=2,
+    #     lazy_primitives="none",
+    #     MOOD=True,
+    #     cascade="muscl",
+    #     MUSCL_limiter="moncen",
+    #     max_MOOD_iters=1,
+    #     blend=True,
+    #     NAD=True,
+    #     NAD_rtol=1e-2,
+    #     NAD_atol=1e-8,
+    #     SED=True,
+    # ),
 }
 
 # remove old output
@@ -104,7 +86,9 @@ for N, (name, config) in product(N_LIST, configs.items()):
     print(f"Running N={N}, config={name}")
 
     # run solver
-    sim = EulerSolver(ic=entropy_wave, nx=N, gamma=gamma, **config)
+    sim = EulerSolver(
+        ic=partial(entropy_wave, gamma=gamma), nx=N, gamma=gamma, **config
+    )
     try:
         sim.run(T, reduce_CFL=True, muscl_hancock=config.get("MUSCL", False))
     except RuntimeError as e:
