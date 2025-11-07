@@ -20,6 +20,7 @@ from .slope_limiting.MOOD import (
     MOODState,
     append_troubled_cell_scalar_statistics,
     clear_troubled_cell_scalar_statistics,
+    detect_PAD_violations,
     init_troubled_cell_scalar_statistics,
     log_troubled_cell_scalar_statistics,
 )
@@ -29,11 +30,11 @@ from .slope_limiting.muscl import (
     musclConfig,
     musclInterpolationScheme,
 )
+from .slope_limiting.shock_detection import compute_shock_detector
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     append_zhang_shu_scalar_statistics,
     clear_zhang_shu_scalar_statistics,
-    compute_shock_detector,
     compute_theta,
     init_zhang_shu_scalar_statistics,
     log_zhang_shu_scalar_statistics,
@@ -432,7 +433,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # first-order scheme early escape
         if p == 0:
-            self._init_unlimited_scheme(0, flux_recipe, GL, lazy_primitives)
+            self._init_unlimited_scheme(0, flux_recipe, GL, lazy_primitives, eta_max)
             return
 
         # init a priori scheme
@@ -456,7 +457,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 PAD_atol,
             )
         else:
-            self._init_unlimited_scheme(p, flux_recipe, GL, lazy_primitives)
+            self._init_unlimited_scheme(p, flux_recipe, GL, lazy_primitives, eta_max)
 
         # init a posteriori scheme
         self.MOOD = MOOD
@@ -492,9 +493,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         flux_recipe: Literal[1, 2, 3],
         GL: bool,
         lazy_primitives: Literal["none", "full", "adaptive"],
+        eta_max: float,
     ):
-        if lazy_primitives == "adaptive":
-            raise ValueError("Cannot use adaptive lazy primitives without ZS limiter.")
         self.p = p
         self.base_scheme = polyInterpolationScheme(
             p=p,
@@ -502,7 +502,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter_config=None,
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
-            eta_max=None,
+            eta_max=eta_max,
         )
 
     def _init_muscl_scheme(
@@ -586,7 +586,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     limiter_config=None,
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
-                    eta_max=None,
+                    eta_max=base_scheme.eta_max,
                 )
             ]
         elif cascade in ("muscl", "muscl1"):
@@ -609,7 +609,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         limiter_config=None,
                         gauss_legendre=base_scheme.gauss_legendre,
                         lazy_primitives=base_scheme.lazy_primitives,
-                        eta_max=None,
+                        eta_max=base_scheme.eta_max,
                     )
                 ]
         elif cascade == "full":
@@ -620,7 +620,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     limiter_config=None,
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
-                    eta_max=None,
+                    eta_max=base_scheme.eta_max,
                 )
                 for p in range(base_scheme.p - 1, -1, -1)
             ]
@@ -920,6 +920,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # General slope-limiting arrays
         arrays.add("dmp", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
+        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
 
         # Zhang-Shu limiter arrays
         arrays.add("theta", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -939,6 +940,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
             arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
 
+        arrays.add("_NAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_PAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_troubles_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("_any_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
@@ -1148,18 +1151,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         active_dims = self.active_dims
         p = scheme.p
         xp = self.xp
-
-        # configure lazy primitives
+        arrays = self.arrays
         lazy_primitives = getattr(scheme, "lazy_primitives", "none")
 
         # allocate arrays
-        _u_ = self.arrays["_u_"]
-        _ucc_ = self.arrays["_ucc_"]  # shape (..., 1)
-        _wcc_ = self.arrays["_wcc_"]  # shape (..., 1)
-        _w_ = self.arrays["_w_"]  # shape (..., 1)
-        _theta_for_shocks_ = self.arrays["theta_for_shocks"]
-        _wp_ = self.arrays["buffer"][..., :1]
-        buffer = self.arrays["buffer"][..., 1:]
+        _u_ = arrays["_u_"]
+        _ucc_ = arrays["_ucc_"]  # shape (..., 1)
+        _wcc_ = arrays["_wcc_"]  # shape (..., 1)
+        _w_ = arrays["_w_"]  # shape (..., 1)
+        _wp_ = arrays["buffer"][..., :1]
+        _theta_for_shocks_ = arrays["theta_for_shocks"]
+        _PAD_violations_ = arrays["_PAD_violations_"]
+        _any_PAD_violations_ = arrays["_any_troubles_"]
+        buffer = arrays["buffer"][..., 1:]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
@@ -1197,7 +1201,34 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 buffer=buffer,
             )
 
-            _w_[...] = xp.where(_theta_for_shocks_, _wp_[..., 0], _w_)
+            if "PAD_bounds" in self.arrays:
+                if self.MOOD:
+                    PAD_atol = self.MOOD_state.config.PAD_atol
+                elif isinstance(scheme.limiter_config, ZhangShuConfig):
+                    PAD_atol = scheme.limiter_config.PAD_atol
+                else:
+                    raise ValueError(
+                        "PAD_atol must be specified to detect PAD violations."
+                    )
+
+                detect_PAD_violations(
+                    xp,
+                    _w_,
+                    self.arrays["PAD_bounds"],
+                    physical_tols=PAD_atol,
+                    out=_PAD_violations_,
+                )
+                _any_PAD_violations_[...] = xp.any(
+                    _PAD_violations_ < 0, axis=0, keepdims=True
+                )
+
+                _w_[...] = xp.where(
+                    xp.logical_and(_theta_for_shocks_, _any_PAD_violations_ >= 0),
+                    _wp_[..., 0],
+                    _w_,
+                )
+            else:
+                _w_[...] = xp.where(_theta_for_shocks_, _wp_[..., 0], _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
@@ -1308,6 +1339,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         theta = self.arrays["theta"]
         theta_vis = self.arrays["theta_vis"]
         dmp = self.arrays["dmp"]
+        alpha = self.arrays["_alpha_"]
         visualize = self.arrays["visualize"]
         buffer = self.arrays["buffer"]
 
@@ -1321,6 +1353,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             z,
             out=theta,
             dmp=dmp,
+            alpha=alpha,
             buffer=buffer,
             config=scheme.limiter_config,
         )
@@ -1577,7 +1610,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 "ZhangShuConfig."
             )
 
-        PAD_violations = self.arrays["buffer"][self.interior][..., 0]
+        PAD_violations = self.arrays["_PAD_violations_"][self.interior]
         MOOD.detect_PAD_violations(
             xp,
             self.primitives_from_conservatives(unew),

@@ -228,21 +228,20 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
     # allocate arrays
     u_old = arrays["_u_"]
-    u_old_interior = arrays["_u_"][interior]
     w_old = arrays["_w_"]
     u_new = arrays["buffer"][..., 0]
-    buffer = arrays["buffer"]
-    NAD_violations = buffer[..., 1][lim_slc]
-    PAD_violations = buffer[..., 2][interior]
-    alpha = buffer[..., 3:4][lim_slc]
-    buffer = buffer[..., 4:]
+    w_new = arrays["buffer"][..., 1]
+    dmp = arrays["dmp"][lim_slc]
+    _NAD_violations_ = arrays["_NAD_violations_"][lim_slc]
+    PAD_violations = arrays["_PAD_violations_"][interior]
+    _alpha_ = arrays["_alpha_"][lim_slc]
+    buffer = arrays["buffer"][..., 2:]
     troubles = arrays["troubles"]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
-    dmp = arrays["dmp"][lim_slc]
+    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
     visualize = arrays["visualize"][lim_slc]
     troubles_vis = arrays["troubles_vis"]
-    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
 
     # reset troubles / cascade index array
     troubles[...] = False
@@ -250,11 +249,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         _cascade_idx_array_[...] = 0
 
     # compute candidate solution
-    u_new_interior = u_old_interior + dt * fv_solver.compute_RHS()
-    u_new[interior] = u_new_interior
+    u_new[interior] = u_old[interior] + dt * fv_solver.compute_RHS()
     fv_solver.apply_bc(t, u_new, scheme=fv_solver.base_scheme)
-    w_new = fv_solver.primitives_from_conservatives(u_new)
-    w_new_interior = w_new[interior]
+    w_new[...] = fv_solver.primitives_from_conservatives(u_new)
 
     # compute NAD violations
     if NAD:
@@ -263,13 +260,14 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             (w_new if primitive_NAD else u_new)[lim_slc],
             (w_old if primitive_NAD else u_old)[lim_slc],
             active_dims,
-            out=NAD_violations,
+            out=_NAD_violations_,
             dmp=dmp,
             rtol=NAD_rtol,
             atol=NAD_atol,
             absolute_dmp=absolute_dmp,
             include_corners=include_corners,
         )
+        NAD_violations = _NAD_violations_[interior]
     else:
         # if not using NAD, still need DMP for visualization
         compute_dmp(
@@ -286,20 +284,19 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             xp,
             (w_new if primitive_NAD else u_new)[lim_slc],
             active_dims,
-            out=alpha,
+            out=_alpha_,
             buffer=buffer[lim_slc],
         )
-        troubles[lim_slc] = xp.logical_and(
-            NAD_violations[interior] < 0, alpha[..., 0][interior] < 1
-        )
+        alpha = _alpha_[..., 0][interior]
+        troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
     else:
-        troubles[lim_slc] = NAD_violations[interior] < 0
+        troubles[lim_slc] = NAD_violations < 0
 
     # compute PAD violations
     if PAD:
         detect_PAD_violations(
             xp,
-            w_new_interior,
+            w_new[interior],
             cast(ArrayLike, PAD_bounds),
             physical_tols=PAD_atol,
             out=PAD_violations,

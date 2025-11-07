@@ -8,4 +8,7 @@
 - [ ] compare Shu Osher test with other papers
 - [ ] print energy conservation
 - [ ] test interacting blast wave energy conservation
-- [ ] why does fulllazy increase error for MOOD?
+- [x] why does fulllazy increase error for MOOD?: greater P violations
+- [ ] unify array naming scheme `u` and `_u_`
+- [ ] increase buffer requirement for SED
+- [ ] move PAD and eta_max to base limiter_config class
