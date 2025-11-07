@@ -268,6 +268,21 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             include_corners=include_corners,
         )
         NAD_violations = _NAD_violations_[interior]
+
+        # compute smooth extrema
+        if SED:
+            smooth_extrema_detector(
+                xp,
+                (w_new if primitive_NAD else u_new)[lim_slc],
+                active_dims,
+                out=_alpha_,
+                buffer=buffer[lim_slc],
+            )
+            alpha = _alpha_[..., 0][interior]
+            troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
+        else:
+            troubles[lim_slc] = NAD_violations < 0
+
     else:
         # if not using NAD, still need DMP for visualization
         compute_dmp(
@@ -277,20 +292,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             out=dmp,
             include_corners=include_corners,
         )
-
-    # compute smooth extrema
-    if SED:
-        smooth_extrema_detector(
-            xp,
-            (w_new if primitive_NAD else u_new)[lim_slc],
-            active_dims,
-            out=_alpha_,
-            buffer=buffer[lim_slc],
-        )
-        alpha = _alpha_[..., 0][interior]
-        troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
-    else:
-        troubles[lim_slc] = NAD_violations < 0
 
     # compute PAD violations
     if PAD:

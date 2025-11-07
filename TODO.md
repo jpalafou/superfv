@@ -12,3 +12,4 @@
 - [ ] unify array naming scheme `u` and `_u_`
 - [ ] increase buffer requirement for SED
 - [ ] move PAD and eta_max to base limiter_config class
+- [ ] fix buffer size

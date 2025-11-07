@@ -110,12 +110,13 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
 @pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_theta(dims: str, SED: bool, include_corners: bool):
-    u, dmp_buffer, out = sample_data(dims, nout=1)
+    u, mega_buffer, out = sample_data(dims, nout=1)
     nodes, _, _ = sample_data(dims, nout=1)
     nodes = nodes[..., np.newaxis]
 
-    dmp = dmp_buffer[..., :2]
-    buffer = dmp_buffer[..., 2:]
+    dmp = mega_buffer[..., :2]
+    alpha = mega_buffer[..., 2:3]
+    buffer = mega_buffer[..., 3:]
 
     config = ZhangShuConfig(SED, False, 0, include_corners)
 
@@ -128,14 +129,14 @@ def test_compute_theta(dims: str, SED: bool, include_corners: bool):
         nodes if "z" in dims else None,
         out=out,
         dmp=dmp,
+        alpha=alpha,
         buffer=buffer,
         config=config,
     )
 
     assert not np.any(np.isnan(out[modified]))
-    if not SED:
-        out[modified] = np.nan
-        assert np.all(np.isnan(out))
+    out[modified] = np.nan
+    assert np.all(np.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

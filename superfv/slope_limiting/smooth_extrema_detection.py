@@ -57,6 +57,11 @@ def smooth_extrema_detector_1d(
     vl = buffer[..., 2]
     vr = buffer[..., 3]
 
+    # temporary arrays
+    alpha = xp.empty_like(out)
+    alpha_l = xp.empty_like(u)
+    alpha_r = xp.empty_like(u)
+
     # compute derivatives
     central_difference(u, axis, out=du)
     central_difference(du, axis, out=dv)
@@ -64,24 +69,22 @@ def smooth_extrema_detector_1d(
 
     # left detector
     vl[crop(axis, (1, -1))] = du[crop(axis, (None, -2))] - du[crop(axis, (1, -1))]
-    alpha_l = -xp.where(dv < 0, xp.maximum(vl, 0), xp.minimum(vl, 0)) / dv
-    alpha_l[...] = xp.minimum(alpha_l, 1)
+    alpha_l[...] = -xp.where(dv < 0, xp.maximum(vl, 0), xp.minimum(vl, 0)) / dv
 
     # right detector
     vr[crop(axis, (1, -1))] = du[crop(axis, (2, None))] - du[crop(axis, (1, -1))]
-    alpha_r = xp.where(dv > 0, xp.maximum(vr, 0), xp.minimum(vr, 0)) / dv
-    alpha_r[...] = xp.minimum(alpha_r, alpha_l)
+    alpha_r[...] = xp.where(dv > 0, xp.maximum(vr, 0), xp.minimum(vr, 0)) / dv
 
-    # take local minimum
-    out[..., 0] = xp.minimum(alpha_l, alpha_r)
+    # combine left and right detectors
+    alpha[..., 0] = xp.minimum(xp.minimum(alpha_l, alpha_r), 1.0)
 
     # take min of neighbors and return
     lft_slc = crop(axis, (2, -4), ndim=5)
     cen_slc = crop(axis, (3, -3), ndim=5)
     rgt_slc = crop(axis, (4, -2), ndim=5)
 
-    out[cen_slc] = xp.minimum(out[lft_slc], out[cen_slc])
-    out[cen_slc] = xp.minimum(out[rgt_slc], out[cen_slc])
+    out[cen_slc] = xp.minimum(alpha[lft_slc], alpha[cen_slc])
+    out[cen_slc] = xp.minimum(alpha[rgt_slc], out[cen_slc])
 
     modified = cast(Tuple[slice, ...], replace_slice(cen_slc, 4, slice(None, 1)))
     return modified

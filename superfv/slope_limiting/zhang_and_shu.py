@@ -118,6 +118,9 @@ def compute_theta(
     node_mp = buffer[..., :2]
     alpha_buf = buffer[..., 2:]
 
+    # temporary arrays
+    theta = xp.empty_like(out)
+
     # compute discrete maximum principle
     active_dims = tuple(
         cast(Literal["x", "y", "z"], dim)
@@ -142,7 +145,7 @@ def compute_theta(
     M = dmp[..., 1]
     mj = node_mp[..., 0]
     Mj = node_mp[..., 1]
-    out[..., 0] = xp.minimum(
+    theta[..., 0] = xp.minimum(
         xp.minimum(
             xp.divide(xp.abs(M - u), xp.abs(Mj - u) + tol),
             xp.divide(xp.abs(m - u), xp.abs(mj - u) + tol),
@@ -159,8 +162,9 @@ def compute_theta(
             out=alpha,
             buffer=alpha_buf,
         )
-        out[modified] = xp.where(alpha[modified] < 1, out[modified], 1)
+        out[modified] = xp.where(alpha[modified] < 1, theta[modified], 1)
     else:
+        out[...] = theta
         modified = cast(Tuple[slice, ...], replace_slice(dmp_modified, 4, slice(0, 1)))
 
     return modified
