@@ -43,52 +43,36 @@ configs = {
     #     PAD={"rho": (0, None), "P": (0, None)},
     #     SED=True,
     # ),
-    "MM3, atol=1e-8": dict(
+    "MM3-nolazy": dict(
         riemann_solver="hllc",
         p=3,
         flux_recipe=2,
         lazy_primitives="none",
         MOOD=True,
-        limiting_vars=("rho",),
+        limiting_vars="actives",
         cascade="muscl",
         MUSCL_limiter="moncen",
         max_MOOD_iters=1,
         blend=True,
         NAD=True,
         NAD_rtol=1e-2,
-        NAD_atol=1e-8,
+        NAD_atol=1e-3,
         SED=True,
     ),
-    "MM3, atol=1e-6": dict(
+    "MM3-fulllazy": dict(
         riemann_solver="hllc",
         p=3,
         flux_recipe=2,
-        lazy_primitives="none",
+        lazy_primitives="full",
         MOOD=True,
-        limiting_vars=("rho",),
+        limiting_vars="actives",
         cascade="muscl",
         MUSCL_limiter="moncen",
         max_MOOD_iters=1,
         blend=True,
         NAD=True,
         NAD_rtol=1e-2,
-        NAD_atol=1e-6,
-        SED=True,
-    ),
-    "MM3, atol=1e-5": dict(
-        riemann_solver="hllc",
-        p=3,
-        flux_recipe=2,
-        lazy_primitives="none",
-        MOOD=True,
-        limiting_vars=("rho",),
-        cascade="muscl",
-        MUSCL_limiter="moncen",
-        max_MOOD_iters=1,
-        blend=True,
-        NAD=True,
-        NAD_rtol=1e-2,
-        NAD_atol=1e-5,
+        NAD_atol=1e-3,
         SED=True,
     ),
     # "MM7": dict(
@@ -139,7 +123,7 @@ df = pd.DataFrame(data)
 
 # plot error curves of p over N
 fig, ax = plt.subplots(figsize=(11, 8.5))
-ax.set_title("Nonlinear sound wave error convergence")
+ax.set_title("Entropy wave convergence")
 ax.set_xlabel("N")
 ax.set_ylabel("Linf error")
 ax.set_xscale("log", base=2)

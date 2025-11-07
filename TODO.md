@@ -1,9 +1,11 @@
 - [ ] Gresho Vortex from David sequel paper. demonstrate value of high-order
-- [x] adaptively fall back to w0 or wp in the Zhang-Shu limiter
 - [ ] evolve trouble/theta as passive scalars using Runge-Kutta methods instead of taking the average across substeps
 - [ ] do i need all those step log element copies? can't i just copy the step log at the top?
 - [ ] can the solver args be organized?
 - [ ] refactor `_compute_buffer_size`
 - [ ] improve performance of shock detection
 - [ ] a posteriori is not high-order for the entropy wave problem
-- [x] MOOD.py: `dmp[lim_slc]` should be dmp on line 267
+- [ ] compare Shu Osher test with other papers
+- [ ] print energy conservation
+- [ ] test interacting blast wave energy conservation
+- [ ] why does fulllazy increase error for MOOD?

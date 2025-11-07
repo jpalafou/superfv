@@ -1,8 +1,9 @@
-from typing import Any, Literal, Tuple, cast
+from types import ModuleType
+from typing import Literal, Tuple, cast
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, insert_slice, merge_slices
+from superfv.tools.slicing import crop, merge_slices, replace_slice
 from superfv.tools.stability import avoid0
 
 
@@ -15,11 +16,13 @@ def central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
         axis: Axis along which to compute the central difference.
         out: Array to which the output is assigned.
     """
-    out[crop(axis, (1, -1))] = 0.5 * (u[crop(axis, (2, 0))] - u[crop(axis, (0, -2))])
+    out[crop(axis, (1, -1))] = 0.5 * (
+        u[crop(axis, (2, None))] - u[crop(axis, (None, -2))]
+    )
 
 
-def smooth_extema_detector_1d(
-    xp: Any,
+def smooth_extrema_detector_1d(
+    xp: ModuleType,
     u: ArrayLike,
     dim: Literal["x", "y", "z"],
     buffer: ArrayLike,
@@ -60,32 +63,32 @@ def smooth_extema_detector_1d(
     dv[...] = avoid0(xp, 0.5 * dv, eps)
 
     # left detector
-    vl[crop(axis, (1, -1))] = du[crop(axis, (0, -2))] - du[crop(axis, (1, -1))]
+    vl[crop(axis, (1, -1))] = du[crop(axis, (None, -2))] - du[crop(axis, (1, -1))]
     alpha_l = -xp.where(dv < 0, xp.maximum(vl, 0), xp.minimum(vl, 0)) / dv
     alpha_l[...] = xp.minimum(alpha_l, 1)
 
     # right detector
-    vr[crop(axis, (1, -1))] = du[crop(axis, (2, 0))] - du[crop(axis, (1, -1))]
+    vr[crop(axis, (1, -1))] = du[crop(axis, (2, None))] - du[crop(axis, (1, -1))]
     alpha_r = xp.where(dv > 0, xp.maximum(vr, 0), xp.minimum(vr, 0)) / dv
     alpha_r[...] = xp.minimum(alpha_r, alpha_l)
 
     # take local minimum
-    alpha = xp.minimum(alpha_l, alpha_r)
+    out[..., 0] = xp.minimum(alpha_l, alpha_r)
 
     # take min of neighbors and return
-    lft_slc = crop(axis, (2, -4), ndim=4)
-    cen_slc = crop(axis, (3, -3), ndim=4)
-    rgt_slc = crop(axis, (4, -2), ndim=4)
-    modified0 = insert_slice(cen_slc, 4, 0)
-    modified = cast(Tuple[slice, ...], insert_slice(cen_slc, 4, slice(None, 1)))
+    lft_slc = crop(axis, (2, -4), ndim=5)
+    cen_slc = crop(axis, (3, -3), ndim=5)
+    rgt_slc = crop(axis, (4, -2), ndim=5)
 
-    out[modified0] = xp.minimum(alpha[lft_slc], alpha[cen_slc])
-    out[modified0] = xp.minimum(alpha[cen_slc], alpha[rgt_slc])
+    out[cen_slc] = xp.minimum(out[lft_slc], out[cen_slc])
+    out[cen_slc] = xp.minimum(out[rgt_slc], out[cen_slc])
+
+    modified = cast(Tuple[slice, ...], replace_slice(cen_slc, 4, slice(None, 1)))
     return modified
 
 
 def smooth_extema_detector_2d(
-    xp: Any,
+    xp: ModuleType,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     buffer: ArrayLike,
@@ -115,10 +118,10 @@ def smooth_extema_detector_2d(
     alpha_dim1 = buffer[..., 4:5]
     alpha_dim2 = buffer[..., 5:6]
 
-    modified1 = smooth_extema_detector_1d(
+    modified1 = smooth_extrema_detector_1d(
         xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
     )
-    modified2 = smooth_extema_detector_1d(
+    modified2 = smooth_extrema_detector_1d(
         xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
     )
 
@@ -129,7 +132,7 @@ def smooth_extema_detector_2d(
 
 
 def smooth_extema_detector_3d(
-    xp: Any,
+    xp: ModuleType,
     u: ArrayLike,
     buffer: ArrayLike,
     *,
@@ -159,13 +162,13 @@ def smooth_extema_detector_3d(
     alpha_dim2 = buffer[..., 5:6]
     alpha_dim3 = buffer[..., 6:7]
 
-    modified1 = smooth_extema_detector_1d(
+    modified1 = smooth_extrema_detector_1d(
         xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
     )
-    modified2 = smooth_extema_detector_1d(
+    modified2 = smooth_extrema_detector_1d(
         xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
     )
-    modified3 = smooth_extema_detector_1d(
+    modified3 = smooth_extrema_detector_1d(
         xp, u, dim3, buffer[..., :4], out=alpha_dim3, eps=eps
     )
 
@@ -177,7 +180,7 @@ def smooth_extema_detector_3d(
 
 
 def smooth_extrema_detector(
-    xp: Any,
+    xp: ModuleType,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
@@ -206,7 +209,7 @@ def smooth_extrema_detector(
 
     """
     if len(active_dims) == 1:
-        return smooth_extema_detector_1d(
+        return smooth_extrema_detector_1d(
             xp, u, active_dims[0], buffer, out=out, eps=eps
         )
     elif len(active_dims) == 2:

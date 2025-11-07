@@ -590,7 +590,7 @@ def plot_spacetime(
     overlay_troubles: bool = False,
     troubles_cmap: str = "Reds",
     troubles_alpha: float = 0.5,
-    tlabel: bool = True,
+    tlabel: bool = False,
     xlabel: bool = False,
     **kwargs,
 ) -> Tuple[Union[AxesImage, QuadContourSet], Optional[Colorbar]]:
