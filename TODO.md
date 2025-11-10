@@ -6,9 +6,6 @@
 - [ ] improve performance of shock detection
 - [ ] a posteriori is not high-order for the entropy wave problem
 - [ ] compare Shu Osher test with other papers
-- [ ] print energy conservation
-- [ ] test interacting blast wave energy conservation
+- [x] print energy conservation
 - [ ] unify array naming scheme `u` and `_u_`
-- [x] increase buffer requirement for SED
 - [ ] move PAD and eta_max to base limiter_config class
-- [x] fix buffer size

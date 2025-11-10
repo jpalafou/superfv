@@ -312,40 +312,33 @@ class EulerSolver(FiniteVolumeSolver):
 
     def log_quantity(self) -> Dict[str, float]:
         """
-        Log the minimum density and pressure.
+        Log the global physical scalars.
 
         Returns:
-            Dictionary with the following keys:
-            - "min_rho": Minimum density.
-            - "max_rho": Maximum density.
-            - "min_P": Minimum pressure.
-            - "max_P": Maximum pressure.
-            - "total_rho": Total density.
-            - "total_E": Total energy.
+            Dictionary of global physical scalars with the following keys:
+            - "rho_min": Minimum cell-averaged density.
+            - "rho_max": Maximum cell-averaged density.
+            - "P_min": Minimum cell-averaged pressure.
+            - "P_max": Maximum cell-averaged pressure.
+            - "rho_total": Total density.
+            - "E_total": Total energy.
+            - "E_cons": Absolute energy conservation error.
         """
-        min_rho, max_rho, min_P, max_P, total_rho, total_E = self.get_physical_scalars()
+        return self.get_physical_scalars()
 
-        return {
-            "min_rho": min_rho,
-            "max_rho": max_rho,
-            "min_P": min_P,
-            "max_P": max_P,
-            "total_rho": total_rho,
-            "total_E": total_E,
-        }
-
-    def get_physical_scalars(self) -> Tuple[float, float, float, float, float, float]:
+    def get_physical_scalars(self) -> Dict[str, float]:
         """
-        Compute global physical scalars from the "_w_" array.
+        Compute global physical scalars from the "u" and "w" arrays.
 
         Returns:
-            Tuple of global physical scalars:
-            - min_rho: Minimum density.
-            - max_rho: Maximum density.
-            - min_P: Minimum pressure.
-            - max_P: Maximum pressure.
-            - total_rho: Total density.
-            - total_E: Total energy.
+            Dictionary of global physical scalars with the following keys:
+            - "rho_min": Minimum cell-averaged density.
+            - "rho_max": Maximum cell-averaged density.
+            - "P_min": Minimum cell-averaged pressure.
+            - "P_max": Maximum cell-averaged pressure.
+            - "rho_total": Total density.
+            - "E_total": Total energy.
+            - "E_cons": Absolute energy conservation error.
         """
         idx = self.variable_index_map
         interior = self.interior
@@ -353,14 +346,28 @@ class EulerSolver(FiniteVolumeSolver):
         u = self.arrays["_u_"][interior]
         w = self.arrays["_w_"][interior]
 
-        min_rho = u[idx("rho")].min().item()
-        max_rho = u[idx("rho")].max().item()
-        min_P = w[idx("P")].min().item()
-        max_P = w[idx("P")].max().item()
-        total_rho = u[idx("rho")].sum().item()
-        total_E = u[idx("E")].sum().item()
+        rho_min = u[idx("rho")].min().item()
+        rho_max = u[idx("rho")].max().item()
+        P_min = w[idx("P")].min().item()
+        P_max = w[idx("P")].max().item()
+        rho_total = u[idx("rho")].sum().item()
+        E_total = u[idx("E")].sum().item()
 
-        return min_rho, max_rho, min_P, max_P, total_rho, total_E
+        if self.n_steps == 0:
+            E_cons = 0.0
+        else:
+            E_cons = abs(E_total - self.minisnapshots["E_total"][0])
+
+        scalar_packet = {
+            "rho_min": rho_min,
+            "rho_max": rho_max,
+            "P_min": P_min,
+            "P_max": P_max,
+            "rho_total": rho_total,
+            "E_total": E_total,
+            "E_cons": E_cons,
+        }
+        return scalar_packet
 
     @MethodTimer(cat="compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
@@ -523,10 +530,16 @@ class EulerSolver(FiniteVolumeSolver):
         Build the update message for the FV solver, including the minimum density and
         pressure.
         """
-        min_rho, _, min_P, _, _, _ = self.get_physical_scalars()
+        scalar_packet = self.get_physical_scalars()
+
+        rho_min = scalar_packet["rho_min"]
+        P_min = scalar_packet["P_min"]
+        E_cons = scalar_packet["E_cons"]
 
         message = super().build_update_message()
-        message += f" | min(rho)={min_rho:.2e}, min(P)={min_P:.2e}"
+        message += (
+            f" | min(rho)={rho_min:.2e}, min(P)={P_min:.2e} | E_cons={E_cons:.2e}"
+        )
 
         return message
 
