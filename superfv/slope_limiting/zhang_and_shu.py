@@ -251,9 +251,9 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     step_log = fv_solver.step_log  # gets mutated
 
     # allocate arrays
-    theta = arrays["theta"][interior][..., 0]
-    theta_vis = arrays["theta_vis"]
-    buffer = arrays["buffer"]
+    theta = arrays["_theta_"][interior][..., 0]
+    buffer = arrays["_buffer_"]
+    theta_vis = arrays["theta_vis"]  # has no ghost cells
 
     if nvars < 4:
         raise ValueError(

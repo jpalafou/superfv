@@ -276,8 +276,8 @@ class AdvectionSolver(FiniteVolumeSolver):
 
         Returns:
             Dictionary with the following keys:
-            - "min_rho": Minimum density in the domain.
-            - "max_rho": Maximum density in the domain.
+            - "rho_min": Minimum density in the domain.
+            - "rho_max": Maximum density in the domain.
         """
         idx = self.variable_index_map
 
@@ -285,8 +285,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         max_rho = self.arrays["u"][idx("rho")].max().item()
 
         return {
-            "min_rho": min_rho,
-            "max_rho": max_rho,
+            "rho_min": min_rho,
+            "rho_max": max_rho,
         }
 
     @MethodTimer(cat="compute_dt")

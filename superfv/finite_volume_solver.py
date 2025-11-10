@@ -907,25 +907,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("buffer", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
-        arrays.add("x_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("y_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("z_nodes", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("centroid", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("F_wrkspce", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
-        arrays.add("G_wrkspce", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
-        arrays.add("H_wrkspce", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
-
-        # Lazy primitive array
-        arrays.add("theta_for_shocks", np.ones((1, _nx_, _ny_, _nz_)))
+        arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
+        arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
+        arrays.add("_centroid_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
+        arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
+        arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
         # General slope-limiting arrays
-        arrays.add("dmp", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
-        arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
+        arrays.add("_dmp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_eta_", np.ones((1, _nx_, _ny_, _nz_)))
+
+        # Visualization array
+        arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
 
         # Zhang-Shu limiter arrays
-        arrays.add("theta", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("theta_vis", np.ones((nvars, nx, ny, nz)))
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
         arrays.add("theta_vis_log", np.ones((nvars, nx, ny, nz)))
@@ -976,7 +976,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ) -> int:
         """
         Compute the required buffer size, which is the length along the fifth axis of
-        the "buffer", for the given interpolation scheme.
+        the "_buffer_", for the given interpolation scheme.
 
         Args:
             scheme: Interpolation scheme.
@@ -1212,25 +1212,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _ucc_ = arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = arrays["_wcc_"]  # shape (..., 1)
         _w_ = arrays["_w_"]  # shape (..., 1)
-        _theta_for_shocks_ = arrays["theta_for_shocks"]
+        _eta_ = arrays["_eta_"]
         _PAD_violations_ = arrays["_PAD_violations_"]
         _any_PAD_violations_ = arrays["_any_troubles_"]
 
-        check_buffer_slots(arrays["buffer"], required=1)
-        _wp_ = arrays["buffer"][..., :1]
-        buffer = arrays["buffer"][..., 1:]
+        check_buffer_slots(arrays["_buffer_"], required=1)
+        _wp_ = arrays["_buffer_"][..., :1]
+        _buff_ = arrays["_buffer_"][..., 1:]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
         self.apply_bc(t, _u_, scheme=scheme)
 
         # 1) conservative and primitive centroids
-        fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=buffer)
+        fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=_buff_)
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
         # 2) primitive FV averages
         if lazy_primitives == "none":
-            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
+            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=_buff_)
             _w_[...] = _wp_[..., 0]
         elif lazy_primitives == "full":
             _w_[...] = self.primitives_from_conservatives(_u_)
@@ -1244,16 +1244,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     "Adaptive lazy primitives require eta_max to be set in the scheme."
                 )
 
-            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=buffer)
+            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=_buff_)
             _w_[...] = self.primitives_from_conservatives(_u_)
 
             compute_shock_detector(
-                xp,
-                _w_,
-                active_dims,
-                scheme.eta_max,
-                out=_theta_for_shocks_,
-                buffer=buffer,
+                xp, _w_, active_dims, scheme.eta_max, out=_eta_, buffer=_buff_
             )
 
             if "PAD_bounds" in self.arrays:
@@ -1278,12 +1273,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
                 _w_[...] = xp.where(
-                    xp.logical_and(_theta_for_shocks_, _any_PAD_violations_ >= 0),
+                    xp.logical_and(_eta_, _any_PAD_violations_ >= 0),
                     _wp_[..., 0],
                     _w_,
                 )
             else:
-                _w_[...] = xp.where(_theta_for_shocks_, _wp_[..., 0], _w_)
+                _w_[...] = xp.where(_eta_, _wp_[..., 0], _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
@@ -1350,8 +1345,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
         adims = self.active_dims
 
-        out = self.arrays[dim + "_nodes"]
-        buffer = self.arrays["buffer"]
+        out = self.arrays[f"_{dim}_nodes_"]
+        buffer = self.arrays["_buffer_"]
 
         # perform interpolation
         p = scheme.p
@@ -1386,26 +1381,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         interior = self.interior
 
         # define array references
-        average = self.arrays["_w_"] if primitives else self.arrays["_u_"]
-        centroid = self.arrays["_wcc_"] if primitives else self.arrays["_ucc_"]
-        x = self.arrays["x_nodes"] if mesh.x_is_active else None
-        y = self.arrays["y_nodes"] if mesh.y_is_active else None
-        z = self.arrays["z_nodes"] if mesh.z_is_active else None
-        theta = self.arrays["theta"]
-        theta_vis = self.arrays["theta_vis"]
-        dmp = self.arrays["dmp"]
+        w = self.arrays["_w_"] if primitives else self.arrays["_u_"]
+        wcc = self.arrays["_wcc_"] if primitives else self.arrays["_ucc_"]
+        wx = self.arrays["_x_nodes_"] if mesh.x_is_active else None
+        wy = self.arrays["_y_nodes_"] if mesh.y_is_active else None
+        wz = self.arrays["_z_nodes_"] if mesh.z_is_active else None
+        theta = self.arrays["_theta_"]
+        dmp = self.arrays["_dmp_"]
         alpha = self.arrays["_alpha_"]
+        buffer = self.arrays["_buffer_"]
+        theta_vis = self.arrays["theta_vis"]
         visualize = self.arrays["visualize"]
-        buffer = self.arrays["buffer"]
 
         # compute centroid and theta
         compute_theta(
             xp,
-            average,
-            centroid,
-            x,
-            y,
-            z,
+            w,
+            wcc,
+            wx,
+            wy,
+            wz,
             out=theta,
             dmp=dmp,
             alpha=alpha,
@@ -1414,12 +1409,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         # limit the face nodes
-        if x is not None:
-            x[...] = zhang_shu_operator(x, average[..., np.newaxis], theta)
-        if y is not None:
-            y[...] = zhang_shu_operator(y, average[..., np.newaxis], theta)
-        if z is not None:
-            z[...] = zhang_shu_operator(z, average[..., np.newaxis], theta)
+        if wx is not None:
+            wx[...] = zhang_shu_operator(wx, w[..., np.newaxis], theta)
+        if wy is not None:
+            wy[...] = zhang_shu_operator(wy, w[..., np.newaxis], theta)
+        if wz is not None:
+            wz[...] = zhang_shu_operator(wz, w[..., np.newaxis], theta)
 
         # compute theta for visualization (ignore cells with small dmp ranges)
         compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
@@ -1448,12 +1443,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pad = getattr(self.mesh, f"{dim}_slab_depth")
         axis = DIM_TO_AXIS[dim]
         flux_name = self.flux_names[dim]
-        flux_workspace_name = flux_name + "_wrkspce"
 
-        out = self.arrays[flux_name]
-        flux_workspace = self.arrays[flux_workspace_name]
+        flux_name = self.flux_names[dim]
+        F = self.arrays[flux_name]
+        _F_ = self.arrays[f"_{flux_name}_"]
 
-        nodes = self.arrays[dim + "_nodes"]
+        nodes = self.arrays[f"_{dim}_nodes_"]
 
         # convert to primitives if requested
         if convert_to_primitives:
@@ -1468,7 +1463,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # perform the integration
         if self.mesh.ndim == 1:
-            flux_workspace[...] = left_state
+            _F_[...] = left_state
         else:
             if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
                 fv.integrate_GaussLegendre_nodes(
@@ -1477,7 +1472,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     dim,
                     self.active_dims,
                     scheme.p,
-                    out=flux_workspace[..., 0],
+                    out=_F_[..., 0],
                 )
             elif isinstance(
                 scheme, (polyInterpolationScheme, musclInterpolationScheme)
@@ -1488,7 +1483,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     dim,
                     self.active_dims,
                     scheme.p,
-                    out=flux_workspace,
+                    out=_F_,
                     buffer=right_state,
                 )
             else:
@@ -1497,7 +1492,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     "Expected polyInterpolationScheme or musclInterpolationScheme."
                 )
 
-        out[...] = flux_workspace[self.flux_interior[dim]][..., 0]
+        F[...] = _F_[self.flux_interior[dim]][..., 0]
 
     def compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """
@@ -1815,7 +1810,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.n_updates += self.mesh.size
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            theta = self.arrays["theta"][self.interior][..., 0]
+            theta = self.arrays["_theta_"][self.interior][..., 0]
             theta_vis = self.arrays["theta_vis"]
             theta_log = self.arrays["theta_log"]
             theta_vis_log = self.arrays["theta_vis_log"]
@@ -2076,8 +2071,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dt: The time step size (required if hancock is True).
 
         Notes:
-            - "buffer" array has different shape requirements depending on whether SED
-            is used and the number (length) of active dimensions:
+            - "_buffer_" array has different shape requirements depending on whether
+            SED is used and the number (length) of active dimensions:
                 - without SED: (nvars, nx, ny, nz, >=4)
                 - with SED, 1D: (nvars, nx, ny, nz, >=11)
                 - with SED, 2D: (nvars, nx, ny, nz, >=13)
@@ -2089,18 +2084,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays = self.arrays
 
         # allocate arrays
-        x_nodes = arrays["x_nodes"]
-        y_nodes = arrays["y_nodes"]
-        z_nodes = arrays["z_nodes"]
-        w_center = arrays["_w_"] if limit_primitives else arrays["_u_"]
+        wx = arrays["_x_nodes_"]
+        wy = arrays["_y_nodes_"]
+        wz = arrays["_z_nodes_"]
+        wcc = arrays["_w_"] if limit_primitives else arrays["_u_"]
         alpha = arrays["_alpha_"]
 
-        check_buffer_slots(arrays["buffer"], required=4)
-        dwx = arrays["buffer"][..., 0:1]
-        dwy = arrays["buffer"][..., 1:2]
-        dwz = arrays["buffer"][..., 2:3]
-        w_center_for_nodes = arrays["buffer"][..., 3]
-        buffer = arrays["buffer"][..., 4:]
+        check_buffer_slots(arrays["_buffer_"], required=4)
+        dwx = arrays["_buffer_"][..., 0:1]
+        dwy = arrays["_buffer_"][..., 1:2]
+        dwz = arrays["_buffer_"][..., 2:3]
+        wcc_for_nodes = arrays["_buffer_"][..., 3]
+        lim_buff = arrays["_buffer_"][..., 4:]
 
         # compute limited slopes
         if scheme.limiter_config.limiter == "PP2D":
@@ -2109,11 +2104,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             compute_PP2D_slopes(
                 xp,
-                w_center,
+                wcc,
                 active_dims,
                 Sx=dw1,
                 Sy=dw2,
-                buffer=buffer,
+                buffer=lim_buff,
                 alpha=alpha,
                 SED=scheme.limiter_config.SED,
             )
@@ -2123,11 +2118,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     continue
                 compute_limited_slopes(
                     xp,
-                    w_center,
+                    wcc,
                     dim,
                     active_dims,
                     out=slope_arr,
-                    buffer=buffer,
+                    buffer=lim_buff,
                     alpha=alpha,
                     limiter=scheme.limiter_config.limiter,
                     SED=scheme.limiter_config.SED,
@@ -2140,26 +2135,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     "dt must be provided for MUSCL-Hancock reconstruction."
                 )
 
-            w_center_for_nodes[...] = w_center
+            wcc_for_nodes[...] = wcc
             for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
                 if dim not in active_dims:
                     continue
                 h = getattr(mesh, "h" + dim)
                 ds = self.flux_jvp(
-                    w_center, slope_arr[..., 0], dim, primitives=limit_primitives
+                    wcc, slope_arr[..., 0], dim, primitives=limit_primitives
                 )
-                w_center_for_nodes[...] -= ds * dt / 2 / h
+                wcc_for_nodes[...] -= ds * dt / 2 / h
         else:
-            w_center_for_nodes[...] = w_center
+            wcc_for_nodes[...] = wcc
 
         # update the face nodes using the limited slopes
-        for node_arr, slope_arr, dim in zip(
-            [x_nodes, y_nodes, z_nodes], [dwx, dwy, dwz], xyz_tup
-        ):
+        for node_arr, slope_arr, dim in zip([wx, wy, wz], [dwx, dwy, dwz], xyz_tup):
             if dim not in active_dims:
                 continue
-            node_arr[..., 0] = w_center_for_nodes - slope_arr[..., 0] / 2
-            node_arr[..., 1] = w_center_for_nodes + slope_arr[..., 0] / 2
+            node_arr[..., 0] = wcc_for_nodes - slope_arr[..., 0] / 2
+            node_arr[..., 1] = wcc_for_nodes + slope_arr[..., 0] / 2
 
     def reduce_CFL(self, q: int):
         """

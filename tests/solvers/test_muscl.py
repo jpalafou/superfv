@@ -139,8 +139,8 @@ def test_advection_of_a_1d_square(limiter: str, dim: str, predictor_corrector: b
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
-    assert np.min(sim.minisnapshots["min_rho"]) >= 0
-    assert np.min(sim.minisnapshots["max_rho"]) <= 1
+    assert np.min(sim.minisnapshots["rho_min"]) >= 0
+    assert np.min(sim.minisnapshots["rho_max"]) <= 1
 
 
 @pytest.mark.parametrize("limiter", ["minmod", "PP2D"])
@@ -168,8 +168,8 @@ def test_advection_of_a_2d_square(
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
-    assert np.min(sim.minisnapshots["min_rho"]) >= -1e-15
-    assert np.min(sim.minisnapshots["max_rho"]) <= 1 + 1e-15
+    assert np.min(sim.minisnapshots["rho_min"]) >= -1e-15
+    assert np.min(sim.minisnapshots["rho_max"]) <= 1 + 1e-15
 
 
 @pytest.mark.parametrize("limiter", ["minmod"])
@@ -191,8 +191,8 @@ def test_advection_of_a_3d_square(limiter: str, predictor_corrector: bool):
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
-    assert np.min(sim.minisnapshots["min_rho"]) >= -1e-15
-    assert np.min(sim.minisnapshots["max_rho"]) <= 1 + 1e-15
+    assert np.min(sim.minisnapshots["rho_min"]) >= -1e-15
+    assert np.min(sim.minisnapshots["rho_max"]) <= 1 + 1e-15
 
 
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
@@ -217,7 +217,7 @@ def test_hydro_advection_of_a_1d_square(
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
-    assert np.min(sim.minisnapshots["min_rho"]) >= 1e-5 + (-1e-15)
+    assert np.min(sim.minisnapshots["rho_min"]) >= 1e-5 + (-1e-15)
 
 
 @pytest.mark.parametrize("limiter", ["minmod", "PP2D"])
@@ -254,7 +254,7 @@ def test_hydro_advection_of_a_2d_square(
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
-    assert np.min(sim.minisnapshots["min_rho"]) >= 1e-5 + (-1e-15)
+    assert np.min(sim.minisnapshots["rho_min"]) >= 1e-5 + (-1e-15)
 
 
 @pytest.mark.parametrize("limiter", ["minmod"])
@@ -278,4 +278,4 @@ def test_hydro_advection_of_a_3d_square(limiter: str, predictor_corrector: bool)
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
-    assert np.min(sim.minisnapshots["min_rho"]) >= 1e-5 + (-1e-15)
+    assert np.min(sim.minisnapshots["rho_min"]) >= 1e-5 + (-1e-15)

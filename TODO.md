@@ -6,6 +6,5 @@
 - [ ] improve performance of shock detection
 - [ ] a posteriori is not high-order for the entropy wave problem
 - [ ] compare Shu Osher test with other papers
-- [x] print energy conservation
-- [ ] unify array naming scheme `u` and `_u_`
+- [x] unify array naming scheme `u` and `_u_`
 - [ ] move PAD and eta_max to base limiter_config class

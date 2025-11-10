@@ -233,19 +233,20 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     max_idx = len(cascade) - 1
 
     # allocate arrays
-    u_old = arrays["_u_"]
-    w_old = arrays["_w_"]
-    u_new = arrays["buffer"][..., 0]
-    w_new = arrays["buffer"][..., 1]
-    dmp = arrays["dmp"][lim_slc]
+    check_buffer_slots(arrays["_buffer_"], required=2)
+    _u_old_ = arrays["_u_"]
+    _w_old_ = arrays["_w_"]
+    _u_new_ = arrays["_buffer_"][..., 0]
+    _w_new_ = arrays["_buffer_"][..., 1]
+    _dmp_ = arrays["_dmp_"][lim_slc]
     _NAD_violations_ = arrays["_NAD_violations_"][lim_slc]
-    PAD_violations = arrays["_PAD_violations_"][interior]
     _alpha_ = arrays["_alpha_"][lim_slc]
-    abuff = arrays["buffer"][..., 2:]
-    troubles = arrays["troubles"]
+    _abuff_ = arrays["_buffer_"][..., 2:][lim_slc]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
+    PAD_violations = arrays["_PAD_violations_"][interior]
+    troubles = arrays["troubles"]
     visualize = arrays["visualize"][lim_slc]
     troubles_vis = arrays["troubles_vis"]
 
@@ -255,19 +256,19 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         _cascade_idx_array_[...] = 0
 
     # compute candidate solution
-    u_new[interior] = u_old[interior] + dt * fv_solver.compute_RHS()
-    fv_solver.apply_bc(t, u_new, scheme=fv_solver.base_scheme)
-    w_new[...] = fv_solver.primitives_from_conservatives(u_new)
+    _u_new_[interior] = _u_old_[interior] + dt * fv_solver.compute_RHS()
+    fv_solver.apply_bc(t, _u_new_, scheme=fv_solver.base_scheme)
+    _w_new_[...] = fv_solver.primitives_from_conservatives(_u_new_)
 
     # compute NAD violations
     if NAD:
         detect_NAD_violations(
             xp,
-            (w_new if primitive_NAD else u_new)[lim_slc],
-            (w_old if primitive_NAD else u_old)[lim_slc],
+            (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
+            (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
             active_dims,
             out=_NAD_violations_,
-            dmp=dmp,
+            dmp=_dmp_,
             rtol=NAD_rtol,
             atol=NAD_atol,
             absolute_dmp=absolute_dmp,
@@ -279,10 +280,10 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         if SED:
             smooth_extrema_detector(
                 xp,
-                (w_new if primitive_NAD else u_new)[lim_slc],
+                (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
                 active_dims,
                 out=_alpha_,
-                buffer=abuff[lim_slc],
+                buffer=_abuff_,
             )
             alpha = _alpha_[..., 0][interior]
             troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
@@ -293,9 +294,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         # if not using NAD, still need DMP for visualization
         compute_dmp(
             xp,
-            (w_old if primitive_NAD else u_old)[lim_slc],
+            (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
             active_dims,
-            out=dmp,
+            out=_dmp_,
             include_corners=include_corners,
         )
 
@@ -303,7 +304,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     if PAD:
         detect_PAD_violations(
             xp,
-            w_new[interior],
+            _w_new_[interior],
             cast(ArrayLike, PAD_bounds),
             physical_tols=PAD_atol,
             out=PAD_violations,
@@ -351,7 +352,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
     # determine which troubled cells should be visualized
     troubles_vis[...] = troubles
-    compute_vis(xp, dmp[interior], vis_rtol, vis_atol, out=visualize)
+    compute_vis(xp, _dmp_[interior], vis_rtol, vis_atol, out=visualize)
     troubles_vis[lim_slc] = xp.where(visualize, troubles[lim_slc], False)
 
     return n_revisable_troubled_cells, n_troubled_cells
@@ -495,9 +496,9 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     F = arrays["F"]
     G = arrays["G"]
     H = arrays["H"]
-    F_mask = arrays["_mask_"][:, :, :-1, :-1]
-    G_mask = arrays["_mask_"][:, :-1, :, :-1]
-    H_mask = arrays["_mask_"][:, :-1, :-1, :]
+    _Fmask_ = arrays["_mask_"][:, :, :-1, :-1]
+    _Gmask_ = arrays["_mask_"][:, :-1, :, :-1]
+    _Hmask_ = arrays["_mask_"][:, :-1, :-1, :]
     _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
 
@@ -521,23 +522,23 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=_Fmask_)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
-            mask = F_mask[interior] == i
+            mask = _Fmask_[interior] == i
             xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=_Gmask_)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
-            mask = G_mask[interior] == i
+            mask = _Gmask_[interior] == i
             xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=_Hmask_)
         for i, scheme in enumerate(cascade[: (current_max_idx + 1)]):
-            mask = H_mask[interior] == i
+            mask = _Hmask_[interior] == i
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
 
 
@@ -570,13 +571,13 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     F = arrays["F"]
     G = arrays["G"]
     H = arrays["H"]
-    F_mask = arrays["_fmask_"][:, :, :-1, :-1]
-    G_mask = arrays["_fmask_"][:, :-1, :, :-1]
-    H_mask = arrays["_fmask_"][:, :-1, :-1, :]
+    _Fmask_ = arrays["_fmask_"][:, :, :-1, :-1]
+    _Gmask_ = arrays["_fmask_"][:, :-1, :, :-1]
+    _Hmask_ = arrays["_fmask_"][:, :-1, :-1, :]
     _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_array_ = arrays["_cascade_idx_array_"]
     _blended_cascade_idx_array_ = arrays["_blended_cascade_idx_array_"]
-    troubles_buffer = arrays["buffer"][:1, ..., 1:]
+    _troubles_buffer_ = arrays["_buffer_"][:1, ..., 1:]
 
     # assuming `troubles` has just been updated, update the cascade index array
     xp.minimum(_cascade_idx_array_ + _any_troubles_, 1, out=_cascade_idx_array_)
@@ -589,7 +590,7 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
             xp,
             _blended_cascade_idx_array_,
             active_dims,
-            buffer=troubles_buffer,
+            buffer=_troubles_buffer_,
         )
         _cascade_idx_array_ = _blended_cascade_idx_array_
 
@@ -608,22 +609,22 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=F_mask)
-        mask = F_mask[interior]
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=_Fmask_)
+        mask = _Fmask_[interior]
         xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
         xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=G_mask)
-        mask = G_mask[interior]
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=_Gmask_)
+        mask = _Gmask_[interior]
         xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
         xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=H_mask)
-        mask = H_mask[interior]
+        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=_Hmask_)
+        mask = _Hmask_[interior]
         xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
         xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
 
@@ -814,7 +815,7 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
 
     troubles = arrays["troubles"]
     troubles_vis = arrays["troubles_vis"]
-    buffer = arrays["buffer"]
+    buffer = arrays["_buffer_"]
 
     if nvars < 4:
         raise ValueError("Troubled cell logging requires at least 4 variable slots.")

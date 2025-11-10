@@ -27,8 +27,8 @@ def test_mpp_1d(N: int, p: int, cascade: str):
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["min_rho"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["max_rho"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
+    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
 
 
@@ -56,8 +56,8 @@ def test_mpp_2d(N: int, p: int, cascade: str):
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["min_rho"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["max_rho"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
+    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
 
 
@@ -87,6 +87,6 @@ def test_mpp_3d(cascade: str):
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["min_rho"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["max_rho"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
+    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
