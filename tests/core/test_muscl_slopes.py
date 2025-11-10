@@ -29,6 +29,7 @@ def test_uniform_field(face_dim: str, active_dims: str, limiter: str, SED: bool)
     )
 
     u = np.empty((1, *mesh.shape))
+    alpha = np.empty((1, *mesh.shape, 1))
     buffer = np.empty((1, *mesh.shape, 20))
     du = np.empty((1, *mesh.shape, 1))
 
@@ -45,6 +46,7 @@ def test_uniform_field(face_dim: str, active_dims: str, limiter: str, SED: bool)
         face_dim,
         active_dims_tuple,
         out=du,
+        alpha=alpha,
         buffer=buffer,
         limiter=limiter,
         SED=SED,
@@ -79,6 +81,7 @@ def test_linear_ramp(face_dim: str, active_dims: str, limiter: str, SED: bool):
     )
 
     u = np.empty((1, *mesh.shape))
+    alpha = np.empty((1, *mesh.shape, 1))
     buffer = np.empty((1, *mesh.shape, 20))
     du = np.empty((1, *mesh.shape, 1))
 
@@ -95,6 +98,7 @@ def test_linear_ramp(face_dim: str, active_dims: str, limiter: str, SED: bool):
         face_dim,
         active_dims_tuple,
         out=du,
+        alpha=alpha,
         buffer=buffer,
         limiter=limiter,
         SED=SED,

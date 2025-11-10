@@ -6,6 +6,7 @@ from superfv.boundary_conditions import BCs, apply_bc
 from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp, compute_vis
+from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
@@ -193,6 +194,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         A tuple containing:
         - The number of revisable troubled cells detected.
         - The total number of troubled cells detected, including non-revisable ones.
+
+    Notes:
+        - The required buffer shape depends on whether smooth extrema detection (SED)
+            is enabled and on the number of active dimensions:
+            - SED is not enabled: (nvars, nx, ny, nz, 2)
     """
     # gather solver parameters
     xp = fv_solver.xp
@@ -235,7 +241,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     _NAD_violations_ = arrays["_NAD_violations_"][lim_slc]
     PAD_violations = arrays["_PAD_violations_"][interior]
     _alpha_ = arrays["_alpha_"][lim_slc]
-    buffer = arrays["buffer"][..., 2:]
+    abuff = arrays["buffer"][..., 2:]
     troubles = arrays["troubles"]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
@@ -276,7 +282,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 (w_new if primitive_NAD else u_new)[lim_slc],
                 active_dims,
                 out=_alpha_,
-                buffer=buffer[lim_slc],
+                buffer=abuff[lim_slc],
             )
             alpha = _alpha_[..., 0][interior]
             troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
@@ -678,8 +684,11 @@ def blend_troubled_cells(
     Returns:
         Slice objects indicating the modified regions in the troubles array.
     """
-    theta = buffer[..., 0]
     ndim = len(active_dims)
+
+    # allocate arrays
+    check_buffer_slots(buffer, required=1)
+    theta = buffer[..., 0]
 
     # initialize theta
     theta[...] = troubles

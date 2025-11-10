@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from superfv.tools.buffer import check_buffer_slots
+
 from . import fv
 from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
@@ -920,7 +922,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # General slope-limiting arrays
         arrays.add("dmp", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
-        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
 
         # Zhang-Shu limiter arrays
         arrays.add("theta", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -969,29 +971,80 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self._dt_criterion = self.adaptive_dt_criterion
             self._compute_revised_dt = self.adaptive_dt_revision
 
-    def _compute_buffer_size(self, scheme: InterpolationScheme) -> int:
-        mesh = self.mesh
-        max_nodes = self.nodes_per_face(scheme)
+    def _compute_buffer_size(
+        self, scheme: InterpolationScheme, check_MOOD: bool = True
+    ) -> int:
+        """
+        Compute the required buffer size, which is the length along the fifth axis of
+        the "buffer", for the given interpolation scheme.
 
-        SED_buffer_cost = {1: 4, 2: 6, 3: 7}[mesh.ndim]
-        base_buffer_size = SED_buffer_cost + 1
+        Args:
+            scheme: Interpolation scheme.
+            check_MOOD: Whether to check fallback schemes in MOOD configuration.
 
-        buffer_size = max(base_buffer_size, max_nodes)
+        Returns:
+            Required buffer size.
+        """
+        ndim = self.mesh.ndim
+        p = scheme.p
 
-        MOOD_buffer_size = SED_buffer_cost + 4
-        MUSCL_buffer_size = SED_buffer_cost + 10
+        # buffer cost of interpolation nodes
+        GL_nodes_per_dim = -(-(p + 1) // 2)
+        if ndim == 1:
+            interpolation_buffer_cost = 0
+        elif ndim == 2:
+            if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
+                interpolation_buffer_cost = 2
+            else:
+                interpolation_buffer_cost = 2
+        else:  # ndim == 3
+            if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
+                interpolation_buffer_cost = 2 + 2 * GL_nodes_per_dim
+            else:
+                interpolation_buffer_cost = 3
 
-        if isinstance(scheme.limiter_config, ZhangShuConfig):
-            buffer_size = max(buffer_size, SED_buffer_cost)
-        elif self.MOOD:
-            buffer_size = max((buffer_size, MOOD_buffer_size, MUSCL_buffer_size))
-        elif isinstance(scheme, musclInterpolationScheme):
-            buffer_size = max(buffer_size, MUSCL_buffer_size)
-
+        # buffer cost of `update_workspaces` function
         if getattr(scheme, "lazy_primitives", "none") == "adaptive":
-            buffer_size = max(buffer_size, 12)
+            adaptive_primitive_cost = {1: 8, 2: 10, 3: 11}[ndim]
+            update_workspaces_buffer_cost = (
+                max(interpolation_buffer_cost, adaptive_primitive_cost) + 1
+            )
+        else:
+            update_workspaces_buffer_cost = interpolation_buffer_cost + 1
 
-        return buffer_size
+        # buffer cost of slope-limiting functions
+        if isinstance(scheme.limiter_config, ZhangShuConfig):
+            limiting_buffer_cost = 3
+        elif isinstance(scheme, musclInterpolationScheme):
+            limiting_buffer_cost = 4
+            if scheme.limiter_config.limiter == "PP2D":
+                limiting_buffer_cost += 4
+            else:
+                limiting_buffer_cost += 5
+        elif check_MOOD and self.MOOD:
+            limiting_buffer_cost = 2
+        else:
+            limiting_buffer_cost = 0
+
+        # add SED buffer cost if applicable
+        using_SED = (
+            getattr(scheme.limiter_config, "SED", False) or self.MOOD_state.config.SED
+        )
+        if using_SED:
+            limiting_buffer_cost += {1: 7, 2: 9, 3: 10}[ndim]
+
+        # buffer size requirement before checking fallback schemes
+        total_buffer_cost = max(update_workspaces_buffer_cost, limiting_buffer_cost)
+
+        # check fallback schemes in MOOD configuration
+        if check_MOOD:
+            for fallback_scheme in self.MOOD_state.config.cascade[1:]:
+                fallback_buffer_cost = self._compute_buffer_size(
+                    fallback_scheme, check_MOOD=False
+                )
+                total_buffer_cost = max(total_buffer_cost, fallback_buffer_cost)
+
+        return total_buffer_cost
 
     def nodes_per_face(self, scheme: InterpolationScheme) -> int:
         """ """
@@ -1159,10 +1212,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _ucc_ = arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = arrays["_wcc_"]  # shape (..., 1)
         _w_ = arrays["_w_"]  # shape (..., 1)
-        _wp_ = arrays["buffer"][..., :1]
         _theta_for_shocks_ = arrays["theta_for_shocks"]
         _PAD_violations_ = arrays["_PAD_violations_"]
         _any_PAD_violations_ = arrays["_any_troubles_"]
+
+        check_buffer_slots(arrays["buffer"], required=1)
+        _wp_ = arrays["buffer"][..., :1]
         buffer = arrays["buffer"][..., 1:]
 
         # 0) conservatives FV averages + BC
@@ -2019,6 +2074,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limit_primitives: Whether to limit the primitive variables.
             hancock: Whether to use the MUSCL-Hancock method.
             dt: The time step size (required if hancock is True).
+
+        Notes:
+            - "buffer" array has different shape requirements depending on whether SED
+            is used and the number (length) of active dimensions:
+                - without SED: (nvars, nx, ny, nz, >=4)
+                - with SED, 1D: (nvars, nx, ny, nz, >=11)
+                - with SED, 2D: (nvars, nx, ny, nz, >=13)
+                - with SED, 3D: (nvars, nx, ny, nz, >=14)
         """
         xp = self.xp
         mesh = self.mesh
@@ -2030,6 +2093,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         y_nodes = arrays["y_nodes"]
         z_nodes = arrays["z_nodes"]
         w_center = arrays["_w_"] if limit_primitives else arrays["_u_"]
+        alpha = arrays["_alpha_"]
+
+        check_buffer_slots(arrays["buffer"], required=4)
         dwx = arrays["buffer"][..., 0:1]
         dwy = arrays["buffer"][..., 1:2]
         dwz = arrays["buffer"][..., 2:3]
@@ -2048,6 +2114,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 Sx=dw1,
                 Sy=dw2,
                 buffer=buffer,
+                alpha=alpha,
                 SED=scheme.limiter_config.SED,
             )
         else:
@@ -2061,6 +2128,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     active_dims,
                     out=slope_arr,
                     buffer=buffer,
+                    alpha=alpha,
                     limiter=scheme.limiter_config.limiter,
                     SED=scheme.limiter_config.SED,
                 )

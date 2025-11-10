@@ -2,6 +2,7 @@ from types import ModuleType
 from typing import Literal, Tuple, cast
 
 from superfv.fv import DIM_TO_AXIS
+from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices, replace_slice
 from superfv.tools.stability import avoid0
@@ -25,9 +26,9 @@ def smooth_extrema_detector_1d(
     xp: ModuleType,
     u: ArrayLike,
     dim: Literal["x", "y", "z"],
-    buffer: ArrayLike,
     *,
     out: ArrayLike,
+    buffer: ArrayLike,
     eps: float = 1e-16,
 ):
     """
@@ -39,9 +40,9 @@ def smooth_extrema_detector_1d(
             (nvars, nx, ny, nz).
         dim: Dimension along which to compute the smooth extrema detector: "x", "y",
             "z".
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=4).
         out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=7).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
@@ -52,15 +53,14 @@ def smooth_extrema_detector_1d(
     axis = DIM_TO_AXIS[dim]
 
     # allocate arrays
+    check_buffer_slots(buffer, required=7)
     du = buffer[..., 0]
     dv = buffer[..., 1]
     vl = buffer[..., 2]
     vr = buffer[..., 3]
-
-    # temporary arrays
-    alpha = xp.empty_like(out)
-    alpha_l = xp.empty_like(u)
-    alpha_r = xp.empty_like(u)
+    alpha_l = buffer[..., 4]
+    alpha_r = buffer[..., 5]
+    alpha = buffer[..., 6:7]  # (..., 1)
 
     # compute derivatives
     central_difference(u, axis, out=du)
@@ -90,13 +90,13 @@ def smooth_extrema_detector_1d(
     return modified
 
 
-def smooth_extema_detector_2d(
+def smooth_extrema_detector_2d(
     xp: ModuleType,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    buffer: ArrayLike,
     *,
     out: ArrayLike,
+    buffer: ArrayLike,
     eps: float = 1e-16,
 ):
     """
@@ -108,38 +108,36 @@ def smooth_extema_detector_2d(
             (nvars, nx, ny, nz).
         active_dims: Tuple of two dimensions along which to compute the smooth extrema
             detector: ("x", "y"), ("x", "z"), or ("y", "z").
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=6).
         out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=9).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    dim1, dim2 = active_dims
+    d1, d2 = active_dims
 
-    alpha_dim1 = buffer[..., 4:5]
-    alpha_dim2 = buffer[..., 5:6]
+    check_buffer_slots(buffer, required=9)
+    alph1 = buffer[..., :1]
+    alph2 = buffer[..., 1:2]
+    abuff = buffer[..., 2:]
 
-    modified1 = smooth_extrema_detector_1d(
-        xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
-    )
-    modified2 = smooth_extrema_detector_1d(
-        xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
-    )
+    modified1 = smooth_extrema_detector_1d(xp, u, d1, out=alph1, buffer=abuff, eps=eps)
+    modified2 = smooth_extrema_detector_1d(xp, u, d2, out=alph2, buffer=abuff, eps=eps)
 
     modified = merge_slices(modified1, modified2)
-    out[modified] = xp.minimum(alpha_dim1[modified], alpha_dim2[modified])
+    out[modified] = xp.minimum(alph1[modified], alph2[modified])
 
     return modified
 
 
-def smooth_extema_detector_3d(
+def smooth_extrema_detector_3d(
     xp: ModuleType,
     u: ArrayLike,
-    buffer: ArrayLike,
     *,
     out: ArrayLike,
+    buffer: ArrayLike,
     eps: float = 1e-16,
 ):
     """
@@ -149,35 +147,31 @@ def smooth_extema_detector_3d(
         xp: `np` namespace.
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=7).
         out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=10).
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    dim1: Literal["x"] = "x"
-    dim2: Literal["y"] = "y"
-    dim3: Literal["z"] = "z"
+    d1: Literal["x"] = "x"
+    d2: Literal["y"] = "y"
+    d3: Literal["z"] = "z"
 
-    alpha_dim1 = buffer[..., 4:5]
-    alpha_dim2 = buffer[..., 5:6]
-    alpha_dim3 = buffer[..., 6:7]
+    check_buffer_slots(buffer, required=10)
+    alph1 = buffer[..., :1]
+    alph2 = buffer[..., 1:2]
+    alph3 = buffer[..., 2:3]
+    abuff = buffer[..., 3:]
 
-    modified1 = smooth_extrema_detector_1d(
-        xp, u, dim1, buffer[..., :4], out=alpha_dim1, eps=eps
-    )
-    modified2 = smooth_extrema_detector_1d(
-        xp, u, dim2, buffer[..., :4], out=alpha_dim2, eps=eps
-    )
-    modified3 = smooth_extrema_detector_1d(
-        xp, u, dim3, buffer[..., :4], out=alpha_dim3, eps=eps
-    )
+    modified1 = smooth_extrema_detector_1d(xp, u, d1, out=alph1, buffer=abuff, eps=eps)
+    modified2 = smooth_extrema_detector_1d(xp, u, d2, out=alph2, buffer=abuff, eps=eps)
+    modified3 = smooth_extrema_detector_1d(xp, u, d3, out=alph3, buffer=abuff, eps=eps)
 
     modified = merge_slices(modified1, modified2, modified3)
-    out[modified] = xp.minimum(alpha_dim1[modified], alpha_dim2[modified])
-    out[modified] = xp.minimum(alpha_dim3[modified], out[modified])
+    out[modified] = xp.minimum(alph1[modified], alph2[modified])
+    out[modified] = xp.minimum(alph3[modified], out[modified])
 
     return modified
 
@@ -201,10 +195,11 @@ def smooth_extrema_detector(
         active_dims: Tuple of dimensions along which to compute the smooth extrema
             detector. Has length 1, 2, or 3 with possible values "x", "y", "z".
         out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=4) for 1D,
-            (nvars, nx, ny, nz, >=6) for 2D,
-            or (nvars, nx, ny, nz, >=7) for 3D
+        buffer: Array to which temporary values are assigned. Has different shape
+            requirements depending on the number (length) of active dimensions:
+            - 1D: (nvars, nx, ny, nz, >=7)
+            - 2D: (nvars, nx, ny, nz, >=9)
+            - 3D: (nvars, nx, ny, nz, >=10)
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
@@ -213,10 +208,12 @@ def smooth_extrema_detector(
     """
     if len(active_dims) == 1:
         return smooth_extrema_detector_1d(
-            xp, u, active_dims[0], buffer, out=out, eps=eps
+            xp, u, active_dims[0], out=out, buffer=buffer, eps=eps
         )
     elif len(active_dims) == 2:
-        return smooth_extema_detector_2d(xp, u, active_dims, buffer, out=out, eps=eps)
+        return smooth_extrema_detector_2d(
+            xp, u, active_dims, out=out, buffer=buffer, eps=eps
+        )
     elif len(active_dims) == 3:
-        return smooth_extema_detector_3d(xp, u, buffer, out=out, eps=eps)
+        return smooth_extrema_detector_3d(xp, u, out=out, buffer=buffer, eps=eps)
     raise ValueError("active_dims must have length 1, 2, or 3.")

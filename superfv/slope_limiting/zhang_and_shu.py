@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
+from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import replace_slice
 
@@ -80,9 +81,9 @@ def compute_theta(
     *,
     out: ArrayLike,
     dmp: ArrayLike,
-    alpha: ArrayLike,
     buffer: ArrayLike,
     config: ZhangShuConfig,
+    alpha: Optional[ArrayLike] = None,
 ) -> Tuple[slice, ...]:
     """
     Compute Zhang and Shu's a priori slope limiting parameter theta based on arrays of
@@ -97,15 +98,16 @@ def compute_theta(
         out: Array to which theta is written. Has shape (nvars, nx, ny, nz, >=1).
         dmp: Array to which the discrete maximum principle is written. Has shape
             (nvars, nx, ny, nz, >=2).
-        alpha: Array to which the smooth extrema detector values are written. Has shape
-            (nvars, nx, ny, nz, 1).
-        buffer: Array to which intermediate values are written. Has the following
-            shapes depending on the number of active dimensions:
-            - 1D: (nvars, nx, ny, nz, >=6).
-            - 2D: (nvars, nx, ny, nz, >=8).
-            - 3D: (nvars, nx, ny, nz, >=9).
-
+        buffer: Array to which temporary values are assigned. Has different shape
+            requirements depending on whether SED is used and the number (length) of
+            active dimensions:
+            - without SED: (nvars, nx, ny, nz, >=4)
+            - with SED, 1D: (nvars, nx, ny, nz, >=11)
+            - with SED, 2D: (nvars, nx, ny, nz, >=13)
+            - with SED, 3D: (nvars, nx, ny, nz, >=14)
         config: Configuration for the Zhang-Shu limiter.
+        alpha: Optional array to which the smooth extrema detector values are written
+            if SED is enabled. Has shape (nvars, nx, ny, nz, 1).
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -115,11 +117,9 @@ def compute_theta(
     tol = config.tol
 
     # allocate arrays
+    check_buffer_slots(buffer, required=3)
     node_mp = buffer[..., :2]
-    alpha_buf = buffer[..., 2:]
-
-    # temporary arrays
-    theta = xp.empty_like(out)
+    theta = buffer[..., 2:3]
 
     # compute discrete maximum principle
     active_dims = tuple(
@@ -155,17 +155,20 @@ def compute_theta(
 
     # relax theta using a smooth extrema detector
     if SED:
+        if alpha is None:
+            raise ValueError("alpha array must be provided when SED is enabled.")
+        abuff = buffer[..., 3:]
         modified = smooth_extrema_detector(
             xp,
             u,
             active_dims,
             out=alpha,
-            buffer=alpha_buf,
+            buffer=abuff,
         )
         out[modified] = xp.where(alpha[modified] < 1, theta[modified], 1)
     else:
-        out[...] = theta
         modified = cast(Tuple[slice, ...], replace_slice(dmp_modified, 4, slice(0, 1)))
+        out[modified] = theta[modified]
 
     return modified
 

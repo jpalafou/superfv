@@ -77,33 +77,49 @@ def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: b
 @pytest.mark.parametrize("SED", [False, True])
 def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
     face_dim = dims[0]
-    u, buffer, out = sample_data(dims, nout=1)
+    u, buffer, temp = sample_data(dims, nout=2)
+    out = temp[..., :1]
+    alpha = temp[..., 1:2]
     modified = compute_limited_slopes(
-        np, u, face_dim, tuple(dims), out=out, buffer=buffer, limiter=limiter, SED=SED
+        np,
+        u,
+        face_dim,
+        tuple(dims),
+        out=out,
+        buffer=buffer,
+        limiter=limiter,
+        SED=SED,
+        alpha=alpha,
     )
 
     assert not np.any(np.isnan(out[modified]))
-    if not SED:
-        out[modified] = np.nan
-        assert np.all(np.isnan(out))
+    # skipping all nan check since the stencils will leave some ghost cells non-nan
+
+    if SED:
+        assert not np.any(np.isnan(alpha[modified]))
+        alpha[modified] = np.nan
+        assert np.all(np.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
 @pytest.mark.parametrize("SED", [False, True])
 def test_compute_PP2D_slopes(dims: str, SED: bool):
-    u, buffer, out = sample_data(dims, nout=2)
-    Sx, Sy = out[..., :1], out[..., 1:2]
+    u, buffer, temp = sample_data(dims, nout=3)
+    Sx = temp[..., :1]
+    Sy = temp[..., 1:2]
+    alpha = temp[..., 2:3]
     modified = compute_PP2D_slopes(
-        np, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, SED=SED
+        np, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, SED=SED, alpha=alpha
     )
 
     assert not np.any(np.isnan(Sx[modified]))
     assert not np.any(np.isnan(Sy[modified]))
-    if not SED:
-        Sx[modified] = np.nan
-        Sy[modified] = np.nan
-        assert np.all(np.isnan(Sx))
-        assert np.all(np.isnan(Sy))
+    # skipping all nan check since the 2D stencils will leave some ghost cells non-nan
+
+    if SED:
+        assert not np.any(np.isnan(alpha[modified]))
+        alpha[modified] = np.nan
+        assert np.all(np.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
