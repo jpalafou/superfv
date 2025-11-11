@@ -17,21 +17,28 @@ class musclConfig(LimiterConfig):
     Configuration for the MUSCL slope limiter.
 
     Attributes:
-        limiter: The type of limiter to use. Can be "minmod", "moncen", or None.
-        SED: Whether to use the smooth extrema detector to relax the limiter.
+        shock_detection: Whether to enable shock detection.
+        smooth_extrema_detection: Whether to enable smooth extrema detection.
+        physical_admissibility_detection: Whether to enable physical admissibility
+            detection (PAD).
+        eta_max: Eta threshold for shock detection if shock_detection is True.
+        PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
+            respectively, for each variable when physical_admissibility_detection is
+            True. Must be provided if physical_admissibility_detection is True.
+        PAD_atol: Absolute tolerance for physical admissibility detection if
+            physical_admissibility_detection is True.
+        limiter: Optional slope limiter specification of "minmod", "moncen", "PP2D".
     """
 
-    limiter: Optional[Literal["minmod", "moncen", "PP2D"]]
-    SED: bool
+    limiter: Optional[Literal["minmod", "moncen", "PP2D"]] = None
 
     def key(self) -> str:
         return f"muscl-{self.limiter}"
 
     def to_dict(self) -> dict:
-        return dict(
-            limiter=self.limiter,
-            SED=self.SED,
-        )
+        out = LimiterConfig.to_dict(self)
+        out.update(dict(limiter=self.limiter))
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +58,11 @@ class musclInterpolationScheme(InterpolationScheme):
 
     p: int = 1
     flux_recipe: Literal[1, 2] = 2
-    limiter_config: musclConfig = musclConfig(limiter="minmod", SED=False)
+    limiter_config: musclConfig = musclConfig(
+        shock_detection=False,
+        smooth_extrema_detection=False,
+        physical_admissibility_detection=False,
+    )
 
     def __post_init__(self):
         InterpolationScheme.__post_init__(self)

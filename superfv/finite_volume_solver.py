@@ -14,7 +14,11 @@ from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .fv import DIM_TO_AXIS
-from .interpolation_schemes import InterpolationScheme, polyInterpolationScheme
+from .interpolation_schemes import (
+    InterpolationScheme,
+    LimiterConfig,
+    polyInterpolationScheme,
+)
 from .mesh import UniformFVMesh, xyz_tup
 from .slope_limiting import MOOD, compute_vis
 from .slope_limiting.MOOD import (
@@ -423,28 +427,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         SED: bool,
     ):
         self.base_scheme: InterpolationScheme
+        self.using_PAD: bool
+        self.MOOD: bool
+        self.MOOD_config: MOODConfig
+        self.MOOD_state: MOODState
 
-        idx = self.variable_index_map
-        idx.add_var_to_group("limiting", [])
+        self._init_PAD(PAD)  # defines `self.using_PAD`
 
-        null_MOOD_config = MOODConfig(
-            cascade=[], blend=False, max_iters=0, NAD=False, PAD=False, SED=False
-        )
-        self.MOOD_state = MOODState(config=null_MOOD_config)
-        self.MOOD = False
-
-        # first-order scheme early escape
+        # init a priori base scheme
         if p == 0:
-            self._init_unlimited_scheme(0, flux_recipe, GL, lazy_primitives, eta_max)
-            return
-
-        # init a priori scheme
-        if MUSCL:
+            self._init_unlimited_scheme(
+                0, flux_recipe, GL, lazy_primitives, eta_max, PAD_atol
+            )
+        elif MUSCL:
             if ZS:
                 raise ValueError("MUSCL scheme cannot be combined with ZS.")
             self._init_muscl_scheme(p, flux_recipe, MUSCL_limiter, SED)
         elif ZS:
-            self._init_PAD(PAD)
             self._init_zhang_shu_scheme(
                 p,
                 flux_recipe,
@@ -452,20 +451,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 lazy_primitives,
                 eta_max,
                 include_corners,
-                PAD,
                 SED,
                 adaptive_dt,
                 max_dt_revisions,
                 PAD_atol,
             )
         else:
-            self._init_unlimited_scheme(p, flux_recipe, GL, lazy_primitives, eta_max)
+            self._init_unlimited_scheme(
+                p, flux_recipe, GL, lazy_primitives, eta_max, PAD_atol
+            )
 
         # init a posteriori scheme
-        self.MOOD = MOOD
-        if self.MOOD:
-            if not ZS:
-                self._init_PAD(PAD)
+        if MOOD and self.base_scheme.p > 0:
+            self.MOOD = True
+
             self._init_MOOD(
                 cascade,
                 blend,
@@ -473,7 +472,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 max_MOOD_iters,
                 skip_trouble_counts,
                 NAD,
-                PAD,
                 SED,
                 NAD_rtol,
                 NAD_atol,
@@ -481,13 +479,39 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 absolute_dmp,
                 include_corners,
             )
+        else:
+            self.MOOD = False
+            self.MOOD_config = MOODConfig(
+                shock_detection=False,
+                smooth_extrema_detection=False,
+                physical_admissibility_detection=False,
+            )
+            self.MOOD_state = MOODState(config=self.MOOD_config)
 
         # add limiting variables to the index map
+        idx = self.variable_index_map
+        idx.add_var_to_group("limiting", [])
         if limiting_vars == "all":
             limiting_vars = tuple(idx.var_idx_map.keys())
         elif limiting_vars == "actives":
             limiting_vars = tuple(idx.group_var_map["primitives"])
         idx.add_var_to_group("limiting", limiting_vars)
+
+    def _init_PAD(
+        self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
+    ):
+        if PAD is None:
+            self.using_PAD = False
+            return
+
+        idx = self.variable_index_map
+        self.using_PAD = True
+
+        PAD_bounds = np.array([[-np.inf, np.inf] for _ in range(self.nvars)])
+        for var, (lb, ub) in PAD.items():
+            PAD_bounds[idx(var), 0] = lb if lb is not None else -np.inf
+            PAD_bounds[idx(var), 1] = ub if ub is not None else np.inf
+        self.arrays.add("PAD_bounds", PAD_bounds)
 
     def _init_unlimited_scheme(
         self,
@@ -496,12 +520,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         GL: bool,
         lazy_primitives: Literal["none", "full", "adaptive"],
         eta_max: float,
+        PAD_atol: float,
     ):
         self.p = p
         self.base_scheme = polyInterpolationScheme(
             p=p,
             flux_recipe=flux_recipe,
-            limiter_config=None,
+            limiter_config=LimiterConfig(
+                shock_detection=lazy_primitives == "adaptive",
+                smooth_extrema_detection=False,
+                physical_admissibility_detection=self.using_PAD,
+                eta_max=eta_max,
+                PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
+                PAD_atol=PAD_atol,
+            ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
             eta_max=eta_max,
@@ -523,7 +555,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.p = 1
         self.base_scheme = musclInterpolationScheme(
             flux_recipe=flux_recipe,
-            limiter_config=musclConfig(limiter=MUSCL_limiter, SED=SED),
+            limiter_config=musclConfig(
+                shock_detection=False,
+                smooth_extrema_detection=SED,
+                physical_admissibility_detection=False,
+                limiter=MUSCL_limiter,
+            ),
         )
 
     def _init_zhang_shu_scheme(
@@ -534,7 +571,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: Literal["none", "full", "adaptive"],
         eta_max: float,
         include_corners: bool,
-        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         SED: bool,
         adaptive_dt: bool,
         max_dt_revisions: int,
@@ -545,12 +581,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=p,
             flux_recipe=flux_recipe,
             limiter_config=ZhangShuConfig(
-                SED=SED,
+                shock_detection=lazy_primitives == "adaptive",
+                smooth_extrema_detection=SED,
+                physical_admissibility_detection=self.using_PAD,
+                eta_max=eta_max,
+                PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
+                PAD_atol=PAD_atol,
+                include_corners=include_corners,
                 adaptive_dt=adaptive_dt,
                 max_dt_revisions=max_dt_revisions,
-                include_corners=include_corners,
-                PAD_bounds=None if PAD is None else self.arrays["PAD_bounds"],
-                PAD_atol=PAD_atol,
+                theta_denom_tol=1e-16,
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
@@ -565,7 +605,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         max_MOOD_iters: int,
         skip_trouble_counts: bool,
         NAD: bool,
-        PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         SED: bool,
         NAD_rtol: float,
         NAD_atol: float,
@@ -579,13 +618,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 "Base scheme must be an instance of polyInterpolationScheme."
             )
 
+        # define list of fallback schemes
         fallback_schemes: List[InterpolationScheme]
         if cascade == "first-order":
             fallback_schemes = [
                 polyInterpolationScheme(
                     p=0,
                     flux_recipe=base_scheme.flux_recipe,
-                    limiter_config=None,
+                    limiter_config=LimiterConfig(
+                        shock_detection=False,
+                        smooth_extrema_detection=False,
+                        physical_admissibility_detection=False,
+                    ),
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
                     eta_max=base_scheme.eta_max,
@@ -600,7 +644,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             fallback_schemes = [
                 musclInterpolationScheme(
                     flux_recipe=muscl_flux_recipe,
-                    limiter_config=musclConfig(limiter=MUSCL_limiter, SED=False),
+                    limiter_config=musclConfig(
+                        shock_detection=False,
+                        smooth_extrema_detection=False,
+                        physical_admissibility_detection=False,
+                        limiter=MUSCL_limiter,
+                    ),
                 )
             ]
             if cascade == "muscl1":
@@ -608,7 +657,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     polyInterpolationScheme(
                         p=0,
                         flux_recipe=base_scheme.flux_recipe,
-                        limiter_config=None,
+                        limiter_config=LimiterConfig(
+                            shock_detection=False,
+                            smooth_extrema_detection=False,
+                            physical_admissibility_detection=False,
+                        ),
                         gauss_legendre=base_scheme.gauss_legendre,
                         lazy_primitives=base_scheme.lazy_primitives,
                         eta_max=base_scheme.eta_max,
@@ -619,46 +672,40 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 polyInterpolationScheme(
                     p=p,
                     flux_recipe=base_scheme.flux_recipe,
-                    limiter_config=None,
+                    limiter_config=LimiterConfig(
+                        shock_detection=False,
+                        smooth_extrema_detection=False,
+                        physical_admissibility_detection=False,
+                    ),
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
                     eta_max=base_scheme.eta_max,
                 )
                 for p in range(base_scheme.p - 1, -1, -1)
             ]
+        else:
+            raise ValueError(f"Unknown cascade type: {cascade}.")
         cascade_list = [self.base_scheme] + fallback_schemes
 
-        MOOD_config = MOODConfig(
+        # assign MOOD config
+        self.MOOD_config = MOODConfig(
+            shock_detection=base_scheme.lazy_primitives == "adaptive",
+            smooth_extrema_detection=SED,
+            physical_admissibility_detection=self.using_PAD,
+            eta_max=base_scheme.limiter_config.eta_max,
+            PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
+            PAD_atol=PAD_atol,
+            numerical_admissibility_detection=NAD,
             cascade=cascade_list,
             blend=blend,
             max_iters=max_MOOD_iters,
-            NAD=NAD,
-            PAD=PAD is not None,
-            SED=SED,
-            NAD_rtol=NAD_rtol,
-            NAD_atol=NAD_atol,
-            PAD_atol=PAD_atol,
-            PAD_bounds=None if PAD is None else self.arrays["PAD_bounds"],
             absolute_dmp=absolute_dmp,
             include_corners=include_corners,
+            NAD_rtol=NAD_rtol,
+            NAD_atol=NAD_atol,
             skip_trouble_counts=skip_trouble_counts,
         )
-        self.MOOD_state = MOODState(config=MOOD_config)
-
-    def _init_PAD(
-        self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
-    ):
-        if PAD is None:
-            return
-        idx = self.variable_index_map
-        PAD_bounds = np.array([[-np.inf, np.inf] for _ in range(self.nvars)])
-        for var, (lb, ub) in PAD.items():
-            PAD_bounds[idx(var), 0] = lb if lb is not None else -np.inf
-            PAD_bounds[idx(var), 1] = ub if ub is not None else np.inf
-        PAD_bounds = np.expand_dims(
-            PAD_bounds, axis=(1, 2, 3)
-        )  # shape (nvars, 1, 1, 1, 2)
-        self.arrays.add("PAD_bounds", PAD_bounds)
+        self.MOOD_state = MOODState(config=self.MOOD_config)
 
     def _init_snapshots(self):
         self.step_log: Dict[str, List[float]] = {}
@@ -688,7 +735,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # determine slab depth
         if isinstance(bs, musclInterpolationScheme):
             node_cost = 0  # included in limiter
-            limiting_cost = 3 if bs.limiter_config.SED else 1
+            limiting_cost = 3 if bs.limiter_config.smooth_extrema_detection else 1
             flux_integral_cost = 0
         elif isinstance(bs, polyInterpolationScheme):
             s = -(-p // 2)  # ghost cell cost of stencil with degree 0
@@ -702,10 +749,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             limiting_cost = 0
             if isinstance(bs.limiter_config, ZhangShuConfig):
-                limiting_cost = 3 if bs.limiter_config.SED else 1
+                limiting_cost = 3 if bs.limiter_config.smooth_extrema_detection else 1
             if self.MOOD:
                 NAD_cost = 1
-                if self.MOOD_state.config.SED:
+                if self.MOOD_state.config.smooth_extrema_detection:
                     NAD_cost = 3
                 trouble_map_cost = 3 if self.MOOD_state.config.blend else 1
                 limiting_cost = NAD_cost + trouble_map_cost
@@ -937,7 +984,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("troubles_vis_log", np.zeros((nvars, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
-        for scheme in self.MOOD_state.config.cascade:
+        for scheme in self.MOOD_config.cascade:
             arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
             arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
             arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
@@ -1027,10 +1074,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiting_buffer_cost = 0
 
         # add SED buffer cost if applicable
-        using_SED = (
-            getattr(scheme.limiter_config, "SED", False) or self.MOOD_state.config.SED
-        )
-        if using_SED:
+        if getattr(scheme.limiter_config, "smooth_extrema_detection", False):
             limiting_buffer_cost += {1: 7, 2: 9, 3: 10}[ndim]
 
         # buffer size requirement before checking fallback schemes
@@ -1251,21 +1295,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 xp, _w_, active_dims, scheme.eta_max, out=_eta_, buffer=_buff_
             )
 
-            if "PAD_bounds" in self.arrays:
-                if self.MOOD:
-                    PAD_atol = self.MOOD_state.config.PAD_atol
-                elif isinstance(scheme.limiter_config, ZhangShuConfig):
-                    PAD_atol = scheme.limiter_config.PAD_atol
-                else:
-                    raise ValueError(
-                        "PAD_atol must be specified to detect PAD violations."
-                    )
-
+            if scheme.limiter_config.physical_admissibility_detection:
                 detect_PAD_violations(
                     xp,
                     _w_,
                     self.arrays["PAD_bounds"],
-                    physical_tols=PAD_atol,
+                    physical_tols=scheme.limiter_config.PAD_atol,
                     out=_PAD_violations_,
                 )
                 _any_PAD_violations_[...] = xp.any(
@@ -1655,10 +1690,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 "PAD criterion requires a Zhang-Shu limiter configuration."
             )
         if scheme.limiter_config.PAD_bounds is None:
-            raise ValueError(
-                "PAD bounds are not set. Please provide PAD bounds in the "
-                "ZhangShuConfig."
-            )
+            raise ValueError("PAD bounds are required to enable adaptive dt.")
 
         PAD_violations = self.arrays["_PAD_violations_"][self.interior]
         MOOD.detect_PAD_violations(
@@ -2110,7 +2142,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 Sy=dw2,
                 buffer=lim_buff,
                 alpha=alpha,
-                SED=scheme.limiter_config.SED,
+                SED=scheme.limiter_config.smooth_extrema_detection,
             )
         else:
             for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
@@ -2125,7 +2157,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     buffer=lim_buff,
                     alpha=alpha,
                     limiter=scheme.limiter_config.limiter,
-                    SED=scheme.limiter_config.SED,
+                    SED=scheme.limiter_config.smooth_extrema_detection,
                 )
 
         # evolve the cell-center by 1/2 dt

@@ -2,22 +2,63 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from .tools.device_management import ArrayLike
+
 
 @dataclass(frozen=True, slots=True)
-class LimiterConfig(ABC):
+class LimiterConfig:
     """
     Base class for slope or flux limiter configurations.
+
+    Attributes:
+        shock_detection: Whether to enable shock detection.
+        smooth_extrema_detection: Whether to enable smooth extrema detection.
+        physical_admissibility_detection: Whether to enable physical admissibility
+            detection (PAD).
+        eta_max: Eta threshold for shock detection if shock_detection is True.
+        PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
+            respectively, for each variable when physical_admissibility_detection is
+            True. Must be provided if physical_admissibility_detection is True.
+        PAD_atol: Absolute tolerance for physical admissibility detection if
+            physical_admissibility_detection is True.
     """
 
-    @abstractmethod
+    shock_detection: bool
+    smooth_extrema_detection: bool
+    physical_admissibility_detection: bool
+    eta_max: float = 0.0
+    PAD_bounds: Optional[ArrayLike] = None
+    PAD_atol: float = 0.0
+
+    def __post_init__(self):
+        if self.shock_detection and self.eta_max is None:
+            raise ValueError("eta_max must be provided when shock_detection is True.")
+        if self.physical_admissibility_detection:
+            if self.PAD_bounds is None:
+                raise ValueError(
+                    "PAD_bounds must be provided when physical_admissibility_detection"
+                    " is True."
+                )
+            if self.PAD_atol is None:
+                raise ValueError(
+                    "PAD_atol must be provided when physical_admissibility_detection"
+                    " is True."
+                )
+
     def key(self) -> str:
         """Return a unique key for the limiter configuration."""
-        pass
+        return "generic_limiter"
 
-    @abstractmethod
     def to_dict(self) -> dict:
         """Convert the limiter configuration to a dictionary."""
-        pass
+        return dict(
+            shock_detection=self.shock_detection,
+            eta_max=self.eta_max,
+            smooth_extrema_detection=self.smooth_extrema_detection,
+            physical_admissibility_detection=self.physical_admissibility_detection,
+            PAD_bounds=None if self.PAD_bounds is None else self.PAD_bounds.tolist(),
+            PAD_atol=self.PAD_atol,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,15 +80,17 @@ class InterpolationScheme(ABC):
 
     p: int
     flux_recipe: Literal[1, 2, 3]
-    limiter_config: Optional[LimiterConfig] = None
+    limiter_config: LimiterConfig = LimiterConfig(
+        shock_detection=False,
+        smooth_extrema_detection=False,
+        physical_admissibility_detection=False,
+    )
 
     def __post_init__(self):
         if self.p < 0:
             raise ValueError("Polynomial degree p must be non-negative.")
         if self.flux_recipe not in (1, 2, 3):
             raise ValueError("Invalid flux recipe. Must be 1, 2, or 3.")
-        if self.p == 0 and self.limiter_config is not None:
-            raise ValueError("Limiter cannot be used with p=0 (first-order scheme).")
 
     @abstractmethod
     def key(self) -> str:

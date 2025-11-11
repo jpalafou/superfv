@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from functools import lru_cache
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cast
+
+import numpy as np
 
 from superfv.boundary_conditions import BCs, apply_bc
 from superfv.fv import DIM_TO_AXIS
-from superfv.interpolation_schemes import LimiterConfig
+from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import compute_dmp, compute_vis
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
@@ -14,12 +19,6 @@ from .smooth_extrema_detection import smooth_extrema_detector
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
-
-from dataclasses import dataclass
-from functools import lru_cache
-from types import ModuleType
-
-from superfv.interpolation_schemes import InterpolationScheme
 
 # custom type for fluxes
 Fluxes = Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]]
@@ -31,19 +30,22 @@ class MOODConfig(LimiterConfig):
     Configuration for the MOOD framework.
 
     Attributes:
+        shock_detection: Whether to enable shock detection.
+        smooth_extrema_detection: Whether to enable smooth extrema detection.
+        physical_admissibility_detection: Whether to enable physical admissibility
+            detection (PAD).
+        eta_max: Eta threshold for shock detection if shock_detection is True.
+        PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
+            respectively, for each variable when physical_admissibility_detection is
+            True. Must be provided if physical_admissibility_detection is True.
+        PAD_atol: Absolute tolerance for physical admissibility detection if
+            physical_admissibility_detection is True.
+        numerical_admissibility_detection: Whether to enable numerical admissibility
+            detection (NAD).
         cascade: The list of interpolation schemes to use in the MOOD framework.
         blend: Whether to blend troubled cells when using a fallback scheme. Only valid
             for cascades of length 2.
         max_iters: The maximum number of iterations to perform.
-        NAD: Whether to use numerical admissibility detection to detect troubled cells.
-        PAD: Whether to use physical admissibility detection to detect troubled cells.
-        SED: Whether to use smooth extrema detection to forgive troubled cells.
-        NAD_rtol: Relative tolerance for NAD violations.
-        NAD_atol: Absolute tolerance for NAD violations.
-        PAD_atol: Absolute tolerance for PAD violations.
-        PAD_bounds: Physical bounds for each variable used in PAD. Has shape
-            (nvars, 1, 1, 1, 2) with the minimum and maximum values for each variable
-            stored in the first and second element of the last dimension, respectively.
         absolute_dmp: Whether to use the absolute values of the DMP instead of the
             range to set the NAD bounds. The NAD condition for each case is:
             - `absolute_dmp=False`:
@@ -52,61 +54,51 @@ class MOODConfig(LimiterConfig):
                 umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
         include_corners: Whether to include corner cells when computing the local
             minima and maxima.
+        NAD_rtol: Relative tolerance for NAD violations.
+        NAD_atol: Absolute tolerance for NAD violations.
         skip_trouble_counts: Whether to skip counting the number of troubled cells. If
             True, `detect_troubled_cells` will return (1, 1) always. This can be used
             to avoid CUDA synchronization overhead when the troubled cell count is not
             needed.
     """
 
-    cascade: List[InterpolationScheme]
-    blend: bool
-    max_iters: int
-    NAD: bool
-    PAD: bool
-    SED: bool
-    NAD_rtol: float = 1.0
-    NAD_atol: float = 0.0
-    PAD_atol: float = 0.0
-    PAD_bounds: Optional[ArrayLike] = None
+    numerical_admissibility_detection: bool = False
+    cascade: List[InterpolationScheme] = field(default_factory=list)
+    blend: bool = False
+    max_iters: int = 0
     absolute_dmp: bool = False
     include_corners: bool = False
+    NAD_rtol: float = 1.0
+    NAD_atol: float = 0.0
     skip_trouble_counts: bool = False
 
     def __post_init__(self):
-        if self.PAD and self.PAD_bounds is None:
-            raise ValueError(
-                "PAD requires PAD_bounds to be set. "
-                "Set PAD=False if you do not want to use PAD."
-            )
-        if self.SED and not self.NAD:
-            raise ValueError(
-                "SED requires NAD to be enabled. Please set NAD to a non-None value."
-            )
+        LimiterConfig.__post_init__(self)
+        if self.smooth_extrema_detection and not self.numerical_admissibility_detection:
+            raise ValueError("SED requires NAD to be enabled.")
         if self.blend and len(self.cascade) != 2:
-            raise ValueError("Blending is only supported for cascades of length 2.")
+            raise ValueError("Blending is only supported for cascades of length 2")
 
     def key(self) -> str:
         cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
         return f"MOOD: [{cascade_keys}]"
 
     def to_dict(self) -> dict:
-        return dict(
-            cascade=[scheme.to_dict() for scheme in self.cascade],
-            max_iters=self.max_iters,
-            NAD=self.NAD,
-            PAD=self.PAD,
-            SED=self.SED,
-            NAD_rtol=self.NAD_rtol,
-            NAD_atol=self.NAD_atol,
-            PAD_atol=self.PAD_atol,
-            PAD_bounds=(
-                None
-                if self.PAD_bounds is None
-                else self.PAD_bounds[:, 0, 0, 0, :].tolist()
-            ),
-            absolute_dmp=self.absolute_dmp,
-            include_corners=self.include_corners,
+        out = LimiterConfig.to_dict(self)
+        out.update(
+            dict(
+                numerical_admissibility_detection=self.numerical_admissibility_detection,
+                cascade=[scheme.to_dict() for scheme in self.cascade],
+                blend=self.blend,
+                max_iters=self.max_iters,
+                absolute_dmp=self.absolute_dmp,
+                include_corners=self.include_corners,
+                NAD_rtol=self.NAD_rtol,
+                NAD_atol=self.NAD_atol,
+                skip_trouble_counts=self.skip_trouble_counts,
+            )
         )
+        return out
 
 
 @dataclass
@@ -172,15 +164,6 @@ class MOODState:
         self.fine_troubled_cell_count = n
         self.troubled_cell_count += n
 
-    def to_dict(self) -> dict:
-        """
-        Convert the MOODState to a dictionary.
-
-        Returns:
-            A dictionary representation of the MOODState.
-        """
-        return self.config.to_dict()
-
 
 def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int, int]:
     """
@@ -217,15 +200,15 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     cascade_status = MOOD_state.cascade_status
     MOOD_config = MOOD_state.config
     cascade = MOOD_config.cascade
-    NAD = MOOD_config.NAD
+    NAD = MOOD_config.numerical_admissibility_detection
     NAD_rtol = MOOD_config.NAD_rtol
     NAD_atol = MOOD_config.NAD_atol
     absolute_dmp = MOOD_config.absolute_dmp
     include_corners = MOOD_config.include_corners
-    PAD = MOOD_config.PAD
+    PAD = MOOD_config.physical_admissibility_detection
     PAD_bounds = MOOD_config.PAD_bounds
     PAD_atol = MOOD_config.PAD_atol
-    SED = MOOD_config.SED
+    SED = MOOD_config.smooth_extrema_detection
     skip_trouble_counts = MOOD_config.skip_trouble_counts
 
     # determine limiting style
@@ -431,8 +414,8 @@ def detect_PAD_violations(
         physical_tols: Physical tolerances for all variables as a single float.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
     """
-    physical_mins = physical_ranges[..., 0]
-    physical_maxs = physical_ranges[..., 1]
+    physical_mins = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, 0]
+    physical_maxs = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, 1]
     out[...] = xp.minimum(u_new - physical_mins, physical_maxs - u_new) + physical_tols
 
 

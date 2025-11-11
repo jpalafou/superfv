@@ -26,49 +26,51 @@ class ZhangShuConfig(LimiterConfig):
     maxima and minima of the nodes, respectively.
 
     Attributes:
-        SED: Whether to use the smooth extrema detector to relax the limiter.
-        adaptive_dt: Whether to use adaptive time stepping.
-        max_dt_revisions: The maximum number of revisions for the time step.
+        shock_detection: Whether to enable shock detection.
+        smooth_extrema_detection: Whether to enable smooth extrema detection.
+        physical_admissibility_detection: Whether to enable physical admissibility
+            detection (PAD).
+        eta_max: Eta threshold for shock detection if shock_detection is True.
+        PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
+            respectively, for each variable when physical_admissibility_detection is
+            True. Must be provided if physical_admissibility_detection is True.
+        PAD_atol: Absolute tolerance for physical admissibility detection if
+            physical_admissibility_detection is True.
         include_corners: Whether to include corner cells when computing the discrete
             maximum principle.
-        PAD_bounds: An array of shape (nvars, 2) specifying the physical bounds
-            (min, max) for each variable.
-        PAD_atol: Absolute tolerance for PAD violations.
-        tol: Tolerance for the denominator of the
+        adaptive_dt: Whether to use adaptive time stepping. If True,
+            physical_admissibility_detection must also be True.
+        max_dt_revisions: The maximum number of revisions for the time step.
+        theta_denom_tol: Tolerance for the denominator of the theta calculation.
     """
 
-    SED: bool
-    adaptive_dt: bool
-    max_dt_revisions: int
     include_corners: bool = False
-    PAD_bounds: Optional[ArrayLike] = None
-    PAD_atol: float = 0.0
-    tol: float = 1e-16
+    adaptive_dt: bool = False
+    max_dt_revisions: int = 0
+    theta_denom_tol: float = 1e-16
 
     def __post_init__(self):
-        if self.adaptive_dt and self.PAD_bounds is None:
+        LimiterConfig.__post_init__(self)
+        if self.adaptive_dt and not self.physical_admissibility_detection:
             raise ValueError(
-                "Adaptive time stepping requires PAD_bounds to be set. "
-                "Set adaptive_dt=False if you do not want to use PAD."
+                "adaptive_dt can only be True if physical_admissibility_detection"
+                " is True."
             )
 
     def key(self) -> str:
         return "zhang-shu"
 
     def to_dict(self) -> dict:
-        return dict(
-            SED=self.SED,
-            adaptive_dt=self.adaptive_dt,
-            max_dt_revisions=self.max_dt_revisions,
-            include_corners=self.include_corners,
-            PAD_bounds=(
-                None
-                if self.PAD_bounds is None
-                else self.PAD_bounds[:, 0, 0, 0, :].tolist()
-            ),
-            PAD_atol=self.PAD_atol,
-            tol=self.tol,
+        out = LimiterConfig.to_dict(self)
+        out.update(
+            dict(
+                include_corners=self.include_corners,
+                adaptive_dt=self.adaptive_dt,
+                max_dt_revisions=self.max_dt_revisions,
+                theta_denom_tol=self.theta_denom_tol,
+            )
         )
+        return out
 
 
 def compute_theta(
@@ -113,8 +115,8 @@ def compute_theta(
         Slice objects indicating the modified regions in the output array.
     """
     include_corners = config.include_corners
-    SED = config.SED
-    tol = config.tol
+    SED = config.smooth_extrema_detection
+    tol = config.theta_denom_tol
 
     # allocate arrays
     check_buffer_slots(buffer, required=3)
