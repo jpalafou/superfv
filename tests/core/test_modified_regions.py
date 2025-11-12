@@ -124,8 +124,9 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("SED", [False, True])
+@pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
-def test_compute_theta(dims: str, SED: bool, include_corners: bool):
+def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
     u, mega_buffer, out = sample_data(dims, nout=1)
     nodes, _, _ = sample_data(dims, nout=1)
     nodes = nodes[..., np.newaxis]
@@ -134,7 +135,14 @@ def test_compute_theta(dims: str, SED: bool, include_corners: bool):
     alpha = mega_buffer[..., 2:3]
     buffer = mega_buffer[..., 3:]
 
-    config = ZhangShuConfig(SED, False, 0, include_corners)
+    config = ZhangShuConfig(
+        smooth_extrema_detection=SED,
+        physical_admissibility_detection=PAD,
+        include_corners=include_corners,
+        shock_detection=False,
+        PAD_atol=0,
+        PAD_bounds=np.array([[0.0, 0.1] * 5]),
+    )
 
     modified = compute_theta(
         np,

@@ -20,8 +20,9 @@ p_CFL_map = {
 
 @pytest.mark.parametrize("adaptive_dt", [False, True])
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7, 15])
+@pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
-def test_1D_advection_mpp(adaptive_dt, p, dim):
+def test_1D_advection_mpp(adaptive_dt, p, SED, dim):
     if p > 7 and not adaptive_dt:
         pytest.skip("High order schemes require adaptive timestepping.")
     solver = AdvectionSolver(
@@ -32,6 +33,7 @@ def test_1D_advection_mpp(adaptive_dt, p, dim):
         adaptive_dt=adaptive_dt and p > 0,
         ZS=True,
         PAD={"rho": (0, 1)},
+        SED=SED,
     )
     solver.run(n=10)
 
@@ -43,8 +45,9 @@ def test_1D_advection_mpp(adaptive_dt, p, dim):
 
 
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
+@pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])
-def test_2D_advection_mpp(p, dim1_dim2):
+def test_2D_advection_mpp(p, SED, dim1_dim2):
     dim1, dim2 = dim1_dim2
     solver = AdvectionSolver(
         p=p,
@@ -56,6 +59,7 @@ def test_2D_advection_mpp(p, dim1_dim2):
         GL=True,
         ZS=True,
         PAD={"rho": (0, 1)},
+        SED=SED,
         cupy=CUPY_AVAILABLE,
     )
     solver.run(n=10)

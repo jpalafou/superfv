@@ -11,6 +11,8 @@ from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import replace_slice
 
+from .MOOD import detect_PAD_violations
+
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
@@ -103,10 +105,10 @@ def compute_theta(
         buffer: Array to which temporary values are assigned. Has different shape
             requirements depending on whether SED is used and the number (length) of
             active dimensions:
-            - without SED: (nvars, nx, ny, nz, >=4)
-            - with SED, 1D: (nvars, nx, ny, nz, >=11)
-            - with SED, 2D: (nvars, nx, ny, nz, >=13)
-            - with SED, 3D: (nvars, nx, ny, nz, >=14)
+            - without SED: (nvars, nx, ny, nz, >=3)
+            - with SED, 1D: (nvars, nx, ny, nz, >=10)
+            - with SED, 2D: (nvars, nx, ny, nz, >=12)
+            - with SED, 3D: (nvars, nx, ny, nz, >=13)
         config: Configuration for the Zhang-Shu limiter.
         alpha: Optional array to which the smooth extrema detector values are written
             if SED is enabled. Has shape (nvars, nx, ny, nz, 1).
@@ -167,6 +169,33 @@ def compute_theta(
             out=alpha,
             buffer=abuff,
         )
+
+        # unrelax theta where there are PAD violations
+        if config.physical_admissibility_detection:
+            PAD_bounds = config.PAD_bounds
+            PAD_atol = config.PAD_atol
+
+            if PAD_bounds is None:
+                raise ValueError(
+                    "PAD_bounds must be provided when "
+                    "physical_admissibility_detection is True."
+                )
+
+            # recycle buffer slots
+            PAD_violations = abuff[..., :1]
+            PAD_violations_1d = abuff[..., 1:2]
+
+            PAD_violations[...] = 0
+            for nodes in [x_nodes, y_nodes, z_nodes]:
+                if nodes is None:
+                    continue
+                detect_PAD_violations(
+                    xp, nodes, PAD_bounds, PAD_atol, out=PAD_violations_1d
+                )
+                PAD_violations[...] = PAD_violations + (PAD_violations_1d < 0)
+
+            alpha[modified] = xp.where(PAD_violations[modified], 0.0, alpha[modified])
+
         out[modified] = xp.where(alpha[modified] < 1, theta[modified], 1)
     else:
         modified = cast(Tuple[slice, ...], replace_slice(dmp_modified, 4, slice(0, 1)))

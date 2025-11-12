@@ -407,10 +407,28 @@ def detect_PAD_violations(
         physical_ranges: Physical ranges for each variable. Has shape (nvars, 2).
         physical_tols: Physical tolerances for all variables as a single float.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
+
+    Notes:
+        - Creates temporary arrays in memory.
     """
-    physical_mins = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, 0]
-    physical_maxs = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, 1]
-    out[...] = xp.minimum(u_new - physical_mins, physical_maxs - u_new) + physical_tols
+    ndim = u_new.ndim
+
+    if ndim not in (4, 5):
+        raise ValueError("u_new must have 4 or 5 dimensions.")
+
+    slice1 = 0 if ndim == 4 else slice(0, 1)
+    slice2 = 1 if ndim == 4 else slice(1, 2)
+    physical_mins = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, slice1]
+    physical_maxs = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, slice2]
+
+    violations = (
+        xp.minimum(u_new - physical_mins, physical_maxs - u_new) + physical_tols
+    )
+
+    if ndim == 4:
+        out[...] = violations
+    else:
+        out[...] = xp.any(violations, axis=4, keepdims=True)
 
 
 @lru_cache(maxsize=None)

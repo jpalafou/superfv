@@ -1039,10 +1039,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if ndim == 1:
             interpolation_buffer_cost = 0
         elif ndim == 2:
-            if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
-                interpolation_buffer_cost = 2
-            else:
-                interpolation_buffer_cost = 2
+            interpolation_buffer_cost = 2
         else:  # ndim == 3
             if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
                 interpolation_buffer_cost = 2 + 2 * GL_nodes_per_dim

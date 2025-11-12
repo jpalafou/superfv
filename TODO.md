@@ -7,5 +7,4 @@
 - [ ] a posteriori is not high-order for the entropy wave problem
 - [ ] compare Shu Osher test with other papers
 - [ ] rename `to_dict` pattern to `__dict__`
-- [ ] enable ZS SED unrelaxation using PAD
-- [x] remove MOOD state dependency on MOOD config, solve inconsistent cascade status calls
+- [x] enable ZS SED unrelaxation using PAD
