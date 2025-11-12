@@ -437,7 +437,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # init a priori base scheme
         if p == 0:
             self._init_unlimited_scheme(
-                0, flux_recipe, GL, lazy_primitives, eta_max, PAD_atol
+                0, flux_recipe, GL, lazy_primitives, eta_max, SED, PAD_atol
             )
         elif MUSCL:
             if ZS:
@@ -458,7 +458,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         else:
             self._init_unlimited_scheme(
-                p, flux_recipe, GL, lazy_primitives, eta_max, PAD_atol
+                p, flux_recipe, GL, lazy_primitives, eta_max, SED, PAD_atol
             )
 
         # init a posteriori scheme
@@ -520,6 +520,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         GL: bool,
         lazy_primitives: Literal["none", "full", "adaptive"],
         eta_max: float,
+        SED: bool,
         PAD_atol: float,
     ):
         self.p = p
@@ -528,7 +529,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             flux_recipe=flux_recipe,
             limiter_config=LimiterConfig(
                 shock_detection=lazy_primitives == "adaptive",
-                smooth_extrema_detection=False,
+                smooth_extrema_detection=SED,
                 physical_admissibility_detection=self.using_PAD,
                 eta_max=eta_max,
                 PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,

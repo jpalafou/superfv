@@ -51,6 +51,7 @@ def test_mpp_2d(N: int, p: int, cascade: str):
         cascade=cascade,
         max_MOOD_iters=max_MOOD_iters,
         NAD=True,
+        NAD_atol=PAD_atol,
         PAD={"rho": (0.0, 1.0)},
         PAD_atol=PAD_atol,
     )

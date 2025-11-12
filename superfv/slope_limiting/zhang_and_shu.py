@@ -181,19 +181,8 @@ def compute_theta(
                     "physical_admissibility_detection is True."
                 )
 
-            # recycle buffer slots
-            PAD_violations = abuff[..., :1]
-            PAD_violations_1d = abuff[..., 1:2]
-
-            PAD_violations[...] = 0
-            for nodes in [x_nodes, y_nodes, z_nodes]:
-                if nodes is None:
-                    continue
-                detect_PAD_violations(
-                    xp, nodes, PAD_bounds, PAD_atol, out=PAD_violations_1d
-                )
-                PAD_violations[...] = PAD_violations + (PAD_violations_1d < 0)
-
+            PAD_violations = abuff[..., :1]  # recycle buffer slots
+            detect_PAD_violations(xp, node_mp, PAD_bounds, PAD_atol, out=PAD_violations)
             alpha[modified] = xp.where(PAD_violations[modified], 0.0, alpha[modified])
 
         out[modified] = xp.where(alpha[modified] < 1, theta[modified], 1)

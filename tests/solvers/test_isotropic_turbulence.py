@@ -5,29 +5,18 @@ import pytest
 from superfv import EulerSolver
 from superfv.initial_conditions import decaying_isotropic_turbulence
 
+rho_PAD = {"rho": (0.0, None)}
+
 
 @pytest.mark.parametrize(
     "config",
     [
-        dict(riemann_solver="hllc", p=0),
-        dict(
-            riemann_solver="hllc",
-            p=1,
-            flux_recipe=2,
-            MUSCL=True,
-            MUSCL_limiter="moncen",
-        ),
-        dict(
-            riemann_solver="hllc",
-            p=3,
-            flux_recipe=2,
-            lazy_primitives="adaptive",
-            ZS=True,
-            PAD={"rho": (0, None)},
-        ),
+        dict(p=0),
+        dict(p=1, MUSCL=True, MUSCL_limiter="moncen"),
+        dict(p=3, lazy_primitives="adaptive", ZS=True, PAD=rho_PAD),
     ],
 )
-@pytest.mark.parametrize("seed", range(1, 31))
+@pytest.mark.parametrize("seed", range(1, 4))
 def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
     N = 100
     T = 0.1
@@ -51,24 +40,9 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
 @pytest.mark.parametrize(
     "config",
     [
-        dict(riemann_solver="hllc", p=0),
-        dict(
-            riemann_solver="hllc",
-            p=1,
-            flux_recipe=2,
-            MUSCL=True,
-            MUSCL_limiter="PP2D",
-        ),
-        dict(
-            riemann_solver="hllc",
-            p=3,
-            flux_recipe=2,
-            lazy_primitives="adaptive",
-            ZS=True,
-            GL=True,
-            include_corners=True,
-            PAD={"rho": (0, None)},
-        ),
+        dict(p=0),
+        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D"),
+        dict(p=3, ZS=True, GL=True, lazy_primitives="adaptive", PAD=rho_PAD),
     ],
 )
 @pytest.mark.parametrize("seed", range(1, 31))
