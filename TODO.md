@@ -6,7 +6,6 @@
 - [ ] improve performance of shock detection
 - [ ] a posteriori is not high-order for the entropy wave problem
 - [ ] compare Shu Osher test with other papers
-- [x] move PAD and eta_max to base limiter_config class
 - [ ] rename `to_dict` pattern to `__dict__`
 - [ ] enable ZS SED unrelaxation using PAD
-- [ ] remove MOOD state dependency on MOOD config, solve inconsistent cascade status calls
+- [x] remove MOOD state dependency on MOOD config, solve inconsistent cascade status calls

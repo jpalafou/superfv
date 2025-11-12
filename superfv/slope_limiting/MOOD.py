@@ -107,15 +107,11 @@ class MOODState:
     Class that describes the state of the MOOD iterator.
 
     Attributes:
-        config: The MOOD configuration.
         iter_idx: Current iteration index in the MOOD loop.
         iter_count: Total number of iterations across all MOOD loops in a step.
         fine_iter_count: Number of iterations in the current MOOD loop.
-        cascade_status: List of boolean flags indicating the status of each
-            interpolation scheme in the cascade.
+        cascade_idx: Current index in the cascade of schemes.
     """
-
-    config: MOODConfig
 
     def __post_init__(self):
         self.reset_MOOD_loop()
@@ -144,7 +140,7 @@ class MOODState:
         self.iter_idx = 0
         self.fine_iter_count = 0
         self.fine_troubled_cell_count = 0
-        self.cascade_status: List[bool] = [False] * len(self.config.cascade)
+        self.cascade_idx = 0
 
     def increment_MOOD_iteration(self):
         """
@@ -184,6 +180,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             - SED is not enabled: (nvars, nx, ny, nz, 2)
     """
     # gather solver parameters
+    MOOD_config = fv_solver.MOOD_config
+    MOOD_state = fv_solver.MOOD_state
     xp = fv_solver.xp
     scheme = fv_solver.base_scheme
     arrays = fv_solver.arrays
@@ -191,14 +189,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     lim_slc = fv_solver.variable_index_map("limiting", keepdims=True)
     interior = fv_solver.interior
     dt = fv_solver.substep_dt
-    MOOD_state = fv_solver.MOOD_state
     vis_rtol = fv_solver.vis_rtol
     vis_atol = fv_solver.vis_atol
 
     # gather MOOD parameters
     iter_idx = MOOD_state.iter_idx
-    cascade_status = MOOD_state.cascade_status
-    MOOD_config = MOOD_state.config
     cascade = MOOD_config.cascade
     NAD = MOOD_config.numerical_admissibility_detection
     NAD_rtol = MOOD_config.NAD_rtol
@@ -331,7 +326,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             arrays["G_" + scheme_key][...] = arrays["G"].copy()
         if "z" in active_dims:
             arrays["H_" + scheme_key][...] = arrays["H"].copy()
-        cascade_status[0] = True
 
     # determine which troubled cells should be visualized
     troubles_vis[...] = troubles
@@ -461,13 +455,13 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
         t: Current time value.
     """
     # gather solver parameters
+    MOOD_config = fv_solver.MOOD_config
+    MOOD_state = fv_solver.MOOD_state
     xp = fv_solver.xp
     arrays = fv_solver.arrays
     active_dims = fv_solver.active_dims
     interior = fv_solver.interior
-    MOOD_state = fv_solver.MOOD_state
-    cascade = MOOD_state.config.cascade
-    cascade_status = MOOD_state.cascade_status
+    cascade = MOOD_config.cascade
     max_idx = len(cascade) - 1
 
     # early escape for single fallback scheme case
@@ -490,10 +484,10 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     current_max_idx = xp.max(_cascade_idx_array_).item()
 
     # update the cascade scheme fluxes
-    if not cascade_status[current_max_idx]:
+    if MOOD_state.cascade_idx == current_max_idx - 1:
         scheme = cascade[current_max_idx]
         fv_solver.compute_fluxes(t, scheme)
-        cascade_status[current_max_idx] = True
+        MOOD_state.cascade_idx += 1
 
         if "x" in active_dims:
             arrays["F_" + scheme.key()] = F.copy()
@@ -501,6 +495,8 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
             arrays["G_" + scheme.key()] = G.copy()
         if "z" in active_dims:
             arrays["H_" + scheme.key()] = H.copy()
+    elif MOOD_state.cascade_idx != current_max_idx:
+        raise ValueError("Invalid cascade index for flux revision.")
 
     # broadcast cascade index to each face
     if "x" in active_dims:
@@ -534,13 +530,14 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
         t: Current time value.
     """
     # gather solver parameters
+    MOOD_config = fv_solver.MOOD_config
+    MOOD_state = fv_solver.MOOD_state
     xp = fv_solver.xp
     arrays = fv_solver.arrays
     active_dims = fv_solver.active_dims
     interior = fv_solver.interior
-    MOOD_state = fv_solver.MOOD_state
-    cascade = MOOD_state.config.cascade
-    cascade_status = MOOD_state.cascade_status
+    blend = MOOD_config.blend
+    cascade = MOOD_config.cascade
 
     # parse schemes
     if len(cascade) != 2:
@@ -567,7 +564,7 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
     # max is 1 since there should be at least 1 troubled cell at this point
 
     # blend cascade index
-    if MOOD_state.config.blend:
+    if blend:
         _blended_cascade_idx_array_[...] = _cascade_idx_array_
         blend_troubled_cells(
             xp,
@@ -578,9 +575,9 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
         _cascade_idx_array_ = _blended_cascade_idx_array_
 
     # compute fallback scheme fluxes
-    if not cascade_status[1]:
+    if MOOD_state.cascade_idx == 0:
         fv_solver.compute_fluxes(t, fallback_scheme)
-        cascade_status[1] = True
+        MOOD_state.cascade_idx += 1
 
         if "x" in active_dims:
             arrays["F_" + fallback_scheme.key()] = F.copy()
@@ -588,6 +585,8 @@ def revise_fluxes_with_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
             arrays["G_" + fallback_scheme.key()] = G.copy()
         if "z" in active_dims:
             arrays["H_" + fallback_scheme.key()] = H.copy()
+    elif MOOD_state.cascade_idx != 1:
+        raise ValueError("Invalid cascade index for fallback scheme revision.")
 
     # broadcast cascade index to each face
     if "x" in active_dims:

@@ -462,6 +462,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
 
         # init a posteriori scheme
+        self.MOOD_state = MOODState()
         if MOOD and self.base_scheme.p > 0:
             self.MOOD = True
 
@@ -486,7 +487,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 smooth_extrema_detection=False,
                 physical_admissibility_detection=False,
             )
-            self.MOOD_state = MOODState(config=self.MOOD_config)
 
         # add limiting variables to the index map
         idx = self.variable_index_map
@@ -705,7 +705,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             NAD_atol=NAD_atol,
             skip_trouble_counts=skip_trouble_counts,
         )
-        self.MOOD_state = MOODState(config=self.MOOD_config)
 
     def _init_snapshots(self):
         self.step_log: Dict[str, List[float]] = {}
@@ -752,9 +751,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 limiting_cost = 3 if bs.limiter_config.smooth_extrema_detection else 1
             if self.MOOD:
                 NAD_cost = 1
-                if self.MOOD_state.config.smooth_extrema_detection:
+                if self.MOOD_config.smooth_extrema_detection:
                     NAD_cost = 3
-                trouble_map_cost = 3 if self.MOOD_state.config.blend else 1
+                trouble_map_cost = 3 if self.MOOD_config.blend else 1
                 limiting_cost = NAD_cost + trouble_map_cost
 
             flux_integral_cost = s if len(self.active_dims) > 1 else 0
@@ -1082,7 +1081,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # check fallback schemes in MOOD configuration
         if check_MOOD:
-            for fallback_scheme in self.MOOD_state.config.cascade[1:]:
+            for fallback_scheme in self.MOOD_config.cascade[1:]:
                 fallback_buffer_cost = self._compute_buffer_size(
                     fallback_scheme, check_MOOD=False
                 )
@@ -1574,10 +1573,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             t: Time value.
         """
+        config = self.MOOD_config
         state = self.MOOD_state
 
         state.reset_MOOD_loop()
-        for _ in range(state.config.max_iters):
+        for _ in range(config.max_iters):
 
             self.timer.start("detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
@@ -2329,7 +2329,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             CFL=self.CFL,
             ic=getattr(self.ic, "__name__", "unknown name"),
             integrator=self.integrator if hasattr(self, "integrator") else None,
-            MOOD_config=self.MOOD_state.config.to_dict() if self.MOOD else None,
+            MOOD_config=self.MOOD_config.to_dict() if self.MOOD else None,
             mesh=self.mesh.to_dict(),
             nvars=self.nvars,
             n_passive_vars=self.n_passive_vars,
