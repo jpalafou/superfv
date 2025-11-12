@@ -953,6 +953,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_wp_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
         arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
@@ -1050,11 +1051,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # buffer cost of `update_workspaces` function
         if getattr(scheme, "lazy_primitives", "none") == "adaptive":
             adaptive_primitive_cost = {1: 8, 2: 10, 3: 11}[ndim]
-            update_workspaces_buffer_cost = (
-                max(interpolation_buffer_cost, adaptive_primitive_cost) + 1
+            update_workspaces_buffer_cost = max(
+                interpolation_buffer_cost, adaptive_primitive_cost
             )
         else:
-            update_workspaces_buffer_cost = interpolation_buffer_cost + 1
+            update_workspaces_buffer_cost = interpolation_buffer_cost
 
         # buffer cost of slope-limiting functions
         if isinstance(scheme.limiter_config, ZhangShuConfig):
@@ -1101,6 +1102,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "compute_dt",
             "apply_bc",
             "riemann_solver",
+            "shock_detector",
             "zhang_shu_limiter",
             "MOOD_loop",
             "detect_troubled_cells",
@@ -1252,14 +1254,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _u_ = arrays["_u_"]
         _ucc_ = arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = arrays["_wcc_"]  # shape (..., 1)
-        _w_ = arrays["_w_"]  # shape (..., 1)
+        _wp_ = arrays["_wp_"]  # shape (..., 1)
+        _w_ = arrays["_w_"]
         _eta_ = arrays["_eta_"]
         _PAD_violations_ = arrays["_PAD_violations_"]
         _any_PAD_violations_ = arrays["_any_troubles_"]
-
-        check_buffer_slots(arrays["_buffer_"], required=1)
-        _wp_ = arrays["_buffer_"][..., :1]
-        _buff_ = arrays["_buffer_"][..., 1:]
+        _buff_ = arrays["_buffer_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
@@ -1288,9 +1288,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=_buff_)
             _w_[...] = self.primitives_from_conservatives(_u_)
 
-            compute_shock_detector(
-                xp, _w_, active_dims, scheme.eta_max, out=_eta_, buffer=_buff_
-            )
+            primitives = scheme.flux_recipe in (2, 3)
+            self.shock_detector(scheme, primitives)  # writes to _eta_
 
             if scheme.limiter_config.physical_admissibility_detection:
                 detect_PAD_violations(
@@ -1344,6 +1343,37 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mesh=self.mesh,
             t=t,
             p=scheme.p,
+        )
+
+    @MethodTimer(cat="shock_detector")
+    def shock_detector(self, scheme: InterpolationScheme, primitives: bool):
+        """
+        Compute the shock detector based on the `_w_` or `_u_` workspaces depending on
+        the flux recipe and write the result to the `_eta_` array.
+
+        Args:
+            scheme: Interpolation scheme to use.
+            primitives: Whether to use primitive variables for shock detection.
+                Otherwise, conservative variables are used.
+        """
+        xp = self.xp
+        arrays = self.arrays
+        active_dims = self.active_dims
+
+        if not scheme.limiter_config.shock_detection:
+            raise ValueError("Shock detection is not enabled in the scheme.")
+
+        _eta_ = arrays["_eta_"]
+        _w_ = arrays["_w_"] if primitives else arrays["_u_"]
+        buffer = arrays["_buffer_"]
+
+        compute_shock_detector(
+            xp,
+            _w_,
+            active_dims,
+            scheme.limiter_config.eta_max,
+            out=_eta_,
+            buffer=buffer,
         )
 
     def interpolate_faces(
