@@ -83,6 +83,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         nz: int = 1,
         p: int = 0,
         CFL: float = 0.8,
+        dt_min: float = 1e-15,
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 2,
         lazy_primitives: Literal["none", "full", "adaptive"] = "none",
@@ -156,6 +157,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
             CFL: CFL number.
+            dt_min: Minimum allowable timestep size.
             GL: Whether to use Gauss-Legendre quadrature for flux integration. If
                 `False`, the transverse quadrature is used.
             flux_recipe: Recipe for interpolating flux nodes. Possible values:
@@ -275,6 +277,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
         self._init_bc(bcx, bcy, bcz, bcx_callable, bcy_callable, bcz_callable)
         self._init_array_allocation()
+        self._init_ODE_solver(dt_min)
         self._init_timer(sync_timing)
         self._init_riemann_solver(riemann_solver)
         self._init_visualization(vis_rtol, vis_atol)
@@ -928,11 +931,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.cupy:
             self.arrays.transfer_to("gpu")
 
-        idx = self.variable_index_map
         scheme = self.base_scheme
         mesh = self.mesh
         arrays = self.arrays
-        xp = self.xp
 
         # initialize regular mesh arrays
         nvars, nx, ny, nz = self.nvars, mesh.nx, mesh.ny, mesh.nz
@@ -1002,6 +1003,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # helper attribute
         self.flux_names = {"x": "F", "y": "G", "z": "H"}
 
+    def _init_ODE_solver(self, dt_min: float):
+        idx = self.variable_index_map
+        mesh = self.mesh
+        arrays = self.arrays
+
         # initialize the ODE solver with the initial condition array
         u0 = self._make_conservative_field(self.callable_ic)
         ic_arr = mesh.perform_GaussLegendre_quadrature(
@@ -1012,9 +1018,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=self.p,
         )
 
-        super().__init__(ic_arr, self.arrays)  # defines "u"
-        assert arrays["u"].shape == (nvars, nx, ny, nz)
+        # call superclass initializer
+        super().__init__(ic_arr, self.arrays, dt_min=dt_min)  # defines "u"
+        assert arrays["u"].shape == (self.nvars, mesh.nx, mesh.ny, mesh.nz)
 
+        # set adaptive dt functions if applicable
         if getattr(self.base_scheme.limiter_config, "adaptive_dt", False):
             self._dt_criterion = self.adaptive_dt_criterion
             self._compute_revised_dt = self.adaptive_dt_revision
@@ -2355,6 +2363,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             base_scheme=self.base_scheme.to_dict(),
             bc_mode=self.bc_mode,
             CFL=self.CFL,
+            dt_min=self.dt_min,
             ic=getattr(self.ic, "__name__", "unknown name"),
             integrator=self.integrator if hasattr(self, "integrator") else None,
             MOOD_config=self.MOOD_config.to_dict() if self.MOOD else None,

@@ -66,17 +66,24 @@ class ExplicitODESolver(ABC):
           routines at the end of each step.
     """
 
-    def __init__(self, u0: np.ndarray, array_manager: Optional[ArrayManager] = None):
+    def __init__(
+        self,
+        u0: np.ndarray,
+        array_manager: Optional[ArrayManager] = None,
+        dt_min: float = 1e-15,
+    ):
         """
         Initializes the ODE solver.
 
         Args:
             u0: Initial state as an array.
             array_manager: Optional ArrayManager instance to manage arrays.
+            dt_min: Minimum allowable time-step size.
         """
         # initialize time values
         self.t = 0.0
         self.dt = 0.0
+        self.dt_min = dt_min
 
         # initialize logs
         self.reset_global_logs()
@@ -272,10 +279,8 @@ class ExplicitODESolver(ABC):
         Args:
             dt: Time-step size to validate.
         """
-        if dt <= 0.0:
-            raise RuntimeError("Computed non-positive time-step size.")
-        if dt < 1e-15:
-            raise RuntimeError("Computed step size smaller than 1e-15.")
+        if dt < self.dt_min:
+            raise RuntimeError(f"Computed step size smaller than {self.dt_min}.")
         if np.isnan(dt):
             raise RuntimeError("Computed NaN time-step size.")
 

@@ -32,6 +32,7 @@ class EulerSolver(FiniteVolumeSolver):
         nz: int = 1,
         p: int = 0,
         CFL: float = 0.8,
+        dt_min: float = 1e-15,
         GL: bool = False,
         flux_recipe: Literal[1, 2, 3] = 2,
         lazy_primitives: Literal["none", "full", "adaptive"] = "none",
@@ -108,6 +109,7 @@ class EulerSolver(FiniteVolumeSolver):
             nx, ny, nz: Number of cells in the x, y, and z-directions.
             p: Maximum polynomial degree of the spatial discretization.
             CFL: CFL number.
+            dt_min: Minimum allowable timestep size.
             GL: Whether to use Gauss-Legendre quadrature for flux integration. If
                 `False`, the transverse quadrature is used.
             flux_recipe: Recipe for interpolating flux nodes. Possible values:
@@ -221,6 +223,7 @@ class EulerSolver(FiniteVolumeSolver):
             nz=nz,
             p=p,
             CFL=CFL,
+            dt_min=dt_min,
             GL=GL,
             riemann_solver=riemann_solver,
             flux_recipe=flux_recipe,
