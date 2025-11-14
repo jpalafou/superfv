@@ -10,95 +10,35 @@ from superfv import EulerSolver
 from superfv.initial_conditions import entropy_wave
 from superfv.tools.norms import linf_norm
 
+base_path = "benchmarks/entropy-wave-convergence/"
+plot_path = os.path.join(base_path, "plot.png")
+
+PAD = {"rho": (0, None), "P": (0, None)}
+apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
+aposteriori = dict(MOOD=True, lazy_primitives="adaptive", PAD=PAD, NAD_atol=1e-3)
+
+configs = {
+    "p0": dict(p=0),
+    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="moncen"),
+    "ZS3": dict(p=3, **apriori),
+    "MM3": dict(p=3, **aposteriori),
+    "ZS7": dict(p=7, **apriori),
+    "MM7": dict(p=7, **aposteriori),
+}
+
+N_values = [32, 64, 128]
+
+
 gamma = 5 / 3
 T = 1.0
 
-OUTPUT_NAME = "benchmarks/entropy-wave-convergence/" + "plot.png"
-N_LIST = [32, 64, 128]
-configs = {
-    "p0": dict(riemann_solver="hllc", p=0),
-    "MUSCL-Hancock": dict(
-        riemann_solver="hllc",
-        p=1,
-        MUSCL=True,
-        MUSCL_limiter="moncen",
-        flux_recipe=2,
-        SED=True,
-    ),
-    "ZS3": dict(
-        riemann_solver="hllc",
-        p=3,
-        ZS=True,
-        flux_recipe=2,
-        lazy_primitives="adaptive",
-        PAD={"rho": (0, None), "P": (0, None)},
-        SED=True,
-    ),
-    # "ZS7": dict(
-    #     riemann_solver="hllc",
-    #     p=7,
-    #     ZS=True,
-    #     flux_recipe=2,
-    #     lazy_primitives="adaptive",
-    #     PAD={"rho": (0, None), "P": (0, None)},
-    #     SED=True,
-    # ),
-    "MM3-nolazy": dict(
-        riemann_solver="hllc",
-        p=3,
-        flux_recipe=2,
-        lazy_primitives="none",
-        MOOD=True,
-        limiting_vars="actives",
-        cascade="muscl",
-        MUSCL_limiter="moncen",
-        max_MOOD_iters=1,
-        blend=True,
-        NAD=True,
-        NAD_rtol=1e-2,
-        NAD_atol=1e-3,
-        SED=True,
-    ),
-    "MM3-fulllazy": dict(
-        riemann_solver="hllc",
-        p=3,
-        flux_recipe=2,
-        lazy_primitives="full",
-        MOOD=True,
-        limiting_vars="actives",
-        cascade="muscl",
-        MUSCL_limiter="moncen",
-        max_MOOD_iters=1,
-        blend=True,
-        NAD=True,
-        NAD_rtol=1e-2,
-        NAD_atol=1e-3,
-        SED=True,
-    ),
-    # "MM7": dict(
-    #     riemann_solver="hllc",
-    #     p=7,
-    #     flux_recipe=2,
-    #     lazy_primitives="none",
-    #     MOOD=True,
-    #     cascade="muscl",
-    #     MUSCL_limiter="moncen",
-    #     max_MOOD_iters=1,
-    #     blend=True,
-    #     NAD=True,
-    #     NAD_rtol=1e-2,
-    #     NAD_atol=1e-8,
-    #     SED=True,
-    # ),
-}
-
 # remove old output
-if os.path.exists(OUTPUT_NAME):
-    os.remove(OUTPUT_NAME)
+if os.path.exists(plot_path):
+    os.remove(plot_path)
 
 # loop over all combinations of N and p
 data = []
-for N, (name, config) in product(N_LIST, configs.items()):
+for N, (name, config) in product(N_values, configs.items()):
     # print status
     print(f"Running N={N}, config={name}")
 
@@ -106,6 +46,7 @@ for N, (name, config) in product(N_LIST, configs.items()):
     sim = EulerSolver(
         ic=partial(entropy_wave, gamma=gamma), nx=N, gamma=gamma, **config
     )
+
     try:
         sim.run(T, reduce_CFL=True, muscl_hancock=config.get("MUSCL", False))
     except RuntimeError as e:
@@ -164,4 +105,4 @@ for name in configs.keys():
         **style,
     )
 ax.legend()
-fig.savefig(OUTPUT_NAME)
+fig.savefig(plot_path, dpi=300)

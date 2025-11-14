@@ -114,7 +114,7 @@ def compute_theta(
             if SED is enabled. Has shape (nvars, nx, ny, nz, 1).
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid regions in the output array.
     """
     include_corners = config.include_corners
     SED = config.smooth_extrema_detection
@@ -131,7 +131,7 @@ def compute_theta(
         for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
         if arr is not None
     )
-    dmp_modified = compute_dmp(
+    dmp_valid = compute_dmp(
         xp, u, active_dims, out=dmp, include_corners=include_corners
     )
 
@@ -162,7 +162,7 @@ def compute_theta(
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is enabled.")
         abuff = buffer[..., 3:]
-        modified = smooth_extrema_detector(
+        valid = smooth_extrema_detector(
             xp,
             u,
             active_dims,
@@ -183,14 +183,14 @@ def compute_theta(
 
             PAD_violations = abuff[..., :1]  # recycle buffer slots
             detect_PAD_violations(xp, node_mp, PAD_bounds, PAD_atol, out=PAD_violations)
-            alpha[modified] = xp.where(PAD_violations[modified], 0.0, alpha[modified])
+            alpha[valid] = xp.where(PAD_violations[valid] < 0, 0.0, alpha[valid])
 
-        out[modified] = xp.where(alpha[modified] < 1, theta[modified], 1)
+        out[valid] = xp.where(alpha[valid] < 1, theta[valid], 1)
     else:
-        modified = cast(Tuple[slice, ...], replace_slice(dmp_modified, 4, slice(0, 1)))
-        out[modified] = theta[modified]
+        valid = cast(Tuple[slice, ...], replace_slice(dmp_valid, 4, slice(0, 1)))
+        out[valid] = theta[valid]
 
-    return modified
+    return valid
 
 
 def zhang_shu_operator(u_ho: ArrayLike, u_fo: ArrayLike, theta: ArrayLike) -> ArrayLike:
