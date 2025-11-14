@@ -12,8 +12,13 @@ rho_PAD = {"rho": (0.0, None)}
     "config",
     [
         dict(p=0),
-        dict(p=1, MUSCL=True, MUSCL_limiter="moncen"),
-        dict(p=3, lazy_primitives="adaptive", ZS=True, PAD=rho_PAD),
+        dict(
+            p=1,
+            MUSCL=True,
+            MUSCL_limiter="moncen",
+            SED=False,
+        ),
+        dict(p=3, lazy_primitives="adaptive", ZS=True, PAD=rho_PAD, SED=False),
     ],
 )
 @pytest.mark.parametrize("seed", range(1, 31))
@@ -31,7 +36,6 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
         ),
         isothermal=True,
         nx=N,
-        SED=False,
         **config,
     )
 
@@ -42,8 +46,8 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
     "config",
     [
         dict(p=0),
-        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D"),
-        dict(p=3, ZS=True, GL=True, lazy_primitives="adaptive", PAD=rho_PAD),
+        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", SED=False),
+        dict(p=3, ZS=True, GL=True, lazy_primitives="adaptive", PAD=rho_PAD, SED=False),
     ],
 )
 @pytest.mark.parametrize("seed", range(1, 31))
@@ -61,7 +65,6 @@ def test_2d_isotropic_decaying_turbulence(config: dict, seed: int):
         isothermal=True,
         nx=N,
         ny=N,
-        SED=False,
         **config,
     )
 

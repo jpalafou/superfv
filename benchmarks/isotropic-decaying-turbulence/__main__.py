@@ -13,15 +13,15 @@ M_max_values = [1, 2.5, 5, 10, 25, 50]
 
 seeds = range(1, 31)
 
-PAD = {"rho": (0, None)}
-apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
+common = dict(PAD={"rho": (0, None)}, SED=False)
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
-    MOOD=True, lazy_primitives="adaptive", limiting_vars=("rho", "vx", "vy"), PAD=PAD
+    MOOD=True, lazy_primitives="adaptive", limiting_vars=("rho", "vx", "vy"), **common
 )
 
 configs = {
     "p0": dict(p=0),
-    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D"),
+    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
@@ -85,7 +85,6 @@ for (name, config), seed, M_max in product(configs.items(), seeds, M_max_values)
         isothermal=True,
         nx=N,
         ny=N,
-        SED=False,
         **config,
     )
 
@@ -98,7 +97,6 @@ for (name, config), seed, M_max in product(configs.items(), seeds, M_max_values)
         isothermal=True,
         nx=N,
         ny=N,
-        SED=False,
         dt_min=0.1 * dt_ref,
         **config,
     )
