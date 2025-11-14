@@ -16,7 +16,7 @@ rho_PAD = {"rho": (0.0, None)}
         dict(p=3, lazy_primitives="adaptive", ZS=True, PAD=rho_PAD),
     ],
 )
-@pytest.mark.parametrize("seed", range(1, 4))
+@pytest.mark.parametrize("seed", range(1, 31))
 def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
     N = 100
     T = 0.1
@@ -31,6 +31,7 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
         ),
         isothermal=True,
         nx=N,
+        SED=False,
         **config,
     )
 
@@ -60,6 +61,7 @@ def test_2d_isotropic_decaying_turbulence(config: dict, seed: int):
         isothermal=True,
         nx=N,
         ny=N,
+        SED=False,
         **config,
     )
 
