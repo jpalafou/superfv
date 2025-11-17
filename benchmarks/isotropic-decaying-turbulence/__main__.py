@@ -15,9 +15,9 @@ seeds = range(1, 31)
 
 common = dict(PAD={"rho": (0, None)}, SED=False)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
-aposteriori = dict(
-    MOOD=True, lazy_primitives="adaptive", limiting_vars=("rho", "vx", "vy"), **common
-)
+aposteriori = dict(MOOD=True, limiting_vars=("rho", "vx", "vy"), **common)
+adaptive = dict(lazy_primitives="adaptive")
+lazy = dict(lazy_primitives="full")
 
 configs = {
     "p0": dict(p=0),
@@ -26,17 +26,30 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3": dict(p=3, **aposteriori),
-    "MM7": dict(p=7, **aposteriori),
-    "MM3b": dict(p=3, blend=True, **aposteriori),
-    "MM7b": dict(p=7, blend=True, **aposteriori),
-    "MM3-2": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
-    "MM7-2": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
+    "MM3/adaptive": dict(p=3, **aposteriori, **adaptive),
+    "MM7/adaptive": dict(p=7, **aposteriori, **adaptive),
+    "MM3/w1": dict(p=3, **aposteriori, **lazy),
+    "MM7/w1": dict(p=7, **aposteriori, **lazy),
+    "MM3b/adaptive": dict(p=3, blend=True, **aposteriori, **adaptive),
+    "MM7b/adaptive": dict(p=7, blend=True, **aposteriori, **adaptive),
+    "MM3b/w1": dict(p=3, blend=True, **aposteriori, **lazy),
+    "MM7b/w1": dict(p=7, blend=True, **aposteriori, **lazy),
+    "MM3-2/adaptive": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **adaptive
+    ),
+    "MM7-2/adaptive": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **adaptive
+    ),
+    "MM3-2/w1": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **lazy),
+    "MM7-2/w1": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **lazy),
+    "MM3-3/w1": dict(p=3, cascade="muscl1", max_MOOD_iters=3, **aposteriori, **lazy),
+    "MM7-3/w1": dict(p=7, cascade="muscl1", max_MOOD_iters=3, **aposteriori, **lazy),
 }
 
 # Simulation parameters
 N = 64
 slope = -5 / 3
+dt_min_rel = 1e-4
 
 
 def compute_velocity_rms(sim):
@@ -74,10 +87,10 @@ def compute_reference_dt(sim):
 
 
 # Run simulations
-for (name, config), seed, M_max in product(configs.items(), seeds, M_max_values):
+for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds):
     print(f"- - - Starting simulation: {name}, seed={seed}, M_max={M_max} - - -")
 
-    sim_path = f"{base_path}/{name}/M_max_{M_max}/seed_{seed}/"
+    sim_path = f"{base_path}{name}/M_max_{M_max}/seed_{seed:02d}/"
 
     # dummy sim used purely for computing T and dt_ref
     dummy_sim = EulerSolver(
@@ -97,7 +110,7 @@ for (name, config), seed, M_max in product(configs.items(), seeds, M_max_values)
         isothermal=True,
         nx=N,
         ny=N,
-        dt_min=0.1 * dt_ref,
+        dt_min=dt_min_rel * dt_ref,
         **config,
     )
 
@@ -105,13 +118,22 @@ for (name, config), seed, M_max in product(configs.items(), seeds, M_max_values)
         sim.run(
             [t.item() for t in np.linspace(0, t_cross, 4)[1:]],
             allow_overshoot=True,
-            log_freq=100,
-            path=sim_path,
+            q_max=2,
             muscl_hancock=config.get("MUSCL", False),
+            log_freq=1000,
+            path=sim_path,
         )
         sim.write_timings()
 
+    except FileExistsError:
+        print("\nSimulation already completed, skipping.\n")
+        continue
+
     except Exception as e:
+
+        if name in ("p0", "MUSCL-Hancock", "ZS3", "ZS7"):
+            raise RuntimeError(f"Simulation {name} failed unexpectedly.") from e
+
         print(f"\nFailed: {e}\n")
 
         # write error

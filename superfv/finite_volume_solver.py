@@ -1005,8 +1005,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_ODE_solver(self, dt_min: float):
         idx = self.variable_index_map
+        xp = self.xp
         mesh = self.mesh
+        nvars = self.nvars
         arrays = self.arrays
+
+        nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
 
         # initialize the ODE solver with the initial condition array
         u0 = self._make_conservative_field(self.callable_ic)
@@ -1020,7 +1024,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # call superclass initializer
         super().__init__(ic_arr, self.arrays, dt_min=dt_min)  # defines "u"
-        assert arrays["u"].shape == (self.nvars, mesh.nx, mesh.ny, mesh.nz)
+        assert arrays["u"].shape == (nvars, nx, ny, nz)
 
         # set adaptive dt functions if applicable
         if getattr(self.base_scheme.limiter_config, "adaptive_dt", False):

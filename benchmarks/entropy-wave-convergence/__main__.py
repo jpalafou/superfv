@@ -10,8 +10,8 @@ from superfv import EulerSolver
 from superfv.initial_conditions import entropy_wave
 from superfv.tools.norms import linf_norm
 
-base_path = "benchmarks/entropy-wave-convergence/"
-plot_path = os.path.join(base_path, "plot.png")
+base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence/"
+plot_path = base_path + "plot.png"
 
 PAD = {"rho": (0, None), "P": (0, None)}
 apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
@@ -26,7 +26,7 @@ configs = {
     "MM7": dict(p=7, **aposteriori),
 }
 
-N_values = [32, 64, 128]
+N_values = [32, 64, 128, 256, 512]
 
 
 gamma = 5 / 3
@@ -39,6 +39,8 @@ if os.path.exists(plot_path):
 # loop over all combinations of N and p
 data = []
 for N, (name, config) in product(N_values, configs.items()):
+    sim_path = base_path + f"{name}/N_{N}/"
+
     # print status
     print(f"Running N={N}, config={name}")
 
@@ -48,7 +50,9 @@ for N, (name, config) in product(N_values, configs.items()):
     )
 
     try:
-        sim.run(T, reduce_CFL=True, muscl_hancock=config.get("MUSCL", False))
+        sim.run(
+            T, reduce_CFL=True, muscl_hancock=config.get("MUSCL", False), path=sim_path
+        )
     except RuntimeError as e:
         print(f"  Failed: {e}")
         continue

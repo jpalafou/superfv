@@ -78,6 +78,8 @@ class MOODConfig(LimiterConfig):
             raise ValueError("SED requires NAD to be enabled.")
         if self.blend and len(self.cascade) != 2:
             raise ValueError("Blending is only supported for cascades of length 2")
+        if self.skip_trouble_counts and self.max_iters > 1:
+            raise ValueError("Cannot skip trouble counts when max_iters > 1")
 
     def key(self) -> str:
         cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
@@ -862,6 +864,7 @@ def log_troubled_cell_scalar_statistics(
     """
     step_log = fv_solver.step_log
     idx = fv_solver.variable_index_map
+    config = fv_solver.MOOD_config
     state = fv_solver.MOOD_state
 
     def zero_max(lst: list[float]) -> float:
@@ -898,7 +901,7 @@ def log_troubled_cell_scalar_statistics(
             "MOOD troubled cell count mismatch: "
             f"{nfine} != {state.troubled_cell_count}"
         )
-    if nfine != step_log["nfine_troubles_real_max"]:
+    if not config.skip_trouble_counts and nfine != step_log["nfine_troubles_real_max"]:
         raise ValueError(
             "MOOD troubled cell history mismatch: "
             f"{nfine} != {step_log['nfine_troubles_real_max']}"
