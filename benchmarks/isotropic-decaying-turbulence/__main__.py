@@ -15,9 +15,13 @@ seeds = range(1, 31)
 
 common = dict(PAD={"rho": (0, None)}, SED=False)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
-aposteriori = dict(MOOD=True, limiting_vars=("rho", "vx", "vy"), **common)
-adaptive = dict(lazy_primitives="adaptive")
-lazy = dict(lazy_primitives="full")
+aposteriori = dict(
+    MOOD=True,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    limiting_vars=("rho", "vx", "vy"),
+    **common,
+)
 
 configs = {
     "p0": dict(p=0),
@@ -26,24 +30,14 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/adaptive": dict(p=3, **aposteriori, **adaptive),
-    "MM7/adaptive": dict(p=7, **aposteriori, **adaptive),
-    "MM3/w1": dict(p=3, **aposteriori, **lazy),
-    "MM7/w1": dict(p=7, **aposteriori, **lazy),
-    "MM3b/adaptive": dict(p=3, blend=True, **aposteriori, **adaptive),
-    "MM7b/adaptive": dict(p=7, blend=True, **aposteriori, **adaptive),
-    "MM3b/w1": dict(p=3, blend=True, **aposteriori, **lazy),
-    "MM7b/w1": dict(p=7, blend=True, **aposteriori, **lazy),
-    "MM3-2/adaptive": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **adaptive
-    ),
-    "MM7-2/adaptive": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **adaptive
-    ),
-    "MM3-2/w1": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **lazy),
-    "MM7-2/w1": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori, **lazy),
-    "MM3-3/w1": dict(p=3, cascade="muscl1", max_MOOD_iters=3, **aposteriori, **lazy),
-    "MM7-3/w1": dict(p=7, cascade="muscl1", max_MOOD_iters=3, **aposteriori, **lazy),
+    "MM3": dict(p=3, **aposteriori),
+    "MM7": dict(p=7, **aposteriori),
+    "MM3b": dict(p=3, blend=True, **aposteriori),
+    "MM7b": dict(p=7, blend=True, **aposteriori),
+    "MM3-2": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
+    "MM7-2": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
+    "MM3-3": dict(p=3, cascade="muscl1", max_MOOD_iters=3, **aposteriori),
+    "MM7-3": dict(p=7, cascade="muscl1", max_MOOD_iters=3, **aposteriori),
 }
 
 # Simulation parameters

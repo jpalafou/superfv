@@ -7,4 +7,4 @@
 - [ ] a posteriori is not high-order for the entropy wave problem
 - [ ] compare Shu Osher test with other papers
 - [ ] rename `to_dict` pattern to `__dict__`
-- [x] enable ZS SED unrelaxation using PAD
+- [ ] rm: max_dt_revisions parameter

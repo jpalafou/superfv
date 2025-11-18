@@ -6,21 +6,28 @@ from superfv.initial_conditions import square
 
 base_path = "/scratch/gpfs/jp7427/out/profiling-2d-square/"
 
-PAD = {"rho": (0, None), "P": (0, None)}
-apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
-aposteriori = dict(MOOD=True, PAD=PAD, lazy_primitives="full", NAD_rtol=0, NAD_atol=0)
+common = dict(PAD={"rho": (0, None), "P": (0, None)})
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
+aposteriori = dict(
+    MOOD=True,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    NAD_rtol=0,
+    NAD_atol=0,
+    **common,
+)
 
 configs = {
     "p0": dict(p=0),
-    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D"),
+    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
     "p3": dict(p=3),
     "p7": dict(p=7),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3": dict(p=3, cascade="muscl", skip_trouble_counts=True, **aposteriori),
-    "MM7": dict(p=7, cascade="muscl", skip_trouble_counts=True, **aposteriori),
+    "MM3": dict(p=3, skip_trouble_counts=True, **aposteriori),
+    "MM7": dict(p=7, skip_trouble_counts=True, **aposteriori),
     "MM3-2": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
     "MM7-2": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
     "MM3-3": dict(p=3, cascade="muscl1", max_MOOD_iters=3, **aposteriori),
