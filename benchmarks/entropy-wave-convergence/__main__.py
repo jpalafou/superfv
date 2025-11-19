@@ -13,13 +13,17 @@ from superfv.tools.norms import linf_norm
 base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence/"
 plot_path = base_path + "plot.png"
 
-PAD = {"rho": (0, None), "P": (0, None)}
-apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
-aposteriori = dict(MOOD=True, lazy_primitives="adaptive", PAD=PAD, NAD_atol=1e-3)
+common = dict(PAD={"rho": (0, None), "P": (0, None)})
+apriori = dict(ZS=True, GL=True, lazy_primitives="adaptive", **common)
+aposteriori = dict(
+    MOOD=True, MUSCL_limiter="PP2D", lazy_primitives="full", NAD_atol=1e-3, **common
+)
 
 configs = {
     "p0": dict(p=0),
-    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="moncen"),
+    "MUSCL-Hancock": dict(p=1, MUSCL=True, **common),
+    "ZS2": dict(p=2, **apriori),
+    "MM2": dict(p=2, **aposteriori),
     "ZS3": dict(p=3, **apriori),
     "MM3": dict(p=3, **aposteriori),
     "ZS7": dict(p=7, **apriori),
@@ -46,7 +50,7 @@ for N, (name, config) in product(N_values, configs.items()):
 
     # run solver
     sim = EulerSolver(
-        ic=partial(entropy_wave, gamma=gamma), nx=N, gamma=gamma, **config
+        ic=partial(entropy_wave, gamma=gamma), nx=N, ny=N, gamma=gamma, **config
     )
 
     try:

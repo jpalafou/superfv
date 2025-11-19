@@ -1072,7 +1072,6 @@ def entropy_wave(
     *,
     xp: ModuleType,
     gamma: float,
-    passive_dim: Literal["x", "y", "z"] = "z",
 ) -> ArrayLike:
     """
     Returns array for the entropy wave initial condition.
@@ -1085,8 +1084,6 @@ def entropy_wave(
         t: Optional time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
         gamma: Ratio of specific heats.
-        passive_dim: The dimension in which the velocity of the entropy wave varies.
-
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
@@ -1094,22 +1091,22 @@ def entropy_wave(
         raise ValueError("Entropy wave initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
-    if len(dims) != 1:
-        raise ValueError("Entropy wave initial condition is only defined in 1D.")
-    dim = dims[0]
-
-    if passive_dim not in ["x", "y", "z"]:
-        raise ValueError("The passive dimension must be one of 'x', 'y', or 'z'.")
-    if dim == passive_dim:
+    unused_dims = set("xyz") - set(dims)
+    if not unused_dims:
         raise ValueError(
-            "The passive dimension cannot be the same as the active dimension."
+            "Entropy wave initial condition requires at least one passive dimension."
         )
 
+    passive_dim = unused_dims.pop()
+
     out = xp.zeros((idx.nvars, *x.shape))
+    r = xp.zeros_like(x)
 
     out[idx("rho")] = 1.0
+    for dim in dims:
+        r += {"x": x, "y": y, "z": z}[dim]
+        out[idx("v" + dim)] = 1.0
+    out[idx("v" + passive_dim)] = xp.sin(2 * np.pi * r)
     out[idx("P")] = 1.0 / gamma
-    out[idx("v" + dim)] = 1.0
-    out[idx("v" + passive_dim)] = xp.sin(2 * np.pi * x)
 
     return out
