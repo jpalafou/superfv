@@ -1934,8 +1934,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         overwrite: bool = False,
         discard: bool = True,
         q_max: int = 3,
-        reduce_CFL: bool = False,
+        time_degree: Optional[int] = None,
         muscl_hancock: bool = False,
+        reduce_CFL: bool = False,
     ):
         """
         Integrate the ODE system forward in time using a specified time integrator,
@@ -1966,18 +1967,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
                 disk.
-            q_max: Maximum polynomial degree of the Runge-Kutta method to use.
+            q_max: Maximum time-integration degree (i.e., highest-order Runge-Kutt
+                scheme) the solver is allowed to use. Options are:
                 - 0: Forward Euler (1st order).
                 - 1: SSPRK2 (2nd order).
                 - 2: SSPRK3 (3rd order).
                 - 3: Classical RK4 (4th order).
-            reduce_CFL: If True, reduceseduce the CFL to emulate a higher-order time
-                integrator matching the order of the spatial discretization.
+                The actual degree used will be the minimum of `self.p` and `q_max`.
+            time_degree: If specified, override `self.p` with this value when selecting
+                the time integrator.
             muscl_hancock: If True, use a MUSCL-Hancock scheme instead of a
-                Runge-Kutta method. This option overrides `q_max`. The base scheme must
-                be a `musclInterpolationScheme`, otherwise a ValueError is raised.
+                Runge-Kutta method. This option overrides `q_max` and `time_degree`.
+                The base scheme must be a `musclInterpolationScheme`.
+            reduce_CFL: If True, reduce the CFL to emulate a higher-order time
+                integrator matching the order of the spatial discretization.
         """
-        q = min(self.p, q_max)
+        q = min(self.p if time_degree is None else time_degree, q_max)
         if muscl_hancock:
             self.musclhancock(
                 T=T,

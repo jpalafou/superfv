@@ -20,8 +20,11 @@ aposteriori = dict(
 configs = {
     "p0": dict(p=0),
     "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
-    "p3": dict(p=3),
-    "p7": dict(p=7),
+    "MUSCL3": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", CFL=0.5, **common),
+    "p3t": dict(p=3),
+    "p7t": dict(p=7),
+    "p3gl": dict(p=3, GL=True),
+    "p7gl": dict(p=7, GL=True),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
@@ -50,7 +53,8 @@ for (name, config), N in product(configs.items(), N_values):
     sim.run(
         n=n_steps,
         q_max=2,
-        muscl_hancock=config.get("MUSCL", False),
+        muscl_hancock=name == "MUSCL-Hancock",
+        time_degree=2 if name == "MUSCL3" else None,
         verbose=False,
         path=sim_path,
         overwrite=True,
