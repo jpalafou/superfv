@@ -1929,6 +1929,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -1958,6 +1959,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -1982,6 +1986,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 allow_overshoot=allow_overshoot,
                 verbose=verbose,
                 log_freq=log_freq,
+                max_steps=max_steps,
                 path=path,
                 overwrite=overwrite,
                 discard=discard,
@@ -1998,6 +2003,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     allow_overshoot=allow_overshoot,
                     verbose=verbose,
                     log_freq=log_freq,
+                    max_steps=max_steps,
                     path=path,
                     overwrite=overwrite,
                     discard=discard,
@@ -2012,6 +2018,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     allow_overshoot=allow_overshoot,
                     verbose=verbose,
                     log_freq=log_freq,
+                    max_steps=max_steps,
                     path=path,
                     overwrite=overwrite,
                     discard=discard,
@@ -2026,6 +2033,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     allow_overshoot=allow_overshoot,
                     verbose=verbose,
                     log_freq=log_freq,
+                    max_steps=max_steps,
                     path=path,
                     overwrite=overwrite,
                     discard=discard,
@@ -2040,6 +2048,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     allow_overshoot=allow_overshoot,
                     verbose=verbose,
                     log_freq=log_freq,
+                    max_steps=max_steps,
                     path=path,
                     overwrite=overwrite,
                     discard=discard,
@@ -2055,6 +2064,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -2080,6 +2090,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -2094,6 +2107,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             allow_overshoot=allow_overshoot,
             verbose=verbose,
             log_freq=log_freq,
+            max_steps=max_steps,
             path=path,
             overwrite=overwrite,
             discard=discard,

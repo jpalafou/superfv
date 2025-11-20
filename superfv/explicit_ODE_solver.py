@@ -2,6 +2,7 @@ import os
 import pickle
 import shutil
 import subprocess
+import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
@@ -321,6 +322,7 @@ class ExplicitODESolver(ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -346,6 +348,9 @@ class ExplicitODESolver(ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -380,6 +385,7 @@ class ExplicitODESolver(ABC):
                     allow_overshoot=allow_overshoot,
                     verbose=verbose,
                     log_freq=log_freq,
+                    max_steps=max_steps,
                 )
             else:
                 raise ValueError("Specify exactly one of 'T' or 'n'.")
@@ -447,6 +453,7 @@ class ExplicitODESolver(ABC):
         allow_overshoot: bool,
         verbose: bool,
         log_freq: int,
+        max_steps: Optional[int] = None,
     ):
         """
         Integrate the ODE until a target time is reached.
@@ -465,6 +472,9 @@ class ExplicitODESolver(ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
         """
         # write run args to file
         self.write_run_args(
@@ -500,16 +510,26 @@ class ExplicitODESolver(ABC):
                 else:
                     break
 
+            # determine if we reached the max number of steps
+            reached_max_steps = max_steps is not None and self.n_steps >= max_steps
+
             # take at most one snapshot this step
             if snapshot_mode == "every":
                 self.take_snapshot()
             elif snapshot_mode == "target" and crossed > 0:
                 self.take_snapshot()
+            elif reached_max_steps:
+                self.take_snapshot()
 
             # update printed message
             if verbose:
-                if self.n_steps % log_freq == 0 or self.t >= T_max:
+                closing_message = self.t >= T_max or reached_max_steps
+                if self.n_steps % log_freq == 0 or closing_message:
                     status_print(self.build_update_message())
+
+            if reached_max_steps:
+                warnings.warn("Solver reached maximum number of steps.")
+                break
 
         # wrap up snapshots
         self.postprocess_snapshots()
@@ -691,6 +711,7 @@ class ExplicitODESolver(ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -716,6 +737,9 @@ class ExplicitODESolver(ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -730,6 +754,7 @@ class ExplicitODESolver(ABC):
             allow_overshoot=allow_overshoot,
             verbose=verbose,
             log_freq=log_freq,
+            max_steps=max_steps,
             path=path,
             overwrite=overwrite,
             discard=discard,
@@ -753,6 +778,7 @@ class ExplicitODESolver(ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -779,6 +805,9 @@ class ExplicitODESolver(ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -793,6 +822,7 @@ class ExplicitODESolver(ABC):
             allow_overshoot=allow_overshoot,
             verbose=verbose,
             log_freq=log_freq,
+            max_steps=max_steps,
             path=path,
             overwrite=overwrite,
             discard=discard,
@@ -822,6 +852,7 @@ class ExplicitODESolver(ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -848,6 +879,9 @@ class ExplicitODESolver(ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -862,6 +896,7 @@ class ExplicitODESolver(ABC):
             allow_overshoot=allow_overshoot,
             verbose=verbose,
             log_freq=log_freq,
+            max_steps=max_steps,
             path=path,
             overwrite=overwrite,
             discard=discard,
@@ -896,6 +931,7 @@ class ExplicitODESolver(ABC):
         allow_overshoot: bool = False,
         verbose: bool = True,
         log_freq: int = 100,
+        max_steps: Optional[int] = None,
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
@@ -922,6 +958,9 @@ class ExplicitODESolver(ABC):
                 instead of shortening the last step to hit them exactly.
             verbose: Whether to print progress information.
             log_freq: Step interval between log updates (if verbose).
+            max_steps: If provided, sets the maximum number of steps the solver is
+                permitted to take. If the solver reaches this step count, it will stop,
+                raising a warning.
             path: Directory to write snapshots. If None, snapshots are not written.
             overwrite: Whether to overwrite `path` if it already exists.
             discard: If True, discard the in-memory snapshot data after writing to
@@ -936,6 +975,7 @@ class ExplicitODESolver(ABC):
             allow_overshoot=allow_overshoot,
             verbose=verbose,
             log_freq=log_freq,
+            max_steps=max_steps,
             path=path,
             overwrite=overwrite,
             discard=discard,
