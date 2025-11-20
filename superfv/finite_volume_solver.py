@@ -1121,6 +1121,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "shock_detector",
             "zhang_shu_limiter",
             "MOOD_loop",
+            "compute_fallback_fluxes",
             "detect_troubled_cells",
             "revise_fluxes",
         ]
@@ -1621,13 +1622,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         state = self.MOOD_state
 
         state.reset_MOOD_loop()
-        for _ in range(config.max_iters):
 
+        self.timer.start("compute_fallback_fluxes")
+        MOOD.compute_fallback_fluxes(self, t)
+        self.timer.stop("compute_fallback_fluxes")
+
+        for _ in range(config.max_iters):
             self.timer.start("detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
             self.timer.stop("detect_troubled_cells")
 
-            if n_revisable != 0:
+            if n_revisable:
                 self.timer.start("revise_fluxes")
                 MOOD.revise_fluxes(self, t)
                 self.timer.stop("revise_fluxes")
@@ -2302,7 +2307,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         # Nicer labels + hierarchy
-        children = {"MOOD_loop": ["detect_troubled_cells", "revise_fluxes"]}
+        children = {
+            "MOOD_loop": [
+                "compute_fallback_fluxes",
+                "detect_troubled_cells",
+                "revise_fluxes",
+            ]
+        }
 
         for parent, kids in children.items():
             for k in kids:
