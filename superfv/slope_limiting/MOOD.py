@@ -83,8 +83,6 @@ class MOODConfig(LimiterConfig):
             raise ValueError("SED requires NAD to be enabled.")
         if self.blend and len(self.cascade) != 2:
             raise ValueError("Blending is only supported for cascades of length 2")
-        if self.skip_trouble_counts and self.max_iters > 1:
-            raise ValueError("Cannot skip trouble counts when max_iters > 1")
 
     def key(self) -> str:
         cascade_keys = ", ".join([scheme.key() for scheme in self.cascade])
