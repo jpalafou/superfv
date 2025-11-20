@@ -93,7 +93,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
-        max_dt_revisions: int = 8,
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full", "none"] = "muscl",
         blend: bool = False,
@@ -198,9 +197,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
                 halve the timestep size if the proposed solution fails PAD.
-            max_dt_revisions: Option for the Zhang and Shu limiter; The maximum number
-                of timestep size revisions that may be attempted in an update step
-                if `adaptive_dt=True`. Defaults to 8.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
             cascade: A string indicating which type of MOOD cascade to use:
@@ -263,7 +259,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             MUSCL_limiter,
             ZS,
             adaptive_dt,
-            max_dt_revisions,
             MOOD,
             cascade,
             blend,
@@ -420,7 +415,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         ZS: bool,
         adaptive_dt: bool,
-        max_dt_revisions: int,
         MOOD: bool,
         cascade: Literal["first-order", "muscl", "full", "none"],
         blend: bool,
@@ -464,7 +458,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 include_corners,
                 SED,
                 adaptive_dt,
-                max_dt_revisions,
                 PAD_atol,
             )
         else:
@@ -586,7 +579,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         include_corners: bool,
         SED: bool,
         adaptive_dt: bool,
-        max_dt_revisions: int,
         PAD_atol: float,
     ):
         self.p = p
@@ -602,7 +594,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 PAD_atol=PAD_atol,
                 include_corners=include_corners,
                 adaptive_dt=adaptive_dt,
-                max_dt_revisions=max_dt_revisions,
                 theta_denom_tol=1e-16,
             ),
             gauss_legendre=GL,
@@ -1781,14 +1772,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 "PAD criterion requires a Zhang-Shu limiter configuration."
             )
 
-        max_dt_revisions = self.base_scheme.limiter_config.max_dt_revisions
         n_dt_revisions = self.n_dt_revisions
+        dt_min = self.dt_min
 
-        if n_dt_revisions < max_dt_revisions:
-            return dt / 2
-        raise RuntimeError(
-            f"Failed to satisfy `dt_criterion` in {max_dt_revisions} iterations with dt={dt}."
-        )
+        revised_dt = dt / 2
+        if revised_dt < dt_min:
+            raise RuntimeError(
+                f"Adaptive dt revision resulted in dt={revised_dt} < {dt_min=} after"
+                f"{n_dt_revisions} revisions."
+            )
+
+        return revised_dt
 
     def prepare_snapshot_data(self) -> Dict[str, np.ndarray]:
         """

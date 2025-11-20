@@ -42,13 +42,11 @@ class ZhangShuConfig(LimiterConfig):
             maximum principle.
         adaptive_dt: Whether to use adaptive time stepping. If True,
             physical_admissibility_detection must also be True.
-        max_dt_revisions: The maximum number of revisions for the time step.
         theta_denom_tol: Tolerance for the denominator of the theta calculation.
     """
 
     include_corners: bool = False
     adaptive_dt: bool = False
-    max_dt_revisions: int = 0
     theta_denom_tol: float = 1e-16
 
     def __post_init__(self):
@@ -68,7 +66,6 @@ class ZhangShuConfig(LimiterConfig):
             dict(
                 include_corners=self.include_corners,
                 adaptive_dt=self.adaptive_dt,
-                max_dt_revisions=self.max_dt_revisions,
                 theta_denom_tol=self.theta_denom_tol,
             )
         )

@@ -12,7 +12,7 @@ base_path = "/scratch/gpfs/jp7427/out/hydro-advection-of-square-varying-min-dens
 rho_min_values = [1e-1, 1e-2, 1e-4, 1e-6, 1e-8]
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)}, SED=False)
-apriori = dict(ZS=True, lazy_primitives="adaptive", max_dt_revisions=16, **common)
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D", **common)
 
 configs = {

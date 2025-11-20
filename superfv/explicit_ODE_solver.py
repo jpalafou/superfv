@@ -253,8 +253,8 @@ class ExplicitODESolver(ABC):
         self.called_at_beginning_of_step()
 
         t, u = self.t, self.arrays["u"]
-        dt = clamp_dt(t, self.compute_dt(t, u), target_time)
 
+        dt = clamp_dt(t, self.compute_dt(t, u), target_time)
         self.validate_dt(dt)
 
         while True:
@@ -262,8 +262,10 @@ class ExplicitODESolver(ABC):
             self.stepper(t, u, dt)  # revises self.arrays["unew"]
             if self.dt_criterion(t + dt, self.arrays["unew"]):
                 break
+
             dt = clamp_dt(t, self.compute_revised_dt(t, u, dt), target_time)
             self.n_dt_revisions += 1
+            self.validate_dt(dt, revising=True)
 
         # update attributes
         self.arrays["u"][...] = self.arrays["unew"]
@@ -272,7 +274,7 @@ class ExplicitODESolver(ABC):
 
         self.called_at_end_of_step()
 
-    def validate_dt(self, dt: float):
+    def validate_dt(self, dt: float, revising: bool = False):
         """
         Validate the computed time-step size.
 
@@ -280,9 +282,20 @@ class ExplicitODESolver(ABC):
             dt: Time-step size to validate.
         """
         if dt < self.dt_min:
-            raise RuntimeError(f"Computed step size smaller than {self.dt_min}.")
+            msg = f"Computed time-step size smaller than {self.dt_min}"
+            if revising:
+                msg += f" after {self.n_dt_revisions} revisions."
+            else:
+                msg += "."
+            raise RuntimeError(msg)
+
         if np.isnan(dt):
-            raise RuntimeError("Computed NaN time-step size.")
+            msg = "Computed NaN time-step size"
+            if revising:
+                msg += f" after {self.n_dt_revisions} revisions."
+            else:
+                msg += "."
+            raise RuntimeError(msg)
 
     def called_at_beginning_of_step(self):
         """

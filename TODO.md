@@ -7,7 +7,7 @@
 - [ ] a posteriori is not high-order for the entropy wave problem
 - [ ] compare Shu Osher test with other papers
 - [ ] rename `to_dict` pattern to `__dict__`
-- [ ] rm: max_dt_revisions parameter
+- [x] rm: max_dt_revisions parameter
 - [ ] add: compute all fallback fluxes at the top of the MOOD loop, time it separately.
 - [ ] skip_troubled_counts should be compatible with more than 1 fallback scheme
 - [ ] count frequency of each cascade index
