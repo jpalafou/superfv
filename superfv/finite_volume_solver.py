@@ -988,6 +988,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("troubles_vis", np.zeros((nvars, nx, ny, nz), dtype=bool))
         arrays.add("troubles_log", np.zeros((nvars, nx, ny, nz)))
         arrays.add("troubles_vis_log", np.zeros((nvars, nx, ny, nz)))
+        arrays.add("revisable_troubles", np.zeros((1, nx, ny, nz), dtype=bool))
+        arrays.add("cascade_idx", np.zeros((1, nx, ny, nz), dtype=int))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
         for scheme in self.MOOD_config.cascade:
@@ -999,8 +1001,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_PAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_troubles_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("_any_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
-        arrays.add("_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
-        arrays.add("_blended_cascade_idx_array_", np.zeros((1, _nx_, _ny_, _nz_)))
+        arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
+        arrays.add("_blended_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_)))
         arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
         arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
 
@@ -1083,7 +1085,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             else:
                 limiting_buffer_cost += 5
         elif check_MOOD and self.MOOD:
-            limiting_buffer_cost = 2
+            limiting_buffer_cost = 4
         else:
             limiting_buffer_cost = 0
 
@@ -1121,6 +1123,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "shock_detector",
             "zhang_shu_limiter",
             "MOOD_loop",
+            "compute_fallback_fluxes",
             "detect_troubled_cells",
             "revise_fluxes",
         ]
@@ -1621,13 +1624,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         state = self.MOOD_state
 
         state.reset_MOOD_loop()
-        for _ in range(config.max_iters):
 
+        self.timer.start("compute_fallback_fluxes")
+        MOOD.compute_fallback_fluxes(self, t)
+        self.timer.stop("compute_fallback_fluxes")
+
+        for _ in range(config.max_iters):
             self.timer.start("detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
             self.timer.stop("detect_troubled_cells")
 
-            if n_revisable != 0:
+            if n_revisable:
                 self.timer.start("revise_fluxes")
                 MOOD.revise_fluxes(self, t)
                 self.timer.stop("revise_fluxes")
@@ -1910,7 +1917,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             troubles_vis = self.arrays["troubles_vis"]
             troubles_log = self.arrays["troubles_log"]
             troubles_vis_log = self.arrays["troubles_vis_log"]
-            cascade_idx = self.arrays["_cascade_idx_array_"][self.interior]
+            cascade_idx = self.arrays["cascade_idx"]
             cascade_idx_log = self.arrays["cascade_idx_log"]
 
             xp.add(troubles_log, troubles, out=troubles_log)
@@ -2307,7 +2314,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
         # Nicer labels + hierarchy
-        children = {"MOOD_loop": ["detect_troubled_cells", "revise_fluxes"]}
+        children = {
+            "MOOD_loop": [
+                "compute_fallback_fluxes",
+                "detect_troubled_cells",
+                "revise_fluxes",
+            ]
+        }
 
         for parent, kids in children.items():
             for k in kids:
