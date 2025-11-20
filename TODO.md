@@ -1,16 +1,3 @@
-- [ ] Gresho Vortex from David sequel paper. demonstrate value of high-order
-- [ ] evolve trouble/theta as passive scalars using Runge-Kutta methods instead of taking the average across substeps
-- [ ] do i need all those step log element copies? can't i just copy the step log at the top?
-- [ ] can the solver args be organized?
-- [ ] refactor `_compute_buffer_size`
-- [ ] improve performance of shock detection
-- [ ] a posteriori is not high-order for the entropy wave problem
-- [ ] compare Shu Osher test with other papers
-- [ ] rename `to_dict` pattern to `__dict__`
-- [x] add: compute all fallback fluxes at the top of the MOOD loop, time it separately.
-- [x] skip_troubled_counts should be compatible with more than 1 fallback scheme
-- [x] count frequency of each cascade index
 - [ ] why does ZS3 not converge to 4th order for 2D entropy wave
-- [x] count troubled cells at the end of MOOD loop ?
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
-- [x] requiring four variable slots for trouble logging makes no sense
+- [ ] update `skip_troubled_counts` and `detect_closing_troubles` settings for timing experiment
