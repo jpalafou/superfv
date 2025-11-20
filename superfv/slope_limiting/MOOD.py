@@ -57,9 +57,13 @@ class MOODConfig(LimiterConfig):
         NAD_rtol: Relative tolerance for NAD violations.
         NAD_atol: Absolute tolerance for NAD violations.
         skip_trouble_counts: Whether to skip counting the number of troubled cells. If
-            True, `detect_troubled_cells` will return (1, 1) always. This can be used
+            True, `detect_troubled_cells` will return (-1, -1) always. This can be used
             to avoid CUDA synchronization overhead when the troubled cell count is not
             needed.
+        detect_closing_troubles: Whether to detect closing troubles at the end of the
+            MOOD loop if revisable troubled cells were found during the last iteration.
+            If False, the troubles array will represent the troubled cells that
+            determined the closing cascade index.
     """
 
     numerical_admissibility_detection: bool = False
@@ -71,6 +75,7 @@ class MOODConfig(LimiterConfig):
     NAD_rtol: float = 1.0
     NAD_atol: float = 0.0
     skip_trouble_counts: bool = False
+    detect_closing_troubles: bool = True
 
     def __post_init__(self):
         LimiterConfig.__post_init__(self)

@@ -44,10 +44,11 @@ class AdvectionSolver(FiniteVolumeSolver):
         adaptive_dt: bool = True,
         max_dt_revisions: int = 8,
         MOOD: bool = False,
-        cascade: Literal["first-order", "muscl", "full"] = "muscl",
+        cascade: Literal["first-order", "muscl", "full", "none"] = "muscl",
         blend: bool = False,
         max_MOOD_iters: int = 1,
         skip_trouble_counts: bool = False,
+        detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
         NAD: bool = True,
         NAD_rtol: float = 1e-2,
@@ -158,12 +159,17 @@ class AdvectionSolver(FiniteVolumeSolver):
                 - "first-order": Fall back directly to a first-order scheme.
                 - "muscl": Fall back directly to a MUSCL scheme.
                 - "full": Fall back to a full cascade of scheme in descending order.
+                - "none": Do not use any fallback schemes.
             blend: Whether to blend the troubled cell indicator with neighboring
                 cells following Vilar and Abgrall 2022. Only valid for "first-order"
                 and "muscl" cascades.
             max_MOOD_iters: Option for the MOOD limiter; The maximum number of MOOD
                 iterations that may be performed in an update step. Defaults to 1.
             skip_trouble_counts: Whether to skip counting the number of troubled cells.
+            detect_closing_troubles: Whether to detect closing troubles at the end of
+                the MOOD loop if revisable troubled cells were found during the last
+                iteration. If False, the troubles array will represent the troubled
+                cells that determined the closing cascade index.
             limiting_vars: Specifies which variables are subject to slope limiting.
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
@@ -229,6 +235,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             blend=blend,
             max_MOOD_iters=max_MOOD_iters,
             skip_trouble_counts=skip_trouble_counts,
+            detect_closing_troubles=detect_closing_troubles,
             limiting_vars=limiting_vars,
             NAD=NAD,
             NAD_rtol=NAD_rtol,

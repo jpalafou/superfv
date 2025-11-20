@@ -137,7 +137,6 @@ def _extract_variable_data(
     cell_averaged: bool = False,
     theta: bool = False,
     troubles: bool = False,
-    cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
@@ -148,17 +147,21 @@ def _extract_variable_data(
     Args:
         fv_solver: FiniteVolumeSolver or OutputLoader object.
         t: Nearest time to extract data from.
-        variable: Name of the variable to extract.
+        variable: Name of the variable to extract. Possible values include:
+            - Physical variables: names of primitive, conservative, or passive
+            variables, such as "rho", "u", "p", "E", "Y1", etc.
+            - Group variables: "mean", "min", "max", or "mag" to extract the mean,
+            min, max, or magnitude over all variables in the group, respectively.
+            - "cascade" for the cascade levels of MOOD simulations.
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
-            `theta`, `troubles`, or `cascade` is True.
+            `theta` or `troubles` is True.
         theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
             Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
             or max over all variables, respectively.
         troubles: Whether to extract the troubled cells of a specific variable. Set
             `variable` equal to "mean", "min", or "max" to extract the mean, min, or
             max over all variables, respectively.
-        cascade: Whether to extract the cascade levels.
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
@@ -170,13 +173,13 @@ def _extract_variable_data(
         Array of data for the variable at the nearest time.
 
     Raises:
-        ValueError: More than one of theta, troubles, or cascade is True.
+        ValueError: Both theta and troubles are True.
         ValueError: Variable not found in groups 'primitives', 'conservatives',
             or 'passives'.
         ValueError: Failed to reduce variable data to three dimensions.
     """
-    if sum(int(flag) for flag in (theta, troubles, cascade)) > 1:
-        raise ValueError("Only one of theta, troubles, or cascade can be True.")
+    if theta and troubles:
+        raise ValueError("Only one of theta or troubles can be True.")
 
     idx = fv_solver.variable_index_map
     active_dims = fv_solver.active_dims
@@ -212,12 +215,13 @@ def _extract_variable_data(
     elif troubles:
         # determine the key for troubles
         data = snapshot["troubles_vis" if visualization else "troubles"]
-    elif cascade:
-        # determine the key for cascade
-        data = snapshot["cascade"][0]
     else:
         # determine the key for the physical variable
-        if variable in idx.group_var_map["conservatives"]:
+        if variable == "cascade":
+            if "cascade" not in snapshot:
+                raise ValueError("Cascade data not found in snapshot. Is MOOD enabled?")
+            data = snapshot["cascade"][0]
+        elif variable in idx.group_var_map["conservatives"]:
             data = snapshot["u" if cell_averaged else "ucc"]
         elif (
             variable in idx.group_var_map["primitives"]
@@ -279,7 +283,6 @@ def plot_1d_slice(
     cell_averaged: bool = False,
     theta: bool = False,
     troubles: bool = False,
-    cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
@@ -302,14 +305,13 @@ def plot_1d_slice(
         variable: Name of the variable to extract.
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
-            `theta`, `troubles`, or `cascade` is True.
+            `theta` or `troubles` is True.
         theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
             Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
             or max over all variables, respectively.
         troubles: Whether to extract the troubled cells of a specific variable. Set
             `variable` equal to "mean", "min", or "max" to extract the mean, min, or
             max over all variables, respectively.
-        cascade: Whether to extract the cascade levels.
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
@@ -361,7 +363,6 @@ def plot_1d_slice(
         cell_averaged,
         theta,
         troubles,
-        cascade,
         visualization,
         func,
         multivar_func,
@@ -408,7 +409,6 @@ def plot_2d_slice(
     cell_averaged: bool = False,
     theta: bool = False,
     troubles: bool = False,
-    cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
@@ -435,14 +435,13 @@ def plot_2d_slice(
         variable: Name of the variable to extract.
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
-            `theta`, `troubles`, or `cascade` is True.
+            `theta` or `troubles` is True.
         theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
             Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
             or max over all variables, respectively.
         troubles: Whether to extract the troubled cells of a specific variable. Set
             `variable` equal to "mean", "min", or "max" to extract the  mean, min, or
             max over all variables, respectively.
-        cascade: Whether to extract the cascade levels.
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
@@ -511,7 +510,6 @@ def plot_2d_slice(
         cell_averaged,
         theta,
         troubles,
-        cascade,
         visualization,
         func,
         multivar_func,
@@ -579,7 +577,6 @@ def plot_spacetime(
     cell_averaged: bool = False,
     theta: bool = False,
     troubles: bool = False,
-    cascade: bool = False,
     visualization: bool = True,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
@@ -603,14 +600,13 @@ def plot_spacetime(
         variable: Name of the variable to extract.
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
-            `theta`, `troubles`, or `cascade` is True.
+            `theta` or `troubles` is True.
         theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
             Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
             or max over all variables, respectively.
         troubles: Whether to extract the troubled cells of a specific variable. Set
             `variable` equal to "mean", "min", or "max" to extract the  mean, min, or
             max over all variables, respectively.
-        cascade: Whether to extract the cascade levels.
         visualization: Whether to use the post-processed values of `theta` or
             `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
@@ -661,7 +657,6 @@ def plot_spacetime(
             cell_averaged,
             theta,
             troubles,
-            cascade,
             visualization,
             func,
             multivar_func,
