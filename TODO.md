@@ -9,7 +9,8 @@
 - [ ] rename `to_dict` pattern to `__dict__`
 - [x] add: compute all fallback fluxes at the top of the MOOD loop, time it separately.
 - [ ] skip_troubled_counts should be compatible with more than 1 fallback scheme
-- [ ] count frequency of each cascade index
+- [x] count frequency of each cascade index
 - [ ] why does ZS3 not converge to 4th order for 2D entropy wave
 - [ ] count troubled cells at the end of MOOD loop ?
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
+- [x] requiring four variable slots for trouble logging makes no sense

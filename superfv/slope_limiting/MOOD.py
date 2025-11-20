@@ -267,16 +267,19 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     _abuff_ = arrays["_buffer_"][..., 2:][lim_slc]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
-    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
+    _cascade_idx_ = arrays["_cascade_idx_"]
     PAD_violations = arrays["_PAD_violations_"][interior]
     troubles = arrays["troubles"]
+    revisable_troubles = arrays["revisable_troubles"]
+    cascade_idx = arrays["cascade_idx"]
     visualize = arrays["visualize"][lim_slc]
     troubles_vis = arrays["troubles_vis"]
 
     # reset troubles / cascade index array
     troubles[...] = False
     if iter_idx == 0:
-        _cascade_idx_array_[...] = 0
+        _cascade_idx_[...] = 0
+        cascade_idx[...] = 0
 
     # compute candidate solution
     _u_new_[interior] = _u_old_[interior] + dt * fv_solver.compute_RHS()
@@ -352,10 +355,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         any_troubles = _any_troubles_[interior]
 
         n_troubled_cells = xp.sum(any_troubles).item()
-        revisable_troubled_cells = any_troubles & (
-            _cascade_idx_array_[interior] < max_idx
-        )
-        n_revisable_troubled_cells = xp.sum(revisable_troubled_cells).item()
+        revisable_troubles[...] = any_troubles & (cascade_idx < max_idx)
+        n_revisable_troubled_cells = xp.sum(revisable_troubles).item()
 
     # determine which troubled cells should be visualized
     troubles_vis[...] = troubles
@@ -524,29 +525,31 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     _Gmask_ = arrays["_mask_"][:, :-1, :, :-1]
     _Hmask_ = arrays["_mask_"][:, :-1, :-1, :]
     _any_troubles_ = arrays["_any_troubles_"]
-    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
+    _cascade_idx_ = arrays["_cascade_idx_"]
+    cascade_idx = arrays["cascade_idx"]
 
-    # assuming `troubles` has just been updated, update the cascade index array
-    xp.minimum(_cascade_idx_array_ + _any_troubles_, max_idx, out=_cascade_idx_array_)
+    # assuming `troubles` has just been updated, update the cascade index arrays
+    xp.minimum(_cascade_idx_ + _any_troubles_, max_idx, out=_cascade_idx_)
+    cascade_idx[...] = _cascade_idx_[interior]
 
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=_Fmask_)
+        map_cells_values_to_face_values(xp, _cascade_idx_, 1, out=_Fmask_)
         for i, scheme in enumerate(cascade):
             mask = _Fmask_[interior] == i
             xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=_Gmask_)
+        map_cells_values_to_face_values(xp, _cascade_idx_, 2, out=_Gmask_)
         for i, scheme in enumerate(cascade):
             mask = _Gmask_[interior] == i
             xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=_Hmask_)
+        map_cells_values_to_face_values(xp, _cascade_idx_, 3, out=_Hmask_)
         for i, scheme in enumerate(cascade):
             mask = _Hmask_[interior] == i
             xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
@@ -586,43 +589,44 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
     _Gmask_ = arrays["_fmask_"][:, :-1, :, :-1]
     _Hmask_ = arrays["_fmask_"][:, :-1, :-1, :]
     _any_troubles_ = arrays["_any_troubles_"]
-    _cascade_idx_array_ = arrays["_cascade_idx_array_"]
-    _blended_cascade_idx_array_ = arrays["_blended_cascade_idx_array_"]
+    _cascade_idx_ = arrays["_cascade_idx_"]
+    cascade_idx = arrays["cascade_idx"]
+    _blended_cascade_idx_ = arrays["_blended_cascade_idx_"]
     _troubles_buffer_ = arrays["_buffer_"][:1, ..., 1:]
 
-    # assuming `troubles` has just been updated, update the cascade index array
-    xp.minimum(_cascade_idx_array_ + _any_troubles_, 1, out=_cascade_idx_array_)
-    # max is 1 since there should be at least 1 troubled cell at this point
+    # assuming `troubles` has just been updated, update the cascade index arrays
+    xp.minimum(_cascade_idx_ + _any_troubles_, 1, out=_cascade_idx_)
+    cascade_idx[...] = _cascade_idx_[interior]  # does not include blending information
 
     # blend cascade index
     if blend:
-        _blended_cascade_idx_array_[...] = _cascade_idx_array_
+        _blended_cascade_idx_[...] = _cascade_idx_
         blend_troubled_cells(
             xp,
-            _blended_cascade_idx_array_,
+            _blended_cascade_idx_,
             active_dims,
             buffer=_troubles_buffer_,
         )
-        _cascade_idx_array_ = _blended_cascade_idx_array_
+        _cascade_idx_ = _blended_cascade_idx_
 
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 1, out=_Fmask_)
+        map_cells_values_to_face_values(xp, _cascade_idx_, 1, out=_Fmask_)
         mask = _Fmask_[interior]
         xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
         xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 2, out=_Gmask_)
+        map_cells_values_to_face_values(xp, _cascade_idx_, 2, out=_Gmask_)
         mask = _Gmask_[interior]
         xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
         xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_array_, 3, out=_Hmask_)
+        map_cells_values_to_face_values(xp, _cascade_idx_, 3, out=_Hmask_)
         mask = _Hmask_[interior]
         xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
         xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
@@ -758,6 +762,7 @@ def init_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     Args:
         fv_solver: The finite volume solver instance.
     """
+    config = fv_solver.MOOD_config
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
@@ -770,6 +775,9 @@ def init_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
         step_log[f"nfine_troubles_real_{var}"] = []
         step_log[f"nfine_troubles_vis_{var}"] = []
 
+    for i, _ in enumerate(config.cascade[1:], start=1):
+        step_log[f"nfine_cascade_idx{i}"] = []
+
 
 def clear_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     """
@@ -778,6 +786,7 @@ def clear_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     Args:
         fv_solver: The finite volume solver instance.
     """
+    config = fv_solver.MOOD_config
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
@@ -789,6 +798,9 @@ def clear_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     for var in idx.var_idx_map.keys():
         step_log[f"nfine_troubles_real_{var}"].clear()
         step_log[f"nfine_troubles_vis_{var}"].clear()
+
+    for i, _ in enumerate(config.cascade[1:], start=1):
+        step_log[f"nfine_cascade_idx{i}"].clear()
 
 
 def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
@@ -805,23 +817,23 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     Args:
         fv_solver: The finite volume solver instance.
     """
+    config = fv_solver.MOOD_config
     xp = fv_solver.xp
     arrays = fv_solver.arrays
     interior = fv_solver.interior
     idx = fv_solver.variable_index_map
-    nvars = fv_solver.nvars
     step_log = fv_solver.step_log  # gets mutated
 
     troubles = arrays["troubles"]
     troubles_vis = arrays["troubles_vis"]
+    cascade_idx = arrays["cascade_idx"]
     buffer = arrays["_buffer_"]
 
-    if nvars < 4:
-        raise ValueError("Troubled cell logging requires at least 4 variable slots.")
+    check_buffer_slots(buffer, required=4)
     mean_troubles_real = buffer[interior][0, ..., 0]
-    max_troubles_real = buffer[interior][1, ..., 0]
-    mean_troubles_vis = buffer[interior][2, ..., 0]
-    max_troubles_vis = buffer[interior][3, ..., 0]
+    max_troubles_real = buffer[interior][0, ..., 1]
+    mean_troubles_vis = buffer[interior][0, ..., 2]
+    max_troubles_vis = buffer[interior][0, ..., 3]
 
     # track scalar quantities
     mean_troubles_real[...] = xp.mean(troubles, axis=0)
@@ -846,6 +858,10 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
 
         step_log[f"nfine_troubles_real_{var}"].append(n_real)
         step_log[f"nfine_troubles_vis_{var}"].append(n_vis)
+
+    for i, _ in enumerate(config.cascade[1:], start=1):
+        n_cascade_idx_i = xp.sum(cascade_idx == i).item()
+        step_log[f"nfine_cascade_idx{i}"].append(n_cascade_idx_i)
 
 
 def log_troubled_cell_scalar_statistics(
@@ -883,6 +899,10 @@ def log_troubled_cell_scalar_statistics(
         for key in keys:
             new_data[f"nfine_{key}_{var}"] = step_log[f"nfine_{key}_{var}"].copy()
             new_data[f"n_{key}_{var}"] = zero_max(step_log[f"nfine_{key}_{var}"])
+
+    for i, _ in enumerate(config.cascade[1:], start=1):
+        new_data[f"nfine_cascade_idx{i}"] = step_log[f"nfine_cascade_idx{i}"].copy()
+        new_data[f"n_cascade_idx{i}"] = zero_max(step_log[f"nfine_cascade_idx{i}"])
 
     data.update(new_data)
 
