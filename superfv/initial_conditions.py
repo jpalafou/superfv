@@ -1091,16 +1091,24 @@ def entropy_wave(
         raise ValueError("Entropy wave initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
+
     unused_dims = set("xyz") - set(dims)
     if not unused_dims:
         raise ValueError(
             "Entropy wave initial condition requires at least one passive dimension."
         )
 
-    passive_dim = unused_dims.pop()
+    for dim in ["z", "y", "x"]:
+        if dim in unused_dims:
+            passive_dim = dim
+            break
+    else:
+        raise ValueError("No passive dimension found")
 
     out = xp.zeros((idx.nvars, *x.shape))
     r = xp.zeros_like(x)
+
+    print(f"{dims=}, {passive_dim=}")
 
     out[idx("rho")] = 1.0
     for dim in dims:

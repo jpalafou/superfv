@@ -9,46 +9,22 @@ T = [0.2, 0.4, 0.6, 0.8, 1.0]
 gamma = 5 / 3
 v0 = 5.0
 M_max_values = [1e-1, 1e-2, 1e-3]
-output_base_dir = "out/gresho_vortex"
+base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/"
 
 configs = {
-    "MUSCL-Hancock": dict(
-        riemann_solver="hllc",
-        p=1,
-        MUSCL=True,
-        MUSCL_limiter="PP2D",
-        flux_recipe=2,
-    ),
-    "ZS3": dict(
-        riemann_solver="hllc",
-        p=3,
-        flux_recipe=2,
-        lazy_primitives=True,
-        ZS=True,
-        GL=True,
-        include_corners=True,
-        PAD={"rho": (0, None), "P": (0, None)},
-    ),
-    "MM3": dict(
-        riemann_solver="hllc",
-        p=3,
-        flux_recipe=2,
-        lazy_primitives=True,
-        MOOD=True,
-        limiting_vars="actives",
-        cascade="muscl",
-        MUSCL_limiter="PP2D",
-        max_MOOD_iters=1,
-        NAD=True,
-        NAD_rtol=1e-2,
-        NAD_atol=1e-8,
-        include_corners=True,
-        PAD={"rho": (0, None), "P": (0, None)},
-    ),
+    "p0": dict(p=0),
+    "p1": dict(p=1),
+    "p2": dict(p=2),
+    "p3": dict(p=3),
+    "p4": dict(p=4),
+    "p5": dict(p=5),
 }
 
 for (name, config), M_max in product(configs.items(), M_max_values):
     print(f"Running {name} with M_max = {M_max}")
+
+    sim_path = base_path + f"{name}/M_max_{M_max}/"
+
     sim = EulerSolver(
         ic=partial(gresho_vortex, gamma=gamma, M_max=M_max, v0=v0),
         gamma=gamma,
@@ -64,7 +40,9 @@ for (name, config), M_max in product(configs.items(), M_max_values):
             muscl_hancock=config.get("MUSCL", False),
             allow_overshoot=True,
             log_freq=20,
-            path=output_base_dir + "/" + name + f"-M_max={M_max}",
+            path=sim_path,
         )
+    except FileExistsError as e:
+        print(f"File exists for simulation {name}, skipping: {e}")
     except RuntimeError as e:
         print(f"Simulation '{name}' failed: {e}")

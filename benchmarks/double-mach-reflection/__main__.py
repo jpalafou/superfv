@@ -8,23 +8,61 @@ from superfv.tools.slicing import crop
 # loop parameters
 base_path = "/scratch/gpfs/jp7427/out/double-mach-reflection/"
 
-PAD = {"rho": (0, None), "P": (0, None)}
-apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
-aposteriori = dict(MOOD=True, lazy_primitives="adaptive", PAD=PAD)
+
+common = dict(PAD={"rho": (0, None), "P": (0, None)})
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
+aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D", **common)
 
 configs = {
-    "ZS3": dict(p=3, GL=True, **apriori),
     "p0": dict(p=0),
-    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D"),
+    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
+    "MUSCL3": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", CFL=0.5, **common),
+    "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3": dict(p=3, **aposteriori),
-    "MM7": dict(p=7, **aposteriori),
-    "MM3(1e-1)": dict(p=3, NAD_rtol=1e-1, **aposteriori),
-    "MM7(1e-1)": dict(p=7, NAD_rtol=1e-1, **aposteriori),
-    "MM3(1)": dict(p=3, NAD_rtol=1.0, **aposteriori),
-    "MM7(1)": dict(p=7, NAD_rtol=1.0, **aposteriori),
+    "MM3/rtol_1": dict(p=3, NAD_rtol=1, **aposteriori),
+    "MM7/rtol_1": dict(p=7, NAD_rtol=1, **aposteriori),
+    "MM3/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori),
+    "MM7/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori),
+    "MM3/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori),
+    "MM7/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori),
+    "MM3-2/rtol_1": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1, **aposteriori
+    ),
+    "MM7-2/rtol_1": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1, **aposteriori
+    ),
+    "MM3-2/rtol_1e-1": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-1, **aposteriori
+    ),
+    "MM7-2/rtol_1e-1": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-1, **aposteriori
+    ),
+    "MM3-2/rtol_1e-2": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-2, **aposteriori
+    ),
+    "MM7-2/rtol_1e-2": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-2, **aposteriori
+    ),
+    "MM3-3/rtol_1": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1, **aposteriori
+    ),
+    "MM7-3/rtol_1": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1, **aposteriori
+    ),
+    "MM3-3/rtol_1e-1": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-1, **aposteriori
+    ),
+    "MM7-3/rtol_1e-1": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-1, **aposteriori
+    ),
+    "MM3-3/rtol_1e-2": dict(
+        p=3, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-2, **aposteriori
+    ),
+    "MM7-3/rtol_1e-2": dict(
+        p=7, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-2, **aposteriori
+    ),
 }
 
 # simulation parameters
@@ -104,7 +142,8 @@ for name, config in configs.items():
             T,
             allow_overshoot=True,
             q_max=2,
-            muscl_hancock=config.get("MUSCL", False),
+            muscl_hancock=name == "MUSCL-Hancock",
+            time_degree=2 if name == "MUSCL3" else None,
             log_freq=1000,
             path=sim_path,
         )

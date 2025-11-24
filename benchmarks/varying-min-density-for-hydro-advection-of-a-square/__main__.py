@@ -6,7 +6,9 @@ import numpy as np
 from superfv import EulerSolver
 from superfv.initial_conditions import square
 
-base_path = "/scratch/gpfs/jp7427/out/hydro-advection-of-square-varying-min-density/"
+base_path = (
+    "/scratch/gpfs/jp7427/out/varying-min-density-for-hydro-advection-of-a-square/"
+)
 
 # Loop parameters
 rho_min_values = [1e-1, 1e-2, 1e-4, 1e-6, 1e-8]

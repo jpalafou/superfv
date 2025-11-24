@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=entropy                  # create a short name for your job
+#SBATCH --job-name=rho_min                  # create a short name for your job
 #SBATCH --nodes=1                           # node count
 #SBATCH --ntasks-per-node=1                 # total number of tasks per node
 #SBATCH --cpus-per-task=1                   # cpu-cores per task (>1 if multi-threaded tasks)
@@ -13,4 +13,4 @@ module purge
 module load anaconda3/2025.6
 conda activate superfv
 
-python benchmarks/entropy-wave-convergence
+python benchmarks/varying-min-density-for-hydro-advection-of-a-square

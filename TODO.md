@@ -1,3 +1,3 @@
 - [ ] why does ZS3 not converge to 4th order for 2D entropy wave
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
-- [ ] update `skip_troubled_counts` and `detect_closing_troubles` settings for timing experiment
+- [ ] inconsistency: other arguments have "none" options but `MUSCL_limiter` expects None

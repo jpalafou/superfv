@@ -14,6 +14,8 @@ aposteriori = dict(
     MUSCL_limiter="PP2D",
     NAD_rtol=0,
     NAD_atol=0,
+    skip_trouble_counts=True,
+    detect_closing_troubles=False,
     **common,
 )
 
@@ -29,8 +31,8 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3": dict(p=3, skip_trouble_counts=True, **aposteriori),
-    "MM7": dict(p=7, skip_trouble_counts=True, **aposteriori),
+    "MM3": dict(p=3, **aposteriori),
+    "MM7": dict(p=7, **aposteriori),
     "MM3-2": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
     "MM7-2": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
     "MM3-3": dict(p=3, cascade="muscl1", max_MOOD_iters=3, **aposteriori),
@@ -39,15 +41,22 @@ configs = {
 
 n_steps = 10
 N_values = [64, 128, 256, 512, 1024, 2048]
+devices = ["cpu"]  # ["gpu", "cpu"]
+max_cpu_resolution = 512
 
-for (name, config), N in product(configs.items(), N_values):
-    print(f"Running {name} with N={N}")
-    sim_path = f"{base_path}{name}/N_{N}/"
+for device, (name, config), N in product(devices, configs.items(), N_values):
+    if device == "cpu" and N > max_cpu_resolution:
+        continue
+
+    print(f"Running {name} with N={N} on {device}")
+
+    sim_path = f"{base_path}{device}/{name}/N_{N}/"
+
     sim = EulerSolver(
         ic=partial(square, bounds=(1, 2), P=1, vx=1, vy=1),
         nx=N,
         ny=N,
-        cupy=True,
+        cupy=device == "gpu",
         **config,
     )
     sim.run(
