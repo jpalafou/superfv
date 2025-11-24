@@ -2,6 +2,8 @@
 *.egg-info
 *.ipynb_checkpoints
 *.log
+*.lprof
+*.txt
 .mypy_cache
 .nox
 .pytest_cache
