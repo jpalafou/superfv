@@ -1,12 +1,16 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
-from . import hydro, riemann_solvers
+from . import riemann_solvers
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
-from .tools.device_management import ArrayLike
+from .hydro import cons_to_prim, prim_to_cons, sound_speed
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
+
+if CUPY_AVAILABLE:
+    from .hydro import sound_speed_cp
 
 
 class EulerSolver(FiniteVolumeSolver):
@@ -294,7 +298,7 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of conservative variables.
         """
-        return hydro.prim_to_cons(self.xp, self.variable_index_map, w, self.gamma)
+        return prim_to_cons(self.xp, self.variable_index_map, w, self.gamma)
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
         """
@@ -306,7 +310,7 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of primitive variables.
         """
-        return hydro.cons_to_prim(
+        return cons_to_prim(
             self.xp,
             self.variable_index_map,
             u,
@@ -374,6 +378,17 @@ class EulerSolver(FiniteVolumeSolver):
         }
         return scalar_packet
 
+    def compute_sound_speed(self, w: ArrayLike) -> ArrayLike:
+        idx = self.variable_index_map
+        gamma = self.gamma
+
+        if self.isothermal:
+            return self.iso_cs
+        elif self.cupy:
+            return sound_speed_cp(w[idx("rho")], w[idx("P")], gamma)
+        else:
+            return sound_speed(self.xp, idx, w, gamma)
+
     @MethodTimer(cat="compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         """
@@ -394,11 +409,7 @@ class EulerSolver(FiniteVolumeSolver):
         sum_of_s_over_h = self.arrays["sum_of_s_over_h"]
 
         w = self.primitives_from_conservatives(u)
-        c = (
-            self.iso_cs
-            if self.isothermal
-            else hydro.sound_speed(xp, idx, w, self.gamma)[0, ...]
-        )
+        c = self.compute_sound_speed(w)
 
         sum_of_s_over_h[...] = 0.0
         for dim in self.active_dims:

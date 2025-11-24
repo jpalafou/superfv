@@ -4,7 +4,7 @@ from typing import Literal, Tuple
 import numpy as np
 
 from .mesh import UniformFVMesh
-from .tools.device_management import ArrayLike
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 
 
@@ -249,3 +249,17 @@ def turbulent_power_specta(
     E_k = E_shell / widths
 
     return k_centers, E_k
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp
+
+    sound_speed_cp = cp.ElementwiseKernel(
+        in_params="float64 rho, float64 P, float64 gamma",
+        out_params="float64 cs",
+        operation="""
+            double val = gamma * P / rho;
+            cs = sqrt(fmax(val, 0.0));
+        """,
+        name="sound_speed_ew",
+    )

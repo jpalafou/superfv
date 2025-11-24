@@ -273,3 +273,82 @@ def hllct(
     flux[idx("m" + d1)] = dg * vg * vg + pg
     flux[idx("E")] = (eg + pg) * vg
     return flux
+
+
+# if CUPY_AVAILABLE:
+#     import cupy as cp
+
+#     def make_hllc_elementwise_kernel(npassives: int):
+#         # Build input signature for passives: passives_l_0, passives_l_1, ...
+#         in_args = [
+#             'float64 rhol, float64 v1l, float64 v2l, float64 v3l, float64 Pl, float64 El,',
+#             'float64 rhor, float64 v1r, float64 v2r, float64 v3r, float64 Pr, float64 Er,',
+#             'float64 gamma, float64 iso_cs, bool isothermal'
+#         ]
+#         out_args = ['float64 Frho, float64 Fm1, float64 FE, float64 Fm2, float64 Fm3']
+#         # add passives inputs and outputs
+#         for i in range(npassives):
+#             in_args.append(f'float64 passl{i}, float64 passr{i}')
+#             out_args.append(f'float64 Fpass{i}')
+
+#         in_sig = ', '.join(in_args)
+#         out_sig = ', '.join(out_args)
+
+#         # kernel body: compute hydrodynamic part (shortened here) then handle passives
+#         body = """
+#         // compute sound speeds
+#         double cl = isothermal ? iso_cs : sqrt(gamma * Pl / rhol);
+#         double cr = isothermal ? iso_cs : sqrt(gamma * Pr / rhor);
+#         double cmax = fmax(cl, cr);
+
+#         double sl = fmin(v1l, v1r) - cmax;
+#         double sr = fmax(v1l, v1r) + cmax;
+
+#         double rcl = rhol * (v1l - sl);
+#         double rcr = rhor * (sr - v1r);
+#         double denom = (rcl + rcr) == 0.0 ? 1e-300 : (rcl + rcr);
+#         double vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / denom;
+#         double Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / denom;
+
+#         double rhoE_starl_denoml = (sl - vstar) == 0.0 ? 1e-300 : (sl - vstar);
+#         double rhoE_starr_denomr = (sr - vstar) == 0.0 ? 1e-300 : (sr - vstar);
+
+#         double rhostarl = rhol * (sl - v1l) / rhoE_starl_denoml;
+#         double rhostarr = rhor * (sr - v1r) / rhoE_starr_denomr;
+
+#         double Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / rhoE_starl_denoml;
+#         double Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / rhoE_starr_denomr;
+
+#         // small local inline hllc_operator equivalent:
+#         auto hllc_op = [&](double sL, double sR, double vS, double aL, double aR, double aSL, double aSR) {
+#             if (vS <= sL) return aL;
+#             if (vS >= sR) return aR;
+#             return (sR * aSL - sL * aSR + sL * sR * (aR - aL)) / (sR - sL);
+#         };
+
+#         double rhogdv = hllc_op(sl, sr, vstar, rhol, rhor, rhostarl, rhostarr);
+#         double v1gdv = hllc_op(sl, sr, vstar, v1l, v1r, vstar, vstar);
+#         double Pgdv  = hllc_op(sl, sr, vstar, Pl, Pr, Pstar, Pstar);
+#         double Egdv  = hllc_op(sl, sr, vstar, El, Er, Estarl, Estarr);
+
+#         Frho = rhogdv * v1gdv;
+#         Fm1  = Frho * v1gdv + Pgdv;
+#         FE   = v1gdv * (Egdv + Pgdv);
+#         Fm2  = Frho * (vstar > 0.0 ? v2l : v2r);
+#         Fm3  = Frho * (vstar > 0.0 ? v3l : v3r);
+#         """
+
+#         # append passives selection
+#         body += '\n    // passives\n'
+#         for i in range(npassives):
+#             body += f'    Fpass{i} = Frho * (vstar > 0.0 ? passl{i} : passr{i});\n'
+
+#         return cp.ElementwiseKernel(in_sig, out_sig, body, f'hllc_npass_{npassives}')
+
+#     # Example usage for npassives = 3
+#     npass = 3
+#     hllc_ew = make_hllc_elementwise_kernel(npass)
+
+#     # Suppose left/right arrays: shape (nvars, Nfaces)
+#     # flatten them to 1D arrays per component and call:
+#     # Frho, Fm1, FE, Fm2, Fm3, Fpass0, Fpass1, Fpass2 = hllc_ew(rhol, v1l, ..., passl0, passr0, ...)
