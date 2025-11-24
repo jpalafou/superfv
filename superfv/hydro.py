@@ -263,3 +263,56 @@ if CUPY_AVAILABLE:
         """,
         name="sound_speed_ew",
     )
+
+    def make_prim_to_cons_elementwise_kernel(npassives: int):
+        in_params = (
+            "float64 rho, float64 vx, float64 vy, float64 vz, float64 P, float64 gamma"
+        )
+        out_params = "float64 mx, float64 my, float64 mz, float64 E"
+
+        body = """
+        mx = rho * vx;
+        my = rho * vy;
+        mz = rho * vz;
+        double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
+        E = K + P / (gamma - 1.0);
+        """
+
+        for i in range(npassives):
+            in_params += f", float64 pass{i}"
+            out_params += f", float64 upass{i}"
+            body += f"\nupass{i} = rho * pass{i};"
+
+        return cp.ElementwiseKernel(
+            in_params=in_params,
+            out_params=out_params,
+            operation=body,
+            name=f"prim_to_cons_npass_{npassives}",
+        )
+
+    def make_cons_to_prim_elementwise_kernel(npassives: int):
+        in_params = (
+            "float64 rho, float64 mx, float64 my, float64 mz, float64 E, "
+            "float64 gamma, bool isothermal, float64 isothermal_cs"
+        )
+        out_params = "float64 vx, float64 vy, float64 vz, float64 P"
+
+        body = """
+        vx = mx / rho;
+        vy = my / rho;
+        vz = mz / rho;
+        double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
+        P = isothermal ? rho * isothermal_cs * isothermal_cs : (gamma - 1.0) * (E - K);
+        """
+
+        for i in range(npassives):
+            in_params += f", float64 upass{i}"
+            out_params += f", float64 pass{i}"
+            body += f"\npass{i} = upass{i} / rho;"
+
+        return cp.ElementwiseKernel(
+            in_params=in_params,
+            out_params=out_params,
+            operation=body,
+            name=f"cons_to_prim_npass_{npassives}",
+        )

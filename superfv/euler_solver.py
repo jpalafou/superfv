@@ -10,7 +10,11 @@ from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
 
 if CUPY_AVAILABLE:
-    from .hydro import sound_speed_cp
+    from .hydro import (
+        make_cons_to_prim_elementwise_kernel,
+        make_prim_to_cons_elementwise_kernel,
+        sound_speed_cp,
+    )
 
 
 class EulerSolver(FiniteVolumeSolver):
@@ -212,6 +216,8 @@ class EulerSolver(FiniteVolumeSolver):
         self.gamma = gamma
         self.isothermal = isothermal
         self.iso_cs = iso_cs
+
+        # init base class
         super().__init__(
             ic=ic,
             ic_passives=ic_passives,
@@ -260,6 +266,12 @@ class EulerSolver(FiniteVolumeSolver):
             sync_timing=sync_timing,
         )
 
+        # special cupy functions
+        if self.cupy:
+            n_passives = self.n_passive_vars
+            self.prim_to_cons_cp = make_prim_to_cons_elementwise_kernel(n_passives)
+            self.cons_to_prim_cp = make_cons_to_prim_elementwise_kernel(n_passives)
+
     def define_vars(self) -> VariableIndexMap:
         """
         Returns an VariableIndexMap object with the following variables:
@@ -298,7 +310,27 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of conservative variables.
         """
-        return prim_to_cons(self.xp, self.variable_index_map, w, self.gamma)
+        xp = self.xp
+        idx = self.variable_index_map
+        gamma = self.gamma
+
+        if self.cupy and hasattr(self, "prim_to_cons_cp"):
+            return xp.asarray(
+                [
+                    w[idx("rho")],
+                    *self.prim_to_cons_cp(
+                        w[idx("rho")],
+                        w[idx("vx")],
+                        w[idx("vy")],
+                        w[idx("vz")],
+                        w[idx("P")],
+                        gamma,
+                        *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
+                    ),
+                ]
+            )
+        else:
+            return prim_to_cons(xp, idx, w, gamma)
 
     def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
         """
@@ -310,14 +342,36 @@ class EulerSolver(FiniteVolumeSolver):
         Returns:
             Array of primitive variables.
         """
-        return cons_to_prim(
-            self.xp,
-            self.variable_index_map,
-            u,
-            self.gamma,
-            self.isothermal,
-            self.iso_cs,
-        )
+        xp = self.xp
+        idx = self.variable_index_map
+        gamma = self.gamma
+
+        if self.cupy and hasattr(self, "cons_to_prim_cp"):
+            return xp.asarray(
+                [
+                    u[idx("rho")],
+                    *self.cons_to_prim_cp(
+                        u[idx("rho")],
+                        u[idx("mx")],
+                        u[idx("my")],
+                        u[idx("mz")],
+                        u[idx("E")],
+                        gamma,
+                        self.isothermal,
+                        self.iso_cs,
+                        *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
+                    ),
+                ]
+            )
+        else:
+            return cons_to_prim(
+                self.xp,
+                self.variable_index_map,
+                u,
+                self.gamma,
+                self.isothermal,
+                self.iso_cs,
+            )
 
     def log_quantity(self) -> Dict[str, float]:
         """
