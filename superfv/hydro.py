@@ -252,7 +252,7 @@ def turbulent_power_specta(
 
 
 if CUPY_AVAILABLE:
-    import cupy as cp
+    import cupy as cp  # type: ignore
 
     sound_speed_cp = cp.ElementwiseKernel(
         in_params="float64 rho, float64 P, float64 gamma",

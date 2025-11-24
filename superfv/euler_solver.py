@@ -378,7 +378,7 @@ class EulerSolver(FiniteVolumeSolver):
         }
         return scalar_packet
 
-    def compute_sound_speed(self, w: ArrayLike) -> ArrayLike:
+    def compute_sound_speed(self, w: ArrayLike) -> Union[ArrayLike, float]:
         idx = self.variable_index_map
         gamma = self.gamma
 
