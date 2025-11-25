@@ -900,36 +900,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         )
 
     def _init_riemann_solver(self, riemann_solver: str):
-        if not hasattr(self, riemann_solver):
-            raise ValueError(f"Riemann solver {riemann_solver} not implemented.")
-        self.riemann_func = getattr(self, riemann_solver)
+        self.init_riemann_solver(riemann_solver)
 
     def _init_visualization(self, vis_rtol: float, vis_atol: float):
         self.vis_rtol = vis_rtol
         self.vis_atol = vis_atol
-
-    @MethodTimer(cat="riemann_solver")
-    def riemann_solver(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        *,
-        out: ArrayLike,
-    ):
-        """
-        Compute the numerical fluxes at the interface using the specified Riemann solver.
-
-        Args:
-            wl: Primitive variables to the left of the interface. Has shape
-                (nvars, nx, ny, nz, ...).
-            wr: Primitive variables to the right of the interface. Has shape
-                (nvars, nx, ny, nz, ...).
-            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
-            out: Output array to store the numerical fluxes. Has shape
-                (nvars, nx, ny, nz, ...).
-        """
-        out[...] = self.riemann_func(wl, wr, dim)
 
     def _init_array_allocation(self):
         if self.cupy:
@@ -1167,6 +1142,41 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         Returns:
             Array of primitive variables.
+        """
+        pass
+
+    @abstractmethod
+    def init_riemann_solver(self, riemann_solver: str):
+        """
+        Define `self.arraywise_riemann_solver` and `self.elemewise_riemann_solver`.
+
+        Args:
+            riemann_solver: Name of the Riemann solver to use.
+        """
+        pass
+
+    @MethodTimer(cat="riemann_solver")
+    @abstractmethod
+    def riemann_solver(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        out: ArrayLike,
+    ):
+        """
+        Compute the numerical flux at the interfaces using the Riemann solver and write
+        the result to the `out` array.
+
+        Args:
+            wl: Array of primitive variables to the left of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            wr: Array of primitive variables to the right of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
+            out: Output array to write the numerical fluxes to. Has shape
+                (nvars, nx, ny, nz, ...).
         """
         pass
 
@@ -2419,7 +2429,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mesh=self.mesh.to_dict(),
             nvars=self.nvars,
             n_passive_vars=self.n_passive_vars,
-            riemann_func=self.riemann_func.__name__,
+            arraywise_riemann_solver=(
+                self.arraywise_riemann_solver.__name__
+                if hasattr(self, "arraywise_riemann_solver")
+                else None
+            ),
+            elemewise_riemann_solver=(
+                self.elemewise_riemann_solver.__name__
+                if hasattr(self, "elemewise_riemann_solver")
+                else None
+            ),
             variable_index_map=self.variable_index_map.to_dict(),
             xp=self.xp.__name__,
         )

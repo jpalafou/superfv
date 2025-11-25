@@ -1,9 +1,11 @@
-from typing import Dict, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 from . import riemann_solvers
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
+from .fv import DIM_TO_AXIS
+from .riemann_solvers import AdvectionRiemannSolver
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -275,6 +277,90 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         return u
 
+    def init_riemann_solver(self, riemann_solver: str):
+        """
+        Define `self.arraywise_riemann_solver` and `self.elemewise_riemann_solver`.
+
+        Args:
+            riemann_solver: Name of the Riemann solver to use.
+        """
+        self.arraywise_riemann_solver: AdvectionRiemannSolver
+        self.elemewise_riemann_solver: Optional[Callable] = None
+
+        if hasattr(riemann_solvers, riemann_solver):
+            tmp_arraywise = getattr(riemann_solvers, riemann_solver)
+            if not isinstance(tmp_arraywise, AdvectionRiemannSolver):
+                raise TypeError(
+                    f"Riemann solver '{riemann_solver}' is not of type "
+                    "AdvectionRiemannSolver."
+                )
+            self.arraywise_riemann_solver = tmp_arraywise
+        else:
+            raise ValueError(f"Riemann solver '{riemann_solver}' is not implemented.")
+
+        make_kernel_name = f"make_{riemann_solver}_elementwise_kernel"
+        if hasattr(riemann_solvers, make_kernel_name):
+            self.elemewise_riemann_solver = getattr(riemann_solvers, make_kernel_name)(
+                self.n_passive_vars
+            )
+
+    @MethodTimer(cat="riemann_solver")
+    def riemann_solver(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        out: ArrayLike,
+    ):
+        """
+        Compute the numerical flux at the interfaces using the Riemann solver and write
+        the result to the `out` array.
+
+        Args:
+            wl: Array of primitive variables to the left of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            wr: Array of primitive variables to the right of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
+            out: Output array to write the numerical fluxes to. Has shape
+                (nvars, nx, ny, nz, ...).
+        """
+        idx = self.variable_index_map
+
+        if self.cupy and self.elemewise_riemann_solver is not None:
+            result = self.elemewise_riemann_solver(
+                wl[idx("rho")],
+                wr[idx("rho")],
+                wl[idx("vx")],
+                wr[idx("vx")],
+                wl[idx("vy")],
+                wr[idx("vy")],
+                wl[idx("vz")],
+                wr[idx("vz")],
+                DIM_TO_AXIS[dim],
+                *[
+                    x
+                    for v in idx.group_var_map.get("passives", [])
+                    for x in (wl[idx(v)], wr[idx(v)])
+                ],
+            )
+
+            out[idx("rho")] = result[0]
+            out[idx("vx")] = result[1]
+            out[idx("vy")] = result[2]
+            out[idx("vz")] = result[3]
+            for i, v in enumerate(idx.group_var_map.get("passives", []), start=4):
+                out[idx(v)] = result[i]
+        else:
+            out[...] = self.arraywise_riemann_solver(
+                self.xp,
+                idx,
+                wl,
+                wr,
+                dim,
+            )
+
     def log_quantity(self) -> Dict[str, float]:
         """
         Log the minimum and maximum density in the domain.
@@ -361,20 +447,3 @@ class AdvectionSolver(FiniteVolumeSolver):
         out[_v_] = 0
 
         return out
-
-    def advection_upwind(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
-        """
-        Riemann solver implementation. See FiniteVolumeSolver.dummy_riemann_solver.
-        """
-        return riemann_solvers.advection_upwind(
-            self.xp,
-            self.variable_index_map,
-            wl,
-            wr,
-            dim,
-        )

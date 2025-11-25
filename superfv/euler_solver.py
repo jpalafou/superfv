@@ -1,11 +1,12 @@
-from typing import Dict, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
+from . import riemann_solvers
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
 from .fv import DIM_TO_AXIS
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
-from .riemann_solvers import hllc, hllct, llf
+from .riemann_solvers import HydroRiemannSolver
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -376,6 +377,100 @@ class EulerSolver(FiniteVolumeSolver):
                 self.iso_cs,
             )
 
+    def init_riemann_solver(self, riemann_solver: str):
+        """
+        Define `self.arraywise_riemann_solver` and `self.elemewise_riemann_solver`.
+
+        Args:
+            riemann_solver: Name of the Riemann solver to use.
+        """
+        self.arraywise_riemann_solver: HydroRiemannSolver
+        self.elemewise_riemann_solver: Optional[Callable] = None
+
+        if hasattr(riemann_solvers, riemann_solver):
+            tmp_arraywise = getattr(riemann_solvers, riemann_solver)
+            if not isinstance(tmp_arraywise, HydroRiemannSolver):
+                raise TypeError(
+                    f"Riemann solver '{riemann_solver}' is not of type "
+                    "HydroRiemannSolver."
+                )
+            self.arraywise_riemann_solver = tmp_arraywise
+        else:
+            raise ValueError(f"Riemann solver '{riemann_solver}' is not implemented.")
+
+        make_kernel_name = f"make_{riemann_solver}_elementwise_kernel"
+        if hasattr(riemann_solvers, make_kernel_name):
+            self.elemewise_riemann_solver = getattr(riemann_solvers, make_kernel_name)(
+                self.n_passive_vars
+            )
+
+    @MethodTimer(cat="riemann_solver")
+    def riemann_solver(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        *,
+        out: ArrayLike,
+    ):
+        """
+        Compute the numerical flux at the interfaces using the Riemann solver and write
+        the result to the `out` array.
+
+        Args:
+            wl: Array of primitive variables to the left of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            wr: Array of primitive variables to the right of the interface. Has shape
+                (nvars, nx, ny, nz, ...).
+            dim: Direction in which the Riemann problem is solved: "x", "y", or "z".
+            out: Output array to write the numerical fluxes to. Has shape
+                (nvars, nx, ny, nz, ...).
+        """
+        idx = self.variable_index_map
+        gamma = self.gamma
+
+        if self.cupy and self.elemewise_riemann_solver is not None:
+            result = self.elemewise_riemann_solver(
+                wl[idx("rho")],
+                wr[idx("rho")],
+                wl[idx("vx")],
+                wr[idx("vx")],
+                wl[idx("vy")],
+                wr[idx("vy")],
+                wl[idx("vz")],
+                wr[idx("vz")],
+                wl[idx("P")],
+                wr[idx("P")],
+                self.iso_cs if self.isothermal else self.compute_sound_speed(wl),
+                self.iso_cs if self.isothermal else self.compute_sound_speed(wr),
+                gamma,
+                DIM_TO_AXIS[dim],
+                *[
+                    x
+                    for v in idx.group_var_map.get("passives", [])
+                    for x in (wl[idx(v)], wr[idx(v)])
+                ],
+            )
+
+            out[idx("rho")] = result[0]
+            out[idx("mx")] = result[1]
+            out[idx("my")] = result[2]
+            out[idx("mz")] = result[3]
+            out[idx("E")] = result[4]
+            for i, v in enumerate(idx.group_var_map.get("passives", []), start=5):
+                out[idx(v)] = result[i]
+        else:
+            out[...] = self.arraywise_riemann_solver(
+                self.xp,
+                idx,
+                wl,
+                wr,
+                dim,
+                gamma,
+                self.isothermal,
+                self.iso_cs,
+            )
+
     def log_quantity(self) -> Dict[str, float]:
         """
         Log the global physical scalars.
@@ -537,95 +632,6 @@ class EulerSolver(FiniteVolumeSolver):
             out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
 
         return out
-
-    def llf(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
-        """
-        LLF implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
-        """
-        return llf(
-            self.xp,
-            self.variable_index_map,
-            wl,
-            wr,
-            dim,
-            self.gamma,
-            self.isothermal,
-            self.iso_cs,
-        )
-
-    def hllc(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
-        """
-        HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
-        """
-        xp = self.xp
-        idx = self.variable_index_map
-        gamma = self.gamma
-
-        if self.cupy and hasattr(self, "hllc_cp"):
-            return xp.asarray(
-                self.hllc_cp(
-                    wl[idx("rho")],
-                    wr[idx("rho")],
-                    wl[idx("vx")],
-                    wr[idx("vx")],
-                    wl[idx("vy")],
-                    wr[idx("vy")],
-                    wl[idx("vz")],
-                    wr[idx("vz")],
-                    wl[idx("P")],
-                    wr[idx("P")],
-                    self.iso_cs if self.isothermal else self.compute_sound_speed(wl),
-                    self.iso_cs if self.isothermal else self.compute_sound_speed(wr),
-                    gamma,
-                    DIM_TO_AXIS[dim],
-                    *[
-                        x
-                        for v in idx.group_var_map.get("passives", [])
-                        for x in (wl[idx(v)], wr[idx(v)])
-                    ],
-                )
-            )
-        else:
-            return hllc(
-                xp,
-                idx,
-                wl,
-                wr,
-                dim,
-                gamma,
-                self.isothermal,
-                self.iso_cs,
-            )
-
-    def hllct(
-        self,
-        wl: ArrayLike,
-        wr: ArrayLike,
-        dim: Literal["x", "y", "z"],
-    ) -> ArrayLike:
-        """
-        HLLC Teyssier implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
-        """
-        if self.mesh.ndim > 1:
-            raise NotImplementedError("HLLCT is only implemented for 1D problems.")
-        return hllct(
-            self.xp,
-            self.variable_index_map,
-            wl,
-            wr,
-            dim,
-            self.gamma,
-        )
 
     def build_update_message(self) -> str:
         """

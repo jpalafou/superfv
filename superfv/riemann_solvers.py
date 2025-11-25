@@ -1,10 +1,37 @@
 from types import ModuleType
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 from .hydro import fluxes, prim_to_cons, sound_speed
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.stability import avoid0
+
+
+@runtime_checkable
+class AdvectionRiemannSolver(Protocol):
+    def __call__(
+        self,
+        xp: ModuleType,
+        idx: VariableIndexMap,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+    ) -> ArrayLike: ...
+
+
+@runtime_checkable
+class HydroRiemannSolver(Protocol):
+    def __call__(
+        self,
+        xp: ModuleType,
+        idx: VariableIndexMap,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ) -> ArrayLike: ...
 
 
 def advection_upwind(
