@@ -18,7 +18,7 @@ if CUPY_AVAILABLE:
         out_params="float64 alpha",
         operation=(
             """
-            double dul = ulc - ul2;
+            double dul = uc - ul2;
             double duc = ur1 - ul1;
             double dur = ur2 - uc;
 
@@ -54,33 +54,33 @@ def smooth_extrema_detector_cp(
 ):
     axis = DIM_TO_AXIS[dim]
 
-    ul3 = u[crop(axis, (None, -6))]
-    ul2 = u[crop(axis, (1, -5))]
-    ul1 = u[crop(axis, (2, -4))]
-    uc = u[crop(axis, (3, -3))]
-    ur1 = u[crop(axis, (4, -2))]
-    ur2 = u[crop(axis, (5, -1))]
-    ur3 = u[crop(axis, (6, None))]
+    ul3 = u[crop(axis, (None, -6), ndim=4)]
+    ul2 = u[crop(axis, (1, -5), ndim=4)]
+    ul1 = u[crop(axis, (2, -4), ndim=4)]
+    uc = u[crop(axis, (3, -3), ndim=4)]
+    ur1 = u[crop(axis, (4, -2), ndim=4)]
+    ur2 = u[crop(axis, (5, -1), ndim=4)]
+    ur3 = u[crop(axis, (6, None), ndim=4)]
 
     alpha = buffer[..., 0]
     buff_l = buffer[..., 1]
     buff_c = buffer[..., 2]
     buff_r = buffer[..., 3]
-    alphal = buff_l[crop(axis, (2, -4))]
-    alphac = buff_c[crop(axis, (3, -3))]
-    alphar = buff_r[crop(axis, (4, -2))]
+    alphal = buff_l[crop(axis, (2, -4), ndim=4)]
+    alphac = buff_c[crop(axis, (3, -3), ndim=4)]
+    alphar = buff_r[crop(axis, (4, -2), ndim=4)]
 
-    smooth_extrema_detector_cp_kernel(ul3, ul2, ul1, uc, ur1, eps, out=alphal)
-    smooth_extrema_detector_cp_kernel(ul2, ul1, uc, ur1, ur2, eps, out=alphac)
-    smooth_extrema_detector_cp_kernel(ul1, uc, ur1, ur2, ur3, eps, out=alphar)
+    smooth_extrema_detector_cp_kernel(ul3, ul2, ul1, uc, ur1, eps, alphal)
+    smooth_extrema_detector_cp_kernel(ul2, ul1, uc, ur1, ur2, eps, alphac)
+    smooth_extrema_detector_cp_kernel(ul1, uc, ur1, ur2, ur3, eps, alphar)
 
-    cen_slc = crop(axis, (3, -3))
+    cen_slc = crop(axis, (3, -3), ndim=4)
     alpha[cen_slc] = xp.minimum(alphal, alphac)
     alpha[cen_slc] = xp.minimum(alphar, alpha[cen_slc])
 
     out[insert_slice(cen_slc, 4, 0)] = alpha[cen_slc]
 
-    modified = cast(Tuple[slice, ...], replace_slice(cen_slc, 4, slice(None, 1)))
+    modified = cast(Tuple[slice, ...], insert_slice(cen_slc, 4, slice(None, 1)))
     return modified
 
 
