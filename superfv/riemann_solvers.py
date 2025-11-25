@@ -419,4 +419,5 @@ if CUPY_AVAILABLE:
             out_params=out_params,
             operation=body,
             name=f"hllc_npass_{npassives}",
+            no_return=True,
         )

@@ -299,7 +299,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             raise ValueError(f"Riemann solver '{riemann_solver}' is not implemented.")
 
         make_kernel_name = f"make_{riemann_solver}_elementwise_kernel"
-        if hasattr(riemann_solvers, make_kernel_name):
+        if self.cupy and hasattr(riemann_solvers, make_kernel_name):
             self.elemewise_riemann_solver = getattr(riemann_solvers, make_kernel_name)(
                 self.n_passive_vars
             )

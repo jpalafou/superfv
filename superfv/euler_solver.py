@@ -399,7 +399,7 @@ class EulerSolver(FiniteVolumeSolver):
             raise ValueError(f"Riemann solver '{riemann_solver}' is not implemented.")
 
         make_kernel_name = f"make_{riemann_solver}_elementwise_kernel"
-        if hasattr(riemann_solvers, make_kernel_name):
+        if self.cupy and hasattr(riemann_solvers, make_kernel_name):
             self.elemewise_riemann_solver = getattr(riemann_solvers, make_kernel_name)(
                 self.n_passive_vars
             )
@@ -430,7 +430,9 @@ class EulerSolver(FiniteVolumeSolver):
         gamma = self.gamma
 
         if self.cupy and self.elemewise_riemann_solver is not None:
-            result = self.elemewise_riemann_solver(
+            cl = self.compute_sound_speed(wl)
+            cr = self.compute_sound_speed(wr)
+            self.elemewise_riemann_solver(
                 wl[idx("rho")],
                 wr[idx("rho")],
                 wl[idx("vx")],
@@ -441,8 +443,8 @@ class EulerSolver(FiniteVolumeSolver):
                 wr[idx("vz")],
                 wl[idx("P")],
                 wr[idx("P")],
-                self.iso_cs if self.isothermal else self.compute_sound_speed(wl),
-                self.iso_cs if self.isothermal else self.compute_sound_speed(wr),
+                cl,
+                cr,
                 gamma,
                 DIM_TO_AXIS[dim],
                 *[
@@ -450,15 +452,13 @@ class EulerSolver(FiniteVolumeSolver):
                     for v in idx.group_var_map.get("passives", [])
                     for x in (wl[idx(v)], wr[idx(v)])
                 ],
+                out[idx("rho")],
+                out[idx("mx")],
+                out[idx("my")],
+                out[idx("mz")],
+                out[idx("E")],
+                *[out[idx(v)] for v in idx.group_var_map.get("passives", [])],
             )
-
-            out[idx("rho")] = result[0]
-            out[idx("mx")] = result[1]
-            out[idx("my")] = result[2]
-            out[idx("mz")] = result[3]
-            out[idx("E")] = result[4]
-            for i, v in enumerate(idx.group_var_map.get("passives", []), start=5):
-                out[idx(v)] = result[i]
         else:
             out[...] = self.arraywise_riemann_solver(
                 self.xp,
