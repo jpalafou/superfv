@@ -2,7 +2,7 @@ from types import ModuleType
 from typing import Literal
 
 from .hydro import fluxes, prim_to_cons, sound_speed
-from .tools.device_management import ArrayLike
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.stability import avoid0
 
@@ -275,80 +275,121 @@ def hllct(
     return flux
 
 
-# if CUPY_AVAILABLE:
-#     import cupy as cp
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
 
-#     def make_hllc_elementwise_kernel(npassives: int):
-#         # Build input signature for passives: passives_l_0, passives_l_1, ...
-#         in_args = [
-#             'float64 rhol, float64 v1l, float64 v2l, float64 v3l, float64 Pl, float64 El,',
-#             'float64 rhor, float64 v1r, float64 v2r, float64 v3r, float64 Pr, float64 Er,',
-#             'float64 gamma, float64 iso_cs, bool isothermal'
-#         ]
-#         out_args = ['float64 Frho, float64 Fm1, float64 FE, float64 Fm2, float64 Fm3']
-#         # add passives inputs and outputs
-#         for i in range(npassives):
-#             in_args.append(f'float64 passl{i}, float64 passr{i}')
-#             out_args.append(f'float64 Fpass{i}')
+    def make_hllc_elementwise_kernel(npassives: int):
+        in_params = (
+            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, "
+            "float64 v2l, float64 v2r, float64 v3l, float64 v3r, "
+            "float64 Pl, float64 Pr, float64 cl, float64 cr, float64 gamma, int8 dim"
+        )
+        out_params = "float64 Frho, float64 Fm1, float64 Fm2, float64 Fm3, float64 FE"
+        body = """
+        double vl;
+        double vr;
+        if (dim == 1) {
+            vl = v1l;
+            vr = v1r;
+        } else if (dim == 2) {
+            vl = v2l;
+            vr = v2r;
+        } else {
+            vl = v3l;
+            vr = v3r;
+        }
 
-#         in_sig = ', '.join(in_args)
-#         out_sig = ', '.join(out_args)
+        double Kl = 0.5 * rhol * (v1l * v1l + v2l * v2l + v3l * v3l);
+        double Kr = 0.5 * rhor * (v1r * v1r + v2r * v2r + v3r * v3r);
 
-#         # kernel body: compute hydrodynamic part (shortened here) then handle passives
-#         body = """
-#         // compute sound speeds
-#         double cl = isothermal ? iso_cs : sqrt(gamma * Pl / rhol);
-#         double cr = isothermal ? iso_cs : sqrt(gamma * Pr / rhor);
-#         double cmax = fmax(cl, cr);
+        double El = Pl / (gamma - 1.0) + Kl;
+        double Er = Pr / (gamma - 1.0) + Kr;
 
-#         double sl = fmin(v1l, v1r) - cmax;
-#         double sr = fmax(v1l, v1r) + cmax;
+        double cmax = max(cl, cr);
 
-#         double rcl = rhol * (v1l - sl);
-#         double rcr = rhor * (sr - v1r);
-#         double denom = (rcl + rcr) == 0.0 ? 1e-300 : (rcl + rcr);
-#         double vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / denom;
-#         double Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / denom;
+        double sl = min(vl, vr) - cmax;
+        double sr = max(vl, vr) + cmax;
 
-#         double rhoE_starl_denoml = (sl - vstar) == 0.0 ? 1e-300 : (sl - vstar);
-#         double rhoE_starr_denomr = (sr - vstar) == 0.0 ? 1e-300 : (sr - vstar);
+        double rcl = rhol * (vl - sl);
+        double rcr = rhor * (sr - vr);
+        double vP_star_denom = rcl + rcr;
+        double vP_star_denom_safe = (
+            abs(vP_star_denom) > 1e-15
+                ? vP_star_denom
+                : (vP_star_denom > 0 ? 1e-15 : -1e-15)
+        );
+        double vstar = (rcr * vr + rcl * vl + (Pl - Pr)) / vP_star_denom_safe;
+        double Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (vl - vr)) / vP_star_denom_safe;
 
-#         double rhostarl = rhol * (sl - v1l) / rhoE_starl_denoml;
-#         double rhostarr = rhor * (sr - v1r) / rhoE_starr_denomr;
+        double rhoE_star_denoml = sl - vstar;
+        double rhoE_star_denomr = sr - vstar;
+        double rhoE_star_denoml_safe = (
+            abs(rhoE_star_denoml) > 1e-15
+                ? rhoE_star_denoml
+                : (rhoE_star_denoml > 0 ? 1e-15 : -1e-15)
+        );
+        double rhoE_star_denomr_safe = (
+            abs(rhoE_star_denomr) > 1e-15
+                ? rhoE_star_denomr
+                : (rhoE_star_denomr > 0 ? 1e-15 : -1e-15)
+        );
+        double rhostarl = rhol * (sl - vl) / rhoE_star_denoml_safe;
+        double rhostarr = rhor * (sr - vr) / rhoE_star_denomr_safe;
+        double Estarl = ((sl - vl) * El - Pl * vl + Pstar * vstar) / rhoE_star_denoml_safe;
+        double Estarr = ((sr - vr) * Er - Pr * vr + Pstar * vstar) / rhoE_star_denomr_safe;
 
-#         double Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / rhoE_starl_denoml;
-#         double Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / rhoE_starr_denomr;
+        double rhogdv;
+        double vgdv;
+        double Pgdv;
+        double Egdv;
 
-#         // small local inline hllc_operator equivalent:
-#         auto hllc_op = [&](double sL, double sR, double vS, double aL, double aR, double aSL, double aSR) {
-#             if (vS <= sL) return aL;
-#             if (vS >= sR) return aR;
-#             return (sR * aSL - sL * aSR + sL * sR * (aR - aL)) / (sR - sL);
-#         };
+        if (sl > 0) {
+            rhogdv = rhol;
+            vgdv = vl;
+            Pgdv = Pl;
+            Egdv = El;
+        } else if (vstar > 0) {
+            rhogdv = rhostarl;
+            vgdv = vstar;
+            Pgdv = Pstar;
+            Egdv = Estarl;
+        } else if (sr > 0) {
+            rhogdv = rhostarr;
+            vgdv = vstar;
+            Pgdv = Pstar;
+            Egdv = Estarr;
+        } else {
+            rhogdv = rhor;
+            vgdv = vr;
+            Pgdv = Pr;
+            Egdv = Er;
+        }
 
-#         double rhogdv = hllc_op(sl, sr, vstar, rhol, rhor, rhostarl, rhostarr);
-#         double v1gdv = hllc_op(sl, sr, vstar, v1l, v1r, vstar, vstar);
-#         double Pgdv  = hllc_op(sl, sr, vstar, Pl, Pr, Pstar, Pstar);
-#         double Egdv  = hllc_op(sl, sr, vstar, El, Er, Estarl, Estarr);
+        Frho = rhogdv * vgdv;
+        if (dim == 1) {
+            Fm1 = Frho * vgdv + Pgdv;
+            Fm2 = Frho * (vstar > 0 ? v2l : v2r);
+            Fm3 = Frho * (vstar > 0 ? v3l : v3r);
+        } else if (dim == 2) {
+            Fm1 = Frho * (vstar > 0 ? v1l : v1r);
+            Fm2 = Frho * vgdv + Pgdv;
+            Fm3 = Frho * (vstar > 0 ? v3l : v3r);
+        } else {
+            Fm1 = Frho * (vstar > 0 ? v1l : v1r);
+            Fm2 = Frho * (vstar > 0 ? v2l : v2r);
+            Fm3 = Frho * vgdv + Pgdv;
+        }
+        FE = vgdv * (Egdv + Pgdv);
+        """
 
-#         Frho = rhogdv * v1gdv;
-#         Fm1  = Frho * v1gdv + Pgdv;
-#         FE   = v1gdv * (Egdv + Pgdv);
-#         Fm2  = Frho * (vstar > 0.0 ? v2l : v2r);
-#         Fm3  = Frho * (vstar > 0.0 ? v3l : v3r);
-#         """
+        for i in range(npassives):
+            in_params += f", float64 passl{i}, float64 passr{i}"
+            out_params += f", float64 Fpass{i}"
+            body += f"\nFpass{i} = Frho * (vstar > 0 ? passl{i} : passr{i});"
 
-#         # append passives selection
-#         body += '\n    // passives\n'
-#         for i in range(npassives):
-#             body += f'    Fpass{i} = Frho * (vstar > 0.0 ? passl{i} : passr{i});\n'
-
-#         return cp.ElementwiseKernel(in_sig, out_sig, body, f'hllc_npass_{npassives}')
-
-#     # Example usage for npassives = 3
-#     npass = 3
-#     hllc_ew = make_hllc_elementwise_kernel(npass)
-
-#     # Suppose left/right arrays: shape (nvars, Nfaces)
-#     # flatten them to 1D arrays per component and call:
-#     # Frho, Fm1, FE, Fm2, Fm3, Fpass0, Fpass1, Fpass2 = hllc_ew(rhol, v1l, ..., passl0, passr0, ...)
+        return cp.ElementwiseKernel(
+            in_params=in_params,
+            out_params=out_params,
+            operation=body,
+            name=f"hllc_npass_{npassives}",
+        )

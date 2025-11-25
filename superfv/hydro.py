@@ -259,7 +259,7 @@ if CUPY_AVAILABLE:
         out_params="float64 cs",
         operation="""
             double val = gamma * P / rho;
-            cs = sqrt(fmax(val, 0.0));
+            cs = sqrt(max(val, 0.0));
         """,
         name="sound_speed_ew",
     )
@@ -293,7 +293,7 @@ if CUPY_AVAILABLE:
     def make_cons_to_prim_elementwise_kernel(npassives: int):
         in_params = (
             "float64 rho, float64 mx, float64 my, float64 mz, float64 E, "
-            "float64 gamma, bool isothermal, float64 isothermal_cs"
+            "float64 gamma, bool isothermal, float64 iso_cs"
         )
         out_params = "float64 vx, float64 vy, float64 vz, float64 P"
 
@@ -302,7 +302,7 @@ if CUPY_AVAILABLE:
         vy = my / rho;
         vz = mz / rho;
         double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
-        P = isothermal ? rho * isothermal_cs * isothermal_cs : (gamma - 1.0) * (E - K);
+        P = isothermal ? rho * iso_cs * iso_cs : (gamma - 1.0) * (E - K);
         """
 
         for i in range(npassives):

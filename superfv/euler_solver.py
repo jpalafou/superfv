@@ -1,10 +1,11 @@
 from typing import Dict, Literal, Optional, Tuple, Union
 
-from . import riemann_solvers
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
+from .fv import DIM_TO_AXIS
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
+from .riemann_solvers import hllc, hllct, llf
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
@@ -15,6 +16,7 @@ if CUPY_AVAILABLE:
         make_prim_to_cons_elementwise_kernel,
         sound_speed_cp,
     )
+    from .riemann_solvers import make_hllc_elementwise_kernel
 
 
 class EulerSolver(FiniteVolumeSolver):
@@ -271,6 +273,7 @@ class EulerSolver(FiniteVolumeSolver):
             n_passives = self.n_passive_vars
             self.prim_to_cons_cp = make_prim_to_cons_elementwise_kernel(n_passives)
             self.cons_to_prim_cp = make_cons_to_prim_elementwise_kernel(n_passives)
+            self.hllc_cp = make_hllc_elementwise_kernel(n_passives)
 
     def define_vars(self) -> VariableIndexMap:
         """
@@ -544,7 +547,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         LLF implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
-        return riemann_solvers.llf(
+        return llf(
             self.xp,
             self.variable_index_map,
             wl,
@@ -564,16 +567,45 @@ class EulerSolver(FiniteVolumeSolver):
         """
         HLLC implementation. See FiniteVolumeSolver.dummy_riemann_solver for details.
         """
-        return riemann_solvers.hllc(
-            self.xp,
-            self.variable_index_map,
-            wl,
-            wr,
-            dim,
-            self.gamma,
-            self.isothermal,
-            self.iso_cs,
-        )
+        xp = self.xp
+        idx = self.variable_index_map
+        gamma = self.gamma
+
+        if self.cupy and hasattr(self, "hllc_cp"):
+            return xp.asarray(
+                self.hllc_cp(
+                    wl[idx("rho")],
+                    wr[idx("rho")],
+                    wl[idx("vx")],
+                    wr[idx("vx")],
+                    wl[idx("vy")],
+                    wr[idx("vy")],
+                    wl[idx("vz")],
+                    wr[idx("vz")],
+                    wl[idx("P")],
+                    wr[idx("P")],
+                    self.iso_cs if self.isothermal else self.compute_sound_speed(wl),
+                    self.iso_cs if self.isothermal else self.compute_sound_speed(wr),
+                    gamma,
+                    DIM_TO_AXIS[dim],
+                    *[
+                        x
+                        for v in idx.group_var_map.get("passives", [])
+                        for x in (wl[idx(v)], wr[idx(v)])
+                    ],
+                )
+            )
+        else:
+            return hllc(
+                xp,
+                idx,
+                wl,
+                wr,
+                dim,
+                gamma,
+                self.isothermal,
+                self.iso_cs,
+            )
 
     def hllct(
         self,
@@ -586,7 +618,7 @@ class EulerSolver(FiniteVolumeSolver):
         """
         if self.mesh.ndim > 1:
             raise NotImplementedError("HLLCT is only implemented for 1D problems.")
-        return riemann_solvers.hllct(
+        return hllct(
             self.xp,
             self.variable_index_map,
             wl,

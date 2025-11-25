@@ -78,7 +78,7 @@ def sinus(
         ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
-    out = xp.empty((len(idx.idxs), *x.shape))
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMaps
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -141,7 +141,7 @@ def square(
         ArrayLike: Array with the initial conditions for the given variables.
     """
     dims = parse_xyz(x, y, z)
-    out = xp.empty((len(idx.idxs), *x.shape))
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -207,7 +207,7 @@ def composite(
         raise ValueError("Composite profile only defined in 1D.")
     dim = dims[0]
 
-    out = xp.empty((len(idx.idxs), *x.shape))
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -285,7 +285,7 @@ def slotted_disk(
     Returns:
         ArrayLike: Array with the initial conditions for the given variables.
     """
-    out = xp.empty((len(idx.idxs), *x.shape))
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
         # angular velocity
@@ -359,7 +359,7 @@ def sod_shock_tube_1d(
         raise ValueError("Sod shock tube initial condition is only defined in 1D.")
     dim1 = dims[0]
 
-    out = xp.empty((len(idx.idxs), *x.shape))
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
@@ -413,7 +413,7 @@ def velocity_ramp(
         raise ValueError("Velocity ramp initial condition is only defined in 1D.")
     dim1 = dims[0]
 
-    out = xp.empty((len(idx.idxs), *x.shape))
+    out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
@@ -977,7 +977,7 @@ def decaying_isotropic_turbulence(
         vz *= s
 
     # assemble state like your other ICs
-    out = xp.empty((len(idx.idxs), *full_shape), dtype=float)
+    out = xp.zeros((len(idx.idxs), *full_shape), dtype=float)
     out[idx("rho")] = xp.ones_like(x, dtype=float)
     out[idx("vx")] = vx
     out[idx("vy")] = vy
