@@ -3,9 +3,85 @@ from typing import Literal, Tuple, cast
 
 from superfv.fv import DIM_TO_AXIS
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import ArrayLike
-from superfv.tools.slicing import crop, merge_slices, replace_slice
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
 from superfv.tools.stability import avoid0
+
+if CUPY_AVAILABLE:
+    import cupy as cp
+
+    smooth_extrema_detector_cp_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 ul2, float64 ul1, float64 uc, float64 ur1, float64 ur2"
+            ", float64 eps"
+        ),
+        out_params="float64 alpha",
+        operation=(
+            """
+            double dul = ulc - ul2;
+            double duc = ur1 - ul1;
+            double dur = ur2 - uc;
+
+            double dv = 0.5 * (dur - dul);
+            double dv_safe = (
+                abs(dv_safe) > eps
+                    ? dv_safe
+                    : (dv_safe > 0 ? eps : -eps)
+            );
+
+            double dvl = dul - duc;
+            double alphal = -((dv < 0) ? max(dvl, 0.0) : min(dvl, 0.0)) / dv_safe;
+
+            double dvr = dur - duc;
+            double alphar = ((dv > 0) ? max(dvr, 0.0) : min(dvr, 0.0)) / dv_safe;
+
+            alpha = min(min(alphal, alphar), 1.0);
+            """
+        ),
+        name="smooth_extrema_detector_cp_kernel",
+        no_return=True,
+    )
+
+
+def smooth_extrema_detector_cp(
+    xp: ModuleType,
+    u: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    *,
+    out: ArrayLike,
+    buffer: ArrayLike,
+    eps: float = 1e-16,
+):
+    axis = DIM_TO_AXIS[dim]
+
+    ul3 = u[crop(axis, (None, -6))]
+    ul2 = u[crop(axis, (1, -5))]
+    ul1 = u[crop(axis, (2, -4))]
+    uc = u[crop(axis, (3, -3))]
+    ur1 = u[crop(axis, (4, -2))]
+    ur2 = u[crop(axis, (5, -1))]
+    ur3 = u[crop(axis, (6, None))]
+
+    alpha = buffer[..., 0]
+    buff_l = buffer[..., 1]
+    buff_c = buffer[..., 2]
+    buff_r = buffer[..., 3]
+    alphal = buff_l[crop(axis, (2, -4))]
+    alphac = buff_c[crop(axis, (3, -3))]
+    alphar = buff_r[crop(axis, (4, -2))]
+
+    smooth_extrema_detector_cp_kernel(ul3, ul2, ul1, uc, ur1, eps, out=alphal)
+    smooth_extrema_detector_cp_kernel(ul2, ul1, uc, ur1, ur2, eps, out=alphac)
+    smooth_extrema_detector_cp_kernel(ul1, uc, ur1, ur2, ur3, eps, out=alphar)
+
+    cen_slc = crop(axis, (3, -3))
+    alpha[cen_slc] = xp.minimum(alphal, alphac)
+    alpha[cen_slc] = xp.minimum(alphar, alpha[cen_slc])
+
+    out[insert_slice(cen_slc, 4, 0)] = alpha[cen_slc]
+
+    modified = cast(Tuple[slice, ...], replace_slice(cen_slc, 4, slice(None, 1)))
+    return modified
 
 
 def central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
@@ -30,7 +106,7 @@ def smooth_extrema_detector_1d(
     out: ArrayLike,
     buffer: ArrayLike,
     eps: float = 1e-16,
-):
+) -> Tuple[slice, ...]:
     """
     Compute the 1D smooth extrema detector alpha.
 
@@ -48,6 +124,8 @@ def smooth_extrema_detector_1d(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cuda"):
+        return smooth_extrema_detector_cp(xp, u, dim, out=out, buffer=buffer, eps=eps)
 
     # retrieve axis
     axis = DIM_TO_AXIS[dim]
@@ -98,7 +176,7 @@ def smooth_extrema_detector_2d(
     out: ArrayLike,
     buffer: ArrayLike,
     eps: float = 1e-16,
-):
+) -> Tuple[slice, ...]:
     """
     Compute the 2D smooth extrema detector alpha.
 
@@ -139,7 +217,7 @@ def smooth_extrema_detector_3d(
     out: ArrayLike,
     buffer: ArrayLike,
     eps: float = 1e-16,
-):
+) -> Tuple[slice, ...]:
     """
     Compute the 3D smooth extrema detector alpha.
 
@@ -184,7 +262,7 @@ def smooth_extrema_detector(
     out: ArrayLike,
     buffer: ArrayLike,
     eps: float = 1e-16,
-):
+) -> Tuple[slice, ...]:
     """
     Compute the smooth extrema detector alpha along specified dimensions.
 
