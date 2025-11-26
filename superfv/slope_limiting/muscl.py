@@ -256,6 +256,9 @@ def compute_PP2D_slopes(
     if len(active_dims) != 2:
         raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
 
+    axis1 = DIM_TO_AXIS[active_dims[0]]
+    axis2 = DIM_TO_AXIS[active_dims[1]]
+
     # allocate arrays
     check_buffer_slots(buffer, required=4)
     V_min = buffer[..., 0]
@@ -266,19 +269,20 @@ def compute_PP2D_slopes(
     V_min_neighbors = xp.empty((8,) + u.shape)
     V_max_neighbors = xp.empty((8,) + u.shape)
 
+    # assign slices
+    slc1_c = crop(axis1, (1, -1), ndim=4)
+    slc2_c = crop(axis2, (1, -1), ndim=4)
+
+    slc_c = insert_slice(merge_slices(slc1_c, slc2_c), 4, 0)
+
+    slc1_l = merge_slices(crop(axis1, (None, -2), ndim=4), slc2_c)
+    slc1_r = merge_slices(crop(axis1, (2, None), ndim=4), slc2_c)
+    slc2_l = merge_slices(slc1_c, crop(axis2, (None, -2), ndim=4))
+    slc2_r = merge_slices(slc1_c, crop(axis2, (2, None), ndim=4))
+
     # compute second-order slopes
-    axis1 = DIM_TO_AXIS[active_dims[0]]
-    axis2 = DIM_TO_AXIS[active_dims[1]]
-    slc1_l = crop(axis1, (None, -2), ndim=4)
-    slc1_r = crop(axis1, (2, None), ndim=4)
-    slc2_l = crop(axis2, (None, -2), ndim=4)
-    slc2_r = crop(axis2, (2, None), ndim=4)
-
-    slc1_c = replace_slice(crop(axis1, (1, -1), ndim=5), 4, slice(None, 1))
-    slc2_c = replace_slice(crop(axis2, (1, -1), ndim=5), 4, slice(None, 1))
-
-    Sx[replace_slice(slc1_c, 4, 0)] = 0.5 * (u[slc1_r] - u[slc1_l])
-    Sy[replace_slice(slc2_c, 4, 0)] = 0.5 * (u[slc2_r] - u[slc2_l])
+    Sx[slc_c] = 0.5 * (u[slc1_r] - u[slc1_l])
+    Sy[slc_c] = 0.5 * (u[slc2_r] - u[slc2_l])
 
     # compute PPD2 limiter
     neighbor_slices = gather_neighbor_slices(active_dims, include_corners=True)
@@ -309,9 +313,7 @@ def compute_PP2D_slopes(
         modified = smooth_extrema_detector(xp, u, active_dims, out=alpha, buffer=abuff)
         theta[...] = xp.where(alpha < 1, theta, 1.0)
     else:
-        modified = merge_slices(
-            cast(Tuple[slice, ...], slc1_c), cast(Tuple[slice, ...], slc2_c)
-        )
+        modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
 
     Sx[modified] = theta[modified] * Sx[modified]
     Sy[modified] = theta[modified] * Sy[modified]

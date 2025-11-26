@@ -1,7 +1,6 @@
 - [ ] why does ZS3 not converge to 4th order for 2D entropy wave
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
 - [ ] inconsistency: other arguments have "none" options but `MUSCL_limiter` expects None
-- [x] SED not equivalent between NumPy and CuPy
-- [ ] PP2D limiter, modified regions of `Sx` and `Sy` are not identical
+- [x] PP2D limiter, modified regions of `Sx` and `Sy` are not identical
 - [ ] replace `min`, `max` and `abs` in elementwise kernels with `fmin`, `fmax` and `fabs`
 - [ ] add docstrings to kernel helper functions

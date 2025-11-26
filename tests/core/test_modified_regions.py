@@ -1,3 +1,4 @@
+import warnings
 from types import ModuleType
 
 import numpy as np
@@ -19,6 +20,14 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
 
+def configure_xp():
+    if CUPY_AVAILABLE:
+        warnings.warn("Running tests with CuPy", RuntimeWarning)
+        return cp
+    else:
+        return np
+
+
 def sample_data(dims: str, nout: int = 1, N: int = 32, *, xp: ModuleType) -> tuple:
     xyz_shape = (
         N if "x" in dims else 1,
@@ -33,7 +42,7 @@ def sample_data(dims: str, nout: int = 1, N: int = 32, *, xp: ModuleType) -> tup
 
 @pytest.mark.parametrize("dims", ["x", "y", "z"])
 def test_blend_troubled_cells(dims: str):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     troubles0, buffer, out = sample_data("xyz", nout=1, xp=xp)
     troubles1 = out[..., 0]
@@ -49,7 +58,7 @@ def test_blend_troubled_cells(dims: str):
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_dmp(dims: str, include_corners: bool):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     u, _, out = sample_data(dims, nout=2, xp=xp)
     modified = compute_dmp(xp, u, tuple(dims), out=out, include_corners=include_corners)
@@ -63,7 +72,7 @@ def test_compute_dmp(dims: str, include_corners: bool):
 @pytest.mark.parametrize("absolute_dmp", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: bool):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     uold, buffer, out = sample_data(dims, nout=1, xp=xp)
     unew, _, _ = sample_data(dims, nout=1, xp=xp)
@@ -88,7 +97,7 @@ def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: b
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("SED", [False, True])
 def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     face_dim = dims[0]
     u, buffer, temp = sample_data(dims, nout=2, xp=xp)
@@ -118,7 +127,7 @@ def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
 @pytest.mark.parametrize("SED", [False, True])
 def test_compute_PP2D_slopes(dims: str, SED: bool):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     u, buffer, temp = sample_data(dims, nout=3, xp=xp)
     Sx = temp[..., :1]
@@ -143,7 +152,7 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
 @pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     u, mega_buffer, out = sample_data(dims, nout=1, xp=xp)
     nodes, _, _ = sample_data(dims, nout=1, xp=xp)
@@ -183,7 +192,7 @@ def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 def test_map_cells_values_to_face_values(dims: str):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     face_dim = dims[0]
     axis = DIM_TO_AXIS[face_dim]
@@ -210,7 +219,7 @@ def test_map_cells_values_to_face_values(dims: str):
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 def test_smooth_extrema_detection(dims: str):
-    xp = cp if CUPY_AVAILABLE else np
+    xp = configure_xp()
 
     u, buffer, out = sample_data(dims, nout=1, xp=xp)
     modified = smooth_extrema_detector(xp, u, tuple(dims), out=out, buffer=buffer)
