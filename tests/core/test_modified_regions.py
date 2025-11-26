@@ -1,3 +1,5 @@
+from types import ModuleType
+
 import numpy as np
 import pytest
 
@@ -11,53 +13,63 @@ from superfv.slope_limiting.MOOD import (
 from superfv.slope_limiting.muscl import compute_limited_slopes, compute_PP2D_slopes
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
+from superfv.tools.device_management import CUPY_AVAILABLE
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
 
 
-def sample_data(dims: str, nout: int = 1, N: int = 32) -> tuple:
+def sample_data(dims: str, nout: int = 1, N: int = 32, *, xp: ModuleType) -> tuple:
     xyz_shape = (
         N if "x" in dims else 1,
         N if "y" in dims else 1,
         N if "z" in dims else 1,
     )
-    u = np.ones((5, *xyz_shape))
-    buffer = np.full((5, *xyz_shape, 20), np.nan)
-    out = np.full((5, *xyz_shape, nout), np.nan)
+    u = xp.ones((5, *xyz_shape))
+    buffer = xp.full((5, *xyz_shape, 20), xp.nan)
+    out = xp.full((5, *xyz_shape, nout), xp.nan)
     return u, buffer, out
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z"])
 def test_blend_troubled_cells(dims: str):
-    troubles0, buffer, out = sample_data("xyz", nout=1)
+    xp = cp if CUPY_AVAILABLE else np
+
+    troubles0, buffer, out = sample_data("xyz", nout=1, xp=xp)
     troubles1 = out[..., 0]
     modified = blend_troubled_cells(
-        np, troubles0, tuple(dims), out=troubles1, buffer=buffer
+        xp, troubles0, tuple(dims), out=troubles1, buffer=buffer
     )
 
-    assert not np.any(np.isnan(troubles1[modified]))
-    troubles1[modified] = np.nan
-    assert np.all(np.isnan(troubles1))
+    assert not xp.any(xp.isnan(troubles1[modified]))
+    troubles1[modified] = xp.nan
+    assert xp.all(xp.isnan(troubles1))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_dmp(dims: str, include_corners: bool):
-    u, _, out = sample_data(dims, nout=2)
-    modified = compute_dmp(np, u, tuple(dims), out=out, include_corners=include_corners)
+    xp = cp if CUPY_AVAILABLE else np
 
-    assert not np.any(np.isnan(out[modified]))
-    out[modified] = np.nan
-    assert np.all(np.isnan(out))
+    u, _, out = sample_data(dims, nout=2, xp=xp)
+    modified = compute_dmp(xp, u, tuple(dims), out=out, include_corners=include_corners)
+
+    assert not xp.any(xp.isnan(out[modified]))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("absolute_dmp", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: bool):
-    uold, buffer, out = sample_data(dims, nout=1)
-    unew, _, _ = sample_data(dims, nout=1)
+    xp = cp if CUPY_AVAILABLE else np
+
+    uold, buffer, out = sample_data(dims, nout=1, xp=xp)
+    unew, _, _ = sample_data(dims, nout=1, xp=xp)
     out = out[..., 0]
     modified = detect_NAD_violations(
-        np,
+        xp,
         uold,
         unew,
         tuple(dims),
@@ -67,21 +79,23 @@ def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: b
         include_corners=include_corners,
     )
 
-    assert not np.any(np.isnan(out[modified]))
-    out[modified] = np.nan
-    assert np.all(np.isnan(out))
+    assert not xp.any(xp.isnan(out[modified]))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("SED", [False, True])
 def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
+    xp = cp if CUPY_AVAILABLE else np
+
     face_dim = dims[0]
-    u, buffer, temp = sample_data(dims, nout=2)
+    u, buffer, temp = sample_data(dims, nout=2, xp=xp)
     out = temp[..., :1]
     alpha = temp[..., 1:2]
     modified = compute_limited_slopes(
-        np,
+        xp,
         u,
         face_dim,
         tuple(dims),
@@ -92,34 +106,36 @@ def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
         alpha=alpha,
     )
 
-    assert not np.any(np.isnan(out[modified]))
+    assert not xp.any(xp.isnan(out[modified]))
     # skipping all nan check since the stencils will leave some ghost cells non-nan
 
     if SED:
-        assert not np.any(np.isnan(alpha[modified]))
-        alpha[modified] = np.nan
-        assert np.all(np.isnan(alpha))
+        assert not xp.any(xp.isnan(alpha[modified]))
+        alpha[modified] = xp.nan
+        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
 @pytest.mark.parametrize("SED", [False, True])
 def test_compute_PP2D_slopes(dims: str, SED: bool):
-    u, buffer, temp = sample_data(dims, nout=3)
+    xp = cp if CUPY_AVAILABLE else np
+
+    u, buffer, temp = sample_data(dims, nout=3, xp=xp)
     Sx = temp[..., :1]
     Sy = temp[..., 1:2]
     alpha = temp[..., 2:3]
     modified = compute_PP2D_slopes(
-        np, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, SED=SED, alpha=alpha
+        xp, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, SED=SED, alpha=alpha
     )
 
-    assert not np.any(np.isnan(Sx[modified]))
-    assert not np.any(np.isnan(Sy[modified]))
+    assert not xp.any(xp.isnan(Sx[modified]))
+    assert not xp.any(xp.isnan(Sy[modified]))
     # skipping all nan check since the 2D stencils will leave some ghost cells non-nan
 
     if SED:
-        assert not np.any(np.isnan(alpha[modified]))
-        alpha[modified] = np.nan
-        assert np.all(np.isnan(alpha))
+        assert not xp.any(xp.isnan(alpha[modified]))
+        alpha[modified] = xp.nan
+        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
@@ -127,9 +143,11 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
 @pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
-    u, mega_buffer, out = sample_data(dims, nout=1)
-    nodes, _, _ = sample_data(dims, nout=1)
-    nodes = nodes[..., np.newaxis]
+    xp = cp if CUPY_AVAILABLE else np
+
+    u, mega_buffer, out = sample_data(dims, nout=1, xp=xp)
+    nodes, _, _ = sample_data(dims, nout=1, xp=xp)
+    nodes = nodes[..., xp.newaxis]
 
     dmp = mega_buffer[..., :2]
     alpha = mega_buffer[..., 2:3]
@@ -141,11 +159,11 @@ def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
         include_corners=include_corners,
         shock_detection=False,
         PAD_atol=0,
-        PAD_bounds=np.array([[0.0, 0.1] * 5]),
+        PAD_bounds=xp.array([[0.0, 0.1] * 5]),
     )
 
     modified = compute_theta(
-        np,
+        xp,
         u,
         nodes,
         nodes if "x" in dims else None,
@@ -158,16 +176,18 @@ def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
         config=config,
     )
 
-    assert not np.any(np.isnan(out[modified]))
-    out[modified] = np.nan
-    assert np.all(np.isnan(out))
+    assert not xp.any(xp.isnan(out[modified]))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 def test_map_cells_values_to_face_values(dims: str):
+    xp = cp if CUPY_AVAILABLE else np
+
     face_dim = dims[0]
     axis = DIM_TO_AXIS[face_dim]
-    u, _, out = sample_data(dims, nout=1, N=33)
+    u, _, out = sample_data(dims, nout=1, N=33, xp=xp)
     out = out[..., 0]
     if "x" in dims:
         u = u[:, :-1, :, :]
@@ -181,18 +201,20 @@ def test_map_cells_values_to_face_values(dims: str):
         u = u[:, :, :, :-1]
         if face_dim != "z":
             out = out[:, :, :, :-1]
-    modified = map_cells_values_to_face_values(np, u, axis, out=out)
+    modified = map_cells_values_to_face_values(xp, u, axis, out=out)
 
-    assert not np.any(np.isnan(out[modified]))
-    out[modified] = np.nan
-    assert np.all(np.isnan(out))
+    assert not xp.any(xp.isnan(out[modified]))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 def test_smooth_extrema_detection(dims: str):
-    u, buffer, out = sample_data(dims, nout=1)
-    modified = smooth_extrema_detector(np, u, tuple(dims), out=out, buffer=buffer)
+    xp = cp if CUPY_AVAILABLE else np
 
-    assert not np.any(np.isnan(out[modified]))
-    out[modified] = np.nan
-    assert np.all(np.isnan(out))
+    u, buffer, out = sample_data(dims, nout=1, xp=xp)
+    modified = smooth_extrema_detector(xp, u, tuple(dims), out=out, buffer=buffer)
+
+    assert not xp.any(xp.isnan(out[modified]))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))

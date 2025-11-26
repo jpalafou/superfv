@@ -13,6 +13,8 @@ if not TYPE_CHECKING:
     try:
         import cupy as cp
 
+        test_array = cp.asarray([1, 2, 3])
+
         xp = cp
         cp_array = cp.ndarray
         cp_array_to_numpy_array = cp.asnumpy
