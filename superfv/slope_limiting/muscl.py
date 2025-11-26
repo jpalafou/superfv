@@ -430,6 +430,35 @@ def compute_MUSCL_slopes_kernel_helper(
     SED: bool = False,
     alpha: Optional[ArrayLike] = None,
 ) -> Tuple[slice, ...]:
+    """
+    Compute limited slopes for face-centered nodes from an array of finite
+    volume averages using a CuPy kernel.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to compute slopes from, has shape
+            (nvars, nx, ny, nz).
+        face_dim: Dimension along which the limited slopes are computed.
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            interpolation of nodes along the face of a cell on a two-dimensional grid.
+        out: Output array to store the limited slopes. Has shape
+            (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
+        buffer: Array to which temporary values are assigned. Has different shape
+            requirements depending on whether SED is used and the number (length) of
+            active dimensions:
+            - without SED: (nvars, nx, ny, nz, >=5)
+            - with SED, 1D: (nvars, nx, ny, nz, >=12)
+            - with SED, 2D: (nvars, nx, ny, nz, >=14)
+            - with SED, 3D: (nvars, nx, ny, nz, >=15)
+        limiter: Limiter to apply to the slopes. Can be "minmod" or "moncen".
+        SED: Whether to use the smooth extrema detector to relax the limiter.
+        alpha: Array to store the smooth extrema detector values if SED is True. Has
+            shape (nvars, nx, ny, nz, 1).
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
     axis = DIM_TO_AXIS[face_dim]
 
     # assign neighbors
@@ -474,6 +503,36 @@ def compute_PP2D_slopes_kernel_helper(
     SED: bool = False,
     alpha: Optional[ArrayLike] = None,
 ) -> Tuple[slice, ...]:
+    """
+    Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays using a CuPy
+    kernel.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of finite volume averages to compute slopes from, has shape
+            (nvars, nx, ny, nz).
+        active_dims: Tuple indicating the active dimensions for interpolation. Can be
+            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
+            interpolation of nodes along the face of a cell on a two-dimensional grid.
+        Sx: Output array to store the limited slopes in the first active dimension. Has
+            shape (nvars, nx, ny, nz, 1).
+        Sy: Output array to store the limited slopes in the second active dimension.
+            Has shape (nvars, nx, ny, nz, 1).
+        buffer: Array to which temporary values are assigned. Has different shape
+            requirements depending on whether SED is used and the number (length) of
+            active dimensions:
+            - without SED: (nvars, nx, ny, nz, >=4)
+            - with SED, 1D: (nvars, nx, ny, nz, >=11)
+            - with SED, 2D: (nvars, nx, ny, nz, >=13)
+            - with SED, 3D: (nvars, nx, ny, nz, >=14)
+        eps: Small number to avoid division by zero.
+        SED: Whether to use the smooth extrema detector to relax the limiter.
+        alpha: Array to store the smooth extrema detector values if SED is True. Has
+            shape (nvars, nx, ny, nz, 1).
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
     if len(active_dims) != 2:
         raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
 

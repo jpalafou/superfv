@@ -7,82 +7,6 @@ from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
 from superfv.tools.stability import avoid0
 
-if CUPY_AVAILABLE:
-    import cupy as cp  # type: ignore
-
-    smooth_extrema_detector_cp_kernel = cp.ElementwiseKernel(
-        in_params=(
-            "float64 ul2, float64 ul1, float64 uc, float64 ur1, float64 ur2"
-            ", float64 eps"
-        ),
-        out_params="float64 alpha",
-        operation=(
-            """
-            double dul = 0.5 * (uc - ul2);
-            double duc = 0.5 * (ur1 - ul1);
-            double dur = 0.5 * (ur2 - uc);
-
-            double dv = 0.25 * (dur - dul);
-            double dv_safe = (
-                fabs(dv) > eps
-                    ? dv
-                    : (dv > 0 ? eps : -eps)
-            );
-
-            double dvl = dul - duc;
-            double alphal = -((dv < 0) ? fmax(dvl, 0.0) : fmin(dvl, 0.0)) / dv_safe;
-
-            double dvr = dur - duc;
-            double alphar = ((dv > 0) ? fmax(dvr, 0.0) : fmin(dvr, 0.0)) / dv_safe;
-
-            alpha = fmin(fmin(alphal, alphar), 1.0);
-            """
-        ),
-        name="smooth_extrema_detector_cp_kernel",
-        no_return=True,
-    )
-
-
-def smooth_extrema_detector_cp(
-    xp: ModuleType,
-    u: ArrayLike,
-    dim: Literal["x", "y", "z"],
-    *,
-    out: ArrayLike,
-    buffer: ArrayLike,
-    eps: float = 1e-16,
-):
-    axis = DIM_TO_AXIS[dim]
-
-    ul3 = u[crop(axis, (None, -6), ndim=4)]
-    ul2 = u[crop(axis, (1, -5), ndim=4)]
-    ul1 = u[crop(axis, (2, -4), ndim=4)]
-    uc = u[crop(axis, (3, -3), ndim=4)]
-    ur1 = u[crop(axis, (4, -2), ndim=4)]
-    ur2 = u[crop(axis, (5, -1), ndim=4)]
-    ur3 = u[crop(axis, (6, None), ndim=4)]
-
-    alpha = buffer[..., 0]
-    buff_l = buffer[..., 1]
-    buff_c = buffer[..., 2]
-    buff_r = buffer[..., 3]
-    alphal = buff_l[crop(axis, (2, -4), ndim=4)]
-    alphac = buff_c[crop(axis, (3, -3), ndim=4)]
-    alphar = buff_r[crop(axis, (4, -2), ndim=4)]
-
-    smooth_extrema_detector_cp_kernel(ul3, ul2, ul1, uc, ur1, eps, alphal)
-    smooth_extrema_detector_cp_kernel(ul2, ul1, uc, ur1, ur2, eps, alphac)
-    smooth_extrema_detector_cp_kernel(ul1, uc, ur1, ur2, ur3, eps, alphar)
-
-    cen_slc = crop(axis, (3, -3), ndim=4)
-    alpha[cen_slc] = xp.minimum(alphal, alphac)
-    alpha[cen_slc] = xp.minimum(alphar, alpha[cen_slc])
-
-    out[insert_slice(cen_slc, 4, 0)] = alpha[cen_slc]
-
-    modified = cast(Tuple[slice, ...], insert_slice(cen_slc, 4, slice(None, 1)))
-    return modified
-
 
 def central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
     """
@@ -295,3 +219,97 @@ def smooth_extrema_detector(
     elif len(active_dims) == 3:
         return smooth_extrema_detector_3d(xp, u, out=out, buffer=buffer, eps=eps)
     raise ValueError("active_dims must have length 1, 2, or 3.")
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+    smooth_extrema_detector_cp_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 ul2, float64 ul1, float64 uc, float64 ur1, float64 ur2"
+            ", float64 eps"
+        ),
+        out_params="float64 alpha",
+        operation=(
+            """
+            double dul = 0.5 * (uc - ul2);
+            double duc = 0.5 * (ur1 - ul1);
+            double dur = 0.5 * (ur2 - uc);
+
+            double dv = 0.25 * (dur - dul);
+            double dv_safe = (
+                fabs(dv) > eps
+                    ? dv
+                    : (dv > 0 ? eps : -eps)
+            );
+
+            double dvl = dul - duc;
+            double alphal = -((dv < 0) ? fmax(dvl, 0.0) : fmin(dvl, 0.0)) / dv_safe;
+
+            double dvr = dur - duc;
+            double alphar = ((dv > 0) ? fmax(dvr, 0.0) : fmin(dvr, 0.0)) / dv_safe;
+
+            alpha = fmin(fmin(alphal, alphar), 1.0);
+            """
+        ),
+        name="smooth_extrema_detector_cp_kernel",
+        no_return=True,
+    )
+
+
+def smooth_extrema_detector_cp(
+    xp: ModuleType,
+    u: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    *,
+    out: ArrayLike,
+    buffer: ArrayLike,
+    eps: float = 1e-16,
+):
+    """
+    Compute the 1D smooth extrema detector alpha using a CuPy kernel.
+
+    Args:
+        xp: `np` namespace.
+        u: Array of data used to compute the smooth extrema detector. Has shape
+            (nvars, nx, ny, nz).
+        dim: Dimension along which to compute the smooth extrema detector: "x", "y",
+            "z".
+        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
+        buffer: Array to which temporary values are assigned. Has shape
+            (nvars, nx, ny, nz, >=7).
+        eps: Small tolerance used to avoid dividing by zero.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    axis = DIM_TO_AXIS[dim]
+
+    ul3 = u[crop(axis, (None, -6), ndim=4)]
+    ul2 = u[crop(axis, (1, -5), ndim=4)]
+    ul1 = u[crop(axis, (2, -4), ndim=4)]
+    uc = u[crop(axis, (3, -3), ndim=4)]
+    ur1 = u[crop(axis, (4, -2), ndim=4)]
+    ur2 = u[crop(axis, (5, -1), ndim=4)]
+    ur3 = u[crop(axis, (6, None), ndim=4)]
+
+    alpha = buffer[..., 0]
+    buff_l = buffer[..., 1]
+    buff_c = buffer[..., 2]
+    buff_r = buffer[..., 3]
+    alphal = buff_l[crop(axis, (2, -4), ndim=4)]
+    alphac = buff_c[crop(axis, (3, -3), ndim=4)]
+    alphar = buff_r[crop(axis, (4, -2), ndim=4)]
+
+    smooth_extrema_detector_cp_kernel(ul3, ul2, ul1, uc, ur1, eps, alphal)
+    smooth_extrema_detector_cp_kernel(ul2, ul1, uc, ur1, ur2, eps, alphac)
+    smooth_extrema_detector_cp_kernel(ul1, uc, ur1, ur2, ur3, eps, alphar)
+
+    cen_slc = crop(axis, (3, -3), ndim=4)
+    alpha[cen_slc] = xp.minimum(alphal, alphac)
+    alpha[cen_slc] = xp.minimum(alphar, alpha[cen_slc])
+
+    out[insert_slice(cen_slc, 4, 0)] = alpha[cen_slc]
+
+    modified = cast(Tuple[slice, ...], insert_slice(cen_slc, 4, slice(None, 1)))
+    return modified
