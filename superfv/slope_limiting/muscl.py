@@ -7,7 +7,7 @@ from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
 
 
@@ -125,6 +125,20 @@ def compute_limited_slopes(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cuda"):
+        # early escape for CuPy implementation
+        return compute_MUSCL_slopes_kernel_helper(
+            xp,
+            u,
+            face_dim,
+            active_dims,
+            out=out,
+            buffer=buffer,
+            limiter=limiter,
+            SED=SED,
+            alpha=alpha,
+        )
+
     # define slices for left, center, and right nodes
     slc_l = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
     slc_c = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
@@ -225,6 +239,20 @@ def compute_PP2D_slopes(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cuda"):
+        # early escape for CuPy implementation
+        return compute_PP2D_slopes_kernel_helper(
+            xp,
+            u,
+            active_dims,
+            Sx=Sx,
+            Sy=Sy,
+            buffer=buffer,
+            eps=eps,
+            SED=SED,
+            alpha=alpha,
+        )
+
     if len(active_dims) != 2:
         raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
 
@@ -289,3 +317,218 @@ def compute_PP2D_slopes(
     Sy[modified] = theta[modified] * Sy[modified]
 
     return modified
+
+
+# - - - - - DEFINE CUPY KERNELS FOR GPU COMPUTATION - - - - -
+
+if CUPY_AVAILABLE:
+    import cupy as cp
+
+    MUSCL_slopes_kernel = cp.ElementwiseKernel(
+        in_params="float64 ul, float64 u, float64 ur, int32 limiter",
+        out_params="float64 slope",
+        operation=(
+            """
+            double dl = u - ul;
+            double dr = ur - u;
+            double dc = 0.5 * (dl + dr);
+
+            switch (limiter) {
+                case 0: // no limiter
+                    slope = dc;
+                    break;
+                case 1: // minmod
+                    if (dl * dr <= 0) {
+                        slope = 0.0;
+                    } else {
+                        double sgn = (dl > 0) ? 1.0 : -1.0;
+                        slope = sgn * min(abs(dl), abs(dr));
+                    }
+                    break;
+                case 2: // moncen
+                    if (dl * dr <= 0) {
+                        slope = 0.0;
+                    } else {
+                        double sgn = (dc > 0) ? 1.0 : -1.0;
+                        slope = sgn * min(min(abs(2.0 * dl), abs(2.0 * dr)), abs(dc));
+                    }
+                    break;
+                default: // undefined limiter, sabotage with NaN
+                    slope = 0.0 / 0.0;
+                    break;
+            }
+            """
+        ),
+        name="MUSCL_slopes_kernel",
+        no_return=True,
+    )
+
+    PP2D_theta_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 u, float64 u_E, float64 u_NE, float64 u_N, float64 u_NW, "
+            "float64 uW, float64 u_SW, float64 u_S, float64 u_SE, "
+            "float64 Sx, float64 Sy, float64 eps"
+        ),
+        out_params="float64 theta",
+        operation=(
+            """
+            double d_E = u_E - u;
+            double d_NE = u_NE - u;
+            double d_N = u_N - u;
+            double d_NW = u_NW - u;
+            double d_W = uW - u;
+            double d_SW = u_SW - u;
+            double d_S = u_S - u;
+            double d_SE = u_SE - u;
+
+            double vmin = -eps;
+            vmin = min(vmin, d_E);
+            vmin = min(vmin, d_NE);
+            vmin = min(vmin, d_N);
+            vmin = min(vmin, d_NW);
+            vmin = min(vmin, d_W);
+            vmin = min(vmin, d_SW);
+            vmin = min(vmin, d_S);
+            vmin = min(vmin, d_SE);
+
+            double vmax = eps;
+            vmax = max(vmax, d_E);
+            vmax = max(vmax, d_NE);
+            vmax = max(vmax, d_N);
+            vmax = max(vmax, d_NW);
+            vmax = max(vmax, d_W);
+            vmax = max(vmax, d_SW);
+            vmax = max(vmax, d_S);
+            vmax = max(vmax, d_SE);
+
+            double v = 2.0 * min(abs(vmin), abs(vmax)) / (abs(Sx) + abs(Sy));
+
+            theta = min(v, 1.0);
+            """
+        ),
+        name="PP2D_theta_kernel",
+        no_return=True,
+    )
+
+
+# - - - - - DEFINE HELPER FUNCTIONS FOR CUPY IMPLEMENTATION- - - - -
+
+
+def compute_MUSCL_slopes_kernel_helper(
+    xp: ModuleType,
+    u: ArrayLike,
+    face_dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    *,
+    out: ArrayLike,
+    buffer: ArrayLike,
+    limiter: Optional[Literal["minmod", "moncen", "PP2D"]] = None,
+    SED: bool = False,
+    alpha: Optional[ArrayLike] = None,
+) -> Tuple[slice, ...]:
+    axis = DIM_TO_AXIS[face_dim]
+
+    # assign neighbors
+    ul = u[crop(axis, (None, -2), ndim=4)]
+    uc = u[crop(axis, (1, -1), ndim=4)]
+    ur = u[crop(axis, (2, None), ndim=4)]
+
+    # decipher limiter
+    if limiter == "PP2D":
+        raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
+    limiter_int = {None: 0, "minmod": 1, "moncen": 2}[limiter]
+
+    # compute limited slopes
+    inner = replace_slice(crop(axis, (1, -1), ndim=5), 4, 0)
+    MUSCL_slopes_kernel(ul, uc, ur, limiter_int, out[inner])
+
+    # compute smooth extrema detector if requested
+    if SED:
+        if alpha is None:
+            raise ValueError("alpha array must be provided when SED is True.")
+
+        abuf = buffer
+        modified = smooth_extrema_detector(xp, u, active_dims, out=alpha, buffer=abuf)
+
+        dcen = 0.5 * (ur - ul)
+        out[inner] = xp.where(cast(ArrayLike, alpha)[inner] < 1, out[inner], dcen)
+    else:
+        modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
+
+    return modified
+
+
+def compute_PP2D_slopes_kernel_helper(
+    xp: ModuleType,
+    u: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    *,
+    Sx: ArrayLike,
+    Sy: ArrayLike,
+    buffer: ArrayLike,
+    eps: float = 1e-20,
+    SED: bool = False,
+    alpha: Optional[ArrayLike] = None,
+) -> Tuple[slice, ...]:
+    if len(active_dims) != 2:
+        raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
+
+    axis1 = DIM_TO_AXIS[active_dims[0]]
+    axis2 = DIM_TO_AXIS[active_dims[1]]
+
+    theta = buffer[..., :1]
+
+    # gather slices
+    slc1_l = crop(axis1, (None, -2), ndim=4)
+    slc1_c = crop(axis1, (1, -1), ndim=4)
+    slc1_r = crop(axis1, (2, None), ndim=4)
+    slc2_l = crop(axis2, (None, -2), ndim=4)
+    slc2_c = crop(axis2, (1, -1), ndim=4)
+    slc2_r = crop(axis2, (2, None), ndim=4)
+    slc_c = insert_slice(merge_slices(slc1_c, slc2_c), 4, 0)
+
+    # assign neighbor values
+    uc = u[merge_slices(slc1_c, slc2_c)]
+    u_E = u[merge_slices(slc1_r, slc2_c)]
+    u_NE = u[merge_slices(slc1_r, slc2_r)]
+    u_N = u[merge_slices(slc1_c, slc2_r)]
+    u_NW = u[merge_slices(slc1_l, slc2_r)]
+    uW = u[merge_slices(slc1_l, slc2_c)]
+    u_SW = u[merge_slices(slc1_l, slc2_l)]
+    u_S = u[merge_slices(slc1_c, slc2_l)]
+    u_SE = u[merge_slices(slc1_r, slc2_l)]
+
+    # compute second-order slopes
+    Sx[slc_c] = 0.5 * (u_E - uW)
+    Sy[slc_c] = 0.5 * (u_N - u_S)
+
+    # compute PP2D limiter
+    PP2D_theta_kernel(
+        uc,
+        u_E,
+        u_NE,
+        u_N,
+        u_NW,
+        uW,
+        u_SW,
+        u_S,
+        u_SE,
+        Sx[slc_c],
+        Sy[slc_c],
+        eps,
+        theta[slc_c],
+    )
+
+    # apply SED if requested
+    if SED:
+        if alpha is None:
+            raise ValueError("alpha array must be provided when SED is True.")
+        abuff = buffer[..., 1:]
+        modified = smooth_extrema_detector(xp, u, active_dims, out=alpha, buffer=abuff)
+        theta[...] = xp.where(alpha < 1, theta, 1.0)
+    else:
+        modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
+
+    # apply limiter
+    Sx[modified] = theta[modified] * Sx[modified]
+    Sy[modified] = theta[modified] * Sy[modified]
