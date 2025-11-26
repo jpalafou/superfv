@@ -18,15 +18,15 @@ if CUPY_AVAILABLE:
         out_params="float64 alpha",
         operation=(
             """
-            double dul = uc - ul2;
-            double duc = ur1 - ul1;
-            double dur = ur2 - uc;
+            double dul = 0.5 * (uc - ul2);
+            double duc = 0.5 * (ur1 - ul1);
+            double dur = 0.5 * (ur2 - uc);
 
-            double dv = 0.5 * (dur - dul);
+            double dv = 0.25 * (dur - dul);
             double dv_safe = (
-                abs(dv_safe) > eps
-                    ? dv_safe
-                    : (dv_safe > 0 ? eps : -eps)
+                abs(dv) > eps
+                    ? dv
+                    : (dv > 0 ? eps : -eps)
             );
 
             double dvl = dul - duc;
