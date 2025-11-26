@@ -322,7 +322,7 @@ def compute_PP2D_slopes(
 # - - - - - DEFINE CUPY KERNELS FOR GPU COMPUTATION - - - - -
 
 if CUPY_AVAILABLE:
-    import cupy as cp
+    import cupy as cp  # type: ignore
 
     MUSCL_slopes_kernel = cp.ElementwiseKernel(
         in_params="float64 ul, float64 u, float64 ur, int32 limiter",
@@ -532,3 +532,5 @@ def compute_PP2D_slopes_kernel_helper(
     # apply limiter
     Sx[modified] = theta[modified] * Sx[modified]
     Sy[modified] = theta[modified] * Sy[modified]
+
+    return modified

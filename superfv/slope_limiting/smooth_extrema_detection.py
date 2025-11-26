@@ -8,7 +8,7 @@ from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slic
 from superfv.tools.stability import avoid0
 
 if CUPY_AVAILABLE:
-    import cupy as cp
+    import cupy as cp  # type: ignore
 
     smooth_extrema_detector_cp_kernel = cp.ElementwiseKernel(
         in_params=(

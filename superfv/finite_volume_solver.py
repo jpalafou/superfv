@@ -2437,6 +2437,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             elemewise_riemann_solver=(
                 self.elemewise_riemann_solver.__name__
                 if hasattr(self, "elemewise_riemann_solver")
+                and self.elemewise_riemann_solver is not None
                 else None
             ),
             variable_index_map=self.variable_index_map.to_dict(),
