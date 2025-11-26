@@ -49,7 +49,9 @@ def smooth_extrema_detector_1d(
         Slice objects indicating the modified regions in the output array.
     """
     if hasattr(xp, "cuda"):
-        return smooth_extrema_detector_cp(xp, u, dim, out=out, buffer=buffer, eps=eps)
+        return smooth_extrema_detector_kernel_helper(
+            xp, u, dim, out=out, buffer=buffer, eps=eps
+        )
 
     # retrieve axis
     axis = DIM_TO_AXIS[dim]
@@ -224,7 +226,7 @@ def smooth_extrema_detector(
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
-    smooth_extrema_detector_cp_kernel = cp.ElementwiseKernel(
+    smooth_extrema_detector_kernel = cp.ElementwiseKernel(
         in_params=(
             "float64 ul2, float64 ul1, float64 uc, float64 ur1, float64 ur2"
             ", float64 eps"
@@ -252,12 +254,89 @@ if CUPY_AVAILABLE:
             alpha = fmin(fmin(alphal, alphar), 1.0);
             """
         ),
-        name="smooth_extrema_detector_cp_kernel",
+        name="smooth_extrema_detector_kernel",
+        no_return=True,
+    )
+
+    smooth_extrema_detector_neighbor_min_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 ul3, float64 ul2, float64 ul1, float64 uc, float64 ur1, "
+            "float64 ur2, float64 ur3, float64 eps"
+        ),
+        out_params="float64 alpha",
+        operation=(
+            """
+            double dul2 = 0.5 * (ul1 - ul3);
+            double dul1 = 0.5 * (uc - ul2);
+            double duc = 0.5 * (ur1 - ul1);
+            double dur1 = 0.5 * (ur2 - uc);
+            double dur2 = 0.5 * (ur3 - ur1);
+
+            double dvl = 0.25 * (duc - dul2);
+            double dvc = 0.25 * (dur1 - dul1);
+            double dvr = 0.25 * (dur2 - duc);
+
+            double dvl_safe = (
+                fabs(dvl) > eps
+                    ? dvl
+                    : (dvl > 0 ? eps : -eps)
+            );
+            double dvc_safe = (
+                fabs(dvc) > eps
+                    ? dvc
+                    : (dvc > 0 ? eps : -eps)
+            );
+            double dvr_safe = (
+                fabs(dvr) > eps
+                    ? dvr
+                    : (dvr > 0 ? eps : -eps)
+            );
+
+            // left neighbor alphas
+            double dvl_l = dul2 - dul1;
+            double alphal_l = -(
+                (dvl < 0 ? fmax(dvl_l, 0.0) : fmin(dvl_l, 0.0)) / dvl_safe
+            );
+
+            double dvl_c = dul1 - duc;
+            double alphal_c = -(
+                (dvc < 0 ? fmax(dvl_c, 0.0) : fmin(dvl_c, 0.0)) / dvc_safe
+            );
+
+            double dvl_r = duc - dur1;
+            double alphal_r = -(
+                (dvr < 0 ? fmax(dvl_r, 0.0) : fmin(dvl_r, 0.0)) / dvr_safe
+            );
+
+            // right neighbor alphas
+            double dvr_l = duc - dul1;
+            double alphar_l = (
+                (dvl > 0 ? fmax(dvr_l, 0.0) : fmin(dvr_l, 0.0)) / dvl_safe
+            );
+
+            double dvr_c = dur1 - duc;
+            double alphar_c = (
+                (dvc > 0 ? fmax(dvr_c, 0.0) : fmin(dvr_c, 0.0)) / dvc_safe
+            );
+
+            double dvr_r = dur2 - dur1;
+            double alphar_r = (
+                (dvr > 0 ? fmax(dvr_r, 0.0) : fmin(dvr_r, 0.0)) / dvr_safe
+            );
+
+            double alphal = fmin(alphal_l, alphar_l);
+            double alphac = fmin(alphal_c, alphar_c);
+            double alphar = fmin(alphal_r, alphar_r);
+
+            alpha = fmin(fmin(alphal, alphac), alphar);
+            """
+        ),
+        name="smooth_extrema_detector_neighbor_min_kernel",
         no_return=True,
     )
 
 
-def smooth_extrema_detector_cp(
+def smooth_extrema_detector_kernel_helper(
     xp: ModuleType,
     u: ArrayLike,
     dim: Literal["x", "y", "z"],
@@ -293,23 +372,12 @@ def smooth_extrema_detector_cp(
     ur2 = u[crop(axis, (5, -1), ndim=4)]
     ur3 = u[crop(axis, (6, None), ndim=4)]
 
-    alpha = buffer[..., 0]
-    buff_l = buffer[..., 1]
-    buff_c = buffer[..., 2]
-    buff_r = buffer[..., 3]
-    alphal = buff_l[crop(axis, (2, -4), ndim=4)]
-    alphac = buff_c[crop(axis, (3, -3), ndim=4)]
-    alphar = buff_r[crop(axis, (4, -2), ndim=4)]
+    inner_slice = insert_slice(crop(axis, (3, -3), ndim=4), 4, 0)
+    alpha_inner = out[inner_slice]
 
-    smooth_extrema_detector_cp_kernel(ul3, ul2, ul1, uc, ur1, eps, alphal)
-    smooth_extrema_detector_cp_kernel(ul2, ul1, uc, ur1, ur2, eps, alphac)
-    smooth_extrema_detector_cp_kernel(ul1, uc, ur1, ur2, ur3, eps, alphar)
+    smooth_extrema_detector_neighbor_min_kernel(
+        ul3, ul2, ul1, uc, ur1, ur2, ur3, eps, alpha_inner
+    )
 
-    cen_slc = crop(axis, (3, -3), ndim=4)
-    alpha[cen_slc] = xp.minimum(alphal, alphac)
-    alpha[cen_slc] = xp.minimum(alphar, alpha[cen_slc])
-
-    out[insert_slice(cen_slc, 4, 0)] = alpha[cen_slc]
-
-    modified = cast(Tuple[slice, ...], insert_slice(cen_slc, 4, slice(None, 1)))
+    modified = cast(Tuple[slice, ...], replace_slice(inner_slice, 4, slice(None, 1)))
     return modified
