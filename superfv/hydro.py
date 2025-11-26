@@ -259,7 +259,7 @@ if CUPY_AVAILABLE:
         out_params="float64 cs",
         operation="""
             double val = gamma * P / rho;
-            cs = sqrt(max(val, 0.0));
+            cs = sqrt(fmax(val, 0.0));
         """,
         name="sound_speed_ew",
     )

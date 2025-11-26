@@ -344,7 +344,7 @@ if CUPY_AVAILABLE:
                         slope = 0.0;
                     } else {
                         double sgn = (dl > 0) ? 1.0 : -1.0;
-                        slope = sgn * min(abs(dl), abs(dr));
+                        slope = sgn * fmin(fabs(dl), fabs(dr));
                     }
                     break;
                 case 2: // moncen
@@ -352,7 +352,10 @@ if CUPY_AVAILABLE:
                         slope = 0.0;
                     } else {
                         double sgn = (dc > 0) ? 1.0 : -1.0;
-                        slope = sgn * min(min(abs(2.0 * dl), abs(2.0 * dr)), abs(dc));
+                        slope = sgn * fmin(
+                            fmin(fabs(2.0 * dl), fabs(2.0 * dr)),
+                            fabs(dc)
+                        );
                     }
                     break;
                 default: // undefined limiter, sabotage with NaN
@@ -384,28 +387,27 @@ if CUPY_AVAILABLE:
             double d_SE = u_SE - u;
 
             double vmin = -eps;
-            vmin = min(vmin, d_E);
-            vmin = min(vmin, d_NE);
-            vmin = min(vmin, d_N);
-            vmin = min(vmin, d_NW);
-            vmin = min(vmin, d_W);
-            vmin = min(vmin, d_SW);
-            vmin = min(vmin, d_S);
-            vmin = min(vmin, d_SE);
+            vmin = fmin(vmin, d_E);
+            vmin = fmin(vmin, d_NE);
+            vmin = fmin(vmin, d_N);
+            vmin = fmin(vmin, d_NW);
+            vmin = fmin(vmin, d_W);
+            vmin = fmin(vmin, d_SW);
+            vmin = fmin(vmin, d_S);
+            vmin = fmin(vmin, d_SE);
 
             double vmax = eps;
-            vmax = max(vmax, d_E);
-            vmax = max(vmax, d_NE);
-            vmax = max(vmax, d_N);
-            vmax = max(vmax, d_NW);
-            vmax = max(vmax, d_W);
-            vmax = max(vmax, d_SW);
-            vmax = max(vmax, d_S);
-            vmax = max(vmax, d_SE);
+            vmax = fmax(vmax, d_E);
+            vmax = fmax(vmax, d_NE);
+            vmax = fmax(vmax, d_N);
+            vmax = fmax(vmax, d_NW);
+            vmax = fmax(vmax, d_W);
+            vmax = fmax(vmax, d_SW);
+            vmax = fmax(vmax, d_S);
+            vmax = fmax(vmax, d_SE);
 
-            double v = 2.0 * min(abs(vmin), abs(vmax)) / (abs(Sx) + abs(Sy));
-
-            theta = min(v, 1.0);
+            double v = 2.0 * fmin(fabs(vmin), fabs(vmax)) / (fabs(Sx) + fabs(Sy));
+            theta = fmin(v, 1.0);
             """
         ),
         name="PP2D_theta_kernel",

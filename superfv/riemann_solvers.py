@@ -332,16 +332,16 @@ if CUPY_AVAILABLE:
         double El = Pl / (gamma - 1.0) + Kl;
         double Er = Pr / (gamma - 1.0) + Kr;
 
-        double cmax = max(cl, cr);
+        double cmax = fmax(cl, cr);
 
-        double sl = min(vl, vr) - cmax;
-        double sr = max(vl, vr) + cmax;
+        double sl = fmin(vl, vr) - cmax;
+        double sr = fmax(vl, vr) + cmax;
 
         double rcl = rhol * (vl - sl);
         double rcr = rhor * (sr - vr);
         double vP_star_denom = rcl + rcr;
         double vP_star_denom_safe = (
-            abs(vP_star_denom) > 1e-15
+            fabs(vP_star_denom) > 1e-15
                 ? vP_star_denom
                 : (vP_star_denom > 0 ? 1e-15 : -1e-15)
         );
@@ -351,12 +351,12 @@ if CUPY_AVAILABLE:
         double rhoE_star_denoml = sl - vstar;
         double rhoE_star_denomr = sr - vstar;
         double rhoE_star_denoml_safe = (
-            abs(rhoE_star_denoml) > 1e-15
+            fabs(rhoE_star_denoml) > 1e-15
                 ? rhoE_star_denoml
                 : (rhoE_star_denoml > 0 ? 1e-15 : -1e-15)
         );
         double rhoE_star_denomr_safe = (
-            abs(rhoE_star_denomr) > 1e-15
+            fabs(rhoE_star_denomr) > 1e-15
                 ? rhoE_star_denomr
                 : (rhoE_star_denomr > 0 ? 1e-15 : -1e-15)
         );

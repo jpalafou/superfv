@@ -1,15 +1,12 @@
-
 from functools import partial
 
-import matplotlib.pyplot as plt
+import pytest
 
-from superfv import EulerSolver, plot_1d_slice, plot_timeseries
+from superfv import EulerSolver
 from superfv.initial_conditions import sinus, square
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.norms import linf_norm
 
-from superfv.tools.device_management import CUPY_AVAILABLE
-
-import pytest
 
 @pytest.mark.parametrize("f", [square, sinus])
 @pytest.mark.parametrize(

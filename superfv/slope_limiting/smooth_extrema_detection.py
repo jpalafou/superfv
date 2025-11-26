@@ -24,18 +24,18 @@ if CUPY_AVAILABLE:
 
             double dv = 0.25 * (dur - dul);
             double dv_safe = (
-                abs(dv) > eps
+                fabs(dv) > eps
                     ? dv
                     : (dv > 0 ? eps : -eps)
             );
 
             double dvl = dul - duc;
-            double alphal = -((dv < 0) ? max(dvl, 0.0) : min(dvl, 0.0)) / dv_safe;
+            double alphal = -((dv < 0) ? fmax(dvl, 0.0) : fmin(dvl, 0.0)) / dv_safe;
 
             double dvr = dur - duc;
-            double alphar = ((dv > 0) ? max(dvr, 0.0) : min(dvr, 0.0)) / dv_safe;
+            double alphar = ((dv > 0) ? fmax(dvr, 0.0) : fmin(dvr, 0.0)) / dv_safe;
 
-            alpha = min(min(alphal, alphar), 1.0);
+            alpha = fmin(fmin(alphal, alphar), 1.0);
             """
         ),
         name="smooth_extrema_detector_cp_kernel",
