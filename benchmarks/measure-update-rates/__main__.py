@@ -41,7 +41,7 @@ configs = {
 
 n_steps = 10
 N_values = [64, 128, 256, 512, 1024, 2048]
-devices = ["cpu"]  # ["gpu", "cpu"]
+devices = ["gpu", "cpu"]
 max_cpu_resolution = 512
 
 for device, (name, config), N in product(devices, configs.items(), N_values):
