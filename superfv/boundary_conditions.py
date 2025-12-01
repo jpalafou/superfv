@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Callable, Literal, Optional, Tuple, Union, cast
 
+from .axes import AXIS_TO_DIM
 from .field import MultivarField
-from .fv import AXIS_TO_DIM
 from .mesh import UniformFVMesh, xyz_tup
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap, crop

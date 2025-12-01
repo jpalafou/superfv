@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Literal, Optional, Tuple, cast
 
-from superfv.fv import DIM_TO_AXIS
+from superfv.axes import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector

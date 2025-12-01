@@ -6,21 +6,22 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Uni
 
 import numpy as np
 
+from .axes import DIM_TO_AXIS
 from .stencil import (
     conservative_interpolation_weights,
     multistencil_sweep,
     stencil_sweep,
     uniform_quadrature_weights,
 )
-from .tools.device_management import ArrayLike
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import merge_slices
+
+if CUPY_AVAILABLE:
+    from .fv_cp import interpolation_kernel_helper
 
 SingleInterpCoord = Union[int, float]
 MultiInterpCoords = Tuple[SingleInterpCoord, ...]
 StencilWeights = Union[Sequence[float], np.ndarray]
-
-AXIS_TO_DIM = {1: "x", 2: "y", 3: "z"}
-DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
 
 
 def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayLike]:
@@ -693,6 +694,11 @@ def interpolate_cell_centers(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cuda") and p <= 7:
+        return interpolation_kernel_helper(
+            u, "-", active_dims, p, center=True, integrate=False, out=out, buffer=buffer
+        )
+
     return fv_interpolate(
         xp,
         u,
@@ -732,6 +738,18 @@ def integrate_fv_averages(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cuda") and p <= 7:
+        return interpolation_kernel_helper(
+            u[..., 0],
+            "-",
+            active_dims,
+            p,
+            center=True,
+            integrate=True,
+            out=out,
+            buffer=buffer,
+        )
+
     return fv_integrate(
         xp,
         u[..., 0],
@@ -902,6 +920,18 @@ def interpolate_face_centers(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cuda") and p <= 7:
+        return interpolation_kernel_helper(
+            u,
+            face_dim,
+            active_dims,
+            p,
+            center=False,
+            integrate=False,
+            out=out,
+            buffer=buffer,
+        )
+
     transverse_dims = [d for d in active_dims if d != face_dim]
     return fv_interpolate(
         xp,
@@ -942,6 +972,18 @@ def transversely_integrate_nodes(
             integrations, is ignored for single-sweep integrations. Has shape
             (nvars, nx, ny, nz, nbuffer).
     """
+    if hasattr(xp, "cuda") and p <= 7:
+        return interpolation_kernel_helper(
+            u,
+            face_dim,
+            active_dims,
+            p,
+            center=False,
+            integrate=True,
+            out=out,
+            buffer=buffer,
+        )
+
     if len(active_dims) < 2:
         raise ValueError(
             "At least two active dimensions are required for transverse integration."

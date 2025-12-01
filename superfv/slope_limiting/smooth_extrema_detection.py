@@ -1,7 +1,7 @@
 from types import ModuleType
 from typing import Literal, Tuple, cast
 
-from superfv.fv import DIM_TO_AXIS
+from superfv.axes import DIM_TO_AXIS
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice

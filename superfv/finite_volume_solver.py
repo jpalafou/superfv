@@ -10,10 +10,10 @@ import pandas as pd
 from superfv.tools.buffer import check_buffer_slots
 
 from . import fv
+from .axes import DIM_TO_AXIS
 from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
-from .fv import DIM_TO_AXIS
 from .interpolation_schemes import (
     InterpolationScheme,
     LimiterConfig,

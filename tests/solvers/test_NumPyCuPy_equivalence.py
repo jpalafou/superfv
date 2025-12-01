@@ -13,6 +13,13 @@ from superfv.tools.norms import linf_norm
     "config",
     [
         dict(p=0),
+        dict(p=1),
+        dict(p=2),
+        dict(p=3),
+        dict(p=4),
+        dict(p=5),
+        dict(p=6),
+        dict(p=7),
         dict(p=1, MUSCL=True, MUSCL_limiter=None),
         dict(p=1, MUSCL=True, MUSCL_limiter="minmod", SED=False),
         dict(p=1, MUSCL=True, MUSCL_limiter="minmod", SED=True),
@@ -39,5 +46,6 @@ def test_hydro_advection(f: callable, config: dict):
     sim1.run(n=n_steps, muscl_hancock=config.get("MUSCL", False))
     sim2.run(n=n_steps, muscl_hancock=config.get("MUSCL", False))
 
-    tol = 1e-13 if config.get("ZS", False) else 1e-14
+    tol = 1e-13 if config["p"] > 2 else 1e-14
     assert linf_norm(sim2.snapshots[-1]["u"] - sim1.snapshots[-1]["u"]) < tol
+    assert linf_norm(sim2.snapshots[-1]["ucc"] - sim1.snapshots[-1]["ucc"]) < tol

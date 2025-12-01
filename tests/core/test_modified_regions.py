@@ -4,7 +4,7 @@ from types import ModuleType
 import numpy as np
 import pytest
 
-from superfv.fv import DIM_TO_AXIS
+from superfv.axes import DIM_TO_AXIS
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.MOOD import (
     blend_troubled_cells,

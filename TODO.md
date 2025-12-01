@@ -1,4 +1,5 @@
 - [ ] why does ZS3 not converge to 4th order for 2D entropy wave
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
 - [ ] inconsistency: other arguments have "none" options but `MUSCL_limiter` expects None
-- [x] add docstrings to kernel helper functions
+- [ ] fv sweep kernel helpers should return modified regions
+- [ ] MUSCL-Hancock no longer NumPy-CuPy equivalent

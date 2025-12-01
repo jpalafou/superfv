@@ -1,10 +1,10 @@
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 from . import riemann_solvers
+from .axes import DIM_TO_AXIS
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
-from .fv import DIM_TO_AXIS
 from .riemann_solvers import AdvectionRiemannSolver
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap

@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cas
 
 import numpy as np
 
+from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BCs, apply_bc
-from superfv.fv import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import compute_dmp, compute_vis
 from superfv.tools.buffer import check_buffer_slots

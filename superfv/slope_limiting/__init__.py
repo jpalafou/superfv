@@ -3,7 +3,7 @@ from itertools import product
 from types import ModuleType
 from typing import List, Literal, Tuple, cast
 
-from superfv.fv import DIM_TO_AXIS
+from superfv.axes import DIM_TO_AXIS
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
 

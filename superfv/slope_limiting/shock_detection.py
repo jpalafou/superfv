@@ -1,7 +1,7 @@
 from types import ModuleType
 from typing import Literal, Tuple
 
-from superfv.fv import DIM_TO_AXIS
+from superfv.axes import DIM_TO_AXIS
 from superfv.stencil import stencil_sweep
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
