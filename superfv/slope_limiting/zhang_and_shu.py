@@ -8,7 +8,7 @@ from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import replace_slice
 
 from .MOOD import detect_PAD_violations
@@ -70,6 +70,24 @@ class ZhangShuConfig(LimiterConfig):
             )
         )
         return out
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+    theta_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 u, float64 M, float64 m, float64 Mj, float64 mj, float64 tol"
+        ),
+        out_params="float64 theta",
+        operation="""
+        double theta_M = fabs(M - u) / (fabs(Mj - u) + tol);
+        double theta_m = fabs(m - u) / (fabs(mj - u) + tol);
+        theta = fmin(fmin(theta_M, theta_m), 1.0);
+        """,
+        name="theta_kernel",
+        no_return=True,
+    )
 
 
 def compute_theta(
@@ -146,13 +164,17 @@ def compute_theta(
     M = dmp[..., 1]
     mj = node_mp[..., 0]
     Mj = node_mp[..., 1]
-    theta[..., 0] = xp.minimum(
-        xp.minimum(
-            xp.divide(xp.abs(M - u), xp.abs(Mj - u) + tol),
-            xp.divide(xp.abs(m - u), xp.abs(mj - u) + tol),
-        ),
-        1.0,
-    )
+
+    if hasattr(xp, "cuda"):
+        theta_kernel(u, M, m, Mj, mj, tol, theta[..., 0])
+    else:
+        theta[..., 0] = xp.minimum(
+            xp.minimum(
+                xp.divide(xp.abs(M - u), xp.abs(Mj - u) + tol),
+                xp.divide(xp.abs(m - u), xp.abs(mj - u) + tol),
+            ),
+            1.0,
+        )
 
     # relax theta using a smooth extrema detector
     if SED:
