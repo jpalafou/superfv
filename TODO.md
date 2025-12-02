@@ -2,4 +2,4 @@
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
 - [ ] inconsistency: other arguments have "none" options but `MUSCL_limiter` expects None
 - [ ] fv sweep kernel helpers should return modified regions
-- [ ] MUSCL-Hancock no longer NumPy-CuPy equivalent
+- [x] MUSCL-Hancock no longer NumPy-CuPy equivalent

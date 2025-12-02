@@ -329,13 +329,13 @@ def sweep_kernel_helper(
             inner = out[crop(axis, (1, -1))][..., 0]
 
             if integrate:
-                inner[...] = uc
+                out[..., 0] = u
             elif pos == -1:
                 p1_l_interpolation_kernel(ul, uc, ur, inner)
             elif pos == 1:
                 p1_r_interpolation_kernel(ul, uc, ur, inner)
             else:  # pos == 0
-                inner[...] = uc
+                out[..., 0] = u
 
         case 2:
             ul = u[crop(axis, (None, -2), ndim=4)]
