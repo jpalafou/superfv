@@ -543,7 +543,7 @@ def interpolation_kernel_helper_2d(
 
 def interpolation_kernel_helper(
     u: ArrayLike,
-    face_dim: Literal["x", "y", "z"],
+    face_dim: Literal["x", "y", "z", "-"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     center: bool,
@@ -558,7 +558,8 @@ def interpolation_kernel_helper(
 
     Args:
         u: CuPy array of shape (nvars, nx, ny, nz).
-        face_dim: Dimension along which to interpolate ('x', 'y', or 'z').
+        face_dim: Dimension along which to interpolate ('x', 'y', or 'z'). May be '-'
+            if not applicable.
         active_dims: Tuple of active dimensions ('x', 'y', 'z') for interpolation.
             Must contain face_dim.
         p: Polynomial order (0 to 7).
@@ -572,6 +573,11 @@ def interpolation_kernel_helper(
             length 2 or more. Must be provided in that case.
     """
     if len(active_dims) == 1:
+        if face_dim == "-":
+            raise ValueError(
+                "face_dim must be specified when there is only one active dimension."
+            )
+
         interpolation_kernel_helper_1d(
             u,
             p,
@@ -591,6 +597,11 @@ def interpolation_kernel_helper(
         if center:
             dim1 = active_dims[0]
             dim2 = active_dims[1]
+        elif face_dim == "-":
+            raise ValueError(
+                "face_dim must be specified when there are two active dimensions "
+                "and center is False."
+            )
         else:
             dim1 = face_dim
             dim2 = next(dim for dim in active_dims if dim != face_dim)
