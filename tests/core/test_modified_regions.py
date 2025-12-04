@@ -12,6 +12,7 @@ from superfv.slope_limiting.MOOD import (
     map_cells_values_to_face_values,
 )
 from superfv.slope_limiting.muscl import compute_limited_slopes, compute_PP2D_slopes
+from superfv.slope_limiting.shock_detection import compute_shock_detector
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
 from superfv.tools.device_management import CUPY_AVAILABLE
@@ -62,31 +63,6 @@ def test_compute_dmp(dims: str, include_corners: bool):
 
     u, _, out = sample_data(dims, nout=2, xp=xp)
     modified = compute_dmp(xp, u, tuple(dims), out=out, include_corners=include_corners)
-
-    assert not xp.any(xp.isnan(out[modified]))
-    out[modified] = xp.nan
-    assert xp.all(xp.isnan(out))
-
-
-@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("absolute_dmp", [False, True])
-@pytest.mark.parametrize("include_corners", [False, True])
-def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: bool):
-    xp = configure_xp()
-
-    uold, buffer, out = sample_data(dims, nout=1, xp=xp)
-    unew, _, _ = sample_data(dims, nout=1, xp=xp)
-    out = out[..., 0]
-    modified = detect_NAD_violations(
-        xp,
-        uold,
-        unew,
-        tuple(dims),
-        out=out,
-        dmp=buffer,
-        absolute_dmp=absolute_dmp,
-        include_corners=include_corners,
-    )
 
     assert not xp.any(xp.isnan(out[modified]))
     out[modified] = xp.nan
@@ -148,6 +124,26 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+def test_compute_shock_detector(dims: str):
+    xp = configure_xp()
+
+    u, buffer, temp = sample_data(dims, nout=2, xp=xp)
+    out = temp[:1, ..., 0]
+    eta = temp[..., 1]
+
+    modified = compute_shock_detector(
+        xp, u, tuple(dims), 0.025, out=out, eta=eta, buffer=buffer
+    )
+
+    assert not xp.any(xp.isnan(out[modified]))
+    assert not xp.any(xp.isnan(eta[modified]))
+    out[modified] = xp.nan
+    eta[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
+    assert xp.all(xp.isnan(eta))
+
+
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
@@ -183,6 +179,31 @@ def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
         alpha=alpha,
         buffer=buffer,
         config=config,
+    )
+
+    assert not xp.any(xp.isnan(out[modified]))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
+
+
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+@pytest.mark.parametrize("absolute_dmp", [False, True])
+@pytest.mark.parametrize("include_corners", [False, True])
+def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: bool):
+    xp = configure_xp()
+
+    uold, buffer, out = sample_data(dims, nout=1, xp=xp)
+    unew, _, _ = sample_data(dims, nout=1, xp=xp)
+    out = out[..., 0]
+    modified = detect_NAD_violations(
+        xp,
+        uold,
+        unew,
+        tuple(dims),
+        out=out,
+        dmp=buffer,
+        absolute_dmp=absolute_dmp,
+        include_corners=include_corners,
     )
 
     assert not xp.any(xp.isnan(out[modified]))

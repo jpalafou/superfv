@@ -947,7 +947,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # General slope-limiting arrays
         arrays.add("_dmp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_eta_", np.ones((1, _nx_, _ny_, _nz_)))
+        arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_shockless_", np.ones((1, _nx_, _ny_, _nz_), dtype=bool))
 
         # Visualization array
         arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
@@ -1043,7 +1044,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # buffer cost of `update_workspaces` function
         if getattr(scheme, "lazy_primitives", "none") == "adaptive":
-            adaptive_primitive_cost = {1: 8, 2: 10, 3: 11}[ndim]
+            adaptive_primitive_cost = {1: 7, 2: 9, 3: 10}[ndim]
             update_workspaces_buffer_cost = max(
                 interpolation_buffer_cost, adaptive_primitive_cost
             )
@@ -1285,7 +1286,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _wcc_ = arrays["_wcc_"]  # shape (..., 1)
         _wp_ = arrays["_wp_"]  # shape (..., 1)
         _w_ = arrays["_w_"]
-        _eta_ = arrays["_eta_"]
+        _shockless_ = arrays["_shockless_"]
         _PAD_violations_ = arrays["_PAD_violations_"]
         _any_PAD_violations_ = arrays["_any_troubles_"]
         _buff_ = arrays["_buffer_"]
@@ -1318,7 +1319,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _w_[...] = self.primitives_from_conservatives(_u_)
 
             primitives = scheme.flux_recipe in (2, 3)
-            self.shock_detector(scheme, primitives)  # writes to _eta_
+            self.shock_detector(scheme, primitives)  # writes to _eta_, _shockless_
 
             if scheme.limiter_config.physical_admissibility_detection:
                 detect_PAD_violations(
@@ -1333,12 +1334,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
                 _w_[...] = xp.where(
-                    xp.logical_and(_eta_, _any_PAD_violations_ >= 0),
+                    xp.logical_and(_shockless_, _any_PAD_violations_ >= 0),
                     _wp_[..., 0],
                     _w_,
                 )
             else:
-                _w_[...] = xp.where(_eta_, _wp_[..., 0], _w_)
+                _w_[...] = xp.where(_shockless_, _wp_[..., 0], _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
@@ -1393,6 +1394,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Shock detection is not enabled in the scheme.")
 
         _eta_ = arrays["_eta_"]
+        _shockless_ = arrays["_shockless_"]
         _w_ = arrays["_w_"] if primitives else arrays["_u_"]
         buffer = arrays["_buffer_"]
 
@@ -1401,7 +1403,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _w_,
             active_dims,
             scheme.limiter_config.eta_max,
-            out=_eta_,
+            out=_shockless_,
+            eta=_eta_,
             buffer=buffer,
         )
 
