@@ -1393,18 +1393,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if not scheme.limiter_config.shock_detection:
             raise ValueError("Shock detection is not enabled in the scheme.")
 
-        _eta_ = arrays["_eta_"]
-        _shockless_ = arrays["_shockless_"]
-        _w_ = arrays["_w_"] if primitives else arrays["_u_"]
+        eta = arrays["_eta_"]
+        shockless = arrays["_shockless_"]
+        w1 = arrays["_w_"] if primitives else arrays["_u_"]
         buffer = arrays["_buffer_"]
 
         compute_shock_detector(
             xp,
-            _w_,
+            w1,
+            w1,
             active_dims,
             scheme.limiter_config.eta_max,
-            out=_shockless_,
-            eta=_eta_,
+            out=shockless,
+            eta=eta,
             buffer=buffer,
         )
 

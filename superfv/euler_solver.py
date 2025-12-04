@@ -1,11 +1,16 @@
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
+import numpy as np
+
+from superfv.slope_limiting.shock_detection import compute_shock_detector
+
 from . import riemann_solvers
 from .axes import DIM_TO_AXIS
 from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
+from .interpolation_schemes import InterpolationScheme
 from .riemann_solvers import HydroRiemannSolver
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
@@ -268,6 +273,16 @@ class EulerSolver(FiniteVolumeSolver):
             cupy=cupy,
             sync_timing=sync_timing,
         )
+
+        # init hydro arrays
+        nvars, _nx_, _ny_, _nz_ = (
+            self.nvars,
+            self.mesh._nx_,
+            self.mesh._ny_,
+            self.mesh._nz_,
+        )
+        self.arrays.add("_c_", np.empty((1, _nx_, _ny_, _nz_)))
+        self.arrays.add("_wr_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
         # special cupy functions
         if self.cupy:
@@ -632,6 +647,52 @@ class EulerSolver(FiniteVolumeSolver):
             out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
 
         return out
+
+    @MethodTimer(cat="shock_detector")
+    def shock_detector(self, scheme: InterpolationScheme, primitives: bool):
+        """
+        Compute the hydro shock detector based on the `_w_` or `_u_` workspaces depending
+        on the flux recipe and write the result to the `_eta_` array.
+
+        Args:
+            scheme: Interpolation scheme to use.
+            primitives: Whether to use primitive variables for shock detection.
+                Otherwise, conservative variables are used.
+        """
+        xp = self.xp
+        arrays = self.arrays
+        active_dims = self.active_dims
+        idx = self.variable_index_map
+
+        if not scheme.limiter_config.shock_detection:
+            raise ValueError("Shock detection is not enabled in the scheme.")
+
+        eta = arrays["_eta_"]
+        shockless = arrays["_shockless_"]
+        w1 = arrays["_w_"]
+        u1 = arrays["_u_"]
+        wr = arrays["_wr_"]
+        c = arrays["_c_"]
+        buffer = arrays["_buffer_"]
+
+        c[...] = self.compute_sound_speed(w1)
+        if primitives:
+            wr[...] = w1
+            wr[idx("v")] = c
+        else:
+            wr[...] = u1
+            wr[idx("m")] = c * u1[idx("rho")]
+
+        compute_shock_detector(
+            xp,
+            w1 if primitives else u1,
+            wr,
+            active_dims,
+            scheme.limiter_config.eta_max,
+            out=shockless,
+            eta=eta,
+            buffer=buffer,
+        )
 
     def build_update_message(self) -> str:
         """

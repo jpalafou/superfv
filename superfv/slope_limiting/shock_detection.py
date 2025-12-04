@@ -10,7 +10,8 @@ from superfv.tools.slicing import crop, merge_slices
 
 def compute_eta(
     xp: ModuleType,
-    wp: ArrayLike,
+    w1: ArrayLike,
+    wr: ArrayLike,
     axis: int,
     *,
     out: ArrayLike,
@@ -22,7 +23,8 @@ def compute_eta(
 
     Args:
         xp: `np` namespace.
-        wp: Array of primitive variables. Has shape (nvars, nx, ny, nz).
+        w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
+        wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
         axis: Axis along which to compute the shock detector.
         out: Array to which eta is written. Has shape (1, nx, ny, nz).
         buffer: Array to which intermediate values are written. Has shape
@@ -49,14 +51,14 @@ def compute_eta(
     inner = crop(axis, (2, -2), ndim=4)
 
     # compute deltas using stencil sweeps
-    stencil_sweep(xp, wp, stencil1, axis, out=delta1)
-    stencil_sweep(xp, wp, stencil2, axis, out=delta2)
-    stencil_sweep(xp, wp, stencil3, axis, out=delta3)
-    stencil_sweep(xp, wp, stencil4, axis, out=delta4)
+    stencil_sweep(xp, w1, stencil1, axis, out=delta1)
+    stencil_sweep(xp, w1, stencil2, axis, out=delta2)
+    stencil_sweep(xp, w1, stencil3, axis, out=delta3)
+    stencil_sweep(xp, w1, stencil4, axis, out=delta4)
 
     # compute eta values
-    eta_o[...] = xp.abs(delta3) / (xp.abs(wp) + xp.abs(delta1) + xp.abs(delta3) + eps)
-    eta_e[...] = xp.abs(delta4) / (xp.abs(wp) + xp.abs(delta2) + xp.abs(delta4) + eps)
+    eta_o[...] = xp.abs(delta3) / (xp.abs(wr) + xp.abs(delta1) + xp.abs(delta3) + eps)
+    eta_e[...] = xp.abs(delta4) / (xp.abs(wr) + xp.abs(delta2) + xp.abs(delta4) + eps)
     out[inner] = xp.maximum(eta_o[inner], eta_e[inner])
 
     return inner
@@ -64,7 +66,8 @@ def compute_eta(
 
 def compute_shock_detector(
     xp: ModuleType,
-    wp: ArrayLike,
+    w1: ArrayLike,
+    wr: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     eta_threshold: float,
     *,
@@ -79,7 +82,8 @@ def compute_shock_detector(
 
     Args:
         xp: `np` namespace.
-        wp: Array of primitive variables. Has shape (nvars, nx, ny, nz).
+        w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
+        wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
         active_dims: Tuple of active dimensions along which to compute the shock
             detector.
         out: Array to which the shock detector is written. Has shape (1, nx, ny, nz).
@@ -102,7 +106,7 @@ def compute_shock_detector(
         eta_max = buffer[:1, ..., 0]
         eta_buff = buffer[..., 1:]
 
-        inner = compute_eta(xp, wp, axis, out=eta, buffer=eta_buff, eps=eps)
+        inner = compute_eta(xp, w1, wr, axis, out=eta, buffer=eta_buff, eps=eps)
 
     elif ndim == 2:
         axis1 = DIM_TO_AXIS[active_dims[0]]
@@ -113,8 +117,8 @@ def compute_shock_detector(
         eta_max = buffer[:1, ..., 2]
         eta_buff = buffer[..., 3:]
 
-        inner1 = compute_eta(xp, wp, axis1, out=eta1, buffer=eta_buff, eps=eps)
-        inner2 = compute_eta(xp, wp, axis2, out=eta2, buffer=eta_buff, eps=eps)
+        inner1 = compute_eta(xp, w1, wr, axis1, out=eta1, buffer=eta_buff, eps=eps)
+        inner2 = compute_eta(xp, w1, wr, axis2, out=eta2, buffer=eta_buff, eps=eps)
         inner = merge_slices(inner1, inner2)
         eta[inner] = xp.maximum(eta1[inner], eta2[inner])
 
@@ -129,9 +133,9 @@ def compute_shock_detector(
         eta_max = buffer[:1, ..., 3]
         eta_buff = buffer[..., 4:]
 
-        inner1 = compute_eta(xp, wp, axis1, out=eta1, buffer=eta_buff, eps=eps)
-        inner2 = compute_eta(xp, wp, axis2, out=eta2, buffer=eta_buff, eps=eps)
-        inner3 = compute_eta(xp, wp, axis3, out=eta3, buffer=eta_buff, eps=eps)
+        inner1 = compute_eta(xp, w1, wr, axis1, out=eta1, buffer=eta_buff, eps=eps)
+        inner2 = compute_eta(xp, w1, wr, axis2, out=eta2, buffer=eta_buff, eps=eps)
+        inner3 = compute_eta(xp, w1, wr, axis3, out=eta3, buffer=eta_buff, eps=eps)
         inner = merge_slices(inner1, inner2, inner3)
         eta[inner] = xp.maximum(eta1[inner], eta2[inner])
         eta[inner] = xp.maximum(eta3[inner], eta[inner])
