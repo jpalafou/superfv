@@ -20,23 +20,29 @@ aposteriori = dict(
 
 configs = {
     "p0": dict(p=0),
-    "MH/none": dict(p=1, MUSCL=True, MUSCL_limiter=None, **common),
-    "ZS3/wa": dict(p=3, lazy_primitives="adaptive", **apriori),
-    "ZS3/wp": dict(p=3, lazy_primitives="none", **apriori),
-    "MM3": dict(p=3, **aposteriori),
+    "MH": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
     "p3": dict(p=3),
+    "ZS3/wa": dict(p=3, lazy_primitives="adaptive", **apriori),
+    "MM3": dict(p=3, **aposteriori),
+    "p7": dict(p=7),
+    "ZS7/wa": dict(p=7, lazy_primitives="adaptive", **apriori),
+    "MM7": dict(p=7, **aposteriori),
 }
 
 styles = {
     "p0": dict(color="k"),
-    "MH/none": dict(color="darkgray"),
-    "ZS3/wa": dict(color="tab:green", linestyle="--", marker="^", mfc="none"),
-    "ZS3/wp": dict(color="tab:green", marker="o", mfc="none"),
-    "MM3": dict(color="tab:orange", marker="o", mfc="none"),
+    "p1": dict(color="darkgray"),
+    "MH/none": dict(color="darkgray", linestyle=".."),
+    "MH": dict(color="darkgray", linestyle="--"),
     "p3": dict(color="tab:blue"),
+    "ZS3/wa": dict(color="tab:blue", linestyle="--", marker="^"),
+    "MM3": dict(color="tab:blue", linestyle="--", marker="o", mfc="none"),
+    "p7": dict(color="tab:green"),
+    "ZS7/wa": dict(color="tab:green", linestyle="--", marker="^"),
+    "MM7": dict(color="tab:green", linestyle="--", marker="o", mfc="none"),
 }
 
-N_values = [32, 64, 128]
+N_values = [16, 32, 64, 128, 256]
 
 
 gamma = 5 / 3
