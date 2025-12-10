@@ -32,6 +32,10 @@ class MOODConfig(LimiterConfig):
     Attributes:
         shock_detection: Whether to enable shock detection.
         smooth_extrema_detection: Whether to enable smooth extrema detection.
+        check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
+            extrema detection is enabled. Uniform regions satisfy:
+                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
+                    <= uniformity_tol * |u_i|
         physical_admissibility_detection: Whether to enable physical admissibility
             detection (PAD).
         eta_max: Eta threshold for shock detection if shock_detection is True.
@@ -40,6 +44,7 @@ class MOODConfig(LimiterConfig):
             True. Must be provided if physical_admissibility_detection is True.
         PAD_atol: Absolute tolerance for physical admissibility detection if
             physical_admissibility_detection is True.
+        uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
         numerical_admissibility_detection: Whether to enable numerical admissibility
             detection (NAD).
         cascade: The list of interpolation schemes to use in the MOOD framework.
@@ -247,6 +252,8 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     PAD_bounds = config.PAD_bounds
     PAD_atol = config.PAD_atol
     SED = config.smooth_extrema_detection
+    check_uniformity = config.check_uniformity
+    uniformity_tol = config.uniformity_tol
     skip_trouble_counts = config.skip_trouble_counts
 
     # determine limiting style
@@ -306,8 +313,10 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 xp,
                 (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
                 active_dims,
+                check_uniformity,
                 out=_alpha_,
                 buffer=_abuff_,
+                uniformity_tol=uniformity_tol,
             )
             alpha = _alpha_[..., 0][interior]
             troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)

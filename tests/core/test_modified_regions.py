@@ -11,7 +11,11 @@ from superfv.slope_limiting.MOOD import (
     detect_NAD_violations,
     map_cells_values_to_face_values,
 )
-from superfv.slope_limiting.muscl import compute_limited_slopes, compute_PP2D_slopes
+from superfv.slope_limiting.muscl import (
+    compute_limited_slopes,
+    compute_PP2D_slopes,
+    musclConfig,
+)
 from superfv.slope_limiting.shock_detection import compute_shock_detector
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
@@ -72,13 +76,25 @@ def test_compute_dmp(dims: str, include_corners: bool):
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("SED", [False, True])
-def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
+@pytest.mark.parametrize("check_uniformity", [False, True])
+def test_compute_limited_slopes(
+    dims: str, limiter: str, SED: bool, check_uniformity: bool
+):
     xp = configure_xp()
 
     face_dim = dims[0]
     u, buffer, temp = sample_data(dims, nout=2, xp=xp)
     out = temp[..., :1]
     alpha = temp[..., 1:2]
+
+    config = musclConfig(
+        shock_detection=False,
+        smooth_extrema_detection=SED,
+        check_uniformity=check_uniformity,
+        limiter=limiter,
+        physical_admissibility_detection=False,
+    )
+
     modified = compute_limited_slopes(
         xp,
         u,
@@ -86,9 +102,8 @@ def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
         tuple(dims),
         out=out,
         buffer=buffer,
-        limiter=limiter,
-        SED=SED,
         alpha=alpha,
+        config=config,
     )
 
     assert not xp.any(xp.isnan(out[modified]))
@@ -102,15 +117,25 @@ def test_compute_limited_slopes(dims: str, limiter: str, SED: bool):
 
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
 @pytest.mark.parametrize("SED", [False, True])
-def test_compute_PP2D_slopes(dims: str, SED: bool):
+@pytest.mark.parametrize("check_uniformity", [False, True])
+def test_compute_PP2D_slopes(dims: str, SED: bool, check_uniformity: bool):
     xp = configure_xp()
 
     u, buffer, temp = sample_data(dims, nout=3, xp=xp)
     Sx = temp[..., :1]
     Sy = temp[..., 1:2]
     alpha = temp[..., 2:3]
+
+    config = musclConfig(
+        shock_detection=False,
+        smooth_extrema_detection=SED,
+        check_uniformity=check_uniformity,
+        limiter="PP2D",
+        physical_admissibility_detection=False,
+    )
+
     modified = compute_PP2D_slopes(
-        xp, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, SED=SED, alpha=alpha
+        xp, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, alpha=alpha, config=config
     )
 
     assert not xp.any(xp.isnan(Sx[modified]))
@@ -145,9 +170,12 @@ def test_compute_shock_detector(dims: str):
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("SED", [False, True])
+@pytest.mark.parametrize("check_uniformity", [False, True])
 @pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
-def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
+def test_compute_theta(
+    dims: str, SED: bool, check_uniformity: bool, PAD: bool, include_corners: bool
+):
     xp = configure_xp()
 
     u, mega_buffer, out = sample_data(dims, nout=1, xp=xp)
@@ -159,10 +187,11 @@ def test_compute_theta(dims: str, SED: bool, PAD: bool, include_corners: bool):
     buffer = mega_buffer[..., 3:]
 
     config = ZhangShuConfig(
+        shock_detection=False,
         smooth_extrema_detection=SED,
+        check_uniformity=check_uniformity,
         physical_admissibility_detection=PAD,
         include_corners=include_corners,
-        shock_detection=False,
         PAD_atol=0,
         PAD_bounds=xp.array([[0.0, 0.1] * 5]),
     )
@@ -239,11 +268,14 @@ def test_map_cells_values_to_face_values(dims: str):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-def test_smooth_extrema_detection(dims: str):
+@pytest.mark.parametrize("check_uniformity", [False, True])
+def test_smooth_extrema_detection(dims: str, check_uniformity: bool):
     xp = configure_xp()
 
     u, buffer, out = sample_data(dims, nout=1, xp=xp)
-    modified = smooth_extrema_detector(xp, u, tuple(dims), out=out, buffer=buffer)
+    modified = smooth_extrema_detector(
+        xp, u, tuple(dims), check_uniformity, out=out, buffer=buffer
+    )
 
     assert not xp.any(xp.isnan(out[modified]))
     out[modified] = xp.nan

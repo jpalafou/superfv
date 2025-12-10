@@ -7,10 +7,10 @@ import pandas as pd
 from superfv import EulerSolver, OutputLoader
 from superfv.tools.norms import linf_norm
 
-base_path = "/scratch/gpfs/jp7427/out/hydro-advection-of-a-square/"
+base_path = "out/hydro-advection-of-a-square/"
 plot_path = "benchmarks/hydro-advection-of-a-square/plot.png"
 
-common = dict(PAD={"rho": (0, None), "P": (0, None)})
+common = dict(PAD={"rho": (0, None), "P": (0, None)}, uniformity_tol=0.0)
 apriori = dict(ZS=True, GL=True, **common)
 aposteriori = dict(
     MOOD=True, MUSCL_limiter="PP2D", lazy_primitives="full", NAD_atol=1e-3, **common
@@ -18,8 +18,8 @@ aposteriori = dict(
 
 configs = {
     "p0": dict(p=0),
-    "MH/minmod": dict(p=1, MUSCL=True, MUSCL_limiter="minmod", **common),
-    "MH/moncen": dict(p=1, MUSCL=True, MUSCL_limiter="moncen", **common),
+    # "MH/minmod": dict(p=1, MUSCL=True, MUSCL_limiter="minmod", **common),
+    # "MH/moncen": dict(p=1, MUSCL=True, MUSCL_limiter="moncen", **common),
     "MH/PP2D": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
     "MH/none": dict(p=1, MUSCL=True, MUSCL_limiter=None, **common),
     "ZS3/wp": dict(p=3, lazy_primitives="none", **apriori),
@@ -38,7 +38,7 @@ styles = {
     "p3": dict(color="tab:blue"),
 }
 
-N_values = [16, 32, 64, 128, 256]
+N_values = [32, 64, 128]
 
 
 gamma = 1.4

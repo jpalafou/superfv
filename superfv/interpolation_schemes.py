@@ -13,6 +13,10 @@ class LimiterConfig:
     Attributes:
         shock_detection: Whether to enable shock detection.
         smooth_extrema_detection: Whether to enable smooth extrema detection.
+        check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
+            extrema detection is enabled. Uniform regions satisfy:
+                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
+                    <= uniformity_tol * |u_i|
         physical_admissibility_detection: Whether to enable physical admissibility
             detection (PAD).
         eta_max: Eta threshold for shock detection if shock_detection is True.
@@ -21,14 +25,17 @@ class LimiterConfig:
             True. Must be provided if physical_admissibility_detection is True.
         PAD_atol: Absolute tolerance for physical admissibility detection if
             physical_admissibility_detection is True.
+        uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
     """
 
     shock_detection: bool
     smooth_extrema_detection: bool
+    check_uniformity: bool
     physical_admissibility_detection: bool
     eta_max: float = 0.0
     PAD_bounds: Optional[ArrayLike] = None
     PAD_atol: float = 0.0
+    uniformity_tol: float = 1e-3
 
     def __post_init__(self):
         if self.shock_detection and self.eta_max is None:
@@ -83,6 +90,7 @@ class InterpolationScheme(ABC):
     limiter_config: LimiterConfig = LimiterConfig(
         shock_detection=False,
         smooth_extrema_detection=False,
+        check_uniformity=False,
         physical_admissibility_detection=False,
     )
 

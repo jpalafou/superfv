@@ -135,6 +135,7 @@ def test_advection_of_a_1d_square(limiter: str, dim: str, predictor_corrector: b
         p=1,
         MUSCL=True,
         MUSCL_limiter=limiter,
+        SED=False,
         **{"n" + dim: N},
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
@@ -164,6 +165,7 @@ def test_advection_of_a_2d_square(
         p=1,
         MUSCL=True,
         MUSCL_limiter=limiter,
+        SED=False,
         **{"n" + dim1: N, "n" + dim2: N},
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
@@ -185,6 +187,7 @@ def test_advection_of_a_3d_square(limiter: str, predictor_corrector: bool):
         p=1,
         MUSCL=True,
         MUSCL_limiter=limiter,
+        SED=False,
         nx=N,
         ny=N,
         nz=N,
@@ -210,6 +213,7 @@ def test_hydro_advection_of_a_1d_square(
         ),
         p=1,
         MUSCL=True,
+        SED=False,
         flux_recipe=2,
         riemann_solver="hllc",
         MUSCL_limiter=limiter,
@@ -247,6 +251,7 @@ def test_hydro_advection_of_a_2d_square(
         ),
         p=1,
         MUSCL=True,
+        SED=False,
         flux_recipe=2,
         riemann_solver="hllc",
         MUSCL_limiter=limiter,
@@ -269,6 +274,7 @@ def test_hydro_advection_of_a_3d_square(limiter: str, predictor_corrector: bool)
         ),
         p=1,
         MUSCL=True,
+        SED=False,
         flux_recipe=2,
         riemann_solver="hllc",
         MUSCL_limiter=limiter,

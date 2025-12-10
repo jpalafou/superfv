@@ -2,14 +2,17 @@ import numpy as np
 import pytest
 
 from superfv.mesh import UniformFVMesh
-from superfv.slope_limiting.muscl import compute_limited_slopes
+from superfv.slope_limiting.muscl import compute_limited_slopes, musclConfig
 
 
 @pytest.mark.parametrize("face_dim", ["x", "y", "z"])
 @pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("SED", [False, True])
-def test_uniform_field(face_dim: str, active_dims: str, limiter: str, SED: bool):
+@pytest.mark.parametrize("check_uniformity", [False, True])
+def test_uniform_field(
+    face_dim: str, active_dims: str, limiter: str, SED: bool, check_uniformity: bool
+):
     """
     Test limited slope computation on a uniform field.
     """
@@ -19,6 +22,13 @@ def test_uniform_field(face_dim: str, active_dims: str, limiter: str, SED: bool)
         pytest.skip("SED is only applicable with certain limiters")
 
     active_dims_tuple = tuple(active_dims)
+
+    config = musclConfig(
+        shock_detection=False,
+        smooth_extrema_detection=SED,
+        check_uniformity=check_uniformity,
+        physical_admissibility_detection=False,
+    )
 
     N = 16
     mesh = UniformFVMesh(
@@ -48,8 +58,7 @@ def test_uniform_field(face_dim: str, active_dims: str, limiter: str, SED: bool)
         out=du,
         alpha=alpha,
         buffer=buffer,
-        limiter=limiter,
-        SED=SED,
+        config=config,
     )
     du[...] = du / (1 / N)
 
@@ -61,7 +70,10 @@ def test_uniform_field(face_dim: str, active_dims: str, limiter: str, SED: bool)
 @pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("SED", [False, True])
-def test_linear_ramp(face_dim: str, active_dims: str, limiter: str, SED: bool):
+@pytest.mark.parametrize("check_uniformity", [False, True])
+def test_linear_ramp(
+    face_dim: str, active_dims: str, limiter: str, SED: bool, check_uniformity: bool
+):
     """
     Test limited slope computation on a linear ramp.
     """
@@ -71,6 +83,13 @@ def test_linear_ramp(face_dim: str, active_dims: str, limiter: str, SED: bool):
         pytest.skip("SED is only applicable with certain limiters")
 
     active_dims_tuple = tuple(active_dims)
+
+    config = musclConfig(
+        shock_detection=False,
+        smooth_extrema_detection=SED,
+        check_uniformity=check_uniformity,
+        physical_admissibility_detection=False,
+    )
 
     N = 16
     mesh = UniformFVMesh(
@@ -100,8 +119,7 @@ def test_linear_ramp(face_dim: str, active_dims: str, limiter: str, SED: bool):
         out=du,
         alpha=alpha,
         buffer=buffer,
-        limiter=limiter,
-        SED=SED,
+        config=config,
     )
     du[...] = du / (1 / N)
 

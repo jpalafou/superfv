@@ -3,3 +3,5 @@
 - [ ] inconsistency: other arguments have "none" options but `MUSCL_limiter` expects None
 - [ ] fv sweep kernel helpers should return modified regions
 - [ ] `compute_eta` should accept optional reference array so i can pass sound speed for velocity
+- [ ] why does MUSCL-Hancock/PP2D with the uniformity relaxation not converge to 2nd order
+- [ ] uniformity breaks Zhang-Shu property. maybe this is expected
