@@ -1,7 +1,7 @@
-- [ ] why does ZS3 not converge to 4th order for 2D entropy wave
+- [x] why does ZS3 not converge to 4th order for 2D entropy wave
 - [ ] turbulence for `M_max=0.1, 0.01, ...`
 - [ ] inconsistency: other arguments have "none" options but `MUSCL_limiter` expects None
 - [ ] fv sweep kernel helpers should return modified regions
-- [ ] `compute_eta` should accept optional reference array so i can pass sound speed for velocity
-- [ ] why does MUSCL-Hancock/PP2D with the uniformity relaxation not converge to 2nd order
+- [x] `compute_eta` should accept optional reference array so i can pass sound speed for velocity
+- [x] why does MUSCL-Hancock/PP2D with the uniformity relaxation not converge to 2nd order
 - [ ] uniformity breaks Zhang-Shu property. maybe this is expected
