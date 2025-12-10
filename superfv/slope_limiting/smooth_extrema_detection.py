@@ -57,12 +57,10 @@ def smooth_extrema_detector_1d(
     """
     if hasattr(xp, "cuda"):
         return smooth_extrema_detector_kernel_helper(
-            xp,
             u,
             dim,
             check_uniformity,
             out=out,
-            buffer=buffer,
             eps=eps,
             uniformity_tol=uniformity_tol,
         )
@@ -456,9 +454,9 @@ if CUPY_AVAILABLE:
                 double dmp_m_r = fmin(fmin(uc, ur1), ur2);
                 double dmp_M_r = fmax(fmax(uc, ur1), ur2);
 
-                bool uniform_l = fabs(dmp_M_l - dmp_m_l) <= uniformity_tol * fabs(uc);
+                bool uniform_l = fabs(dmp_M_l - dmp_m_l) <= uniformity_tol * fabs(ul1);
                 bool uniform_c = fabs(dmp_M_c - dmp_m_c) <= uniformity_tol * fabs(uc);
-                bool uniform_r = fabs(dmp_M_r - dmp_m_r) <= uniformity_tol * fabs(uc);
+                bool uniform_r = fabs(dmp_M_r - dmp_m_r) <= uniformity_tol * fabs(ur1);
 
                 if (uniform_l) {
                     alphal = 1.0;
@@ -480,13 +478,11 @@ if CUPY_AVAILABLE:
 
 
 def smooth_extrema_detector_kernel_helper(
-    xp: ModuleType,
     u: ArrayLike,
     dim: Literal["x", "y", "z"],
     check_uniformity: bool,
     *,
     out: ArrayLike,
-    buffer: ArrayLike,
     eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
 ):
@@ -494,7 +490,6 @@ def smooth_extrema_detector_kernel_helper(
     Compute the 1D smooth extrema detector alpha using a CuPy kernel.
 
     Args:
-        xp: `np` namespace.
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
         dim: Dimension along which to compute the smooth extrema detector: "x", "y",
@@ -503,9 +498,6 @@ def smooth_extrema_detector_kernel_helper(
             regions satisfy:
                 max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
                     <= uniformity_tol * |u_i|
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=7).
         eps: Small tolerance used to avoid dividing by zero.
         uniformity_tol: Tolerance used to detect uniform regions.
 

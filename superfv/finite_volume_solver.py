@@ -109,7 +109,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_atol: float = 1e-15,
         SED: bool = True,
         check_uniformity: bool = True,
-        uniformity_tol: float = 0.0,
+        uniformity_tol: float = 1e-15,
         vis_rtol: float = 1e-1,
         vis_atol: float = 1e-10,
         cupy: bool = False,

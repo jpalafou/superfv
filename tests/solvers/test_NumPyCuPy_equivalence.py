@@ -21,14 +21,22 @@ from superfv.tools.norms import linf_norm
         dict(p=6),
         dict(p=7),
         dict(p=1, MUSCL=True, MUSCL_limiter=None),
-        dict(p=1, MUSCL=True, MUSCL_limiter="minmod", SED=False),
-        dict(p=1, MUSCL=True, MUSCL_limiter="minmod", SED=True),
-        dict(p=1, MUSCL=True, MUSCL_limiter="moncen", SED=False),
-        dict(p=1, MUSCL=True, MUSCL_limiter="moncen", SED=True),
-        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", SED=False),
-        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", SED=True),
-        dict(p=3, ZS=True, adaptive_dt=False, SED=False),
-        dict(p=3, ZS=True, adaptive_dt=False, SED=True),
+        dict(
+            p=1, MUSCL=True, MUSCL_limiter="minmod", SED=False, check_uniformity=False
+        ),
+        dict(p=1, MUSCL=True, MUSCL_limiter="minmod", SED=True, check_uniformity=False),
+        dict(p=1, MUSCL=True, MUSCL_limiter="minmod", SED=True, check_uniformity=True),
+        dict(
+            p=1, MUSCL=True, MUSCL_limiter="moncen", SED=False, check_uniformity=False
+        ),
+        dict(p=1, MUSCL=True, MUSCL_limiter="moncen", SED=True, check_uniformity=False),
+        dict(p=1, MUSCL=True, MUSCL_limiter="moncen", SED=True, check_uniformity=True),
+        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", SED=False, check_uniformity=False),
+        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", SED=True, check_uniformity=False),
+        dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", SED=True, check_uniformity=True),
+        dict(p=3, ZS=True, adaptive_dt=False, SED=False, check_uniformity=False),
+        dict(p=3, ZS=True, adaptive_dt=False, SED=True, check_uniformity=False),
+        dict(p=3, ZS=True, adaptive_dt=False, SED=True, check_uniformity=True),
     ],
 )
 def test_hydro_advection(f: callable, config: dict):
