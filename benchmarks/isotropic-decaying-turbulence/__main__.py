@@ -9,7 +9,7 @@ from superfv.initial_conditions import decaying_isotropic_turbulence
 base_path = "/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/"
 
 # Loop parameters
-M_max_values = [1, 2.5, 5, 10, 25, 50]
+M_max_values = [0.01, 0.1, 1, 2.5, 5, 10, 25, 50]
 
 seeds = range(1, 31)
 
@@ -82,6 +82,10 @@ def compute_reference_dt(sim):
 
 # Run simulations
 for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds):
+    if M_max < 1 and seed > 1:
+        # only need one seed for low Mach numbers
+        continue
+
     print(f"- - - Starting simulation: {name}, seed={seed}, M_max={M_max} - - -")
 
     sim_path = f"{base_path}{name}/M_max_{M_max}/seed_{seed:02d}/"

@@ -7,38 +7,40 @@ import pandas as pd
 from superfv import EulerSolver, OutputLoader
 from superfv.tools.norms import linf_norm
 
-base_path = "out/hydro-advection-of-a-square/"
+base_path = "/scratch/gpfs/jp7427/out/hydro-advection-of-a-square/"
 plot_path = "benchmarks/hydro-advection-of-a-square/plot.png"
 
-common = dict(PAD={"rho": (0, None), "P": (0, None)}, uniformity_tol=0.0)
-apriori = dict(ZS=True, GL=True, **common)
+common = dict(PAD={"rho": (0, None), "P": (0, None)})
+apriori = dict(ZS=True, GL=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
     MOOD=True, MUSCL_limiter="PP2D", lazy_primitives="full", NAD_atol=1e-3, **common
 )
 
 configs = {
     "p0": dict(p=0),
-    # "MH/minmod": dict(p=1, MUSCL=True, MUSCL_limiter="minmod", **common),
-    # "MH/moncen": dict(p=1, MUSCL=True, MUSCL_limiter="moncen", **common),
-    "MH/PP2D": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
-    "MH/none": dict(p=1, MUSCL=True, MUSCL_limiter=None, **common),
-    "ZS3/wp": dict(p=3, lazy_primitives="none", **apriori),
-    "MM3": dict(p=3, **aposteriori),
+    "p1": dict(p=1),
     "p3": dict(p=3),
+    "p7": dict(p=7),
+    "MH": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
+    "ZS3": dict(p=3, **apriori),
+    "MM3": dict(p=3, **aposteriori),
+    "ZS7": dict(p=7, **apriori),
+    "MM7": dict(p=7, **aposteriori),
 }
 
 styles = {
     "p0": dict(color="k"),
-    "MH/none": dict(color="darkgray"),
-    "MH/PP2D": dict(color="darkgray", marker="o", mfc="none"),
-    "MH/minmod": dict(color="darkgray", linestyle="--", marker="*", mfc="none"),
-    "MH/moncen": dict(color="darkgray", linestyle="--", marker="^", mfc="none"),
-    "ZS3/wp": dict(color="tab:green", marker="o", mfc="none"),
-    "MM3": dict(color="tab:orange", marker="o", mfc="none"),
-    "p3": dict(color="tab:blue"),
+    "p1": dict(color="blue"),
+    "p3": dict(color="green"),
+    "p7": dict(color="red"),
+    "MH": dict(color="blue", linestyle="--", marker="o", mfc="none"),
+    "ZS3": dict(color="green", linestyle="--", marker="o", mfc="none"),
+    "MM3": dict(color="green", linestyle="--", marker="*", mfc="none"),
+    "ZS7": dict(color="red", linestyle="--", marker="o", mfc="none"),
+    "MM7": dict(color="red", linestyle="--", marker="*", mfc="none"),
 }
 
-N_values = [32, 64, 128]
+N_values = [16, 32, 64, 128, 256]
 
 
 gamma = 1.4
@@ -56,6 +58,34 @@ def sinus(idx, x, y, z, t, *, xp):
     return out
 
 
+def plot_convergence(df):
+    # plot error curves of p over N
+    fig, ax = plt.subplots(figsize=(11, 8.5))
+    ax.set_title("Convergence of 2D advection of a square in a single direction")
+    ax.set_xlabel("N")
+    ax.set_ylabel("Linf error")
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.grid()
+
+    for name in configs.keys():
+        df_name = df[df["name"] == name]
+
+        if df_name.empty:
+            continue
+
+        style = styles[name]
+
+        ax.plot(
+            df_name["N"],
+            df_name["error"],
+            label=name,
+            **style,
+        )
+    ax.legend()
+    fig.savefig(plot_path, dpi=300)
+
+
 # remove old output
 if os.path.exists(plot_path):
     os.remove(plot_path)
@@ -69,7 +99,7 @@ for (name, config), N in product(configs.items(), N_values):
     print(f"Running N={N}, config={name}")
 
     # run solver
-    sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=True, **config)
+    sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=N > 64, **config)
 
     try:
         sim.run(
@@ -92,28 +122,6 @@ for (name, config), N in product(configs.items(), N_values):
     rho1 = sim.snapshots[-1]["wcc"][idx("rho")]
     error = linf_norm(rho1 - rho0)
     data.append(dict(N=N, name=name, p=getattr(sim, "p", None), error=error))
-df = pd.DataFrame(data)
 
-# plot error curves of p over N
-fig, ax = plt.subplots(figsize=(11, 8.5))
-ax.set_title("Convergence of 2D advection of a square in a single direction")
-ax.set_xlabel("N")
-ax.set_ylabel("Linf error")
-ax.set_xscale("log", base=2)
-ax.set_yscale("log")
-ax.grid()
-
-
-for name in configs.keys():
-    df_name = df[df["name"] == name]
-    p = df_name["p"].values[0]
-    style = styles[name]
-
-    ax.plot(
-        df_name["N"],
-        df_name["error"],
-        label=name,
-        **style,
-    )
-ax.legend()
-fig.savefig(plot_path, dpi=300)
+    df = pd.DataFrame(data)
+    plot_convergence(df)

@@ -13,33 +13,33 @@ base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence-2d/"
 plot_path = "benchmarks/entropy-wave-convergence/2d/plot.png"
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
-apriori = dict(ZS=True, GL=True, **common)
+apriori = dict(ZS=True, GL=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
     MOOD=True, MUSCL_limiter="PP2D", lazy_primitives="full", NAD_atol=1e-3, **common
 )
 
 configs = {
     "p0": dict(p=0),
-    "MH": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
+    "p1": dict(p=1),
     "p3": dict(p=3),
-    "ZS3/wa": dict(p=3, lazy_primitives="adaptive", **apriori),
-    "MM3": dict(p=3, **aposteriori),
     "p7": dict(p=7),
-    "ZS7/wa": dict(p=7, lazy_primitives="adaptive", **apriori),
+    "MH": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
+    "ZS3": dict(p=3, **apriori),
+    "MM3": dict(p=3, **aposteriori),
+    "ZS7": dict(p=7, **apriori),
     "MM7": dict(p=7, **aposteriori),
 }
 
 styles = {
     "p0": dict(color="k"),
-    "p1": dict(color="darkgray"),
-    "MH/none": dict(color="darkgray", linestyle=".."),
-    "MH": dict(color="darkgray", linestyle="--"),
-    "p3": dict(color="tab:blue"),
-    "ZS3/wa": dict(color="tab:blue", linestyle="--", marker="^"),
-    "MM3": dict(color="tab:blue", linestyle="--", marker="o", mfc="none"),
-    "p7": dict(color="tab:green"),
-    "ZS7/wa": dict(color="tab:green", linestyle="--", marker="^"),
-    "MM7": dict(color="tab:green", linestyle="--", marker="o", mfc="none"),
+    "p1": dict(color="blue"),
+    "p3": dict(color="green"),
+    "p7": dict(color="red"),
+    "MH": dict(color="blue", linestyle="--", marker="o", mfc="none"),
+    "ZS3": dict(color="green", linestyle="--", marker="o", mfc="none"),
+    "MM3": dict(color="green", linestyle="--", marker="*", mfc="none"),
+    "ZS7": dict(color="red", linestyle="--", marker="o", mfc="none"),
+    "MM7": dict(color="red", linestyle="--", marker="*", mfc="none"),
 }
 
 N_values = [16, 32, 64, 128, 256]
@@ -47,6 +47,35 @@ N_values = [16, 32, 64, 128, 256]
 
 gamma = 5 / 3
 T = 1.0
+
+
+def plot_convergence(df):
+    # plot error curves of p over N
+    fig, ax = plt.subplots(figsize=(11, 8.5))
+    ax.set_title("Convergence of 2D entropy wave")
+    ax.set_xlabel("N")
+    ax.set_ylabel("Linf error")
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.grid()
+
+    for name in configs.keys():
+        df_name = df[df["name"] == name]
+
+        if df_name.empty:
+            continue
+
+        style = styles[name]
+
+        ax.plot(
+            df_name["N"],
+            df_name["error"],
+            label=name,
+            **style,
+        )
+    ax.legend()
+    fig.savefig(plot_path, dpi=300)
+
 
 # remove old output
 if os.path.exists(plot_path):
@@ -91,28 +120,6 @@ for (name, config), N in product(configs.items(), N_values):
     vz1 = sim.snapshots[-1]["wcc"][idx("vz")]
     error = linf_norm(vz1 - vz0)
     data.append(dict(N=N, name=name, p=getattr(sim, "p", None), error=error))
-df = pd.DataFrame(data)
 
-# plot error curves of p over N
-fig, ax = plt.subplots(figsize=(11, 8.5))
-ax.set_title("Entropy wave convergence")
-ax.set_xlabel("N")
-ax.set_ylabel("Linf error")
-ax.set_xscale("log", base=2)
-ax.set_yscale("log")
-ax.grid()
-
-
-for name in configs.keys():
-    df_name = df[df["name"] == name]
-    p = df_name["p"].values[0]
-    style = styles[name]
-
-    ax.plot(
-        df_name["N"],
-        df_name["error"],
-        label=name,
-        **style,
-    )
-ax.legend()
-fig.savefig(plot_path, dpi=300)
+    df = pd.DataFrame(data)
+    plot_convergence(df)
