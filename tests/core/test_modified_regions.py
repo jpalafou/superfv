@@ -221,18 +221,21 @@ def test_compute_theta(
 def test_detect_NAD_violations(dims: str, absolute_dmp: bool, include_corners: bool):
     xp = configure_xp()
 
-    uold, buffer, out = sample_data(dims, nout=1, xp=xp)
-    unew, _, _ = sample_data(dims, nout=1, xp=xp)
-    out = out[..., 0]
+    uold, buffer, out1 = sample_data(dims, nout=1, xp=xp)
+    unew, _, dmp = sample_data(dims, nout=2, xp=xp)
+
+    out = out1[..., 0]
+
     modified = detect_NAD_violations(
         xp,
         uold,
         unew,
         tuple(dims),
-        out=out,
-        dmp=buffer,
         absolute_dmp=absolute_dmp,
         include_corners=include_corners,
+        out=out,
+        dmp=dmp,
+        buffer=buffer,
     )
 
     assert not xp.any(xp.isnan(out[modified]))

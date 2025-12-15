@@ -7,8 +7,17 @@ from superfv.advection_solver import AdvectionSolver
 
 @pytest.mark.parametrize("N", [32, 40, 64])
 @pytest.mark.parametrize("p", [1, 2, 3, 4, 5, 6, 7])
-@pytest.mark.parametrize("cascade", ["first-order", "muscl1", "full"])
-def test_mpp_1d(N: int, p: int, cascade: str):
+@pytest.mark.parametrize(
+    "config",
+    [
+        dict(cascade="first-order"),
+        dict(cascade="muscl1"),
+        dict(cascade="muscl1", absolute_dmp=True),
+        dict(cascade="muscl1", NAD_rtol=1e-1),
+        dict(cascade="full"),
+    ],
+)
+def test_mpp_1d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = 20
     PAD_atol = 1e-14
@@ -20,10 +29,10 @@ def test_mpp_1d(N: int, p: int, cascade: str):
         nx=N,
         p=p,
         MOOD=True,
-        cascade=cascade,
         max_MOOD_iters=max_MOOD_iters,
         PAD={"rho": (0, 1)},
         PAD_atol=PAD_atol,
+        **config,
     )
     sim.run(n=n_steps, q_max=2)
 
@@ -34,8 +43,17 @@ def test_mpp_1d(N: int, p: int, cascade: str):
 
 @pytest.mark.parametrize("N", [32, 40, 64])
 @pytest.mark.parametrize("p", [1, 2, 3, 4, 5, 6, 7])
-@pytest.mark.parametrize("cascade", ["first-order", "muscl1", "full"])
-def test_mpp_2d(N: int, p: int, cascade: str):
+@pytest.mark.parametrize(
+    "config",
+    [
+        dict(cascade="first-order"),
+        dict(cascade="muscl1"),
+        dict(cascade="muscl1", absolute_dmp=True),
+        dict(cascade="muscl1", NAD_rtol=1e-1),
+        dict(cascade="full"),
+    ],
+)
+def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = 40
     PAD_atol = 1e-14
@@ -48,12 +66,12 @@ def test_mpp_2d(N: int, p: int, cascade: str):
         ny=N,
         p=p,
         MOOD=True,
-        cascade=cascade,
         max_MOOD_iters=max_MOOD_iters,
         NAD=True,
         NAD_atol=PAD_atol,
         PAD={"rho": (0.0, 1.0)},
         PAD_atol=PAD_atol,
+        **config,
     )
     sim.run(n=n_steps, q_max=2)
 

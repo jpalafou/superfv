@@ -51,12 +51,17 @@ class MOODConfig(LimiterConfig):
         blend: Whether to blend troubled cells when using a fallback scheme. Only valid
             for cascades of length 2.
         max_iters: The maximum number of iterations to perform.
-        absolute_dmp: Whether to use the absolute values of the DMP instead of the
-            range to set the NAD bounds. The NAD condition for each case is:
+        absolute_dmp: If True, the absolute tolerance `atol` is scaled by the global
+            range of `u_old` for each variable. If False, `atol` is used as a fixed
+            additive tolerance. The NAD tolerance is defined as:
             - `absolute_dmp=False`:
-                umin-rtol*(umax-umin)-atol <= u_new <= umax+rtol*(umax-umin)+atol
+                delta = rtol*(umax-umin)+atol
             - `absolute_dmp=True`:
-                umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
+                delta = rtol*(umax-umin)+atol*(umaxglob-uminglob)
+            where umax and umin are the DMP of each cell and umaxglob and uminglob are
+            the global maxima and minima of `u_old` for each variable. Then the NAD
+            criterion is:
+                umin-delta <= u_new <= umax+delta
         include_corners: Whether to include corner cells when computing the local
             minima and maxima.
         NAD_rtol: Relative tolerance for NAD violations.
@@ -298,12 +303,13 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
             (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
             active_dims,
-            out=_NAD_violations_,
-            dmp=_dmp_,
             rtol=NAD_rtol,
             atol=NAD_atol,
             absolute_dmp=absolute_dmp,
             include_corners=include_corners,
+            out=_NAD_violations_,
+            dmp=_dmp_,
+            buffer=_abuff_,
         )
         NAD_violations = _NAD_violations_[interior]
 
@@ -378,13 +384,14 @@ def detect_NAD_violations(
     u_new: ArrayLike,
     u_old: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    *,
-    out: ArrayLike,
-    dmp: ArrayLike,
     rtol: float = 1.0,
     atol: float = 0.0,
     absolute_dmp: bool = False,
     include_corners: bool = False,
+    *,
+    out: ArrayLike,
+    dmp: ArrayLike,
+    buffer: ArrayLike,
 ) -> Tuple[slice, ...]:
     """
     Compute the numerical admissibility detection (NAD) violations.
@@ -394,35 +401,61 @@ def detect_NAD_violations(
         u_new: New solution array. Has shape (nvars, nx, ny, nz).
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
+        rtol: Relative tolerance for the NAD violations.
+        atol: Absolute tolerance for the NAD violations. See `absolute_dmp` for
+            details.
+        absolute_dmp: If True, the absolute tolerance `atol` is scaled by the global
+            range of `u_old` for each variable. If False, `atol` is used as a fixed
+            additive tolerance. The NAD tolerance is defined as:
+            - `absolute_dmp=False`:
+                delta = rtol*(umax-umin)+atol
+            - `absolute_dmp=True`:
+                delta = rtol*(umax-umin)+atol*(umaxglob-uminglob)
+            where umax and umin are the DMP of each cell and umaxglob and uminglob are
+            the global maxima and minima of `u_old` for each variable. Then the NAD
+            criterion is:
+                umin-delta <= u_new <= umax+delta
+        include_corners: Whether to include corner values in the DMP computation.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
         dmp: Array to store the local minima and maxima. Has shape
             (nvars, nx, ny, nz, >=2).
-        rtol: Relative tolerance for the NAD violations.
-        atol: Absolute tolerance for the NAD violations.
-        absolute_dmp: Whether to use the absolute values of the DMP instead of the
-            range to set the NAD bounds. The NAD condition for each case is:
-            - `absolute_dmp=False`:
-                umin-rtol*(umax-umin)-atol <= u_new <= umax+rtol*(umax-umin)+atol
-            - `absolute_dmp=True`:
-                umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
-        include_corners: Whether to include corner values in the DMP computation.
+        buffer: Buffer array with shape (nvars, nx, ny, nz, >=3) to store intermediate
+            values.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    dmp_min, dmp_max = dmp[..., 0], dmp[..., 1]
+    # allocate arrays
+    dmp_min = dmp[..., 0]
+    dmp_max = dmp[..., 1]
+
+    check_buffer_slots(buffer, required=3)
+    dmp_range = buffer[..., 0]
+    lower_bound = buffer[..., 1]
+    upper_bound = buffer[..., 2]
+
+    # compute discrete maximum principle (dmp)
     dmp_modified = compute_dmp(
         xp, u_old, active_dims, out=dmp, include_corners=include_corners
     )
     modified = dmp_modified[:-1]
 
+    # compute NAD bounds based on rtol
+    dmp_range[...] = dmp_max - dmp_min
+    upper_bound[...] = dmp_max + rtol * dmp_range
+    lower_bound[...] = dmp_min - rtol * dmp_range
+
+    # compute NAD bounds based on atol
     if absolute_dmp:
-        upper_bound = dmp_max + rtol * xp.abs(dmp_max) + atol
-        lower_bound = dmp_min - rtol * xp.abs(dmp_min) - atol
+        global_max = u_old.max(axis=(1, 2, 3), keepdims=True)
+        global_min = u_old.min(axis=(1, 2, 3), keepdims=True)
+        global_range = global_max - global_min
+        upper_bound[...] += atol * global_range
+        lower_bound[...] -= atol * global_range
     else:
-        dmp_range = dmp_max - dmp_min
-        upper_bound = dmp_max + rtol * dmp_range + atol
-        lower_bound = dmp_min - rtol * dmp_range - atol
+        upper_bound[...] += atol
+        lower_bound[...] -= atol
+
     out[modified] = xp.minimum(u_new - lower_bound, upper_bound - u_new)[modified]
 
     return modified

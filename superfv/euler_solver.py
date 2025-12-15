@@ -197,12 +197,17 @@ class EulerSolver(FiniteVolumeSolver):
                 if a cell is troubled in the MOOD loop.
             NAD_rtol: Relative tolerance for the NAD violations.
             NAD_atol: Absolute tolerance for the NAD violations.
-            absolute_dmp: Whether to use the absolute values of the DMP instead of the
-            range to set the NAD bounds. The NAD condition for each case is:
-            - `absolute_dmp=False`:
-                umin-rtol*(umax-umin)-atol <= u_new <= umax+rtol*(umax-umin)+atol
-            - `absolute_dmp=True`:
-                umin-rtol*|umin|-atol <= u_new <= umax+rtol*|umax|+atol
+            absolute_dmp: If True, the absolute tolerance `atol` is scaled by the global
+                range of `u_old` for each variable. If False, `atol` is used as a fixed
+                additive tolerance. The NAD tolerance is defined as:
+                - `absolute_dmp=False`:
+                    delta = rtol*(umax-umin)+atol
+                - `absolute_dmp=True`:
+                    delta = rtol*(umax-umin)+atol*(umaxglob-uminglob)
+                where umax and umin are the DMP of each cell and umaxglob and uminglob
+                are the global maxima and minima of `u_old` for each variable. Then the
+                NAD criterion is:
+                    umin-delta <= u_new <= umax+delta
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
