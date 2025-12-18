@@ -778,9 +778,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
         idx = self.variable_index_map
 
-        rtol = xp.full(self.nvars, xp.nan)
-        gtol = xp.full(self.nvars, xp.nan)
-        atol = xp.full(self.nvars, xp.nan)
+        rtol = xp.zeros(self.nvars)
+        gtol = xp.zeros(self.nvars)
+        atol = xp.zeros(self.nvars)
 
         def validate_and_assign(tol_dict: Optional[Dict[str, float]], arr: ArrayLike):
             if tol_dict is None:
