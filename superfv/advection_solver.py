@@ -52,9 +52,9 @@ class AdvectionSolver(FiniteVolumeSolver):
         detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
         NAD: bool = True,
-        NAD_rtol: float = 1e-2,
-        NAD_atol: float = 1e-8,
-        absolute_dmp: bool = False,
+        NAD_rtol: Optional[Dict[str, float]] = None,
+        NAD_gtol: Optional[Dict[str, float]] = None,
+        NAD_atol: Optional[Dict[str, float]] = None,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -180,19 +180,11 @@ class AdvectionSolver(FiniteVolumeSolver):
                 using adaptive timestepping.
             NAD: Whether to use nuerical admissibility detection (NAD) when determining
                 if a cell is troubled in the MOOD loop.
-            NAD_rtol: Relative tolerance for the NAD violations.
-            NAD_atol: Absolute tolerance for the NAD violations.
-            absolute_dmp: If True, the absolute tolerance `atol` is scaled by the global
-                range of `u_old` for each variable. If False, `atol` is used as a fixed
-                additive tolerance. The NAD tolerance is defined as:
-                - `absolute_dmp=False`:
-                    delta = rtol*(umax-umin)+atol
-                - `absolute_dmp=True`:
-                    delta = rtol*(umax-umin)+atol*(umaxglob-uminglob)
-                where umax and umin are the DMP of each cell and umaxglob and uminglob
-                are the global maxima and minima of `u_old` for each variable. Then the
-                NAD criterion is:
-                    umin-delta <= u_new <= umax+delta
+            NAD_rtol, NAD_gtol, NAD_atol: Dictionary of tolerance values for individual
+                variables used to relax the bounds for numerical admissibility
+                detection (see the `detect_NAD_violations` documentation). If a
+                variable or tolerance is not provided, it is treated as 0. If a
+                tolerance is None, all variables are treated as 0 for that tolerance.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
@@ -248,8 +240,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             limiting_vars=limiting_vars,
             NAD=NAD,
             NAD_rtol=NAD_rtol,
+            NAD_gtol=NAD_gtol,
             NAD_atol=NAD_atol,
-            absolute_dmp=absolute_dmp,
             include_corners=include_corners,
             PAD=PAD,
             PAD_atol=PAD_atol,

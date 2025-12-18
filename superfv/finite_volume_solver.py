@@ -101,9 +101,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = True,
-        NAD_rtol: float = 1e-2,
-        NAD_atol: float = 1e-8,
-        absolute_dmp: bool = False,
+        NAD_rtol: Optional[Dict[str, float]] = None,
+        NAD_gtol: Optional[Dict[str, float]] = None,
+        NAD_atol: Optional[Dict[str, float]] = None,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -226,19 +226,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 using adaptive timestepping.
             NAD: Whether to use nuerical admissibility detection (NAD) when determining
                 if a cell is troubled in the MOOD loop.
-            NAD_rtol: Relative tolerance for the NAD violations.
-            NAD_atol: Absolute tolerance for the NAD violations.
-            absolute_dmp: If True, the absolute tolerance `atol` is scaled by the global
-                range of `u_old` for each variable. If False, `atol` is used as a fixed
-                additive tolerance. The NAD tolerance is defined as:
-                - `absolute_dmp=False`:
-                    delta = rtol*(umax-umin)+atol
-                - `absolute_dmp=True`:
-                    delta = rtol*(umax-umin)+atol*(umaxglob-uminglob)
-                where umax and umin are the DMP of each cell and umaxglob and uminglob
-                are the global maxima and minima of `u_old` for each variable. Then the
-                NAD criterion is:
-                    umin-delta <= u_new <= umax+delta
+            NAD_rtol, NAD_gtol, NAD_atol: Dictionary of tolerance values for individual
+                variables used to relax the bounds for numerical admissibility
+                detection (see the `detect_NAD_violations` documentation). If a
+                variable or tolerance is not provided, it is treated as 0. If a
+                tolerance is None, all variables are treated as 0 for that tolerance.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
@@ -279,9 +271,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             detect_closing_troubles,
             limiting_vars,
             NAD,
-            NAD_atol,
             NAD_rtol,
-            absolute_dmp,
+            NAD_gtol,
+            NAD_atol,
             include_corners,
             PAD,
             PAD_atol,
@@ -437,9 +429,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
-        NAD_atol: float,
-        NAD_rtol: float,
-        absolute_dmp: bool,
+        NAD_rtol: Optional[Dict[str, float]],
+        NAD_gtol: Optional[Dict[str, float]],
+        NAD_atol: Optional[Dict[str, float]],
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         PAD_atol: float,
@@ -452,6 +444,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.MOOD: bool
         self.MOOD_config: MOODConfig
         self.MOOD_state: MOODState
+
+        # add limiting variables to the index map
+        idx = self.variable_index_map
+        idx.add_var_to_group("limiting", [])
+        if limiting_vars == "all":
+            limiting_vars = tuple(idx.var_idx_map.keys())
+        elif limiting_vars == "actives":
+            limiting_vars = tuple(idx.group_var_map["primitives"])
+        idx.add_var_to_group("limiting", limiting_vars)
 
         self._init_PAD(PAD)  # defines `self.using_PAD`
 
@@ -515,12 +516,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 detect_closing_troubles,
                 NAD,
                 NAD_rtol,
+                NAD_gtol,
                 NAD_atol,
                 SED,
                 check_uniformity,
                 uniformity_tol,
                 PAD_atol,
-                absolute_dmp,
                 include_corners,
             )
         else:
@@ -531,15 +532,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 check_uniformity=False,
                 physical_admissibility_detection=False,
             )
-
-        # add limiting variables to the index map
-        idx = self.variable_index_map
-        idx.add_var_to_group("limiting", [])
-        if limiting_vars == "all":
-            limiting_vars = tuple(idx.var_idx_map.keys())
-        elif limiting_vars == "actives":
-            limiting_vars = tuple(idx.group_var_map["primitives"])
-        idx.add_var_to_group("limiting", limiting_vars)
 
     def _init_PAD(
         self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
@@ -661,13 +653,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         skip_trouble_counts: bool,
         detect_closing_troubles: bool,
         NAD: bool,
-        NAD_rtol: float,
-        NAD_atol: float,
+        NAD_rtol: Optional[Dict[str, float]],
+        NAD_gtol: Optional[Dict[str, float]],
+        NAD_atol: Optional[Dict[str, float]],
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
         PAD_atol: float,
-        absolute_dmp: bool,
         include_corners: bool,
     ):
         base_scheme = self.base_scheme
@@ -751,6 +743,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(f"Unknown cascade type: {cascade}.")
         cascade_list = [self.base_scheme] + fallback_schemes
 
+        # init NAD arrays if needed
+        if NAD:
+            self._init_NAD(NAD_rtol, NAD_gtol, NAD_atol)
+
         # assign MOOD config
         self.MOOD_config = MOODConfig(
             shock_detection=base_scheme.lazy_primitives == "adaptive",
@@ -765,13 +761,45 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             cascade=cascade_list,
             blend=blend,
             max_iters=max_MOOD_iters,
-            absolute_dmp=absolute_dmp,
             include_corners=include_corners,
-            NAD_rtol=NAD_rtol,
-            NAD_atol=NAD_atol,
+            NAD_rtol=self.arrays["NAD_rtol"] if NAD and NAD_rtol else None,
+            NAD_gtol=self.arrays["NAD_gtol"] if NAD and NAD_gtol else None,
+            NAD_atol=self.arrays["NAD_atol"] if NAD and NAD_atol else None,
             skip_trouble_counts=skip_trouble_counts,
             detect_closing_troubles=detect_closing_troubles,
         )
+
+    def _init_NAD(
+        self,
+        NAD_rtol: Optional[Dict[str, float]],
+        NAD_gtol: Optional[Dict[str, float]],
+        NAD_atol: Optional[Dict[str, float]],
+    ):
+        xp = self.xp
+        idx = self.variable_index_map
+
+        rtol = xp.full(self.nvars, xp.nan)
+        gtol = xp.full(self.nvars, xp.nan)
+        atol = xp.full(self.nvars, xp.nan)
+
+        def validate_and_assign(tol_dict: Optional[Dict[str, float]], arr: ArrayLike):
+            if tol_dict is None:
+                return
+
+            for var, tol in tol_dict.items():
+                if var not in idx.var_idx_map:
+                    raise ValueError(f"{var} not defined in variable index map.")
+                if var not in idx.group_var_map["limiting"]:
+                    raise ValueError(f"{var} not in limiting variable group.")
+                arr[idx(var)] = tol
+
+        validate_and_assign(NAD_rtol, rtol)
+        validate_and_assign(NAD_gtol, gtol)
+        validate_and_assign(NAD_atol, atol)
+
+        self.arrays.add("NAD_rtol", rtol)
+        self.arrays.add("NAD_gtol", gtol)
+        self.arrays.add("NAD_atol", atol)
 
     def _init_snapshots(self):
         self.step_log: Dict[str, List[float]] = {}
@@ -1120,7 +1148,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             else:
                 limiting_buffer_cost += 5
         elif check_MOOD and self.MOOD:
-            limiting_buffer_cost = 4
+            limiting_buffer_cost = 8
         else:
             limiting_buffer_cost = 0
 
