@@ -10,8 +10,8 @@ from superfv.advection_solver import AdvectionSolver
 @pytest.mark.parametrize(
     "config",
     [
-        dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
-        dict(cascade="muscl1", NAD_gtol={"rho": 1e-2}),
+        dict(cascade="first-order", NAD_rtol=1e-2),
+        dict(cascade="muscl1", NAD_gtol={"rho": 1e-1}),
         dict(cascade="full", NAD_atol=1e-8),
     ],
 )
@@ -44,15 +44,17 @@ def test_mpp_1d(N: int, p: int, config: dict):
 @pytest.mark.parametrize(
     "config",
     [
+        dict(cascade="first-order"),
         dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
-        dict(cascade="muscl1", NAD_gtol={"rho": 1e-2}),
-        dict(cascade="full", NAD_atol=1e-8),
+        dict(cascade="muscl1"),
+        dict(cascade="muscl1", NAD_rtol=1e-1),
+        dict(cascade="full"),
     ],
 )
 def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = 40
-    PAD_atol = 1e-14
+    tol = 1e-14
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -64,14 +66,16 @@ def test_mpp_2d(N: int, p: int, config: dict):
         MOOD=True,
         max_MOOD_iters=max_MOOD_iters,
         NAD=True,
+        NAD_atol=tol,
+        NAD_gtol=tol,
         PAD={"rho": (0.0, 1.0)},
-        PAD_atol=PAD_atol,
+        PAD_atol=tol,
         **config,
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) > -tol
+    assert np.max(sim.minisnapshots["rho_max"]) < 1 + tol
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
 
 

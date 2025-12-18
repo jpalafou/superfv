@@ -465,8 +465,6 @@ def detect_NAD_violations(
     upper_violations[...] = upper_bound - u_new
     out[modified] = xp.minimum(lower_violations[modified], upper_violations[modified])
 
-    out[modified] = -1
-
     return modified
 
 
