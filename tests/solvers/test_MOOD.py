@@ -12,7 +12,7 @@ from superfv.advection_solver import AdvectionSolver
     [
         dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
         dict(cascade="muscl1", NAD_gtol={"rho": 1e-2}),
-        dict(cascade="full", NAD_atol={"rho": 1e-8}),
+        dict(cascade="full", NAD_atol=1e-8),
     ],
 )
 def test_mpp_1d(N: int, p: int, config: dict):
@@ -46,7 +46,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
     [
         dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
         dict(cascade="muscl1", NAD_gtol={"rho": 1e-2}),
-        dict(cascade="full", NAD_atol={"rho": 1e-8}),
+        dict(cascade="full", NAD_atol=1e-8),
     ],
 )
 def test_mpp_2d(N: int, p: int, config: dict):

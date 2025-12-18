@@ -66,9 +66,9 @@ class EulerSolver(FiniteVolumeSolver):
         detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "actives",
         NAD: bool = True,
-        NAD_rtol: Optional[Dict[str, float]] = None,
-        NAD_gtol: Optional[Dict[str, float]] = None,
-        NAD_atol: Optional[Dict[str, float]] = None,
+        NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_atol: Optional[Union[Dict[str, float], float]] = None,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -195,11 +195,15 @@ class EulerSolver(FiniteVolumeSolver):
                 using adaptive timestepping.
             NAD: Whether to use nuerical admissibility detection (NAD) when determining
                 if a cell is troubled in the MOOD loop.
-            NAD_rtol, NAD_gtol, NAD_atol: Dictionary of tolerance values for individual
-                variables used to relax the bounds for numerical admissibility
-                detection (see the `detect_NAD_violations` documentation). If a
-                variable or tolerance is not provided, it is treated as 0. If a
-                tolerance is None, all variables are treated as 0 for that tolerance.
+            NAD_rtol, NAD_gtol, NAD_atol: Tolerance values used to relax the bounds for
+                numerical admissibility detection (see the `detect_NAD_violations`).
+                May be provided as one of the following:
+                - Dict[str, float]: A dictionary mapping variable names to their
+                    corresponding tolerance values. Limiting variables not provided in
+                    the dictionary are treated as having a tolerance of 0.
+                - float: A single float value that is applied to all limiting
+                    variables.
+                - None: All limiting variables are treated as having a tolerance of 0.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided

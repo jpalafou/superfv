@@ -101,9 +101,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = True,
-        NAD_rtol: Optional[Dict[str, float]] = None,
-        NAD_gtol: Optional[Dict[str, float]] = None,
-        NAD_atol: Optional[Dict[str, float]] = None,
+        NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_atol: Optional[Union[Dict[str, float], float]] = None,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -226,11 +226,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 using adaptive timestepping.
             NAD: Whether to use nuerical admissibility detection (NAD) when determining
                 if a cell is troubled in the MOOD loop.
-            NAD_rtol, NAD_gtol, NAD_atol: Dictionary of tolerance values for individual
-                variables used to relax the bounds for numerical admissibility
-                detection (see the `detect_NAD_violations` documentation). If a
-                variable or tolerance is not provided, it is treated as 0. If a
-                tolerance is None, all variables are treated as 0 for that tolerance.
+            NAD_rtol, NAD_gtol, NAD_atol: Tolerance values used to relax the bounds for
+                numerical admissibility detection (see the `detect_NAD_violations`).
+                May be provided as one of the following:
+                - Dict[str, float]: A dictionary mapping variable names to their
+                    corresponding tolerance values. Limiting variables not provided in
+                    the dictionary are treated as having a tolerance of 0.
+                - float: A single float value that is applied to all limiting
+                    variables.
+                - None: All limiting variables are treated as having a tolerance of 0.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
@@ -429,9 +433,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
-        NAD_rtol: Optional[Dict[str, float]],
-        NAD_gtol: Optional[Dict[str, float]],
-        NAD_atol: Optional[Dict[str, float]],
+        NAD_rtol: Optional[Union[Dict[str, float], float]],
+        NAD_gtol: Optional[Union[Dict[str, float], float]],
+        NAD_atol: Optional[Union[Dict[str, float], float]],
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         PAD_atol: float,
@@ -653,9 +657,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         skip_trouble_counts: bool,
         detect_closing_troubles: bool,
         NAD: bool,
-        NAD_rtol: Optional[Dict[str, float]],
-        NAD_gtol: Optional[Dict[str, float]],
-        NAD_atol: Optional[Dict[str, float]],
+        NAD_rtol: Optional[Union[Dict[str, float], float]],
+        NAD_gtol: Optional[Union[Dict[str, float], float]],
+        NAD_atol: Optional[Union[Dict[str, float], float]],
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
@@ -771,9 +775,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     def _init_NAD(
         self,
-        NAD_rtol: Optional[Dict[str, float]],
-        NAD_gtol: Optional[Dict[str, float]],
-        NAD_atol: Optional[Dict[str, float]],
+        NAD_rtol: Optional[Union[Dict[str, float], float]],
+        NAD_gtol: Optional[Union[Dict[str, float], float]],
+        NAD_atol: Optional[Union[Dict[str, float], float]],
     ):
         xp = self.xp
         idx = self.variable_index_map
@@ -782,11 +786,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         gtol = xp.zeros(self.nvars)
         atol = xp.zeros(self.nvars)
 
-        def validate_and_assign(tol_dict: Optional[Dict[str, float]], arr: ArrayLike):
-            if tol_dict is None:
+        def validate_and_assign(
+            tols: Optional[Union[Dict[str, float], float]], arr: ArrayLike
+        ):
+            if tols is None:
                 return
 
-            for var, tol in tol_dict.items():
+            if isinstance(tols, (int, float)):
+                arr.fill(tols)
+                return
+
+            for var, tol in tols.items():
                 if var not in idx.var_idx_map:
                     raise ValueError(f"{var} not defined in variable index map.")
                 if var not in idx.group_var_map["limiting"]:
