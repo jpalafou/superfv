@@ -1,1 +1,1 @@
-- [ ] add: PAD-only MPP test in 2D
+- [x] add: PAD-only MPP test in 2D

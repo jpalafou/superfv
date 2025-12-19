@@ -11,8 +11,10 @@ from superfv.advection_solver import AdvectionSolver
     "config",
     [
         dict(cascade="first-order", NAD_rtol=1e-2, scale_NAD_rtol_by_dt=True),
+        dict(cascade="first-order", NAD=False, SED=False),
         dict(cascade="muscl1", NAD_gtol={"rho": 1e-1}),
         dict(cascade="full", NAD_atol=1e-8),
+        dict(cascade="full", NAD=False, SED=False),
     ],
 )
 def test_mpp_1d(N: int, p: int, config: dict):
@@ -44,16 +46,16 @@ def test_mpp_1d(N: int, p: int, config: dict):
 @pytest.mark.parametrize(
     "config",
     [
-        dict(cascade="first-order"),
         dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
-        dict(cascade="muscl1"),
+        dict(cascade="first-order", NAD=False, SED=False),
         dict(cascade="muscl1", NAD_rtol=1e-1, scale_NAD_rtol_by_dt=True),
+        dict(cascade="muscl1", NAD=False, SED=False),
         dict(cascade="full"),
     ],
 )
 def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
-    max_MOOD_iters = 40
+    max_MOOD_iters = N**2 if not config.get("NAD", True) else 40
     tol = 1e-14
 
     sim = AdvectionSolver(
@@ -65,7 +67,6 @@ def test_mpp_2d(N: int, p: int, config: dict):
         p=p,
         MOOD=True,
         max_MOOD_iters=max_MOOD_iters,
-        NAD=True,
         NAD_atol=tol,
         NAD_gtol=tol,
         PAD={"rho": (0.0, 1.0)},
