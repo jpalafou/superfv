@@ -104,6 +104,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_atol: Optional[Union[Dict[str, float], float]] = None,
+        scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -235,6 +236,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - float: A single float value that is applied to all limiting
                     variables.
                 - None: All limiting variables are treated as having a tolerance of 0.
+            scale_NAD_rtol_by_dt: Whether to scale the NAD rtol by dt.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
@@ -278,6 +280,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             NAD_rtol,
             NAD_gtol,
             NAD_atol,
+            scale_NAD_rtol_by_dt,
             include_corners,
             PAD,
             PAD_atol,
@@ -436,6 +439,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         NAD_rtol: Optional[Union[Dict[str, float], float]],
         NAD_gtol: Optional[Union[Dict[str, float], float]],
         NAD_atol: Optional[Union[Dict[str, float], float]],
+        scale_NAD_rtol_by_dt: bool,
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         PAD_atol: float,
@@ -522,6 +526,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 NAD_rtol,
                 NAD_gtol,
                 NAD_atol,
+                scale_NAD_rtol_by_dt,
                 SED,
                 check_uniformity,
                 uniformity_tol,
@@ -660,6 +665,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         NAD_rtol: Optional[Union[Dict[str, float], float]],
         NAD_gtol: Optional[Union[Dict[str, float], float]],
         NAD_atol: Optional[Union[Dict[str, float], float]],
+        scale_NAD_rtol_by_dt: bool,
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
@@ -769,6 +775,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             NAD_rtol=self.arrays["NAD_rtol"] if NAD and NAD_rtol else None,
             NAD_gtol=self.arrays["NAD_gtol"] if NAD and NAD_gtol else None,
             NAD_atol=self.arrays["NAD_atol"] if NAD and NAD_atol else None,
+            scale_NAD_rtol_by_dt=scale_NAD_rtol_by_dt,
             skip_trouble_counts=skip_trouble_counts,
             detect_closing_troubles=detect_closing_troubles,
         )

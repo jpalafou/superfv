@@ -61,6 +61,7 @@ class MOODConfig(LimiterConfig):
             (nvars,) or is treated as 0s if None.
         NAD_atol: Absolute tolerance used to widen the bounds for numerical
             admissibility. Has shape (nvars,) or is treated as 0s if None.
+        scale_NAD_rtol_by_dt: Whether to scale the NAD rtol by the time step size dt.
         skip_trouble_counts: Whether to skip counting the number of troubled cells. If
             True, `detect_troubled_cells` will return (-1, -1) always. This can be used
             to avoid CUDA synchronization overhead when the troubled cell count is not
@@ -79,6 +80,7 @@ class MOODConfig(LimiterConfig):
     NAD_rtol: Optional[ArrayLike] = None
     NAD_gtol: Optional[ArrayLike] = None
     NAD_atol: Optional[ArrayLike] = None
+    scale_NAD_rtol_by_dt: bool = False
     skip_trouble_counts: bool = False
     detect_closing_troubles: bool = True
 
@@ -105,6 +107,7 @@ class MOODConfig(LimiterConfig):
                 NAD_rtol=None if self.NAD_rtol is None else self.NAD_rtol.tolist(),
                 NAD_gtol=None if self.NAD_gtol is None else self.NAD_gtol.tolist(),
                 NAD_atol=None if self.NAD_atol is None else self.NAD_atol.tolist(),
+                scale_NAD_rtol_by_dt=self.scale_NAD_rtol_by_dt,
                 skip_trouble_counts=self.skip_trouble_counts,
             )
         )
@@ -247,6 +250,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     NAD_rtol = config.NAD_rtol
     NAD_gtol = config.NAD_gtol
     NAD_atol = config.NAD_atol
+    scale_NAD_rtol_by_dt = config.scale_NAD_rtol_by_dt
     include_corners = config.include_corners
     PAD = config.physical_admissibility_detection
     PAD_bounds = config.PAD_bounds
@@ -293,14 +297,23 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     _w_new_[...] = fv_solver.primitives_from_conservatives(_u_new_)
 
     # compute NAD violations
+    if NAD_rtol is not None:
+        NAD_rtol = NAD_rtol[lim_slc]
+        if scale_NAD_rtol_by_dt:
+            NAD_rtol *= dt
+    if NAD_gtol is not None:
+        NAD_gtol = NAD_gtol[lim_slc]
+    if NAD_atol is not None:
+        NAD_atol = NAD_atol[lim_slc]
+
     if NAD:
         detect_NAD_violations(
             xp,
             (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
             (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
-            rtol=NAD_rtol[lim_slc] if NAD_rtol is not None else None,
-            gtol=NAD_gtol[lim_slc] if NAD_gtol is not None else None,
-            atol=NAD_atol[lim_slc] if NAD_atol is not None else None,
+            rtol=NAD_rtol,
+            gtol=NAD_gtol,
+            atol=NAD_atol,
             active_dims=active_dims,
             include_corners=include_corners,
             out=_NAD_violations_,

@@ -55,6 +55,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_atol: Optional[Union[Dict[str, float], float]] = None,
+        scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         PAD_atol: float = 1e-15,
@@ -189,6 +190,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                 - float: A single float value that is applied to all limiting
                     variables.
                 - None: All limiting variables are treated as having a tolerance of 0.
+            scale_NAD_rtol_by_dt: Whether to scale the NAD rtol by dt.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
@@ -246,6 +248,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             NAD_rtol=NAD_rtol,
             NAD_gtol=NAD_gtol,
             NAD_atol=NAD_atol,
+            scale_NAD_rtol_by_dt=scale_NAD_rtol_by_dt,
             include_corners=include_corners,
             PAD=PAD,
             PAD_atol=PAD_atol,

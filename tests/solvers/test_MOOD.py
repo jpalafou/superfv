@@ -10,7 +10,7 @@ from superfv.advection_solver import AdvectionSolver
 @pytest.mark.parametrize(
     "config",
     [
-        dict(cascade="first-order", NAD_rtol=1e-2),
+        dict(cascade="first-order", NAD_rtol=1e-2, scale_NAD_rtol_by_dt=True),
         dict(cascade="muscl1", NAD_gtol={"rho": 1e-1}),
         dict(cascade="full", NAD_atol=1e-8),
     ],
@@ -47,7 +47,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
         dict(cascade="first-order"),
         dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
         dict(cascade="muscl1"),
-        dict(cascade="muscl1", NAD_rtol=1e-1),
+        dict(cascade="muscl1", NAD_rtol=1e-1, scale_NAD_rtol_by_dt=True),
         dict(cascade="full"),
     ],
 )
