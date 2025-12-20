@@ -296,24 +296,27 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     fv_solver.apply_bc(t, _u_new_, scheme=fv_solver.base_scheme)
     _w_new_[...] = fv_solver.primitives_from_conservatives(_u_new_)
 
-    # compute NAD violations
-    if NAD_rtol is not None:
-        NAD_rtol = NAD_rtol[lim_slc]
-        if scale_NAD_rtol_by_dt:
-            NAD_rtol *= dt
-    if NAD_gtol is not None:
-        NAD_gtol = NAD_gtol[lim_slc]
-    if NAD_atol is not None:
-        NAD_atol = NAD_atol[lim_slc]
-
     if NAD:
+        NAD_rtol_local: Optional[ArrayLike] = None
+        NAD_gtol_local: Optional[ArrayLike] = None
+        NAD_atol_local: Optional[ArrayLike] = None
+
+        if NAD_rtol is not None:
+            NAD_rtol_local = NAD_rtol[lim_slc].copy()
+            if scale_NAD_rtol_by_dt:
+                NAD_rtol_local *= dt
+        if NAD_gtol is not None:
+            NAD_gtol_local = NAD_gtol[lim_slc]
+        if NAD_atol is not None:
+            NAD_atol_local = NAD_atol[lim_slc]
+
         detect_NAD_violations(
             xp,
             (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
             (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
-            rtol=NAD_rtol,
-            gtol=NAD_gtol,
-            atol=NAD_atol,
+            rtol=NAD_rtol_local,
+            gtol=NAD_gtol_local,
+            atol=NAD_atol_local,
             active_dims=active_dims,
             include_corners=include_corners,
             out=_NAD_violations_,
