@@ -1649,6 +1649,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         nodes = self.arrays[f"_{dim}_nodes_"]
 
+        self.sanitize_face_states(nodes)
+
         # convert to primitives if requested
         if convert_to_primitives:
             nodes[...] = self.primitives_from_conservatives(nodes)
@@ -1692,6 +1694,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
         F[...] = _F_[self.flux_interior[dim]][..., 0]
+
+    def sanitize_face_states(self, states: ArrayLike):
+        """
+        Sanitize reconstructed face states in-place to ensure numerical and physical
+        admissibility before flux computation, such as enforcing positivity.
+
+        Args:
+            states: Reconstructed face states to sanitize (modified in-place).
+
+        Notes:
+            This is a placeholder method and should be overridden in subclasses if
+            specific sanitization procedures are required.
+        """
+        return None
 
     def compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """

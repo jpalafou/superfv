@@ -83,6 +83,8 @@ class EulerSolver(FiniteVolumeSolver):
         gamma: float = 1.4,
         isothermal: bool = False,
         iso_cs: float = 1.0,
+        rho_min: float = 1e-15,
+        P_min: float = 1e-15,
     ):
         """
         Initialize the finite volume solver for the Euler equations.
@@ -229,11 +231,15 @@ class EulerSolver(FiniteVolumeSolver):
                 pressure is directly proportional to density. If True, the `gamma`
                 parameter is ignored.
             iso_cs (float): Isothermal sound speed. Used only if `isothermal=True`.
+            rho_min, P_min (float): Density and pressure floor values for cell face
+                states, applied before the Riemann solver and flux integration.
         """
         # init hydro
         self.gamma = gamma
         self.isothermal = isothermal
         self.iso_cs = iso_cs
+        self.rho_min = rho_min
+        self.P_min = P_min
 
         # init base class
         super().__init__(
@@ -498,6 +504,23 @@ class EulerSolver(FiniteVolumeSolver):
                 self.isothermal,
                 self.iso_cs,
             )
+
+    def sanitize_face_states(self, states: ArrayLike):
+        """
+        Sanitize reconstructed face states in-place to ensure positivity of density and
+        pressure before passing them to the Riemann solver.
+
+        Args:
+            states: Reconstructed face states to sanitize (modified in-place).
+        """
+        xp = self.xp
+        idx = self.variable_index_map
+
+        rho = states[idx("rho")]
+        P = states[idx("P")]
+
+        xp.maximum(rho, self.rho_min, out=rho)
+        xp.maximum(P, self.P_min, out=P)
 
     def log_quantity(self) -> Dict[str, float]:
         """
