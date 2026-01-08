@@ -83,8 +83,8 @@ class EulerSolver(FiniteVolumeSolver):
         gamma: float = 1.4,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-        cell_average_floor: bool = True,
-        cell_face_floor: bool = True,
+        cell_average_floor: bool = False,
+        cell_face_floor: bool = False,
         rho_min: float = 1e-12,
         P_min: float = 1e-12,
     ):
