@@ -1,1 +1,2 @@
-- [x] add: PAD-only MPP test in 2D
+- [x] add: hydro parameters to `to_dict` output
+- [x] fix: "after{} revisions"

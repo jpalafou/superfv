@@ -1399,6 +1399,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _u_[self.interior] = u
         self.apply_bc(t, _u_, scheme=scheme)
 
+        self.sanitize_cell_averages(_u_)
+
         # 1) conservative and primitive centroids
         fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=_buff_)
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
@@ -1446,6 +1448,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 _w_[...] = xp.where(_shockless_, _wp_[..., 0], _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
+
+    def sanitize_cell_averages(self, u: ArrayLike):
+        """
+        Sanitize the cell-averaged conservative variables in place.
+
+        Args:
+            u: Array of conservative variables.
+
+        Notes:
+            This is a no-op by default. Subclasses may override this method to enforce
+            physical constraints on the conservative variables, such as positivity of
+            density and pressure.
+        """
+        return
 
     @MethodTimer(cat="apply_bc")
     def apply_bc(
@@ -1919,7 +1935,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         revised_dt = dt / 2
         if revised_dt < dt_min:
             raise RuntimeError(
-                f"Adaptive dt revision resulted in dt={revised_dt} < {dt_min=} after"
+                f"Adaptive dt revision resulted in dt={revised_dt} < {dt_min=} after "
                 f"{n_dt_revisions} revisions."
             )
 

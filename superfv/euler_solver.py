@@ -83,8 +83,10 @@ class EulerSolver(FiniteVolumeSolver):
         gamma: float = 1.4,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-        rho_min: float = 1e-15,
-        P_min: float = 1e-15,
+        cell_average_floor: bool = True,
+        cell_face_floor: bool = True,
+        rho_min: float = 1e-12,
+        P_min: float = 1e-12,
     ):
         """
         Initialize the finite volume solver for the Euler equations.
@@ -231,13 +233,20 @@ class EulerSolver(FiniteVolumeSolver):
                 pressure is directly proportional to density. If True, the `gamma`
                 parameter is ignored.
             iso_cs (float): Isothermal sound speed. Used only if `isothermal=True`.
-            rho_min, P_min (float): Density and pressure floor values for cell face
-                states, applied before the Riemann solver and flux integration.
+            cell_average_floor (bool): Whether to enforce a floor on cell-averaged
+                density before reconstructing face states. `rho_min` is used as the
+                floor value.
+            cell_face_floor (bool): Whether to enforce a floor on face-state density
+                and pressure after reconstruction and before passing to the Riemann
+                solver. `rho_min` and `P_min` are used as the floor values.
+            rho_min, P_min (float): Minimum allowable density and pressure values.
         """
         # init hydro
         self.gamma = gamma
         self.isothermal = isothermal
         self.iso_cs = iso_cs
+        self.cell_average_floor = cell_average_floor
+        self.cell_face_floor = cell_face_floor
         self.rho_min = rho_min
         self.P_min = P_min
 
@@ -505,22 +514,37 @@ class EulerSolver(FiniteVolumeSolver):
                 self.iso_cs,
             )
 
-    def sanitize_face_states(self, states: ArrayLike):
+    def sanitize_cell_averages(self, u: ArrayLike):
         """
-        Sanitize reconstructed face states in-place to ensure positivity of density and
-        pressure before passing them to the Riemann solver.
+        Enforce positivity of density in the cell-averaged conservative variables.
 
         Args:
-            states: Reconstructed face states to sanitize (modified in-place).
+            u: Array of conservative variables.
         """
+        if not self.cell_average_floor:
+            return
+
         xp = self.xp
         idx = self.variable_index_map
 
-        rho = states[idx("rho")]
-        P = states[idx("P")]
+        xp.maximum(u[idx("rho")], self.rho_min, out=u[idx("rho")])
 
-        xp.maximum(rho, self.rho_min, out=rho)
-        xp.maximum(P, self.P_min, out=P)
+    def sanitize_face_states(self, states: ArrayLike):
+        """
+        Enforce positivity of density in the primitive face states before passing to
+        the Riemann solver.
+
+        Args:
+            states: Array of face states as primitive variables.
+        """
+        if not self.cell_face_floor:
+            return
+
+        xp = self.xp
+        idx = self.variable_index_map
+
+        xp.maximum(states[idx("rho")], self.rho_min, out=states[idx("rho")])
+        xp.maximum(states[idx("P")], self.P_min, out=states[idx("P")])
 
     def log_quantity(self) -> Dict[str, float]:
         """
@@ -754,4 +778,10 @@ class EulerSolver(FiniteVolumeSolver):
         """
         out = super().to_dict()
         out["gamma"] = self.gamma
+        out["isothermal"] = self.isothermal
+        out["iso_cs"] = self.iso_cs
+        out["cell_average_floor"] = self.cell_average_floor
+        out["cell_face_floor"] = self.cell_face_floor
+        out["rho_min"] = self.rho_min
+        out["P_min"] = self.P_min
         return out
