@@ -54,6 +54,7 @@ class EulerSolver(FiniteVolumeSolver):
         lazy_primitives: Literal["none", "full", "adaptive"] = "none",
         eta_max: float = 0.025,
         riemann_solver: Literal["llf", "hllc"] = "hllc",
+        face_fallback: bool = False,
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
@@ -83,6 +84,8 @@ class EulerSolver(FiniteVolumeSolver):
         gamma: float = 1.4,
         isothermal: bool = False,
         iso_cs: float = 1.0,
+        rho_min: float = 1e-12,
+        P_min: float = 1e-12,
     ):
         """
         Initialize the finite volume solver for the Euler equations.
@@ -155,6 +158,8 @@ class EulerSolver(FiniteVolumeSolver):
             eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
+            face_fallback: Whether to enable face state fallback based on floor
+                violations.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
                 `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
                 - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
@@ -218,7 +223,8 @@ class EulerSolver(FiniteVolumeSolver):
                 extrema detection is enabled. Uniform regions satisfy:
                 max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
                     <= uniformity_tol * |u_i|
-            uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
+            uniformity_tol: Tolerance for uniformity check when check_uniformity is
+                True.
             vis_rtol, vis_atol: Relative and absolute tolerances for the visualization
                 threshold. See `compute_vis`.
             cupy: Whether to use CuPy for array operations.
@@ -229,11 +235,15 @@ class EulerSolver(FiniteVolumeSolver):
                 pressure is directly proportional to density. If True, the `gamma`
                 parameter is ignored.
             iso_cs (float): Isothermal sound speed. Used only if `isothermal=True`.
+            rho_min, P_min (float): Density and pressure floors when
+                `face_fallback=True`, ignored otherwise.
         """
         # init hydro
         self.gamma = gamma
         self.isothermal = isothermal
         self.iso_cs = iso_cs
+        self.rho_min = rho_min
+        self.P_min = P_min
 
         # init base class
         super().__init__(
@@ -256,6 +266,7 @@ class EulerSolver(FiniteVolumeSolver):
             dt_min=dt_min,
             GL=GL,
             riemann_solver=riemann_solver,
+            face_fallback=face_fallback,
             flux_recipe=flux_recipe,
             lazy_primitives=lazy_primitives,
             eta_max=eta_max,
@@ -498,6 +509,36 @@ class EulerSolver(FiniteVolumeSolver):
                 self.isothermal,
                 self.iso_cs,
             )
+
+    def primitive_reconstruction_fallback(self, wp: ArrayLike, w0: ArrayLike):
+        """
+        Overwrite the reconstructed face states `wp` with fallback values `w0` in place
+        based on density and pressure floor violations.
+
+        Args:
+            wp: Array of reconstructed face states. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
+            w0: Array of fallback values. Has shape (nvars, nx, ny, nz).
+        """
+        xp = self.xp
+        idx = self.variable_index_map
+        arrays = self.arrays
+
+        # allocate violations buffer
+        violations = arrays["_buffer_"][..., : wp.shape[4]]
+
+        if violations.shape != wp.shape:
+            raise ValueError(
+                f"violations array has shape {violations.shape}, but expected {wp.shape}"
+            )
+
+        # detect density/pressure floor violations
+        violations[...] = 0
+        violations += wp[idx("rho")] < self.rho_min
+        violations += wp[idx("P")] < self.P_min
+
+        # apply fallback where violations occur
+        wp[...] = xp.where(violations, w0[..., np.newaxis], wp)
 
     def log_quantity(self) -> Dict[str, float]:
         """

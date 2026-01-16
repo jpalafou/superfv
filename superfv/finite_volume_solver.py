@@ -89,6 +89,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: Literal["none", "full", "adaptive"] = "none",
         eta_max: float = 0.025,
         riemann_solver: str = "dummy_riemann_solver",
+        face_fallback: bool = False,
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
@@ -186,6 +187,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
+            face_fallback: Whether to enable face state fallback based on floor
+                violations.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
                 `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
                 - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
@@ -287,6 +290,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             SED,
             check_uniformity,
             uniformity_tol,
+            face_fallback,
         )
         self._init_snapshots()
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
@@ -446,6 +450,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
+        face_fallback: bool,
     ):
         self.base_scheme: InterpolationScheme
         self.using_PAD: bool
@@ -541,6 +546,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 check_uniformity=False,
                 physical_admissibility_detection=False,
             )
+
+        # init face fallback
+        self.face_fallback = face_fallback
 
     def _init_PAD(
         self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
@@ -1643,15 +1651,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         axis = DIM_TO_AXIS[dim]
         flux_name = self.flux_names[dim]
 
-        flux_name = self.flux_names[dim]
+        # allocate arrays
         F = self.arrays[flux_name]
         _F_ = self.arrays[f"_{flux_name}_"]
-
         nodes = self.arrays[f"_{dim}_nodes_"]
 
         # convert to primitives if requested
         if convert_to_primitives:
             nodes[...] = self.primitives_from_conservatives(nodes)
+
+        # sanitize face reconstruction
+        if self.face_fallback:
+            self.primitive_reconstruction_fallback(nodes, self.arrays["_w_"])
 
         wl = nodes[crop(4, (None, n))]
         wr = nodes[crop(4, (n, 2 * n))]
@@ -1692,6 +1703,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
         F[...] = _F_[self.flux_interior[dim]][..., 0]
+
+    def primitive_reconstruction_fallback(self, wp: ArrayLike, w0: ArrayLike):
+        """
+        Overwrite the reconstructed face states `wp` with fallback values `w0` in place
+        based on physical constraints which must be enforced in a subclass.
+
+        Args:
+            wp: Array of reconstructed face states. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
+            w0: Array of fallback values. Has shape (nvars, nx, ny, nz).
+        """
+        raise NotImplementedError("Implement in subclass if needed.")
 
     def compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """
@@ -2533,6 +2556,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ic=getattr(self.ic, "__name__", "unknown name"),
             integrator=self.integrator if hasattr(self, "integrator") else None,
             MOOD_config=self.MOOD_config.to_dict() if self.MOOD else None,
+            face_fallback=self.face_fallback,
             mesh=self.mesh.to_dict(),
             nvars=self.nvars,
             n_passive_vars=self.n_passive_vars,
