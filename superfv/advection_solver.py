@@ -40,6 +40,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         lazy_primitives: Literal["none", "full", "adaptive"] = "full",
         eta_max: float = 0.025,
         riemann_solver: Literal["advection_upwind"] = "advection_upwind",
+        face_fallback: bool = False,
         MUSCL: bool = False,
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
@@ -140,6 +141,8 @@ class AdvectionSolver(FiniteVolumeSolver):
             eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
             riemann_solver: Name of the Riemann solver function. Must be implemented in
                 the derived class.
+            face_fallback: Whether to enable face state fallback based on floor
+                violations.
             MUSCL: Whether to use the MUSCL scheme as the base scheme. Overrides `p`,
                 `flux_recipe`, and `lazy_primitives`. The `flux_recipe` options become:
                 - `flux_recipe=1`: Slope limiting is performed on conservative slopes.
@@ -233,6 +236,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             lazy_primitives=lazy_primitives,
             eta_max=eta_max,
             riemann_solver=riemann_solver,
+            face_fallback=face_fallback,
             MUSCL=MUSCL,
             MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,
