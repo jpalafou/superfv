@@ -1,3 +1,4 @@
+import argparse
 import os
 import shutil
 from functools import partial
@@ -8,7 +9,11 @@ import numpy as np
 from superfv import EulerSolver
 from superfv.initial_conditions import decaying_isotropic_turbulence
 
-N = 256
+parser = argparse.ArgumentParser(prog="isoturb")
+parser.add_argument("--N", type=int, required=True)
+args = parser.parse_args()
+
+N = args.N
 cupy = N >= 128
 overwrite = False
 
@@ -17,11 +22,11 @@ if cupy:
     base_path += "cupy/"
 
 # Loop parameters
-M_max_values = [0.01, 0.1, 1, 10, 20, 30, 40, 50]
+M_max_values = [0.01, 0.1, 1, 5, 10, 20, 30, 40, 50]
 
 seeds = range(1, 31)
 
-common = dict(PAD={"rho": (0, None)}, SED=False)
+common = dict(PAD={"rho": (0, None)}, SED=False, face_fallback=True)
 musclhancock = dict(p=1, MUSCL=True, **common)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
@@ -36,39 +41,38 @@ aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
 aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
 configs = {
-    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
-    "MUSCL-Hancock-fb": dict(MUSCL_limiter="PP2D", face_fallback=True, **musclhancock),
-    "ZS3": dict(p=3, GL=True, **apriori),
-    "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3-3/rtol_1e-2_atol_1e-14": dict(
+    "fb/MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
+    "fb/ZS3": dict(p=3, GL=True, **apriori),
+    "fb/ZS7": dict(p=7, GL=True, **apriori),
+    "fb/ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    "fb/ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "fb/MM3-3/rtol_1e-2_atol_1e-14": dict(
         p=3, NAD_rtol=1e-2, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM7-3/rtol_1e-2_atol_1e-14": dict(
+    "fb/MM7-3/rtol_1e-2_atol_1e-14": dict(
         p=7, NAD_rtol=1e-2, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM3-3/rtol_1e-1_atol_1e-14": dict(
+    "fb/MM3-3/rtol_1e-1_atol_1e-14": dict(
         p=3, NAD_rtol=1e-1, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM7-3/rtol_1e-1_atol_1e-14": dict(
+    "fb/MM7-3/rtol_1e-1_atol_1e-14": dict(
         p=7, NAD_rtol=1e-1, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM3-3/rtol_1e0_atol_1e-14": dict(
+    "fb/MM3-3/rtol_1e0_atol_1e-14": dict(
         p=3, NAD_rtol=1e0, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM7-3/rtol_1e0_atol_1e-14": dict(
+    "fb/MM7-3/rtol_1e0_atol_1e-14": dict(
         p=7, NAD_rtol=1e0, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM3-3/rtol_1e1_atol_1e-14": dict(
+    "fb/MM3-3/rtol_1e1_atol_1e-14": dict(
         p=3, NAD_rtol=1e1, NAD_atol=1e-14, **aposteriori3
     ),
-    "MM7-3/rtol_1e1_atol_1e-14": dict(
+    "fb/MM7-3/rtol_1e1_atol_1e-14": dict(
         p=7, NAD_rtol=1e1, NAD_atol=1e-14, **aposteriori3
     ),
 }
 
-no_fail_set = set()  # {"p0", "MUSCL-Hancock", "ZS3", "ZS7"}
+no_fail_set = set()  # {"fb/p0", "fb/MUSCL-Hancock", "fb/ZS3", "fb/ZS7"}
 
 
 def compute_velocity_rms(sim):
