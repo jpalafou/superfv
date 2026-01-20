@@ -32,7 +32,6 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
             seed=seed,
             M=10,
             slope=-5 / 3,
-            solenoidal=False,
         ),
         isothermal=True,
         nx=N,
