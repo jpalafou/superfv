@@ -523,9 +523,15 @@ class EulerSolver(FiniteVolumeSolver):
                 (1, nx, ny, nz, ninterpolations).
         """
         idx = self.variable_index_map
-        return (wp[idx("rho", keepdims=True)] < self.rho_min) | (
-            wp[idx("P", keepdims=True)] < self.P_min
-        )
+        xp = self.xp
+
+        rho = wp[idx("rho", keepdims=True)]
+        P = wp[idx("P", keepdims=True)]
+
+        violations = (rho < self.rho_min) | xp.isnan(rho)
+        violations |= (P < self.P_min) | xp.isnan(P)
+
+        return violations
 
     def log_quantity(self) -> Dict[str, float]:
         """

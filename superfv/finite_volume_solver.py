@@ -1665,7 +1665,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             nodes[...] = self.primitives_from_conservatives(nodes)
 
         # sanitize face reconstruction
-        self.primitive_reconstruction_fallback(nodes, self.arrays["_w_"])
+        self.primitive_reconstruction_fallback(
+            nodes[crop(4, (None, 2 * n))], self.arrays["_w_"], scheme
+        )
 
         wl = nodes[crop(4, (None, n))]
         wr = nodes[crop(4, (n, 2 * n))]
@@ -1707,7 +1709,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         F[...] = _F_[self.flux_interior[dim]][..., 0]
 
-    def primitive_reconstruction_fallback(self, wp: ArrayLike, w0: ArrayLike):
+    def primitive_reconstruction_fallback(
+        self, wp: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
+    ):
         """
         Overwrite the reconstructed face states `wp` with fallback values `w0` in place
         based on physical constraints which must be enforced in a subclass.
@@ -1716,16 +1720,25 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wp: Array of primitive reconstructed face states. Has shape
                 (nvars, nx, ny, nz, ninterpolations).
             w0: Array of primitive fallback values. Has shape (nvars, nx, ny, nz).
+            scheme: Interpolation scheme to use for the reconstruction.
         """
         if not self.face_fallback:
             return
 
         xp = self.xp
+        mesh = self.mesh
 
         violations = self.reconstruction_fallback_mask(wp)
 
         n = xp.sum(violations[self.interior]).item()
         self.n_emergency_fallbacks += n
+
+        total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
+        freq = n / total_nodes
+        if freq > 0.01:
+            warnings.warn(
+                f"{freq * 100:.2f}% of face nodes required emergency fallback reconstruction."
+            )
 
         wp[...] = xp.where(violations, w0[..., xp.newaxis], wp)
 
