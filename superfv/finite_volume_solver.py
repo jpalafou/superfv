@@ -829,6 +829,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def _init_snapshots(self):
         self.step_log: Dict[str, List[float]] = {}
 
+        # init emergency face fallback statistics
+        self.step_log["nfine_emergency_fallbacks"] = []
+        self.n_emergency_fallbacks: int = 0
+
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             init_zhang_shu_scalar_statistics(self)
 
@@ -1714,7 +1718,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             w0: Array of primitive fallback values. Has shape (nvars, nx, ny, nz).
         """
         if not self.face_fallback:
-            self.nfine_emergency_fallbacks.append(0)
             return
 
         xp = self.xp
@@ -1722,8 +1725,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         violations = self.reconstruction_fallback_mask(wp)
 
         n = xp.sum(violations[self.interior]).item()
-
-        self.nfine_emergency_fallbacks.append(n)
+        self.n_emergency_fallbacks += n
 
         wp[...] = xp.where(violations, w0[..., xp.newaxis], wp)
 
@@ -2016,8 +2018,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 "n_updates": n_updates,
                 "substep_update_rate": n_updates / data["step_time"],
                 "update_rate": self.mesh.size / data["step_time"],
-                "nfine_emergency_fallbacks": self.nfine_emergency_fallbacks,
-                "n_emergency_fallbacks": sum(self.nfine_emergency_fallbacks),
+            }
+        )
+
+        # log emergency face fallback statistics
+        data.update(
+            {
+                "nfine_emergency_fallbacks": self.step_log[
+                    "nfine_emergency_fallbacks"
+                ].copy()
             }
         )
 
@@ -2047,7 +2056,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         super().reset_substepwise_logs()
 
         self.n_updates = 0
-        self.nfine_emergency_fallbacks: List[int] = []
+
+        # clear emergency face fallback statistics
+        self.step_log["nfine_emergency_fallbacks"].clear()
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             self.arrays["theta_log"].fill(0.0)
@@ -2069,6 +2080,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
 
         self.n_updates += self.mesh.size
+
+        # append emergency face fallback statistics
+        self.step_log["nfine_emergency_fallbacks"].append(self.n_emergency_fallbacks)
+        self.n_emergency_fallbacks = 0
 
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             theta = self.arrays["_theta_"][self.interior][..., 0]

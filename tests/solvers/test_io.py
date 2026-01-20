@@ -51,7 +51,9 @@ def test_discarding_snapshots(
 @pytest.mark.parametrize("snapshot_mode", ["target", "every"])
 @pytest.mark.parametrize("fixed_n_steps", [True, False])
 def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: bool):
-    sim = EulerSolver(sod_shock_tube_1d, bcx="free", nx=100, p=0)
+    sim = EulerSolver(
+        sod_shock_tube_1d, bcx="free", nx=100, p=1, ZS=True, adaptive_dt=False
+    )
 
     if fixed_n_steps:
         sim.run(
@@ -74,12 +76,19 @@ def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: 
     assert np.array_equal(sim.mesh.Y, loader.mesh.Y)
     assert np.array_equal(sim.mesh.Z, loader.mesh.Z)
 
+    def equal_lists(a, b):
+        if a is b:
+            return True
+        if type(a) is not type(b):
+            return False
+        if isinstance(a, list):
+            return len(a) == len(b) and all(equal_lists(x, y) for x, y in zip(a, b))
+        if isinstance(a, float) and isinstance(b, float):
+            return np.isnan(a) and np.isnan(b) or a == b
+        return a == b
+
     for key in sim.minisnapshots.keys():
-        assert np.array_equal(
-            np.array(sim.minisnapshots[key]),
-            np.array(loader.minisnapshots[key]),
-            equal_nan=True,
-        )
+        assert equal_lists(sim.minisnapshots[key], loader.minisnapshots[key])
 
     for i in range(len(sim.snapshots.data)):
         assert np.array_equal(sim.snapshots[i]["u"], loader.snapshots[i]["u"])
