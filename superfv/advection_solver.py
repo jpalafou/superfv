@@ -55,7 +55,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         NAD: bool = True,
         NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
-        NAD_atol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_atol: Optional[Union[Dict[str, float], float]] = 1e-14,
         scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,

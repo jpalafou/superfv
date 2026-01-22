@@ -14,4 +14,4 @@ module purge
 module load anaconda3/2025.6
 conda activate superfv
 
-python benchmarks/isotropic-decaying-turbulence --N 256
+python benchmarks/isotropic-decaying-turbulence --N 128
