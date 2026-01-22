@@ -1735,7 +1735,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
         freq = n / total_nodes
-        if freq > 0.01:
+        if freq > 0.05:
             warnings.warn(
                 f"{freq * 100:.2f}% of face nodes required emergency fallback reconstruction."
             )
