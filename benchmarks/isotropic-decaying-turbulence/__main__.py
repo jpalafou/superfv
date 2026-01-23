@@ -17,12 +17,12 @@ N = args.N
 cupy = N >= 128
 overwrite = False
 
-base_path = f"/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence2/{N}x{N}/"
+base_path = f"/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/{N}x{N}/"
 if cupy:
     base_path += "cupy/"
 
 # Loop parameters
-M_max_values = [0.01, 0.1, 1, 10, 50]
+M_max_values = [0.01, 0.1, 1, 10, 40, 50]
 
 seeds = range(1, 31)
 
@@ -31,6 +31,7 @@ musclhancock = dict(p=1, MUSCL=True, **common)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
     MOOD=True,
+    face_fallback=False,
     lazy_primitives="full",
     MUSCL_limiter="PP2D",
     limiting_vars=("rho", "vx", "vy"),
@@ -46,14 +47,14 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3-3/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
-    "MM7-3/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
-    "MM3-3/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
-    "MM7-3/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
-    "MM3-3/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
-    "MM7-3/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
-    "MM3-3/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
-    "MM7-3/rtol_1e1": dict(p=7, NAD_rtol=1e1, **aposteriori3),
+    "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
+    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
+    "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
+    "MM3/3revs/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
+    "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
+    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
+    "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
+    "MM7/3revs/rtol_1e1": dict(p=7, NAD_rtol=1e1, **aposteriori3),
 }
 
 no_fail_set = set()  # {"p0", "MUSCL-Hancock", "ZS3", "ZS7"}
