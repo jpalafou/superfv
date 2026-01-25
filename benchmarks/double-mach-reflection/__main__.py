@@ -6,63 +6,36 @@ from superfv.initial_conditions import double_mach_reflection
 from superfv.tools.slicing import crop
 
 # loop parameters
-base_path = "/scratch/gpfs/jp7427/out/double-mach-reflection/"
-
+base_path = "/scratch/gpfs/TEYSSIER/jp7427/out/double-mach-reflection/"
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
+musclhancock = dict(p=1, MUSCL=True, **common)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
-aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D", **common)
+aposteriori = dict(
+    MOOD=True,
+    face_fallback=False,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    **common,
+)
+aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
+aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
+aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
 configs = {
-    "p0": dict(p=0),
-    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
-    "MUSCL3": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", CFL=0.5, **common),
+    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/rtol_1": dict(p=3, NAD_rtol=1, **aposteriori),
-    "MM7/rtol_1": dict(p=7, NAD_rtol=1, **aposteriori),
-    "MM3/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori),
-    "MM7/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori),
-    "MM3/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori),
-    "MM7/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori),
-    "MM3-2/rtol_1": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1, **aposteriori
-    ),
-    "MM7-2/rtol_1": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1, **aposteriori
-    ),
-    "MM3-2/rtol_1e-1": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-1, **aposteriori
-    ),
-    "MM7-2/rtol_1e-1": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-1, **aposteriori
-    ),
-    "MM3-2/rtol_1e-2": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-2, **aposteriori
-    ),
-    "MM7-2/rtol_1e-2": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=2, NAD_rtol=1e-2, **aposteriori
-    ),
-    "MM3-3/rtol_1": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1, **aposteriori
-    ),
-    "MM7-3/rtol_1": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1, **aposteriori
-    ),
-    "MM3-3/rtol_1e-1": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-1, **aposteriori
-    ),
-    "MM7-3/rtol_1e-1": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-1, **aposteriori
-    ),
-    "MM3-3/rtol_1e-2": dict(
-        p=3, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-2, **aposteriori
-    ),
-    "MM7-3/rtol_1e-2": dict(
-        p=7, cascade="muscl1", max_MOOD_iters=3, NAD_rtol=1e-2, **aposteriori
-    ),
+    "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
+    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
+    "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
+    "MM3/3revs/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
+    "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
+    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
+    "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
+    "MM7/3revs/rtol_1e1": dict(p=7, NAD_rtol=1e1, **aposteriori3),
 }
 
 # simulation parameters
@@ -148,6 +121,16 @@ for name, config in configs.items():
             path=sim_path,
         )
         sim.write_timings()
+
+    except FileExistsError as e:
+        print(f"\n\tFile exists for simulation {name}, skipping: {e}\n")
+        continue
+
     except Exception as e:
-        print(f"\nFailed: {e}\n")
+        print(f"\n\tFailed: {e}\n")
+
+        # write error
+        with open(f"{sim_path}/error.txt", "w") as f:
+            f.write(str(e))
+
         continue

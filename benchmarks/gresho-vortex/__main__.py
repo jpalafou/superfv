@@ -7,10 +7,10 @@ from superfv.initial_conditions import gresho_vortex
 N = 96
 T = [0.2, 0.4, 0.6, 0.8, 1.0]
 gamma = 5 / 3
-v0 = 5.0
-M_max_values = [1e-1, 1e-2, 1e-3]
-base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/"
+base_path = "/scratch/gpfs/TEYSSIER/jp7427/out/gresho-vortex/"
 
+v0_values = [5.0]
+M_max_values = [1e-1, 1e-2, 1e-3]
 configs = {
     "p0": dict(p=0),
     "p1": dict(p=1),
@@ -18,12 +18,13 @@ configs = {
     "p3": dict(p=3),
     "p4": dict(p=4),
     "p5": dict(p=5),
+    "p7": dict(p=7),
 }
 
-for (name, config), M_max in product(configs.items(), M_max_values):
-    print(f"Running {name} with M_max = {M_max}")
+for v0, (name, config), M_max in product(v0_values, configs.items(), M_max_values):
+    print(f"Running {name} with M_max = {M_max} and v0 = {v0}")
 
-    sim_path = base_path + f"{name}/M_max_{M_max}/"
+    sim_path = base_path + f"v0_{v0}/{name}/M_max_{M_max}/"
 
     sim = EulerSolver(
         ic=partial(gresho_vortex, gamma=gamma, M_max=M_max, v0=v0),
@@ -36,10 +37,10 @@ for (name, config), M_max in product(configs.items(), M_max_values):
     try:
         sim.run(
             T,
+            allow_overshoot=True,
             q_max=2,
             muscl_hancock=config.get("MUSCL", False),
-            allow_overshoot=True,
-            log_freq=20,
+            log_freq=100,
             path=sim_path,
         )
     except FileExistsError as e:
