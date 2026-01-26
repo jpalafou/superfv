@@ -8,6 +8,7 @@ import numpy as np
 
 from superfv import EulerSolver
 from superfv.initial_conditions import decaying_isotropic_turbulence
+from superfv.tools.device_management import CUPY_AVAILABLE
 
 parser = argparse.ArgumentParser(prog="isoturb")
 parser.add_argument("--N", type=int, required=True)
@@ -16,6 +17,11 @@ args = parser.parse_args()
 N = args.N
 cupy = N >= 128
 overwrite = False
+
+if not cupy and CUPY_AVAILABLE:
+    raise RuntimeError("Requested CPU run but CuPy is available.")
+if cupy and not CUPY_AVAILABLE:
+    raise RuntimeError("Requested GPU run but CuPy is not available.")
 
 base_path = f"/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/{N}x{N}/"
 if cupy:
@@ -47,14 +53,26 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori1),
+    "MM3/1rev/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1),
+    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori1),
+    "MM7/1rev/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1),
+    "MM3/2revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori2),
+    "MM3/2revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori2),
+    "MM7/2revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori2),
+    "MM7/2revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori2),
+    "MM3/3revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori3),
     "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
     "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
     "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
     "MM3/3revs/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
+    "MM3/3revs/no_NAD": dict(p=3, NAD=False, **aposteriori3),
+    "MM7/3revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori3),
     "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
     "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
     "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
     "MM7/3revs/rtol_1e1": dict(p=7, NAD_rtol=1e1, **aposteriori3),
+    "MM7/3revs/no_NAD": dict(p=7, NAD=False, **aposteriori3),
 }
 
 no_fail_set = set()  # {"p0", "MUSCL-Hancock", "ZS3", "ZS7"}
