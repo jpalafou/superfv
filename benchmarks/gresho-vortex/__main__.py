@@ -11,6 +11,10 @@ base_path = "/scratch/gpfs/TEYSSIER/jp7427/out/gresho-vortex/"
 
 v0_values = [5.0]
 M_max_values = [1e-1, 1e-2, 1e-3]
+
+common = dict(PAD={"rho": (0, None), "P": (0, None)})
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
+
 configs = {
     "p0": dict(p=0),
     "p1": dict(p=1),
@@ -19,6 +23,11 @@ configs = {
     "p4": dict(p=4),
     "p5": dict(p=5),
     "p7": dict(p=7),
+    "ZS3": dict(p=3, GL=True, **apriori),
+    "ZS3-cupy": dict(p=3, GL=True, cupy=True, **apriori),
+    # "ZS7": dict(p=7, GL=True, **apriori),
+    # "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    # "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
 }
 
 for v0, (name, config), M_max in product(v0_values, configs.items(), M_max_values):
