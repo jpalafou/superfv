@@ -1590,6 +1590,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
         mesh = self.mesh
         interior = self.interior
+        lim = self.variable_index_map("limiting", keepdims=True)
 
         # define array references
         w = self.arrays["_w_"] if primitives else self.arrays["_u_"]
@@ -1604,7 +1605,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         theta_vis = self.arrays["theta_vis"]
         visualize = self.arrays["visualize"]
 
-        # compute centroid and theta
+        # compute theta
         compute_theta(
             xp,
             w,
@@ -1621,12 +1622,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # limit the face nodes
         if wx is not None:
-            wx[...] = zhang_shu_operator(wx, w[..., np.newaxis], theta)
+            wx[lim] = zhang_shu_operator(wx[lim], w[lim][..., np.newaxis], theta[lim])
         if wy is not None:
-            wy[...] = zhang_shu_operator(wy, w[..., np.newaxis], theta)
+            wy[lim] = zhang_shu_operator(wy[lim], w[lim][..., np.newaxis], theta[lim])
         if wz is not None:
-            wz[...] = zhang_shu_operator(wz, w[..., np.newaxis], theta)
-
+            wz[lim] = zhang_shu_operator(wz[lim], w[lim][..., np.newaxis], theta[lim])
         # compute theta for visualization (ignore cells with small dmp ranges)
         compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
         theta_vis[...] = xp.where(visualize, theta[insert_slice(interior, 4, 0)], 1.0)

@@ -22,7 +22,8 @@ p_CFL_map = {
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7, 15])
 @pytest.mark.parametrize("SED", [True])
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
-def test_1D_advection_mpp(adaptive_dt, p, SED, dim):
+@pytest.mark.parametrize("limiting_vars", ["all", ("rho",)])
+def test_1D_advection_mpp(adaptive_dt, p, SED, dim, limiting_vars):
     if p > 7 and not adaptive_dt:
         pytest.skip("High order schemes require adaptive timestepping.")
     solver = AdvectionSolver(
@@ -32,6 +33,7 @@ def test_1D_advection_mpp(adaptive_dt, p, SED, dim):
         CFL=0.8 if adaptive_dt else p_CFL_map[p],
         adaptive_dt=adaptive_dt and p > 0,
         ZS=True,
+        limiting_vars=limiting_vars,
         PAD={"rho": (0, 1)},
         SED=SED,
         check_uniformity=False,
