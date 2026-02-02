@@ -4,23 +4,34 @@ from superfv.initial_conditions import kelvin_helmholtz_2d
 # loop parameters
 base_path = "/scratch/gpfs/jp7427/out/kelvin-helmholtz/"
 
-PAD = {"rho": (0, None), "P": (0, None)}
-apriori = dict(ZS=True, lazy_primitives="adaptive", PAD=PAD)
-aposteriori = dict(MOOD=True, lazy_primitives="adaptive", PAD=PAD)
+common = dict(PAD={"rho": (0, None), "P": (0, None)})
+musclhancock = dict(p=1, MUSCL=True, **common)
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
+aposteriori = dict(
+    MOOD=True,
+    face_fallback=False,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    **common,
+)
+aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
+aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
+aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
 configs = {
+    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
-    "p0": dict(p=0),
-    "MUSCL-Hancock": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D"),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3": dict(p=3, **aposteriori),
-    "MM7": dict(p=7, **aposteriori),
-    "MM3(1e-1)": dict(p=3, NAD_rtol=1e-1, **aposteriori),
-    "MM7(1e-1)": dict(p=7, NAD_rtol=1e-1, **aposteriori),
-    "MM3(1)": dict(p=3, NAD_rtol=1.0, **aposteriori),
-    "MM7(1)": dict(p=7, NAD_rtol=1.0, **aposteriori),
+    "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
+    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
+    "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
+    "MM3/3revs/no_NAD": dict(p=3, NAD=False, SED=False, **aposteriori3),
+    "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
+    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
+    "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
+    "MM7/3revs/no_NAD": dict(p=7, NAD=False, SED=False, **aposteriori3),
 }
 
 # simulation parameters
@@ -48,7 +59,8 @@ for name, config in configs.items():
             T,
             allow_overshoot=True,
             q_max=2,
-            muscl_hancock=config.get("MUSCL", False),
+            muscl_hancock=name == "MUSCL-Hancock",
+            time_degree=2 if name == "MUSCL3" else None,
             log_freq=1000,
             path=sim_path,
         )

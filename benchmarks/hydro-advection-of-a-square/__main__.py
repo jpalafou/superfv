@@ -11,21 +11,33 @@ base_path = "/scratch/gpfs/jp7427/out/hydro-advection-of-a-square/"
 plot_path = "benchmarks/hydro-advection-of-a-square/plot.png"
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
-apriori = dict(ZS=True, GL=True, lazy_primitives="adaptive", **common)
+musclhancock = dict(p=1, MUSCL=True, **common)
+apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
-    MOOD=True, MUSCL_limiter="PP2D", lazy_primitives="full", NAD_atol=1e-3, **common
+    MOOD=True,
+    face_fallback=False,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    **common,
 )
+aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
+aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
+aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
 configs = {
     "p0": dict(p=0),
     "p1": dict(p=1),
     "p3": dict(p=3),
     "p7": dict(p=7),
-    "MH": dict(p=1, MUSCL=True, MUSCL_limiter="PP2D", **common),
-    "ZS3": dict(p=3, **apriori),
-    "MM3": dict(p=3, **aposteriori),
-    "ZS7": dict(p=7, **apriori),
-    "MM7": dict(p=7, **aposteriori),
+    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
+    "ZS3": dict(p=3, GL=True, **apriori),
+    "ZS7": dict(p=7, GL=True, **apriori),
+    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori1),
+    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori1),
+    "MM3/3revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori3),
+    "MM7/3revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori3),
 }
 
 styles = {
@@ -33,11 +45,15 @@ styles = {
     "p1": dict(color="blue"),
     "p3": dict(color="green"),
     "p7": dict(color="red"),
-    "MH": dict(color="blue", linestyle="--", marker="o", mfc="none"),
+    "MUSCL-Hancock": dict(color="blue", linestyle="--", marker="o", mfc="none"),
     "ZS3": dict(color="green", linestyle="--", marker="o", mfc="none"),
-    "MM3": dict(color="green", linestyle="--", marker="*", mfc="none"),
     "ZS7": dict(color="red", linestyle="--", marker="o", mfc="none"),
-    "MM7": dict(color="red", linestyle="--", marker="*", mfc="none"),
+    "ZS3t": dict(color="green", linestyle="--", marker="+", mfc="none"),
+    "ZS7t": dict(color="red", linestyle="--", marker="+", mfc="none"),
+    "MM3/1rev/rtol_1e-3": dict(color="green", linestyle="--", marker="s", mfc="none"),
+    "MM7/1rev/rtol_1e-3": dict(color="red", linestyle="--", marker="s", mfc="none"),
+    "MM3/3revs/rtol_1e-3": dict(color="green", linestyle="--", marker="^", mfc="none"),
+    "MM7/3revs/rtol_1e-3": dict(color="red", linestyle="--", marker="^", mfc="none"),
 }
 
 N_values = [16, 32, 64, 128, 256]
@@ -102,18 +118,19 @@ for (name, config), N in product(configs.items(), N_values):
     sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=N > 64, **config)
 
     try:
-        sim.run(
-            T,
-            reduce_CFL=True,
-            muscl_hancock=name == "MUSCL-Hancock" or "MH" in name,
-            path=sim_path,
-        )
-        sim.write_timings()
-    except FileExistsError:
         sim = OutputLoader(sim_path)
-    except RuntimeError as e:
-        print(f"  Failed: {e}")
-        continue
+    except FileNotFoundError:
+        try:
+            sim.run(
+                T,
+                reduce_CFL=True,
+                muscl_hancock=name == "MUSCL-Hancock" or "MH" in name,
+                path=sim_path,
+            )
+            sim.write_timings()
+        except RuntimeError as e:
+            print(f"  Failed: {e}")
+            continue
 
     # measure error
     idx = sim.variable_index_map

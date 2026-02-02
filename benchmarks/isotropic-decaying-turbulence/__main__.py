@@ -28,7 +28,7 @@ if cupy:
     base_path += "cupy/"
 
 # Loop parameters
-M_max_values = [0.01, 0.1, 1, 10, 40, 50]
+M_max_values = [0.01, 0.1, 1, 10, 20, 30, 40, 50]
 
 seeds = range(1, 31)
 
@@ -53,20 +53,32 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "MM3/1rev/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori1),
+    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori1),
     "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori1),
     "MM3/1rev/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1),
+    "MM7/1rev/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori1),
+    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori1),
     "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori1),
     "MM7/1rev/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1),
+    "MM3/2revs/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori2),
+    "MM3/2revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori2),
     "MM3/2revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori2),
     "MM3/2revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori2),
+    "MM7/2revs/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori2),
+    "MM7/2revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori2),
     "MM7/2revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori2),
     "MM7/2revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori2),
+    "MM3/3revs/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori3),
+    "MM3/3revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori3),
     "MM3/3revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori3),
     "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
     "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
     "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
     "MM3/3revs/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
     "MM3/3revs/no_NAD": dict(p=3, NAD=False, **aposteriori3),
+    "MM7/3revs/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori3),
+    "MM7/3revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori3),
     "MM7/3revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori3),
     "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
     "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
@@ -148,7 +160,6 @@ for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds)
 
     # check if simulation already done
     if os.path.exists(sim_path):
-        print("meow")
         if (
             os.path.exists(f"{sim_path}timings.txt")
             or os.path.exists(f"{sim_path}error.txt")

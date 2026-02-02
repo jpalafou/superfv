@@ -6,7 +6,7 @@ from superfv.initial_conditions import double_mach_reflection
 from superfv.tools.slicing import crop
 
 # loop parameters
-base_path = "/scratch/gpfs/TEYSSIER/jp7427/out/double-mach-reflection/"
+base_path = "/scratch/gpfs/jp7427/out/double-mach-reflection/"
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
 musclhancock = dict(p=1, MUSCL=True, **common)
@@ -31,11 +31,11 @@ configs = {
     "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
     "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
     "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
-    "MM3/3revs/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
+    "MM3/3revs/no_NAD": dict(p=3, NAD=False, SED=False, **aposteriori3),
     "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
     "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
     "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
-    "MM7/3revs/rtol_1e1": dict(p=7, NAD_rtol=1e1, **aposteriori3),
+    "MM7/3revs/no_NAD": dict(p=7, NAD=False, SED=False, **aposteriori3),
 }
 
 # simulation parameters
