@@ -216,15 +216,20 @@ def test_compute_theta(
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("rtol", [False, True])
-@pytest.mark.parametrize("gtol", [False, True])
-@pytest.mark.parametrize("atol", [False, True])
+@pytest.mark.parametrize(
+    "NAD_config",
+    [
+        dict(),
+        dict(rtol=1e-1),
+        dict(gtol=1e-3),
+        dict(atol=1e-5),
+        dict(rtol=1e-1, delta=False),
+    ],
+)
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_detect_NAD_violations(
     dims: str,
-    rtol: bool,
-    gtol: bool,
-    atol: bool,
+    NAD_config: dict,
     include_corners: bool,
 ):
     xp = configure_xp()
@@ -234,24 +239,20 @@ def test_detect_NAD_violations(
 
     out = out1[..., 0]
 
-    # get NAD tol
-    nvars = uold.shape[0]
-    NAD_rtol = xp.full((nvars,), 1e-1) if rtol else None
-    NAD_gtol = xp.full((nvars,), 1e-3) if gtol else None
-    NAD_atol = xp.full((nvars,), 1e-5) if atol else None
+    for key in ["rtol", "gtol", "atol"]:
+        if key in NAD_config:
+            NAD_config[key] = xp.full((uold.shape[0],), NAD_config[key])
 
     modified = detect_NAD_violations(
         xp,
         uold,
         unew,
         tuple(dims),
-        NAD_rtol,
-        NAD_gtol,
-        NAD_atol,
         include_corners=include_corners,
         out=out,
         dmp=dmp,
         buffer=buffer,
+        **NAD_config,
     )
 
     assert not xp.any(xp.isnan(out[modified]))

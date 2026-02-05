@@ -53,6 +53,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = ("rho",),
         NAD: bool = True,
+        NAD_delta: bool = True,
         NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_atol: Optional[Union[Dict[str, float], float]] = 1e-14,
@@ -184,6 +185,8 @@ class AdvectionSolver(FiniteVolumeSolver):
                 using adaptive timestepping.
             NAD: Whether to use nuerical admissibility detection (NAD) when determining
                 if a cell is troubled in the MOOD loop.
+            NAD_delta: Whether to use the local DMP range to relax the bounds for NAD. If
+                False, only NAD_rtol is used to relax the bounds.
             NAD_rtol, NAD_gtol, NAD_atol: Tolerance values used to relax the bounds for
                 numerical admissibility detection (see the `detect_NAD_violations`).
                 May be provided as one of the following:
@@ -249,6 +252,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             detect_closing_troubles=detect_closing_troubles,
             limiting_vars=limiting_vars,
             NAD=NAD,
+            NAD_delta=NAD_delta,
             NAD_rtol=NAD_rtol,
             NAD_gtol=NAD_gtol,
             NAD_atol=NAD_atol,

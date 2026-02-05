@@ -102,6 +102,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool = True,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = True,
+        NAD_delta: bool = True,
         NAD_rtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
         NAD_atol: Optional[Union[Dict[str, float], float]] = 1e-14,
@@ -230,6 +231,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 using adaptive timestepping.
             NAD: Whether to use nuerical admissibility detection (NAD) when determining
                 if a cell is troubled in the MOOD loop.
+            NAD_delta: Whether to use the local DMP range to relax the bounds for NAD. If
+                False, only NAD_rtol is used to relax the bounds.
             NAD_rtol, NAD_gtol, NAD_atol: Tolerance values used to relax the bounds for
                 numerical admissibility detection (see the `detect_NAD_violations`).
                 May be provided as one of the following:
@@ -280,6 +283,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             detect_closing_troubles,
             limiting_vars,
             NAD,
+            NAD_delta,
             NAD_rtol,
             NAD_gtol,
             NAD_atol,
@@ -440,6 +444,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool,
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
+        NAD_delta: bool,
         NAD_rtol: Optional[Union[Dict[str, float], float]],
         NAD_gtol: Optional[Union[Dict[str, float], float]],
         NAD_atol: Optional[Union[Dict[str, float], float]],
@@ -528,6 +533,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 skip_trouble_counts,
                 detect_closing_troubles,
                 NAD,
+                NAD_delta,
                 NAD_rtol,
                 NAD_gtol,
                 NAD_atol,
@@ -670,6 +676,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         skip_trouble_counts: bool,
         detect_closing_troubles: bool,
         NAD: bool,
+        NAD_delta: bool,
         NAD_rtol: Optional[Union[Dict[str, float], float]],
         NAD_gtol: Optional[Union[Dict[str, float], float]],
         NAD_atol: Optional[Union[Dict[str, float], float]],
@@ -776,6 +783,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             PAD_atol=PAD_atol,
             uniformity_tol=uniformity_tol,
             numerical_admissibility_detection=NAD,
+            delta=NAD_delta,
             cascade=cascade_list,
             blend=blend,
             max_iters=max_MOOD_iters,

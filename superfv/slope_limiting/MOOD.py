@@ -47,6 +47,9 @@ class MOODConfig(LimiterConfig):
         uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
         numerical_admissibility_detection: Whether to enable numerical admissibility
             detection (NAD).
+        delta: Whether to compute NAD violations using the range of the local maximum
+            principle (DMP) to relax the bounds. If False, only rtol is used to relax
+            the bounds.
         cascade: The list of interpolation schemes to use in the MOOD framework.
         blend: Whether to blend troubled cells when using a fallback scheme. Only valid
             for cascades of length 2.
@@ -73,6 +76,7 @@ class MOODConfig(LimiterConfig):
     """
 
     numerical_admissibility_detection: bool = False
+    delta: bool = True
     cascade: List[InterpolationScheme] = field(default_factory=list)
     blend: bool = False
     max_iters: int = 0
@@ -100,6 +104,7 @@ class MOODConfig(LimiterConfig):
         out.update(
             dict(
                 numerical_admissibility_detection=self.numerical_admissibility_detection,
+                delta=self.delta,
                 cascade=[scheme.to_dict() for scheme in self.cascade],
                 blend=self.blend,
                 max_iters=self.max_iters,
@@ -109,6 +114,7 @@ class MOODConfig(LimiterConfig):
                 NAD_atol=None if self.NAD_atol is None else self.NAD_atol.tolist(),
                 scale_NAD_rtol_by_dt=self.scale_NAD_rtol_by_dt,
                 skip_trouble_counts=self.skip_trouble_counts,
+                detect_closing_troubles=self.detect_closing_troubles,
             )
         )
         return out
@@ -247,6 +253,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     iter_idx = MOOD_state.iter_idx
     cascade = config.cascade
     NAD = config.numerical_admissibility_detection
+    delta = config.delta
     NAD_rtol = config.NAD_rtol
     NAD_gtol = config.NAD_gtol
     NAD_atol = config.NAD_atol
@@ -314,10 +321,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             xp,
             (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
             (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
+            active_dims=active_dims,
+            delta=delta,
             rtol=NAD_rtol_local,
             gtol=NAD_gtol_local,
             atol=NAD_atol_local,
-            active_dims=active_dims,
             include_corners=include_corners,
             out=_NAD_violations_,
             dmp=_dmp_,
@@ -396,6 +404,7 @@ def detect_NAD_violations(
     u_new: ArrayLike,
     u_old: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
+    delta: bool = True,
     rtol: Optional[ArrayLike] = None,
     gtol: Optional[ArrayLike] = None,
     atol: Optional[ArrayLike] = None,
@@ -407,7 +416,7 @@ def detect_NAD_violations(
 ) -> Tuple[slice, ...]:
     """
     Compute the numerical admissibility detection (NAD) violations, which violate the
-    following criterion:
+    following criterion if delta is True:
 
     m - delta <= u_new <= M + delta
 
@@ -415,19 +424,26 @@ def detect_NAD_violations(
     delta = rtol*(M-m) + gtol*(Mglob-mglob) + atol, where Mglob and mglob are the
     global maxima and minima of u_old for each variable.
 
+    If delta is False, the criterion becomes:
+
+    m - rtol * |m| <= u_new <= M + rtol * |M|
+
     Args:
         xp: `np` namespace or equivalent.
         u_new: New solution array. Has shape (nvars, nx, ny, nz).
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
-        rtol: Factor by which the local DMP range is multipliedf, forming a product
-            that is used to widen the bounds for numerical admissibility. Has shape
-            (nvars,) or is treated as 0s if None.
+        delta: Whether to compute NAD violations using the range of the local maximum
+            principle (DMP) to relax the bounds. If False, only rtol is used to relax
+            the bounds.
+        rtol: Factor by which the local DMP range or absolute values are multiplied,
+            forming a product that is used to widen the bounds for numerical
+            admissibility. Has shape (nvars,) or is treated as 0s if None
         gtol: Factor by which the global range is multiplied, forming a product that is
             used to widen the bounds for numerical admissibility. Has shape (nvars,)
-            or is treated as 0s if None.
+            or is treated as 0s if None. Ignored if delta is False.
         atol: Absolute tolerance used to widen the bounds for numerical admissibility.
-            Has shape (nvars,) or is treated as 0s if None.
+            Has shape (nvars,) or is treated as 0s if None. Ignored if delta is False.
         include_corners: Whether to include corner values in the DMP computation.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
         dmp: Array to store the local minima and maxima. Negatives imply violations.
@@ -438,19 +454,21 @@ def detect_NAD_violations(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    na = xp.newaxis
+
     # allocate arrays
     dmp_min = dmp[..., 0]
     dmp_max = dmp[..., 1]
 
     check_buffer_slots(buffer, required=6)
     dmp_range = buffer[..., 0]
-    delta = buffer[..., 1]
+    delta_arr = buffer[..., 1]
     lower_bound = buffer[..., 2]
     upper_bound = buffer[..., 3]
     lower_violations = buffer[..., 4]
     upper_violations = buffer[..., 5]
 
-    delta[...] = 0.0
+    delta_arr[...] = 0.0
 
     # compute discrete maximum principle (dmp)
     dmp_modified = compute_dmp(
@@ -458,25 +476,32 @@ def detect_NAD_violations(
     )
     modified = dmp_modified[:-1]
 
-    # relax bounds with local dmp range
-    if rtol is not None:
-        dmp_range[...] = dmp_max - dmp_min
-        delta += rtol[:, np.newaxis, np.newaxis, np.newaxis] * dmp_range
+    if delta:
+        # relax bounds with local dmp range
+        if rtol is not None:
+            dmp_range[...] = dmp_max - dmp_min
+            delta_arr += rtol[:, na, na, na] * dmp_range
 
-    # relax bounds with global range
-    if gtol is not None:
-        global_min = xp.min(u_old, axis=(1, 2, 3), keepdims=True)
-        global_max = xp.max(u_old, axis=(1, 2, 3), keepdims=True)
-        global_range = global_max - global_min
-        delta += gtol[:, np.newaxis, np.newaxis, np.newaxis] * global_range
+        # relax bounds with global range
+        if gtol is not None:
+            global_min = xp.min(u_old, axis=(1, 2, 3), keepdims=True)
+            global_max = xp.max(u_old, axis=(1, 2, 3), keepdims=True)
+            global_range = global_max - global_min
+            delta_arr += gtol[:, na, na, na] * global_range
 
-    # relax bounds with absolute tolerance
-    if atol is not None:
-        delta += atol[:, np.newaxis, np.newaxis, np.newaxis]
+        # relax bounds with absolute tolerance
+        if atol is not None:
+            delta_arr += atol[:, na, na, na]
 
-    # compute violations
-    lower_bound[...] = dmp_min - delta
-    upper_bound[...] = dmp_max + delta
+        # compute violations
+        lower_bound[...] = dmp_min - delta_arr
+        upper_bound[...] = dmp_max + delta_arr
+    elif rtol is None:
+        raise ValueError("rtol must be provided if delta is False.")
+    else:
+        lower_bound[...] = dmp_min - rtol[:, na, na, na] * xp.abs(dmp_min)
+        upper_bound[...] = dmp_max + rtol[:, na, na, na] * xp.abs(dmp_max)
+
     lower_violations[...] = u_new - lower_bound
     upper_violations[...] = upper_bound - u_new
     out[modified] = xp.minimum(lower_violations[modified], upper_violations[modified])
