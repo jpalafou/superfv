@@ -440,9 +440,9 @@ if CUPY_AVAILABLE:
                 (dvr > 0 ? fmax(dvr_r, 0.0) : fmin(dvr_r, 0.0)) / dvr_safe
             );
 
-            double alphal = fmin(alphal_l, alphar_l);
-            double alphac = fmin(alphal_c, alphar_c);
-            double alphar = fmin(alphal_r, alphar_r);
+            double alphal = fmin(fmin(alphal_l, alphar_l), 1.0);
+            double alphac = fmin(fmin(alphal_c, alphar_c), 1.0);
+            double alphar = fmin(fmin(alphal_r, alphar_r), 1.0);
 
             if (check_uniformity) {
                 double dmp_m_l = fmin(fmin(ul2, ul1), uc);
