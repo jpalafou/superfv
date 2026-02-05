@@ -11,6 +11,7 @@ from superfv.tools.norms import linf_norm
 
 base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence-2d/"
 plot_path = "benchmarks/entropy-wave-convergence/2d/plot.png"
+overwrite = False
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
 musclhancock = dict(p=1, MUSCL=True, **common)
@@ -36,10 +37,12 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/1rev/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1),
-    "MM7/1rev/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1),
-    "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
-    "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
+    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
+    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
+    "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
+    "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
+    "MM3/3revs/no_NAD": dict(p=3, NAD=False, SED=False, **aposteriori3),
+    "MM7/3revs/no_NAD": dict(p=7, NAD=False, SED=False, **aposteriori3),
 }
 
 styles = {
@@ -52,10 +55,12 @@ styles = {
     "ZS7": dict(color="red", linestyle="--", marker="o", mfc="none"),
     "ZS3t": dict(color="green", linestyle="--", marker="+", mfc="none"),
     "ZS7t": dict(color="red", linestyle="--", marker="+", mfc="none"),
-    "MM3/1rev/rtol_1e-2": dict(color="green", linestyle="--", marker="s", mfc="none"),
-    "MM7/1rev/rtol_1e-2": dict(color="red", linestyle="--", marker="s", mfc="none"),
-    "MM3/3revs/rtol_1e-2": dict(color="green", linestyle="--", marker="^", mfc="none"),
-    "MM7/3revs/rtol_1e-2": dict(color="red", linestyle="--", marker="^", mfc="none"),
+    "MM3/3revs/rtol_1e-1": dict(color="green", linestyle="--", marker="s", mfc="none"),
+    "MM7/3revs/rtol_1e-1": dict(color="red", linestyle="--", marker="s", mfc="none"),
+    "MM3/3revs/rtol_1e0": dict(color="green", linestyle="--", marker="^", mfc="none"),
+    "MM7/3revs/rtol_1e0": dict(color="red", linestyle="--", marker="^", mfc="none"),
+    "MM3/3revs/no_NAD": dict(color="green", linestyle="--", marker="v", mfc="none"),
+    "MM7/3revs/no_NAD": dict(color="red", linestyle="--", marker="v", mfc="none"),
 }
 
 N_values = [16, 32, 64, 128, 256]
@@ -102,32 +107,42 @@ data = []
 for (name, config), N in product(configs.items(), N_values):
     sim_path = base_path + f"{name}/N_{N}/"
 
-    # print status
-    print(f"Running N={N}, config={name}")
-
-    # run solver
-    sim = EulerSolver(
-        ic=partial(entropy_wave, gamma=gamma),
-        nx=N,
-        ny=N,
-        gamma=gamma,
-        cupy=True,
-        **config,
-    )
-
     try:
+        if overwrite:
+            raise FileNotFoundError
+
+        if os.path.exists(f"{sim_path}error.txt"):
+            print(f"Error exists for N={N}, config={name}, skipping...")
+            continue
+
         sim = OutputLoader(sim_path)
     except FileNotFoundError:
+        print(f"Running simulation for N={N}, config={name}...")
+        sim = EulerSolver(
+            ic=partial(entropy_wave, gamma=gamma),
+            nx=N,
+            ny=N,
+            gamma=gamma,
+            cupy=True,
+            **config,
+        )
         try:
             sim.run(
                 T,
                 reduce_CFL=True,
-                muscl_hancock=name == "MUSCL-Hancock" or "MH" in name,
+                muscl_hancock=name == "MUSCL-Hancock",
                 path=sim_path,
+                overwrite=True,
             )
             sim.write_timings()
+
+            # clean up error file if it exists
+            if os.path.exists(f"{sim_path}error.txt"):
+                os.remove(f"{sim_path}error.txt")
         except RuntimeError as e:
             print(f"  Failed: {e}")
+            with open(f"{sim_path}error.txt", "w") as f:
+                f.write(str(e))
             continue
 
     # measure error
