@@ -38,8 +38,6 @@ class LimiterConfig:
     uniformity_tol: float = 1e-3
 
     def __post_init__(self):
-        if self.shock_detection and self.eta_max is None:
-            raise ValueError("eta_max must be provided when shock_detection is True.")
         if self.physical_admissibility_detection:
             if self.PAD_bounds is None:
                 raise ValueError(
@@ -107,10 +105,13 @@ class InterpolationScheme(ABC):
         """Return a unique key for the interpolation scheme."""
         pass
 
-    @abstractmethod
     def to_dict(self) -> dict:
         """Convert the interpolation scheme to a dictionary."""
-        pass
+        return dict(
+            p=self.p,
+            flux_recipe=self.flux_recipe,
+            limiter_config=self.limiter_config.to_dict(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,12 +136,10 @@ class polyInterpolationScheme(InterpolationScheme):
             - "adaptive": Based on a shock-detection criterion, adaptively reduce the
                 order of conservative cell centers, primitive cell centers, and
                 primitive cell averages to second order.
-        eta_max: Threshold for shock detection when `lazy_primitives` is "adaptive".
     """
 
     gauss_legendre: bool = False
     lazy_primitives: Literal["none", "full", "adaptive"] = "none"
-    eta_max: Optional[float] = None
 
     def __post_init__(self):
         InterpolationScheme.__post_init__(self)
@@ -148,21 +147,15 @@ class polyInterpolationScheme(InterpolationScheme):
             raise ValueError(
                 'Invalid lazy_primitives option. Must be "none", "full", or "adaptive".'
             )
-        if self.lazy_primitives == "adaptive" and self.eta_max is None:
-            raise ValueError(
-                "eta_max must be provided when lazy_primitives is set to 'adaptive'."
-            )
 
     def key(self) -> str:
         return f"poly{self.p}"
 
     def to_dict(self) -> dict:
-        return dict(
-            p=self.p,
-            flux_recipe=self.flux_recipe,
-            limiter_config=(
-                None if self.limiter_config is None else self.limiter_config.to_dict()
-            ),
-            gauss_legendre=self.gauss_legendre,
-            lazy_primitives=self.lazy_primitives,
+        out = InterpolationScheme.to_dict(self)
+        out.update(
+            dict(
+                gauss_legendre=self.gauss_legendre, lazy_primitives=self.lazy_primitives
+            )
         )
+        return out

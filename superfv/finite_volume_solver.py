@@ -600,7 +600,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
-            eta_max=eta_max,
         )
 
     def _init_muscl_scheme(
@@ -664,7 +663,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
-            eta_max=eta_max,
         )
 
     def _init_MOOD(
@@ -708,7 +706,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     ),
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
-                    eta_max=base_scheme.eta_max,
                 )
             ]
         elif cascade in ("muscl", "muscl1"):
@@ -742,7 +739,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         ),
                         gauss_legendre=base_scheme.gauss_legendre,
                         lazy_primitives=base_scheme.lazy_primitives,
-                        eta_max=base_scheme.eta_max,
                     )
                 ]
         elif cascade == "full":
@@ -758,7 +754,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     ),
                     gauss_legendre=base_scheme.gauss_legendre,
                     lazy_primitives=base_scheme.lazy_primitives,
-                    eta_max=base_scheme.eta_max,
                 )
                 for p in range(base_scheme.p - 1, -1, -1)
             ]
@@ -774,11 +769,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # assign MOOD config
         self.MOOD_config = MOODConfig(
-            shock_detection=base_scheme.lazy_primitives == "adaptive",
+            shock_detection=False,
             smooth_extrema_detection=SED,
             check_uniformity=check_uniformity,
             physical_admissibility_detection=self.using_PAD,
-            eta_max=base_scheme.limiter_config.eta_max,
             PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
             PAD_atol=PAD_atol,
             uniformity_tol=uniformity_tol,
@@ -1433,10 +1427,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             if not isinstance(scheme, polyInterpolationScheme):
                 raise ValueError(
                     "Adaptive lazy primitives can only be used with polyInterpolationScheme."
-                )
-            if scheme.eta_max is None:
-                raise ValueError(
-                    "Adaptive lazy primitives require eta_max to be set in the scheme."
                 )
 
             fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=_buff_)
