@@ -60,11 +60,13 @@ class LimiterConfig:
         """Convert the limiter configuration to a dictionary."""
         return dict(
             shock_detection=self.shock_detection,
-            eta_max=self.eta_max,
             smooth_extrema_detection=self.smooth_extrema_detection,
+            check_uniformity=self.check_uniformity,
             physical_admissibility_detection=self.physical_admissibility_detection,
+            eta_max=self.eta_max,
             PAD_bounds=None if self.PAD_bounds is None else self.PAD_bounds.tolist(),
             PAD_atol=self.PAD_atol,
+            uniformity_tol=self.uniformity_tol,
         )
 
 
