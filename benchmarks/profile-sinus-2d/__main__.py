@@ -4,13 +4,13 @@ from functools import partial
 from itertools import product
 
 from superfv import EulerSolver, OutputLoader
-from superfv.initial_conditions import sedov
+from superfv.initial_conditions import sinus
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--cupy", action="store_true", help="Use CuPy for GPU acceleration")
 args = parser.parse_args()
 
-base_path = "/scratch/gpfs/jp7427/out/timing-of-2d-sedov-blast/"
+base_path = "/scratch/gpfs/jp7427/out/timing-of-2d-sine-wave/"
 if args.cupy:
     base_path += "cupy/"
 overwrite = True
@@ -84,10 +84,8 @@ for (name, config), N in product(configs.items(), N_values):
         print(f"Running {name} with N={N}...")
 
         sim = EulerSolver(
-            ic=partial(sedov, P0=1e-2, h=1 / N, gamma=gamma),
+            ic=partial(sinus, bounds=(1, 2), vx=2, vy=1, P=1),
             gamma=gamma,
-            bcx=("reflective", "free"),
-            bcy=("reflective", "free"),
             nx=N,
             ny=N,
             cupy=args.cupy,
