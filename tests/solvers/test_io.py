@@ -88,7 +88,9 @@ def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: 
         return a == b
 
     for key in sim.minisnapshots.keys():
-        assert equal_lists(sim.minisnapshots[key], loader.minisnapshots[key])
+        assert equal_lists(
+            sim.minisnapshots[key], loader.minisnapshots[key]
+        ), f"Mismatch in minisnapshot '{key}'"
 
     for i in range(len(sim.snapshots.data)):
         assert np.array_equal(sim.snapshots[i]["u"], loader.snapshots[i]["u"])

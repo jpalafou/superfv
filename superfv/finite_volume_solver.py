@@ -48,7 +48,7 @@ from .slope_limiting.zhang_and_shu import (
 )
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import VariableIndexMap, crop, insert_slice, merge_slices
-from .tools.timer import MethodTimer
+from .tools.timer import MethodTimer, StepperTimer
 from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
@@ -1221,12 +1221,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "detect_troubled_cells",
             "revise_fluxes",
         ]
-        for cat in new_timer_cats:
-            self.timer.add_cat(cat)
-
-        self.sorted_timer_cats = (
-            ["wall", "take_step"] + new_timer_cats + ["snapshot", "minisnapshot"]
-        )
+        new_stepper_timer = StepperTimer(self.stepper_timer.cats + new_timer_cats)
+        self.stepper_timer = new_stepper_timer
 
     @abstractmethod
     def define_vars(self) -> VariableIndexMap:
@@ -1804,28 +1800,28 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.reset_MOOD_loop()
 
-        self.timer.start("compute_fallback_fluxes")
+        self.stepper_timer.start("compute_fallback_fluxes")
         MOOD.compute_fallback_fluxes(self, t)
-        self.timer.stop("compute_fallback_fluxes")
+        self.stepper_timer.stop("compute_fallback_fluxes")
 
         for _ in range(config.max_iters):
-            self.timer.start("detect_troubled_cells")
+            self.stepper_timer.start("detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
-            self.timer.stop("detect_troubled_cells")
+            self.stepper_timer.stop("detect_troubled_cells")
 
             if n_revisable:
-                self.timer.start("revise_fluxes")
+                self.stepper_timer.start("revise_fluxes")
                 MOOD.revise_fluxes(self, t)
-                self.timer.stop("revise_fluxes")
+                self.stepper_timer.stop("revise_fluxes")
 
                 state.increment_MOOD_iteration()
             else:
                 break
 
         if n_revisable and config.detect_closing_troubles:
-            self.timer.start("detect_troubled_cells")
+            self.stepper_timer.start("detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
-            self.timer.stop("detect_troubled_cells")
+            self.stepper_timer.stop("detect_troubled_cells")
 
         state.update_troubled_cell_count(n_total)
 
@@ -1903,7 +1899,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         Build the closing message for the FV solver.
         """
-        runtime = self.timer.cum_time["wall"]
+        runtime = self.wall_timer.data["wall"].cum_time
         return self.build_update_message() + f" | (ran in {runtime:.2f}s)"
 
     def adaptive_dt_criterion(self, tnew: float, unew: ArrayLike) -> bool:
@@ -2024,11 +2020,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         data = super().prepare_minisnapshot_data()
 
         n_updates = self.n_updates
+        step_time = self.stepper_timer.steps[-1].data["take_step"].cum_time
+        if self.n_steps > 0:
+            substep_update_rate = n_updates / step_time
+            update_rate = self.mesh.size / step_time
+        else:
+            substep_update_rate = 0.0
+            update_rate = 0.0
+
         data.update(
             {
                 "n_updates": n_updates,
-                "substep_update_rate": n_updates / data["step_time"],
-                "update_rate": self.mesh.size / data["step_time"],
+                "substep_update_rate": substep_update_rate,
+                "update_rate": update_rate,
             }
         )
 
@@ -2547,16 +2551,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         Get the timing statistics for the solver as a DataFrame.
         """
+        wall_timer = self.wall_timer
+        stepper_timer = self.stepper_timer
 
-        timer = self.timer
-
-        data = []
-        for cat in self.sorted_timer_cats:
+        data = [
+            {
+                "Routine": "wall",
+                "# of calls": wall_timer.data["wall"].n_calls,
+                "Total time (s)": wall_timer.data["wall"].cum_time,
+            }
+        ]
+        for cat in sorted(stepper_timer.cats):
             data.append(
                 {
                     "Routine": cat,
-                    "# of calls": timer.n_calls[cat],
-                    "Total time (s)": timer.cum_time[cat],
+                    "# of calls": stepper_timer.total_calls(cat),
+                    "Total time (s)": stepper_timer.total_time(cat),
                 }
             )
         df = pd.DataFrame(data)

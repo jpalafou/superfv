@@ -12,7 +12,7 @@ import pandas as pd
 
 from .tools.device_management import ArrayLike, ArrayManager
 from .tools.snapshots import Snapshots
-from .tools.timer import Timer
+from .tools.timer import StepperTimer, Timer
 from .tools.yaml_helper import yaml_dump
 
 
@@ -106,7 +106,8 @@ class ExplicitODESolver(ABC):
         self.arrays["unew"].fill(np.nan)
 
         # initialize timer
-        self.timer = Timer(cats=["wall", "take_step", "snapshot", "minisnapshot"])
+        self.wall_timer = Timer(["wall"])
+        self.stepper_timer = StepperTimer(["take_step", "snapshot", "minisnapshot"])
 
         # initialize snapshots
         self.snapshots: Snapshots = Snapshots()
@@ -304,13 +305,14 @@ class ExplicitODESolver(ABC):
         start.
         """
         self.reset_stepwise_logs()
-        self.timer.start("take_step")
+        self.stepper_timer.begin_new_step()
+        self.stepper_timer.start("take_step")
 
     def called_at_end_of_step(self):
         """
         Helper function called at the end of each step ending with a timer stop.
         """
-        self.timer.stop("take_step")
+        self.stepper_timer.stop("take_step")
         self.increment_stepwise_logs()
         self.increment_global_logs()
 
@@ -356,7 +358,7 @@ class ExplicitODESolver(ABC):
             discard: If True, discard the in-memory snapshot data after writing to
                 disk.
         """
-        self.timer.start("wall")
+        self.wall_timer.start("wall")
 
         # print initial message
         if verbose:
@@ -390,7 +392,7 @@ class ExplicitODESolver(ABC):
             else:
                 raise ValueError("Specify exactly one of 'T' or 'n'.")
         finally:
-            self.timer.stop_all()
+            self.wall_timer.stop_all()
 
         # print closing message
         if verbose:
@@ -566,7 +568,11 @@ class ExplicitODESolver(ABC):
             "n_steps": self.n_steps,
             "n_substeps": self.n_substeps,
             "n_dt_revisions": self.n_dt_revisions,
-            "step_time": self.timer.goldfish_lap_time["take_step"],
+            "stepper_timer": (
+                self.stepper_timer.steps[-1]
+                if self.stepper_timer.steps
+                else Timer(self.stepper_timer.cats)
+            ),
         }
 
     def prepare_output_directory(
@@ -628,7 +634,7 @@ class ExplicitODESolver(ABC):
         """
         Log and time snapshot data at time `self.t` and write it to `self.path` if not None.
         """
-        self.timer.start("snapshot")
+        self.stepper_timer.start("snapshot")
 
         data = self.prepare_snapshot_data()
         self.snapshots.log(self.t, data)
@@ -636,19 +642,19 @@ class ExplicitODESolver(ABC):
         if self.path is not None:
             self.snapshots.write(self.path / "snapshots", self.t, discard=self.discard)
 
-        self.timer.stop("snapshot")
+        self.stepper_timer.stop("snapshot")
 
     def take_minisnapshot(self):
         """
         Log and time minisnapshot data.
         """
-        self.timer.start("minisnapshot")
+        self.stepper_timer.start("minisnapshot")
 
         data = self.prepare_minisnapshot_data()
         for key, value in data.items():
             self.minisnapshots[key].append(value)
 
-        self.timer.stop("minisnapshot")
+        self.stepper_timer.stop("minisnapshot")
 
     def postprocess_snapshots(self):
         """
@@ -678,6 +684,12 @@ class ExplicitODESolver(ABC):
         Increment global logs throughout the simulation.
         """
         self.n_steps += 1
+
+        if len(self.stepper_timer.steps) != self.n_steps + 1:
+            raise RuntimeError(
+                f"Number of steps in timer ({len(self.stepper_timer.steps)}) is not "
+                f"one greater than n_steps ({self.n_steps})."
+            )
 
     def reset_stepwise_logs(self):
         """

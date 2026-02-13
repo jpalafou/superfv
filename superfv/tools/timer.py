@@ -1,140 +1,100 @@
 import time
-from typing import Dict, Iterable, Set, cast
+from dataclasses import dataclass
+from typing import List
 
 import numpy as np
 
 
+@dataclass
+class CatTimer:
+    is_timing: bool = False
+    start_time: float = 0.0
+    cum_time: float = 0.0
+    n_calls: int = 0
+
+    def __eq__(self, other):
+        if not isinstance(other, CatTimer):
+            return NotImplemented
+        return (
+            self.is_timing == other.is_timing
+            and self.start_time == other.start_time
+            and self.cum_time == other.cum_time
+            and self.n_calls == other.n_calls
+        )
+
+
 class Timer:
-    """
-    Timer class for timing code execution.
-    """
 
-    def __init__(
-        self,
-        cats: Iterable[str] = ("main",),
-    ):
-        """
-        Initializes the timer.
+    def __init__(self, cats: List[str]):
+        self.data = {cat: CatTimer() for cat in cats}
 
-        Args:
-            cats: Iterable of category names to initialize.
-            precision: Precision of the time values.
-        """
-        # Public
-        self.cats: Set[str] = set()
-        self.goldfish_lap_time: Dict[str, float] = {}
-        self.cum_time: Dict[str, float] = {}
-        self.n_calls: Dict[str, int] = {}
+    def _check_cat(self, cat: str):
+        if cat not in self.data:
+            raise ValueError(f"Could not find timer category '{cat}'")
 
-        # Private
-        self._running: Dict[str, bool] = {}
-        self._start_time: Dict[str, float] = {}
+    def start(self, cat: str):
+        self._check_cat(cat)
+        if self.data[cat].is_timing:
+            raise ValueError("Cannot start an aready-running timer category.")
 
-        for cat in cats:
-            self._add_cat(cat)
-
-    def _add_cat(self, cat: str):
-        """
-        Internal method to add a new timer category without checks.
-
-        Args:
-            cat: Category name.
-        """
-        # Public
-        self.cats.add(cat)
-        self.goldfish_lap_time[cat] = np.nan
-        self.cum_time[cat] = 0.0
-        self.n_calls[cat] = 0
-
-        # Private
-        self._running[cat] = False
-        self._start_time[cat] = np.nan
-
-    def add_cat(self, cat: str):
-        """
-        Add a new timer category.
-
-        Args:
-            cat: Category name.
-        """
-        if cat in self.cats:
-            raise ValueError(f"Category '{cat}' already exists.")
-        self._add_cat(cat)
-
-    def _check_cat_existence(self, cat: str):
-        if cat not in self.cats:
-            raise ValueError(f"Category '{cat}' not found in timer categories.")
-
-    def start(self, cat: str, reset: bool = False):
-        """
-        Start timer of a category.
-
-        Args:
-            cat: Category name.
-            reset: If True, reset the timer for this category.
-            same_call: If True, do not increment the call count.
-        """
-        self._check_cat_existence(cat)
-        if self._running[cat]:
-            raise RuntimeError(
-                f"Cannot start '{cat}' timer since it is already in progress."
-            )
-        else:
-            if reset:
-                self.n_calls[cat] = 0
-                self.cum_time[cat] = 0.0
-
-            self._running[cat] = True
-            self._start_time[cat] = time.time()
-            self.n_calls[cat] += 1
+        self.data[cat].is_timing = True
+        self.data[cat].start_time = time.perf_counter()
 
     def stop(self, cat: str):
-        """
-        Stop timer of a category.
+        self._check_cat(cat)
+        if not self.data[cat].is_timing:
+            raise ValueError("Cannot stop a timer category that is not active.")
 
-        Args:
-            cat: Category name.
-        """
-        self._check_cat_existence(cat)
-        if self._running[cat]:
-            lap_time = time.time() - cast(float, self._start_time[cat])
-            self.goldfish_lap_time[cat] = lap_time
-            self.cum_time[cat] += lap_time
-            self._running[cat] = False
-            self._start_time[cat] = np.nan
-        else:
-            raise RuntimeError(
-                f"Cannot stop '{cat}' timer since it is not in progress."
-            )
+        self.data[cat].is_timing = False
+        self.data[cat].cum_time += time.perf_counter() - self.data[cat].start_time
+        self.data[cat].n_calls += 1
 
     def stop_all(self):
-        """
-        Stop all running timers.
-        """
-        for cat in self.cats:
-            if self._running[cat]:
+        for cat in self.data:
+            if self.data[cat].is_timing:
                 self.stop(cat)
 
-    def to_dict(self, decimals: int = 2) -> dict:
-        """
-        Return the cumulative times for all categories as a dictionary.
+    def __eq__(self, other):
+        if not isinstance(other, Timer):
+            return NotImplemented
+        return self.data == other.data
 
-        Args:
-            decimals: Number of decimal places to round to.
-        """
-        out = {cat: np.round(t, decimals) for cat, t in self.cum_time.items()}
+
+class StepperTimer:
+    def __init__(self, cats: List[str]):
+        self.cats: List[str] = cats
+        self.steps: List[Timer] = []
+        self.begin_new_step()  # init 0th step
+
+    def begin_new_step(self):
+        self.steps.append(Timer(self.cats))
+
+    def start(self, cat: str):
+        self.steps[-1].start(cat)
+
+    def stop(self, cat: str):
+        self.steps[-1].stop(cat)
+
+    def stop_all(self):
+        self.steps[-1].stop_all()
+
+    def cum_time_list(self, cat: str) -> List[float]:
+        return [timer.data[cat].cum_time for timer in self.steps]
+
+    def ncalls_list(self, cat: str) -> List[int]:
+        return [timer.data[cat].n_calls for timer in self.steps]
+
+    def total_time(self, cat: str):
+        return sum(self.cum_time_list(cat))
+
+    def total_calls(self, cat: str):
+        return sum(self.ncalls_list(cat))
+
+    def to_dict(self, decimals: int = 2) -> dict:
+        out = {cat: np.round(self.total_time(cat), decimals) for cat in self.cats}
         return out
 
     def print_report(self, precision: int = 2):
-        """
-        Prints a report of the timer categories with ncalls and cumtime.
-
-        Args:
-            precision: Number of decimal places to print for cumulative time.
-
-        Returns:
-            A string containing the report formatted as a table.
-        """
         # Sort the categories alphabetically
         sorted_cats = sorted(self.cats)
 
@@ -151,8 +111,8 @@ class Timer:
 
         # Add the data for each category
         for cat in sorted_cats:
-            ncalls = self.n_calls[cat]
-            cumtime = self.cum_time[cat]
+            ncalls = self.total_calls(cat)
+            cumtime = self.total_time(cat)
             report_str += (
                 f"{cat:<{cat_width}} {ncalls:>10} {cumtime:>20.{precision}f}\n"
             )
@@ -161,6 +121,11 @@ class Timer:
 
     def __contains__(self, cat: str) -> bool:
         return cat in self.cats
+
+    def __eq__(self, other):
+        if not isinstance(other, StepperTimer):
+            return NotImplemented
+        return self.cats == other.cats and self.steps == other.steps
 
 
 class MethodTimer:
@@ -177,12 +142,12 @@ class MethodTimer:
             if sync:
                 instance.xp.cuda.Device().synchronize()
 
-            instance.timer.start(self.cat)
+            instance.stepper_timer.start(self.cat)
             result = method(instance, *args, **kwargs)
 
             if sync:
                 instance.xp.cuda.Device().synchronize()
-            instance.timer.stop(self.cat)
+            instance.stepper_timer.stop(self.cat)
             return result
 
         return wrapped
