@@ -4,7 +4,7 @@ from typing import Literal, Tuple
 from superfv.axes import DIM_TO_AXIS
 from superfv.stencil import stencil_sweep
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
 
@@ -26,7 +26,7 @@ def compute_eta(
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
         axis: Axis along which to compute the shock detector.
-        out: Array to which eta is written. Has shape (1, nx, ny, nz).
+        out: Array to which eta is written. Has shape (nvars, nx, ny, nz).
         buffer: Array to which intermediate values are written. Has shape
             (nvars, nx, ny, nz, >=6).
         eps: Small value to avoid division by zero.
@@ -34,6 +34,9 @@ def compute_eta(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if hasattr(xp, "cupy"):
+        return compute_eta_kernel_helper(w1, wr, axis, out=out, eps=eps)
+
     # allocate temporary arrays
     check_buffer_slots(buffer, required=6)
     delta1 = buffer[..., 0]
@@ -147,3 +150,65 @@ def compute_shock_detector(
     out[inner] = xp.where(eta_max[inner] < eta_threshold, 1.0, 0.0)
 
     return inner
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+    compute_eta_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 wl2, float64 wl1, float64 wc, float64 wr1, float64 wr2"
+            ", float64 wref, float64 eps"
+        ),
+        out_params="float64 eta",
+        operation=(
+            """
+        double delta1 = 0.5 * (wr1 - wl1);
+        double delta2 = wr1 - 2.0 * wc + wl1;
+        double delta3 = 0.5 * (wr2 - 2.0 * wr1 + 2.0 * wl1 - wl2);
+        double delta4 = wr2 - 4.0 * wr1 + 6.0 * wc - 4.0 * wl1 + wl2;
+        double eta_o = fabs(delta3) / (fabs(wref) + fabs(delta1) + fabs(delta3) + eps);
+        double eta_e = fabs(delta4) / (fabs(wref) + fabs(delta2) + fabs(delta4) + eps);
+        eta = fmax(eta_o, eta_e);
+        """
+        ),
+        name="compute_eta_kernel",
+        no_return=True,
+    )
+
+
+def compute_eta_kernel_helper(
+    w1: ArrayLike,
+    wr: ArrayLike,
+    axis: int,
+    *,
+    out: ArrayLike,
+    eps: float = 1e-16,
+) -> Tuple[slice, ...]:
+    """
+    Compute the shock detector eta in 1D using the method of Berta et al. (2024) with a
+    custom CuPy kernel.
+
+    Args:
+        w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
+        wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
+        axis: Axis along which to compute the shock detector.
+        out: Array to which eta is written. Has shape (nvars, nx, ny, nz).
+        eps: Small value to avoid division by zero.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    wl2 = w1[crop(axis, (None, -4), ndim=4)]
+    wl1 = w1[crop(axis, (1, -3), ndim=4)]
+    wc = w1[crop(axis, (2, -2), ndim=4)]
+    wr1 = w1[crop(axis, (3, -1), ndim=4)]
+    wr2 = w1[crop(axis, (4, None), ndim=4)]
+    wref = wr[crop(axis, (2, -2), ndim=4)]
+
+    inner_slice = crop(axis, (2, -2), ndim=4)
+    eta_inner = out[inner_slice]
+
+    compute_eta_kernel(wl2, wl1, wc, wr1, wr2, wref, eps, eta_inner)
+
+    return inner_slice
