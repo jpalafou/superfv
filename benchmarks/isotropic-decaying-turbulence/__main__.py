@@ -1,12 +1,11 @@
 import argparse
 import os
-import shutil
 from functools import partial
 from itertools import product
 
 import numpy as np
 
-from superfv import EulerSolver
+from superfv import EulerSolver, OutputLoader
 from superfv.initial_conditions import decaying_isotropic_turbulence
 from superfv.tools.device_management import CUPY_AVAILABLE
 
@@ -47,44 +46,67 @@ aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
 aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
 aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
+no_v = dict(limiting_vars=("rho",))
+aposteriori_no_v = dict(
+    MOOD=True,
+    face_fallback=False,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    **no_v,
+    **common,
+)
+aposteriori1_no_v = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori_no_v)
+aposteriori2_no_v = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori_no_v)
+aposteriori3_no_v = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori_no_v)
+
 configs = {
     "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/1rev/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori1),
-    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori1),
-    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori1),
-    "MM3/1rev/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1),
-    "MM7/1rev/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori1),
-    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori1),
-    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori1),
-    "MM7/1rev/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1),
-    "MM3/2revs/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori2),
-    "MM3/2revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori2),
-    "MM3/2revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori2),
-    "MM3/2revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori2),
-    "MM7/2revs/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori2),
-    "MM7/2revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori2),
-    "MM7/2revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori2),
-    "MM7/2revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori2),
-    "MM3/3revs/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori3),
-    "MM3/3revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori3),
-    "MM3/3revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori3),
-    "MM3/3revs/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori3),
-    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
-    "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
-    "MM3/3revs/rtol_1e1": dict(p=3, NAD_rtol=1e1, **aposteriori3),
-    "MM3/3revs/no_NAD": dict(p=3, NAD=False, **aposteriori3),
-    "MM7/3revs/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori3),
-    "MM7/3revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori3),
-    "MM7/3revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori3),
-    "MM7/3revs/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori3),
-    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
-    "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
-    "MM7/3revs/rtol_1e1": dict(p=7, NAD_rtol=1e1, **aposteriori3),
-    "MM7/3revs/no_NAD": dict(p=7, NAD=False, **aposteriori3),
+    "MM3/3revs/no_delta/rtol_1e-5": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    ),
+    "MM7/3revs/no_delta/rtol_1e-5": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    ),
+    "MM3/3revs/no_delta/rtol_1e-3": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori3
+    ),
+    "MM7/3revs/no_delta/rtol_1e-3": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori3
+    ),
+    "MM3/3revs/no_delta/rtol_1e-2": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3
+    ),
+    "MM7/3revs/no_delta/rtol_1e-2": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3
+    ),
+    "MM3/3revs/no_delta/rtol_1e-1": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
+    ),
+    "MM7/3revs/no_delta/rtol_1e-1": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
+    ),
+    "MM3/2revs/no_delta/rtol_1e-3": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori2
+    ),
+    "MM7/2revs/no_delta/rtol_1e-3": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori2
+    ),
+    "MM3/2revs/no_delta/rtol_1e-2": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori2
+    ),
+    "MM7/2revs/no_delta/rtol_1e-2": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori2
+    ),
+    "MM3/1rev/no_delta/rtol_1e-5": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    ),
+    "MM7/1rev/no_delta/rtol_1e-5": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    ),
 }
 
 no_fail_set = set()  # {"p0", "MUSCL-Hancock", "ZS3", "ZS7"}
@@ -132,77 +154,71 @@ for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds)
 
     sim_path = f"{base_path}{name}/M_max_{M_max}/seed_{seed:02d}/"
 
-    print(f"- - - Starting simulation: {name}, seed={seed}, M_max={M_max} - - -")
-    print(f"\tRunning config with name '{name}' and writing to path '{sim_path}'.")
-
-    # dummy sim used purely for computing T and dt_ref
-    dummy_sim = EulerSolver(
-        ic=partial(decaying_isotropic_turbulence, seed=seed, M=M_max, slope=-5 / 3),
-        isothermal=True,
-        nx=N,
-        ny=N,
-        **config,
-    )
-
-    t_cross = compute_turbulence_crossing_time(dummy_sim)
-    dt_ref = compute_reference_dt(dummy_sim)
-    max_steps = 10 * int(t_cross / dt_ref) if M_max > 1 else None
-    print(f"\tt_cross = {t_cross:.4f}, dt_ref = {dt_ref:.2e}, max_steps = {max_steps}")
-
-    sim = EulerSolver(
-        ic=partial(decaying_isotropic_turbulence, seed=seed, M=M_max, slope=-5 / 3),
-        isothermal=True,
-        nx=N,
-        ny=N,
-        cupy=cupy,
-        **config,
-    )
-
-    # check if simulation already done
-    if os.path.exists(sim_path):
-        if (
-            os.path.exists(f"{sim_path}timings.txt")
-            or os.path.exists(f"{sim_path}error.txt")
-        ) and not overwrite:
-            print("\tSimulation already completed, skipping.\n")
-            continue
-        elif overwrite:
-            print("\tOverwriting existing simulation directory.\n")
-        else:
-            print(
-                "\tSimulation directory exists but not complete, removing contents.\n"
-            )
-        shutil.rmtree(sim_path)
-
-    # attempt running simulation
     try:
-        sim.run(
-            [t.item() for t in np.linspace(0, t_cross, 4)[1:]],
-            allow_overshoot=True,
-            q_max=2,
-            muscl_hancock=config.get("MUSCL", False),
-            log_freq=100,
-            max_steps=max_steps,
-            path=sim_path,
+        if overwrite:
+            raise FileNotFoundError
+
+        if os.path.exists(f"{sim_path}error.txt"):
+            print(f"Error exists for config={name}, skipping...")
+            continue
+
+        sim = OutputLoader(sim_path)
+    except FileNotFoundError:
+        print(f"- - - Starting simulation: {name}, seed={seed}, M_max={M_max} - - -")
+        print(f"\tRunning config with name '{name}' and writing to path '{sim_path}'.")
+
+        # dummy sim used purely for computing T and dt_ref
+        dummy_sim = EulerSolver(
+            ic=partial(decaying_isotropic_turbulence, seed=seed, M=M_max, slope=-5 / 3),
+            isothermal=True,
+            nx=N,
+            ny=N,
+            **config,
         )
-        sim.write_timings()
 
-        if sim.t < t_cross:
-            raise RuntimeError(
-                f"\tSimulation ended at t={sim.t:.4f} before target t={t_cross:.4f}."
+        t_cross = compute_turbulence_crossing_time(dummy_sim)
+        dt_ref = compute_reference_dt(dummy_sim)
+        max_steps = 10 * int(t_cross / dt_ref) if M_max > 1 else None
+        print(
+            f"\tt_cross = {t_cross:.4f}, dt_ref = {dt_ref:.2e}, max_steps = {max_steps}"
+        )
+
+        sim = EulerSolver(
+            ic=partial(decaying_isotropic_turbulence, seed=seed, M=M_max, slope=-5 / 3),
+            isothermal=True,
+            nx=N,
+            ny=N,
+            cupy=cupy,
+            **config,
+        )
+
+        try:
+            sim.run(
+                [t.item() for t in np.linspace(0, t_cross, 4)[1:]],
+                allow_overshoot=True,
+                q_max=2,
+                muscl_hancock=config.get("MUSCL", False),
+                log_freq=100,
+                max_steps=max_steps,
+                path=sim_path,
+                overwrite=True,
             )
+            sim.write_timings()
 
-        print("\tSuccess!\n")
+            if sim.t < t_cross:
+                raise RuntimeError(
+                    f"\tSimulation ended at t={sim.t:.4f} before target t={t_cross:.4f}."
+                )
 
-    except Exception as e:
+            print("\tSuccess!\n")
 
-        if name in no_fail_set:
-            raise RuntimeError(f"\tSimulation {name} failed unexpectedly.") from e
+            # clean up error file if it exists
+            if os.path.exists(f"{sim_path}error.txt"):
+                os.remove(f"{sim_path}error.txt")
 
-        print(f"\tFailed: {e}\n")
+        except RuntimeError as e:
+            print(f"  Failed: {e}")
+            with open(f"{sim_path}error.txt", "w") as f:
+                f.write(str(e))
 
-        # write error
-        with open(f"{sim_path}error.txt", "w") as f:
-            f.write(str(e))
-
-        continue
+            continue

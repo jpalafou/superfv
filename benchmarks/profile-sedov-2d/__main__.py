@@ -1,24 +1,22 @@
+import argparse
 import os
 from functools import partial
 from itertools import product
 
 from superfv import EulerSolver, OutputLoader
-from superfv.initial_conditions import gresho_vortex
+from superfv.initial_conditions import sedov
 
-N = 96
-T = [0.2, 0.4, 0.6, 0.8, 1.0]
-gamma = 5 / 3
-base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/"
+parser = argparse.ArgumentParser()
+parser.add_argument("--cupy", action="store_true", help="Use CuPy for GPU acceleration")
+args = parser.parse_args()
+
+base_path = "/scratch/gpfs/jp7427/out/timing-of-2d-sedov-blast/"
+if args.cupy:
+    base_path += "cupy/"
 overwrite = False
 
-# N = 96
-# T = [0.02, 0.04, 0.06, 0.08, 0.1]  # [0.2, 0.4, 0.6, 0.8, 1.0]
-# gamma = 5 / 3
-# base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/short-debug/"
-# overwrite = False
-
-v0_values = [5.0]
-M_max_values = [1e-1, 1e-2, 1e-3]
+# loop parameters
+N_values = [32, 64, 128, 256, 512, 1024, 2048]
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
 musclhancock = dict(p=1, MUSCL=True, **common)
@@ -34,29 +32,44 @@ aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
 aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
 aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
-no_v = dict(limiting_vars=("rho", "P"))
-
 configs = {
+    "p0": dict(p=0),
+    "p1": dict(p=1),
     "p3": dict(p=3),
     "p7": dict(p=7),
+    "p3/GL": dict(p=3, GL=True),
+    "p7/GL": dict(p=7, GL=True),
     "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3/no_v": dict(p=3, GL=True, **apriori, **no_v),
-    "ZS7/no_v": dict(p=7, GL=True, **apriori, **no_v),
-    "MM3/1rev/no_v/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1, **no_v),
-    "MM7/1rev/no_v/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1, **no_v),
+    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
     "MM3/1rev/no_delta/rtol_1e-5": dict(
         p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
     ),
     "MM7/1rev/no_delta/rtol_1e-5": dict(
         p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
     ),
+    "MM3/2revs/no_delta/rtol_1e-5": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    ),
+    "MM7/2revs/no_delta/rtol_1e-5": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    ),
+    "MM3/3revs/no_delta/rtol_1e-5": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    ),
+    "MM7/3revs/no_delta/rtol_1e-5": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    ),
 }
 
+# simulation parameters
+n_steps = 10
+gamma = 1.4
 
-for v0, (name, config), M_max in product(v0_values, configs.items(), M_max_values):
-    sim_path = f"{base_path}v0_{v0}/{name}/M_max_{M_max}/"
+for (name, config), N in product(configs.items(), N_values):
+    sim_path = f"{base_path}/{name}/N_{N}/"
 
     try:
         if overwrite:
@@ -68,24 +81,25 @@ for v0, (name, config), M_max in product(v0_values, configs.items(), M_max_value
 
         sim = OutputLoader(sim_path)
     except FileNotFoundError:
-        print(f"Running {name} with M_max = {M_max} and v0 = {v0}")
+        print(f"Running {name} with N={N}...")
 
         sim = EulerSolver(
-            ic=partial(gresho_vortex, gamma=gamma, M_max=M_max, v0=v0),
+            ic=partial(sedov, P0=1e-2, h=1 / N, gamma=gamma),
             gamma=gamma,
+            bcx=("reflective", "free"),
+            bcy=("reflective", "free"),
             nx=N,
             ny=N,
-            cupy=True,
+            cupy=args.cupy,
+            skip_trouble_counts=True,
             **config,
         )
 
         try:
             sim.run(
-                T,
-                allow_overshoot=True,
+                n=n_steps,
                 q_max=2,
                 muscl_hancock=config.get("MUSCL", False),
-                log_freq=100,
                 path=sim_path,
                 overwrite=True,
             )

@@ -27,6 +27,8 @@ aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
 aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
 aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
+no_v = dict(limiting_vars=("rho", "P"))
+
 configs = {
     "p0": dict(p=0),
     "p1": dict(p=1),
@@ -37,30 +39,30 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori3),
-    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori3),
-    "MM3/3revs/rtol_1e0": dict(p=3, NAD_rtol=1e0, **aposteriori3),
-    "MM7/3revs/rtol_1e0": dict(p=7, NAD_rtol=1e0, **aposteriori3),
-    "MM3/3revs/no_NAD": dict(p=3, NAD=False, SED=False, **aposteriori3),
-    "MM7/3revs/no_NAD": dict(p=7, NAD=False, SED=False, **aposteriori3),
+    "MM3/1rev/no_v/no_delta/rtol_1e-3": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori1, **no_v
+    ),
+    "MM7/1rev/no_v/no_delta/rtol_1e-3": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori1, **no_v
+    ),
 }
 
 styles = {
     "p0": dict(color="k"),
-    "p1": dict(color="blue"),
-    "p3": dict(color="green"),
+    "p1": dict(color="green"),
+    "p3": dict(color="blue"),
     "p7": dict(color="red"),
-    "MUSCL-Hancock": dict(color="blue", linestyle="--", marker="o", mfc="none"),
-    "ZS3": dict(color="green", linestyle="--", marker="o", mfc="none"),
+    "MUSCL-Hancock": dict(color="green", linestyle="--", marker="o", mfc="none"),
+    "ZS3": dict(color="blue", linestyle="--", marker="o", mfc="none"),
     "ZS7": dict(color="red", linestyle="--", marker="o", mfc="none"),
-    "ZS3t": dict(color="green", linestyle="--", marker="+", mfc="none"),
+    "ZS3t": dict(color="blue", linestyle="--", marker="+", mfc="none"),
     "ZS7t": dict(color="red", linestyle="--", marker="+", mfc="none"),
-    "MM3/3revs/rtol_1e-1": dict(color="green", linestyle="--", marker="s", mfc="none"),
-    "MM7/3revs/rtol_1e-1": dict(color="red", linestyle="--", marker="s", mfc="none"),
-    "MM3/3revs/rtol_1e0": dict(color="green", linestyle="--", marker="^", mfc="none"),
-    "MM7/3revs/rtol_1e0": dict(color="red", linestyle="--", marker="^", mfc="none"),
-    "MM3/3revs/no_NAD": dict(color="green", linestyle="--", marker="v", mfc="none"),
-    "MM7/3revs/no_NAD": dict(color="red", linestyle="--", marker="v", mfc="none"),
+    "MM3/1rev/no_v/no_delta/rtol_1e-3": dict(
+        color="blue", linestyle="--", marker="s", mfc="none"
+    ),
+    "MM7/1rev/no_v/no_delta/rtol_1e-3": dict(
+        color="red", linestyle="--", marker="s", mfc="none"
+    ),
 }
 
 N_values = [16, 32, 64, 128, 256]
