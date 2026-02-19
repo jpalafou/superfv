@@ -4,7 +4,7 @@ from types import ModuleType
 from typing import List, Literal, Tuple, cast
 
 from superfv.axes import DIM_TO_AXIS
-from superfv.tools.device_management import ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
 
 
@@ -98,6 +98,14 @@ def compute_dmp(
     all_slices = gather_neighbor_slices(active_dims, include_corners)
     inner_slice = all_slices[0]
 
+    if hasattr(xp, "cuda"):
+        M = xp.empty_like(arr)
+        m = xp.empty_like(arr)
+        compute_dmp_kernel_helper(arr, M, m, include_corners)
+        out[..., 1] = M
+        out[..., 0] = m
+        return cast(Tuple[slice, ...], insert_slice(inner_slice, 4, slice(None, 2)))
+
     # stack views of neighbors
     all_views = [arr[slc] for slc in all_slices]
     stacked = xp.stack(all_views, axis=0)
@@ -133,3 +141,97 @@ def compute_vis(
     m = dmp[..., 0]
     M = dmp[..., 1]
     out[...] = M - m > atol + rtol * xp.maximum(xp.abs(m), xp.abs(M))
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp
+
+    dmp_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void dmp_kernel(
+            const double* __restrict__ w,   // (nvars,nx,ny,nz) contiguous C-order
+            double* __restrict__ M,      // same shape
+            double* __restrict__ m,      // same shape
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const int include_corners
+        ){
+            // Flattened index over nvars*nx*ny*nz
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long n = (long long)nvars * nx * ny * nz;
+            const bool usingx = nx > 1;
+            const bool usingy = ny > 1;
+            const bool usingz = nz > 1;
+            const int ndim = (int)usingx + (int)usingy + (int)usingz;
+
+            for (long long i = tid; i < n; i += stride) {
+
+                long long t = i;
+                int iz = (int)(t % nz); t /= nz;
+                int iy = (int)(t % ny); t /= ny;
+                int ix = (int)(t % nx); t /= nx;
+                int iv = (int)t;
+
+                if (usingx && !(ix > 0 && ix < nx - 1)) continue;
+                if (usingy && !(iy > 0 && iy < ny - 1)) continue;
+                if (usingz && !(iz > 0 && iz < nz - 1)) continue;
+
+                M[i] = w[i];
+                m[i] = w[i];
+
+                for (int offx = -1; offx <= 1; offx++) {
+                    if (!usingx && offx != 0) continue;
+
+                    for (int offy = -1; offy <= 1; offy++) {
+                        if (!usingy && offy != 0) continue;
+
+                        for (int offz = -1; offz <= 1; offz++) {
+                            if (!usingz && offz != 0) continue;
+
+                            if (offx == 0 && offy == 0 && offz == 0) continue;
+
+                            if (include_corners == 0 && ndim > 1) {
+                                int offsum = 0;
+                                if (usingx) offsum += (offx != 0);
+                                if (usingy) offsum += (offy != 0);
+                                if (usingz) offsum += (offz != 0);
+                                if (offsum > 1) continue;
+                            }
+
+                            int jx = ix + offx;
+                            int jy = iy + offy;
+                            int jz = iz + offz;
+                            const long long j =
+                                (((long long)iv * nx + jx) * ny + jy) * nz + jz;
+
+                            M[i] = (w[j] > M[i]) ? w[j] : M[i];
+                            m[i] = (w[j] < m[i]) ? w[j] : m[i];
+                        }
+                    }
+                }
+            }
+        }
+        """,
+        "dmp_kernel",
+    )
+
+    def compute_dmp_kernel_helper(
+        w: ArrayLike,
+        M: ArrayLike,
+        m: ArrayLike,
+        include_corners: bool,
+    ):
+        nvars, nx, ny, nz = w.shape
+
+        n = w.size
+        threads = 256
+        blocks = min(65535, (n + threads - 1) // threads)
+
+        dmp_kernel(
+            (blocks,), (threads,), (w, M, m, nvars, nx, ny, nz, int(include_corners))
+        )
