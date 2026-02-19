@@ -20,7 +20,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh, xyz_tup
-from .slope_limiting import MOOD, compute_vis
+from .slope_limiting import MOOD, compute_dmp, compute_vis
 from .slope_limiting.MOOD import (
     MOODConfig,
     MOODState,
@@ -42,6 +42,7 @@ from .slope_limiting.zhang_and_shu import (
     append_zhang_shu_scalar_statistics,
     clear_zhang_shu_scalar_statistics,
     compute_theta,
+    compute_theta_kernel_helper,
     init_zhang_shu_scalar_statistics,
     log_zhang_shu_scalar_statistics,
     zhang_shu_operator,
@@ -1077,6 +1078,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
         arrays.add("theta_vis_log", np.ones((nvars, nx, ny, nz)))
 
+        ntotal = _nx_ * _ny_ * _nz_
+        flat_ninterpolations = 1 + self.mesh.ndim * max_ninterps
+        arrays.add("_flat_w_", np.empty((nvars, ntotal)))
+        arrays.add("_flat_wj_", np.empty((nvars, ntotal, flat_ninterpolations)))
+        arrays.add("_flat_M_", np.empty((nvars, ntotal)))
+        arrays.add("_flat_m_", np.empty((nvars, ntotal)))
+        arrays.add("_flat_theta_", np.ones((nvars, ntotal)))
+
         # MOOD arrays
         arrays.add("troubles", np.zeros((nvars, nx, ny, nz), dtype=bool))
         arrays.add("troubles_vis", np.zeros((nvars, nx, ny, nz), dtype=bool))
@@ -1598,21 +1607,65 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         buffer = self.arrays["_buffer_"]
         theta_vis = self.arrays["theta_vis"]
         visualize = self.arrays["visualize"]
+        wflat = self.arrays["_flat_w_"]
+        wjflat = self.arrays["_flat_wj_"]
+        Mflat = self.arrays["_flat_M_"]
+        mflat = self.arrays["_flat_m_"]
+        thetaflat = self.arrays["_flat_theta_"]
 
-        # compute theta
-        compute_theta(
-            xp,
-            w,
-            wcc,
-            wx,
-            wy,
-            wz,
-            out=theta,
-            dmp=dmp,
-            alpha=alpha,
-            buffer=buffer,
-            config=scheme.limiter_config,
-        )
+        if hasattr(xp, "cuda"):
+            nvars = w.shape[0]
+            nx = w.shape[1]
+            ny = w.shape[2]
+            nz = w.shape[3]
+            ntotal = nx * ny * nz
+            max_nodes = self.nodes_per_face(scheme)
+            max_ninterps = 2 * max_nodes
+
+            wflat[...] = w.reshape(nvars, ntotal)
+            wjflat[..., 0] = wcc.reshape(nvars, ntotal)
+
+            for i, dim in enumerate(mesh.active_dims):
+                wj = {"x": wx, "y": wy, "z": wz}[dim]
+                idx1 = 1 + i * max_ninterps
+                idx2 = 1 + (i + 1) * max_ninterps
+                wjflat[..., slice(idx1, idx2)] = wj.reshape(nvars, ntotal, max_ninterps)
+
+            # compute DMP
+            compute_dmp(
+                xp,
+                w,
+                self.active_dims,
+                out=dmp,
+                include_corners=scheme.limiter_config.include_corners,
+            )
+            Mflat[...] = dmp[..., 1].reshape(nvars, ntotal)
+            mflat[...] = dmp[..., 0].reshape(nvars, ntotal)
+
+            compute_theta_kernel_helper(
+                wflat,
+                wjflat,
+                Mflat,
+                mflat,
+                thetaflat,
+                scheme.limiter_config.theta_denom_tol,
+            )
+            theta[...] = thetaflat.reshape(nvars, nx, ny, nz, 1)
+        else:
+            # compute theta
+            compute_theta(
+                xp,
+                w,
+                wcc,
+                wx,
+                wy,
+                wz,
+                out=theta,
+                dmp=dmp,
+                alpha=alpha,
+                buffer=buffer,
+                config=scheme.limiter_config,
+            )
 
         # limit the face nodes
         if wx is not None:

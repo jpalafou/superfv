@@ -94,6 +94,59 @@ if CUPY_AVAILABLE:
         no_return=True,
     )
 
+    compute_theta_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void compute_theta_kernel(
+            const double* w,
+            const double* wj,
+            const double* M,
+            const double* m,
+            double* out,
+            const int nvars,
+            const int nx,
+            const int ninterps,
+            const double eps
+        ) {
+            int tid = (int)(blockIdx.x * blockDim.x + threadIdx.x);
+            int stride = (int)(blockDim.x * gridDim.x);
+
+            int n = nvars * nx;
+
+            for (int i = tid; i < n; i += stride) {
+                const double* row = wj + ((size_t)i) * (size_t)ninterps;
+
+                double mj = row[0];
+                double Mj = row[0];
+                for (int j = 1; j < ninterps; ++j) {
+                    double vj = row[j];
+                    mj = (vj < mj) ? vj : mj;
+                    Mj = (vj > Mj) ? vj : Mj;
+                }
+
+                out[i] = 1.0;
+                out[i] = fmin(fabs(M[i] - w[i]) / (fabs(Mj - w[i]) + eps), out[i]);
+                out[i] = fmin(fabs(m[i] - w[i]) / (fabs(mj - w[i]) + eps), out[i]);
+            }
+        }
+        """,
+        "compute_theta_kernel",
+    )
+
+
+def compute_theta_kernel_helper(
+    w: ArrayLike, wj: ArrayLike, M: ArrayLike, m: ArrayLike, out: ArrayLike, eps: float
+):
+    nvars, nx = w.shape
+    ninterps = wj.shape[2]
+    threads_per_block = 256
+    blocks_per_grid = (nvars * nx + threads_per_block - 1) // threads_per_block
+    compute_theta_kernel(
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (w, wj, M, m, out, nvars, nx, ninterps, eps),
+    )
+
 
 def compute_theta(
     xp: ModuleType,
