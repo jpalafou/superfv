@@ -42,26 +42,26 @@ configs = {
     # "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/1rev/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM3/2revs/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
-    ),
-    "MM7/2revs/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
-    ),
-    "MM3/3revs/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    ),
+    # "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    # "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    # "MM3/1rev/no_delta/rtol_1e-5": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    # ),
+    # "MM7/1rev/no_delta/rtol_1e-5": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    # ),
+    # "MM3/2revs/no_delta/rtol_1e-5": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    # ),
+    # "MM7/2revs/no_delta/rtol_1e-5": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    # ),
+    # "MM3/3revs/no_delta/rtol_1e-5": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    # ),
+    # "MM7/3revs/no_delta/rtol_1e-5": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    # ),
 }
 
 # simulation parameters
