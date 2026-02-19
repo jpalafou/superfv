@@ -18,7 +18,7 @@ overwrite = True
 # loop parameters
 N_values = [32, 64, 128, 256, 512, 1024, 2048]
 
-common = dict(PAD={"rho": (0, None), "P": (0, None)})
+common = dict(PAD={"rho": (0, None), "P": (0, None)}, SED=False)
 musclhancock = dict(p=1, MUSCL=True, **common)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
@@ -33,13 +33,13 @@ aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
 aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
 configs = {
-    "p0": dict(p=0),
-    "p1": dict(p=1),
-    "p3": dict(p=3),
-    "p7": dict(p=7),
-    "p3/GL": dict(p=3, GL=True),
-    "p7/GL": dict(p=7, GL=True),
-    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
+    # "p0": dict(p=0),
+    # "p1": dict(p=1),
+    # "p3": dict(p=3),
+    # "p7": dict(p=7),
+    # "p3/GL": dict(p=3, GL=True),
+    # "p7/GL": dict(p=7, GL=True),
+    # "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),

@@ -55,11 +55,23 @@ configs = {
     "MM7/3revs/no_delta/rtol_1e-1": dict(
         p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
     ),
+    "MM3/2revs/no_delta/rtol_1e-1": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori2
+    ),
+    "MM7/2revs/no_delta/rtol_1e-1": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori2
+    ),
     "MM3/1rev/no_delta/rtol_1e-5": dict(
         p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
     ),
     "MM7/1rev/no_delta/rtol_1e-5": dict(
         p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    ),
+    "MM3/1rev/no_delta/rtol_1e-4": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-4, **aposteriori1
+    ),
+    "MM7/1rev/no_delta/rtol_1e-4": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-4, **aposteriori1
     ),
     "MM3/1rev/no_delta/rtol_1e-3": dict(
         p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori1
@@ -67,11 +79,29 @@ configs = {
     "MM7/1rev/no_delta/rtol_1e-3": dict(
         p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori1
     ),
+    "MM3/1rev/no_delta/rtol_5e-3": dict(
+        p=3, NAD_delta=False, NAD_rtol=5e-3, **aposteriori1
+    ),
+    "MM7/1rev/no_delta/rtol_5e-3": dict(
+        p=7, NAD_delta=False, NAD_rtol=5e-3, **aposteriori1
+    ),
     "MM3/1rev/no_delta/rtol_1e-2": dict(
         p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori1
     ),
     "MM7/1rev/no_delta/rtol_1e-2": dict(
         p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori1
+    ),
+    "MM3/1rev/no_delta/rtol_5e-2": dict(
+        p=3, NAD_delta=False, NAD_rtol=5e-2, **aposteriori1
+    ),
+    "MM7/1rev/no_delta/rtol_5e-2": dict(
+        p=7, NAD_delta=False, NAD_rtol=5e-2, **aposteriori1
+    ),
+    "MM3/1rev/no_delta/rtol_1e-1": dict(
+        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori1
+    ),
+    "MM7/1rev/no_delta/rtol_1e-1": dict(
+        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori1
     ),
 }
 
