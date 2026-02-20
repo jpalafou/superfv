@@ -1189,7 +1189,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # buffer cost of slope-limiting functions
         if isinstance(scheme.limiter_config, ZhangShuConfig):
-            limiting_buffer_cost = 1
+            limiting_buffer_cost = 3
         elif isinstance(scheme, musclInterpolationScheme):
             limiting_buffer_cost = 4
             if scheme.limiter_config.limiter == "PP2D":

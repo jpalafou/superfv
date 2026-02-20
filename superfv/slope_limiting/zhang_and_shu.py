@@ -322,6 +322,7 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     step_log = fv_solver.step_log  # gets mutated
 
     # allocate arrays
+    check_buffer_slots(arrays["_buffer_"], required=3)
     theta = arrays["_theta_"][interior][..., 0]
     buffer = arrays["_buffer_"]
     theta_vis = arrays["theta_vis"]  # has no ghost cells
