@@ -18,7 +18,12 @@ overwrite = True
 # loop parameters
 N_values = [32, 64, 128, 256, 512, 1024, 2048]
 
-common = dict(PAD={"rho": (0, None), "P": (0, None)}, SED=False)
+common = dict(
+    PAD={"rho": (0, None), "P": (0, None)},
+    SED=False,
+    log_limiter_scalars=False,
+    skip_trouble_counts=True,
+)
 musclhancock = dict(p=1, MUSCL=True, **common)
 apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
 aposteriori = dict(
@@ -91,7 +96,6 @@ for (name, config), N in product(configs.items(), N_values):
             nx=N,
             ny=N,
             cupy=args.cupy,
-            skip_trouble_counts=True,
             **config,
         )
 

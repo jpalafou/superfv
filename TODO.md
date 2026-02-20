@@ -1,1 +1,1 @@
-- [x] add: PAD-only MPP test in 2D
+- [ ] log_limiter_scalars should default to false
