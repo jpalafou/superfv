@@ -632,7 +632,8 @@ class ExplicitODESolver(ABC):
 
     def take_snapshot(self):
         """
-        Log and time snapshot data at time `self.t` and write it to `self.path` if not None.
+        Log and time snapshot data at time `self.t` and write it to `self.path` if not
+        None.
         """
         self.stepper_timer.start("snapshot")
 

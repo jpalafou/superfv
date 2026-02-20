@@ -2027,6 +2027,35 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         return revised_dt
 
+    def called_at_beginning_of_step(self):
+        """
+        Helper function called at the beginning of each step starting with a timer
+        start preceded by a CUDA synchronization if using CuPy.
+        """
+        if self.xp:
+            xp.cuda.Device().synchronize()
+        super().called_at_beginning_of_step()
+
+    def called_at_end_of_step(self):
+        """
+        Helper function called at the end of each step ending with a timer stop
+        followed by a CUDA synchronization if using CuPy.
+        """
+        super().called_at_end_of_step()
+        if self.xp:
+            xp.cuda.Device().synchronize()
+
+    def take_snapshot(self):
+        """
+        Log and time snapshot data at time `self.t` and write it to `self.path` if not
+        None, all wrapped in CUDA synchronizations if using CuPy.
+        """
+        if self.xp:
+            xp.cuda.Device().synchronize()
+        super().take_snapshot()
+        if self.xp:
+            xp.cuda.Device().synchronize()
+
     def prepare_snapshot_data(self) -> Dict[str, np.ndarray]:
         """
         Returns the arrays to be saved in the snapshot at time `self.t`.
