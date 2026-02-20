@@ -1713,9 +1713,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     )
 
                 detect_PAD_violations(
-                    xp, node_mp, PAD_bounds, PAD_atol, out=PAD_violations
+                    xp, node_mp, PAD_bounds[lim_slc], PAD_atol, out=PAD_violations
                 )
-                alpha[...] = xp.where(PAD_violations < 0, -1.0, alpha)
+                alpha[..., 0] = xp.where(PAD_violations < 0, -1.0, alpha[..., 0])
 
             theta[...] = xp.where(alpha < 1.0, theta, 1.0)
 

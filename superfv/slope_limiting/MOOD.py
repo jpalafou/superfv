@@ -536,7 +536,7 @@ def detect_PAD_violations(
     if ndim == 4:
         out[...] = violations
     else:
-        out[...] = xp.any(violations, axis=4, keepdims=True)
+        out[...] = xp.any(violations, axis=4)
 
 
 @lru_cache(maxsize=None)
