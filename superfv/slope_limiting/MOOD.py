@@ -15,8 +15,6 @@ from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
-from .smooth_extrema_detection import smooth_extrema_detector
-
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
 
@@ -263,8 +261,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     PAD_bounds = config.PAD_bounds
     PAD_atol = config.PAD_atol
     SED = config.smooth_extrema_detection
-    check_uniformity = config.check_uniformity
-    uniformity_tol = config.uniformity_tol
     skip_trouble_counts = config.skip_trouble_counts
 
     # determine limiting style
@@ -272,7 +268,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     max_idx = len(cascade) - 1
 
     # allocate arrays
-    check_buffer_slots(arrays["_buffer_"], required=6)
+    check_buffer_slots(arrays["_buffer_"], required=8)
     _u_old_ = arrays["_u_"]
     _w_old_ = arrays["_w_"]
     _u_new_ = arrays["_buffer_"][..., 0]
@@ -281,7 +277,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     _NAD_violations_ = arrays["_NAD_violations_"][lim_slc]
     _alpha_ = arrays["_alpha_"][lim_slc]
     _nbuff_ = arrays["_buffer_"][..., 2:8][lim_slc]
-    _abuff_ = arrays["_buffer_"][..., 8:][lim_slc]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
@@ -335,15 +330,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
         # compute smooth extrema
         if SED:
-            smooth_extrema_detector(
-                xp,
-                (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
-                active_dims,
-                check_uniformity,
-                out=_alpha_,
-                buffer=_abuff_,
-                uniformity_tol=uniformity_tol,
-            )
+            fv_solver.smooth_extrema_detection(
+                (_w_new_ if primitive_NAD else _u_new_), scheme
+            )  # revised `_alpha_` along `lim_slc`
             alpha = _alpha_[..., 0][interior]
             troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
         else:

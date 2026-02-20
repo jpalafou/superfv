@@ -6,12 +6,9 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
 
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
-from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import replace_slice
-
-from .MOOD import detect_PAD_violations
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
@@ -103,6 +100,8 @@ if CUPY_AVAILABLE:
             const double* M,
             const double* m,
             double* out,
+            double* Mj,
+            double* mj,
             const int nvars,
             const int nx,
             const int ninterps,
@@ -116,17 +115,17 @@ if CUPY_AVAILABLE:
             for (int i = tid; i < n; i += stride) {
                 const double* row = wj + ((size_t)i) * (size_t)ninterps;
 
-                double mj = row[0];
-                double Mj = row[0];
+                mj[i] = row[0];
+                Mj[i] = row[0];
                 for (int j = 1; j < ninterps; ++j) {
                     double vj = row[j];
-                    mj = (vj < mj) ? vj : mj;
-                    Mj = (vj > Mj) ? vj : Mj;
+                    mj[i] = (vj < mj[i]) ? vj : mj[i];
+                    Mj[i] = (vj > Mj[i]) ? vj : Mj[i];
                 }
 
                 out[i] = 1.0;
-                out[i] = fmin(fabs(M[i] - w[i]) / (fabs(Mj - w[i]) + eps), out[i]);
-                out[i] = fmin(fabs(m[i] - w[i]) / (fabs(mj - w[i]) + eps), out[i]);
+                out[i] = fmin(fabs(M[i] - w[i]) / (fabs(Mj[i] - w[i]) + eps), out[i]);
+                out[i] = fmin(fabs(m[i] - w[i]) / (fabs(mj[i] - w[i]) + eps), out[i]);
             }
         }
         """,
@@ -135,7 +134,14 @@ if CUPY_AVAILABLE:
 
 
 def compute_theta_kernel_helper(
-    w: ArrayLike, wj: ArrayLike, M: ArrayLike, m: ArrayLike, out: ArrayLike, eps: float
+    w: ArrayLike,
+    wj: ArrayLike,
+    M: ArrayLike,
+    m: ArrayLike,
+    Mj: ArrayLike,
+    mj: ArrayLike,
+    out: ArrayLike,
+    eps: float,
 ):
     nvars, nx = w.shape
     ninterps = wj.shape[2]
@@ -144,7 +150,7 @@ def compute_theta_kernel_helper(
     compute_theta_kernel(
         (blocks_per_grid,),
         (threads_per_block,),
-        (w, wj, M, m, out, nvars, nx, ninterps, eps),
+        (w, wj, M, m, Mj, mj, out, nvars, nx, ninterps, eps),
     )
 
 
@@ -158,9 +164,9 @@ def compute_theta(
     *,
     out: ArrayLike,
     dmp: ArrayLike,
+    node_mp: ArrayLike,
     buffer: ArrayLike,
     config: ZhangShuConfig,
-    alpha: Optional[ArrayLike] = None,
 ) -> Tuple[slice, ...]:
     """
     Compute Zhang and Shu's a priori slope limiting parameter theta based on arrays of
@@ -175,6 +181,8 @@ def compute_theta(
         out: Array to which theta is written. Has shape (nvars, nx, ny, nz, >=1).
         dmp: Array to which the discrete maximum principle is written. Has shape
             (nvars, nx, ny, nz, >=2).
+        node_mp: Array to which the nodal maximum principle is written. Has shape
+            (nvars, nx, ny, nz, >=2).
         buffer: Array to which temporary values are assigned. Has different shape
             requirements depending on whether SED is used and the number (length) of
             active dimensions:
@@ -183,20 +191,16 @@ def compute_theta(
             - with SED, 2D: (nvars, nx, ny, nz, >=12)
             - with SED, 3D: (nvars, nx, ny, nz, >=13)
         config: Configuration for the Zhang-Shu limiter.
-        alpha: Optional array to which the smooth extrema detector values are written
-            if SED is enabled. Has shape (nvars, nx, ny, nz, 1).
 
     Returns:
         Slice objects indicating the valid regions in the output array.
     """
     include_corners = config.include_corners
-    SED = config.smooth_extrema_detection
     tol = config.theta_denom_tol
 
     # allocate arrays
-    check_buffer_slots(buffer, required=3)
-    node_mp = buffer[..., :2]
-    theta = buffer[..., 2:3]
+    check_buffer_slots(buffer, required=1)
+    theta = buffer[..., :1]
 
     # compute discrete maximum principle
     active_dims = tuple(
@@ -234,40 +238,8 @@ def compute_theta(
             1.0,
         )
 
-    # relax theta using a smooth extrema detector
-    if SED:
-        if alpha is None:
-            raise ValueError("alpha array must be provided when SED is enabled.")
-        abuff = buffer[..., 3:]
-        valid = smooth_extrema_detector(
-            xp,
-            u,
-            active_dims,
-            config.check_uniformity,
-            out=alpha,
-            buffer=abuff,
-            uniformity_tol=config.uniformity_tol,
-        )
-
-        # unrelax theta where there are PAD violations
-        if config.physical_admissibility_detection:
-            PAD_bounds = config.PAD_bounds
-            PAD_atol = config.PAD_atol
-
-            if PAD_bounds is None:
-                raise ValueError(
-                    "PAD_bounds must be provided when "
-                    "physical_admissibility_detection is True."
-                )
-
-            PAD_violations = abuff[..., :1]  # recycle buffer slots
-            detect_PAD_violations(xp, node_mp, PAD_bounds, PAD_atol, out=PAD_violations)
-            alpha[valid] = xp.where(PAD_violations[valid] < 0, 0.0, alpha[valid])
-
-        out[valid] = xp.where(alpha[valid] < 1, theta[valid], 1)
-    else:
-        valid = cast(Tuple[slice, ...], replace_slice(dmp_valid, 4, slice(0, 1)))
-        out[valid] = theta[valid]
+    valid = cast(Tuple[slice, ...], replace_slice(dmp_valid, 4, slice(0, 1)))
+    out[valid] = theta[valid]
 
     return valid
 

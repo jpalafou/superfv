@@ -20,7 +20,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh, xyz_tup
-from .slope_limiting import MOOD, compute_dmp, compute_vis
+from .slope_limiting import MOOD, compute_dmp, compute_vis, smooth_extrema_detector
 from .slope_limiting.MOOD import (
     MOODConfig,
     MOODState,
@@ -1082,6 +1082,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("theta_vis", np.ones((nvars, nx, ny, nz)))
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
         arrays.add("theta_vis_log", np.ones((nvars, nx, ny, nz)))
+        arrays.add("_node_mp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
 
         ntotal = _nx_ * _ny_ * _nz_
         flat_ninterpolations = 1 + self.mesh.ndim * max_ninterps
@@ -1089,6 +1090,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_flat_wj_", np.empty((nvars, ntotal, flat_ninterpolations)))
         arrays.add("_flat_M_", np.empty((nvars, ntotal)))
         arrays.add("_flat_m_", np.empty((nvars, ntotal)))
+        arrays.add("_flat_Mj_", np.empty((nvars, ntotal)))
+        arrays.add("_flat_mj_", np.empty((nvars, ntotal)))
         arrays.add("_flat_theta_", np.ones((nvars, ntotal)))
 
         # MOOD arrays
@@ -1185,7 +1188,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # buffer cost of slope-limiting functions
         if isinstance(scheme.limiter_config, ZhangShuConfig):
-            limiting_buffer_cost = 3
+            limiting_buffer_cost = 1
         elif isinstance(scheme, musclInterpolationScheme):
             limiting_buffer_cost = 4
             if scheme.limiter_config.limiter == "PP2D":
@@ -1233,6 +1236,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "integrate_fluxes",
             "MOOD_loop",
             "compute_RHS",
+            "detect_smooth_extrema",
             "riemann_solver",
             "shock_detector",
             "compute_fallback_fluxes",
@@ -1604,26 +1608,36 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
         mesh = self.mesh
         interior = self.interior
-        lim = self.variable_index_map("limiting", keepdims=True)
+        lim_slc = self.variable_index_map("limiting", keepdims=True)
+        limiter_config = scheme.limiter_config
 
         # define array references
-        w = self.arrays["_w_"] if primitives else self.arrays["_u_"]
-        wcc = self.arrays["_wcc_"] if primitives else self.arrays["_ucc_"]
-        wx = self.arrays["_x_nodes_"] if mesh.x_is_active else None
-        wy = self.arrays["_y_nodes_"] if mesh.y_is_active else None
-        wz = self.arrays["_z_nodes_"] if mesh.z_is_active else None
-        theta = self.arrays["_theta_"]
-        dmp = self.arrays["_dmp_"]
-        alpha = self.arrays["_alpha_"]
-        buffer = self.arrays["_buffer_"]
-        theta_vis = self.arrays["theta_vis"]
-        visualize = self.arrays["visualize"]
-        wflat = self.arrays["_flat_w_"]
-        wjflat = self.arrays["_flat_wj_"]
-        Mflat = self.arrays["_flat_M_"]
-        mflat = self.arrays["_flat_m_"]
-        thetaflat = self.arrays["_flat_theta_"]
+        w = self.arrays["_w_"][lim_slc] if primitives else self.arrays["_u_"][lim_slc]
+        wcc = (
+            self.arrays["_wcc_"][lim_slc]
+            if primitives
+            else self.arrays["_ucc_"][lim_slc]
+        )
+        wx = self.arrays["_x_nodes_"][lim_slc] if mesh.x_is_active else None
+        wy = self.arrays["_y_nodes_"][lim_slc] if mesh.y_is_active else None
+        wz = self.arrays["_z_nodes_"][lim_slc] if mesh.z_is_active else None
+        theta = self.arrays["_theta_"][lim_slc]
+        dmp = self.arrays["_dmp_"][lim_slc]
+        node_mp = self.arrays["_node_mp_"][lim_slc]
+        alpha = self.arrays["_alpha_"][lim_slc]
+        PAD_violations = self.arrays["_PAD_violations_"][lim_slc]
+        buffer = self.arrays["_buffer_"][lim_slc]
+        theta_vis = self.arrays["theta_vis"][lim_slc]
+        visualize = self.arrays["visualize"][lim_slc]
+        wflat = self.arrays["_flat_w_"][lim_slc]
+        wjflat = self.arrays["_flat_wj_"][lim_slc]
+        Mflat = self.arrays["_flat_M_"][lim_slc]
+        mflat = self.arrays["_flat_m_"][lim_slc]
+        Mjflat = self.arrays["_flat_Mj_"][lim_slc]
+        mjflat = self.arrays["_flat_mj_"][lim_slc]
+        thetaflat = self.arrays["_flat_theta_"][lim_slc]
 
+        # compute theta
         if hasattr(xp, "cuda"):
             nvars = w.shape[0]
             nx = w.shape[1]
@@ -1648,7 +1662,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 w,
                 self.active_dims,
                 out=dmp,
-                include_corners=scheme.limiter_config.include_corners,
+                include_corners=limiter_config.include_corners,
             )
             Mflat[...] = dmp[..., 1].reshape(nvars, ntotal)
             mflat[...] = dmp[..., 0].reshape(nvars, ntotal)
@@ -1658,12 +1672,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 wjflat,
                 Mflat,
                 mflat,
+                Mjflat,
+                mjflat,
                 thetaflat,
-                scheme.limiter_config.theta_denom_tol,
+                limiter_config.theta_denom_tol,
             )
             theta[...] = thetaflat.reshape(nvars, nx, ny, nz, 1)
+            node_mp[..., 0] = mjflat.reshape(nvars, nx, ny, nz)
+            node_mp[..., 1] = Mjflat.reshape(nvars, nx, ny, nz)
         else:
-            # compute theta
             compute_theta(
                 xp,
                 w,
@@ -1673,21 +1690,73 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 wz,
                 out=theta,
                 dmp=dmp,
+                node_mp=node_mp,
                 alpha=alpha,
                 buffer=buffer,
-                config=scheme.limiter_config,
+                config=limiter_config,
             )
+
+        # SED
+        if limiter_config.smooth_extrema_detection:
+            self.detect_smooth_extrema(w, scheme)  # revises `alpha` along `lim_slc`
+
+            # unrelax with PAD
+            if limiter_config.physical_admissibility_detection:
+                PAD_bounds = limiter_config.PAD_bounds
+                PAD_atol = limiter_config.PAD_atol
+
+                if PAD_bounds is None:
+                    raise ValueError(
+                        "PAD_bounds must be provided when "
+                        "physical_admissibility_detection is True."
+                    )
+
+                detect_PAD_violations(
+                    xp, node_mp, PAD_bounds, PAD_atol, out=PAD_violations
+                )
+                alpha[...] = xp.where(PAD_violations < 0, -1.0, alpha)
+
+            theta[...] = xp.where(alpha < 1.0, theta, 1.0)
 
         # limit the face nodes
         if wx is not None:
-            wx[lim] = zhang_shu_operator(wx[lim], w[lim][..., np.newaxis], theta[lim])
+            wx[...] = zhang_shu_operator(wx, w[..., np.newaxis], theta)
         if wy is not None:
-            wy[lim] = zhang_shu_operator(wy[lim], w[lim][..., np.newaxis], theta[lim])
+            wy[...] = zhang_shu_operator(wy, w[..., np.newaxis], theta)
         if wz is not None:
-            wz[lim] = zhang_shu_operator(wz[lim], w[lim][..., np.newaxis], theta[lim])
+            wz[...] = zhang_shu_operator(wz, w[..., np.newaxis], theta)
         # compute theta for visualization (ignore cells with small dmp ranges)
         compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
         theta_vis[...] = xp.where(visualize, theta[insert_slice(interior, 4, 0)], 1.0)
+
+    @MethodTimer(cat="detect_smooth_extrema")
+    def detect_smooth_extrema(self, u: ArrayLike, scheme: InterpolationScheme):
+        """
+        Detect smooth extrema and write the result to the limiting variable slice of
+        the `_alpha_` array.
+
+        Args:
+            u: Array on which smooth extrema are to be detected. Has shape
+                (nvars, nx, ny, nz).
+            scheme: Interpolation scheme to use for the detection.
+        """
+        xp = self.xp
+        active_dims = self.active_dims
+        arrays = self.arrays
+        lim_slc = self.variable_index_map("limiting", keepdims=True)
+
+        alpha = arrays["_alpha_"][lim_slc]
+        buffer = arrays["_buffer_"][lim_slc]
+
+        smooth_extrema_detector(
+            xp,
+            u[lim_slc],
+            active_dims,
+            scheme.limiter_config.check_uniformity,
+            out=alpha,
+            buffer=buffer,
+            uniformity_tol=scheme.limiter_config.uniformity_tol,
+        )
 
     @MethodTimer(cat="integrate_fluxes")
     def integrate_fluxes(
