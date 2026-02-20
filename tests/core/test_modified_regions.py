@@ -182,7 +182,8 @@ def test_compute_theta(
     nodes = nodes[..., xp.newaxis]
 
     dmp = mega_buffer[..., :2]
-    buffer = mega_buffer[..., 2:]
+    node_mp = mega_buffer[..., 2:4]
+    buffer = mega_buffer[..., 4:]
 
     config = ZhangShuConfig(
         shock_detection=False,
@@ -203,6 +204,7 @@ def test_compute_theta(
         nodes if "z" in dims else None,
         out=out,
         dmp=dmp,
+        node_mp=node_mp,
         buffer=buffer,
         config=config,
     )
