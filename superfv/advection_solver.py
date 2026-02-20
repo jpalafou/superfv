@@ -45,6 +45,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
+        log_limiter_scalars: bool = True,
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full", "none"] = "muscl",
         blend: bool = False,
@@ -158,6 +159,8 @@ class AdvectionSolver(FiniteVolumeSolver):
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
                 halve the timestep size if the proposed solution fails PAD.
+            log_limiter_scalars: Whether to log scalar statistics for the Zhang-Shu
+                limiter and MOOD.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
             cascade: A string indicating which type of MOOD cascade to use:
@@ -244,6 +247,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             MUSCL_limiter=MUSCL_limiter,
             ZS=ZS,
             adaptive_dt=adaptive_dt,
+            log_limiter_scalars=log_limiter_scalars,
             MOOD=MOOD,
             cascade=cascade,
             blend=blend,

@@ -95,6 +95,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
+        log_limiter_scalars: bool = True,
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full", "none"] = "muscl",
         blend: bool = False,
@@ -205,6 +206,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 slope limiter.
             adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
                 halve the timestep size if the proposed solution fails PAD.
+            log_limiter_scalars: Whether to log scalar statistics for the Zhang-Shu
+                limiter and MOOD.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
                 `ZS=True` and `adaptive_timestepping=True`.
             cascade: A string indicating which type of MOOD cascade to use:
@@ -297,7 +300,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             uniformity_tol,
             face_fallback,
         )
-        self._init_snapshots()
+        self._init_snapshots(log_limiter_scalars)
         self._init_mesh(xlim, ylim, zlim, nx, ny, nz, CFL)
         self._init_bc(bcx, bcy, bcz, bcx_callable, bcy_callable, bcz_callable)
         self._init_array_allocation()
@@ -829,18 +832,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.arrays.add("NAD_gtol", gtol)
         self.arrays.add("NAD_atol", atol)
 
-    def _init_snapshots(self):
+    def _init_snapshots(self, log_limiter_scalars: bool):
         self.step_log: Dict[str, List[float]] = {}
+        self.log_limiter_scalars = log_limiter_scalars
 
         # init emergency face fallback statistics
         self.step_log["nfine_emergency_fallbacks"] = []
         self.n_emergency_fallbacks: int = 0
 
-        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            init_zhang_shu_scalar_statistics(self)
+        if self.log_limiter_scalars:
+            if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
+                init_zhang_shu_scalar_statistics(self)
 
-        if self.MOOD:
-            init_troubled_cell_scalar_statistics(self)
+            if self.MOOD:
+                init_troubled_cell_scalar_statistics(self)
 
     def _init_mesh(
         self,
@@ -2135,11 +2140,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             }
         )
 
-        if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            log_zhang_shu_scalar_statistics(self, data)
+        if self.log_limiter_scalars:
+            if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
+                log_zhang_shu_scalar_statistics(self, data)
 
-        if self.MOOD:
-            log_troubled_cell_scalar_statistics(self, data)
+            if self.MOOD:
+                log_troubled_cell_scalar_statistics(self, data)
 
         data.update(self.log_quantity())
 
@@ -2168,13 +2174,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
             self.arrays["theta_log"].fill(0.0)
             self.arrays["theta_vis_log"].fill(0.0)
-            clear_zhang_shu_scalar_statistics(self)
+            if self.log_limiter_scalars:
+                clear_zhang_shu_scalar_statistics(self)
 
         if self.MOOD:
             self.arrays["troubles_log"].fill(0)
             self.arrays["troubles_vis_log"].fill(0)
             self.arrays["cascade_idx_log"].fill(0)
-            clear_troubled_cell_scalar_statistics(self)
+            if self.log_limiter_scalars:
+                clear_troubled_cell_scalar_statistics(self)
 
     def increment_substepwise_logs(self):
         """
@@ -2199,7 +2207,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             xp.add(theta_log, theta, out=theta_log)
             xp.add(theta_vis_log, theta_vis, out=theta_vis_log)
 
-            append_zhang_shu_scalar_statistics(self)
+            if self.log_limiter_scalars:
+                append_zhang_shu_scalar_statistics(self)
 
         if self.MOOD:
             troubles = self.arrays["troubles"]
@@ -2215,7 +2224,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             self.MOOD_state.increment_substep_hists()
 
-            append_troubled_cell_scalar_statistics(self)
+            if self.log_limiter_scalars:
+                append_troubled_cell_scalar_statistics(self)
 
     def run(
         self,
