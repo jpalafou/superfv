@@ -20,7 +20,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh, xyz_tup
-from .slope_limiting import MOOD, compute_dmp, compute_vis, smooth_extrema_detector
+from .slope_limiting import MOOD, compute_dmp, compute_vis
 from .slope_limiting.MOOD import (
     MOODConfig,
     MOODState,
@@ -37,6 +37,7 @@ from .slope_limiting.muscl import (
     musclInterpolationScheme,
 )
 from .slope_limiting.shock_detection import compute_shock_detector
+from .slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     append_zhang_shu_scalar_statistics,
@@ -1650,8 +1651,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wflat[...] = w.reshape(nvars, ntotal)
             wjflat[..., 0] = wcc.reshape(nvars, ntotal)
 
-            for i, dim in enumerate(mesh.active_dims):
-                wj = {"x": wx, "y": wy, "z": wz}[dim]
+            for i, wj in enumerate([wx, wy, wz]):
+                if wj is None:
+                    continue
                 idx1 = 1 + i * max_ninterps
                 idx2 = 1 + (i + 1) * max_ninterps
                 wjflat[..., slice(idx1, idx2)] = wj.reshape(nvars, ntotal, max_ninterps)
@@ -1691,14 +1693,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 out=theta,
                 dmp=dmp,
                 node_mp=node_mp,
-                alpha=alpha,
                 buffer=buffer,
                 config=limiter_config,
             )
 
         # SED
         if limiter_config.smooth_extrema_detection:
-            self.detect_smooth_extrema(w, scheme)  # revises `alpha` along `lim_slc`
+            self.detect_smooth_extrema(w, scheme)
 
             # unrelax with PAD
             if limiter_config.physical_admissibility_detection:
@@ -2106,8 +2107,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Helper function called at the beginning of each step starting with a timer
         start preceded by a CUDA synchronization if using CuPy.
         """
-        if self.xp:
-            xp.cuda.Device().synchronize()
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
         super().called_at_beginning_of_step()
 
     def called_at_end_of_step(self):
@@ -2116,19 +2117,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         followed by a CUDA synchronization if using CuPy.
         """
         super().called_at_end_of_step()
-        if self.xp:
-            xp.cuda.Device().synchronize()
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
 
     def take_snapshot(self):
         """
         Log and time snapshot data at time `self.t` and write it to `self.path` if not
         None, all wrapped in CUDA synchronizations if using CuPy.
         """
-        if self.xp:
-            xp.cuda.Device().synchronize()
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
         super().take_snapshot()
-        if self.xp:
-            xp.cuda.Device().synchronize()
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
 
     def prepare_snapshot_data(self) -> Dict[str, np.ndarray]:
         """

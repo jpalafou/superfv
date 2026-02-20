@@ -169,12 +169,11 @@ def test_compute_shock_detector(dims: str):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("check_uniformity", [False, True])
 @pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_compute_theta(
-    dims: str, SED: bool, check_uniformity: bool, PAD: bool, include_corners: bool
+    dims: str, check_uniformity: bool, PAD: bool, include_corners: bool
 ):
     xp = configure_xp()
 
@@ -183,12 +182,11 @@ def test_compute_theta(
     nodes = nodes[..., xp.newaxis]
 
     dmp = mega_buffer[..., :2]
-    alpha = mega_buffer[..., 2:3]
-    buffer = mega_buffer[..., 3:]
+    buffer = mega_buffer[..., 2:]
 
     config = ZhangShuConfig(
         shock_detection=False,
-        smooth_extrema_detection=SED,
+        smooth_extrema_detection=False,
         check_uniformity=check_uniformity,
         physical_admissibility_detection=PAD,
         include_corners=include_corners,
@@ -205,7 +203,6 @@ def test_compute_theta(
         nodes if "z" in dims else None,
         out=out,
         dmp=dmp,
-        alpha=alpha,
         buffer=buffer,
         config=config,
     )

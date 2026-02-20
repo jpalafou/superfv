@@ -144,7 +144,7 @@ def compute_vis(
 
 
 if CUPY_AVAILABLE:
-    import cupy as cp
+    import cupy as cp  # type: ignore
 
     dmp_kernel = cp.RawKernel(
         """

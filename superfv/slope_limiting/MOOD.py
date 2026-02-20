@@ -330,9 +330,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
         # compute smooth extrema
         if SED:
-            fv_solver.smooth_extrema_detection(
+            fv_solver.detect_smooth_extrema(
                 (_w_new_ if primitive_NAD else _u_new_), scheme
-            )  # revised `_alpha_` along `lim_slc`
+            )
             alpha = _alpha_[..., 0][interior]
             troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
         else:
