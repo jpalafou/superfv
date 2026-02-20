@@ -1222,10 +1222,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         new_timer_cats = [
             "compute_dt",
             "apply_bc",
+            "update_workspaces",
+            "interpolate_faces",
+            "zhang_shu_limiter",
+            "integrate_fluxes",
+            "MOOD_loop",
+            "compute_RHS",
             "riemann_solver",
             "shock_detector",
-            "zhang_shu_limiter",
-            "MOOD_loop",
             "compute_fallback_fluxes",
             "detect_troubled_cells",
             "revise_fluxes",
@@ -1378,6 +1382,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         raise NotImplementedError("Riemann solver not implemented.")
 
+    @MethodTimer(cat="update_workspaces")
     def update_workspaces(
         self,
         t: float,
@@ -1528,6 +1533,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             buffer=buffer,
         )
 
+    @MethodTimer(cat="interpolate_faces")
     def interpolate_faces(
         self,
         u: ArrayLike,
@@ -1678,6 +1684,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
         theta_vis[...] = xp.where(visualize, theta[insert_slice(interior, 4, 0)], 1.0)
 
+    @MethodTimer(cat="integrate_fluxes")
     def integrate_fluxes(
         self,
         dim: Literal["x", "y", "z"],
@@ -1878,6 +1885,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.update_troubled_cell_count(n_total)
 
+    @MethodTimer(cat="compute_RHS")
     def compute_RHS(self) -> ArrayLike:
         """
         Compute the right-hand side of the ODE and write it to `self.arrays["dudt"]`.
