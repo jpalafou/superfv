@@ -268,15 +268,14 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     max_idx = len(cascade) - 1
 
     # allocate arrays
-    check_buffer_slots(arrays["_buffer_"], required=8)
     _u_old_ = arrays["_u_"]
     _w_old_ = arrays["_w_"]
-    _u_new_ = arrays["_buffer_"][..., 0]
-    _w_new_ = arrays["_buffer_"][..., 1]
+    _u_new_ = arrays["_unew_"]
+    _w_new_ = arrays["_wnew_"]
     _dmp_ = arrays["_dmp_"][lim_slc]
     _NAD_violations_ = arrays["_NAD_violations_"][lim_slc]
     _alpha_ = arrays["_alpha_"][lim_slc]
-    _nbuff_ = arrays["_buffer_"][..., 2:8][lim_slc]
+    _nbuff_ = arrays["_buffer_"][lim_slc]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]

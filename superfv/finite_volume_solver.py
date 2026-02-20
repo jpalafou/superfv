@@ -1109,6 +1109,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
             arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
 
+        arrays.add("_unew_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_wnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_NAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_PAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_troubles_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=bool))
