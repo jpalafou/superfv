@@ -451,7 +451,7 @@ class EulerSolver(FiniteVolumeSolver):
                 self.n_passive_vars
             )
 
-    @MethodTimer(cat="riemann_solver")
+    @MethodTimer(cat="integrate_fluxes:riemann_solver")
     def riemann_solver(
         self,
         wl: ArrayLike,
@@ -703,7 +703,7 @@ class EulerSolver(FiniteVolumeSolver):
 
         return out
 
-    @MethodTimer(cat="shock_detector")
+    @MethodTimer(cat="update_workspaces:shock_detector")
     def shock_detector(self, scheme: InterpolationScheme, primitives: bool):
         """
         Compute the hydro shock detector based on the `_w_` or `_u_` workspaces depending

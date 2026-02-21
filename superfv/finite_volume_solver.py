@@ -1239,12 +1239,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "integrate_fluxes",
             "MOOD_loop",
             "compute_RHS",
-            "detect_smooth_extrema",
-            "riemann_solver",
-            "shock_detector",
-            "compute_fallback_fluxes",
-            "detect_troubled_cells",
-            "revise_fluxes",
+            "interpolate_faces:shock_detector",
+            "limiter:detect_smooth_extrema",
+            "integrate_fluxes:riemann_solver",
+            "integrate_fluxes:primitive_reconstruction_fallback",
+            "MOOD_loop:compute_fallback_fluxes",
+            "MOOD_loop:detect_troubled_cells",
+            "MOOD_loop:revise_fluxes",
         ]
         new_stepper_timer = StepperTimer(self.stepper_timer.cats + new_timer_cats)
         self.stepper_timer = new_stepper_timer
@@ -1295,7 +1296,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         pass
 
-    @MethodTimer(cat="riemann_solver")
+    @MethodTimer(cat="integrate_fluxes:riemann_solver")
     @abstractmethod
     def riemann_solver(
         self,
@@ -1511,7 +1512,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=scheme.p,
         )
 
-    @MethodTimer(cat="shock_detector")
+    @MethodTimer(cat="interpolate_faces:shock_detector")
     def shock_detector(self, scheme: InterpolationScheme, primitives: bool):
         """
         Compute the shock detector based on the `_w_` or `_u_` workspaces depending on
@@ -1732,7 +1733,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
         theta_vis[...] = xp.where(visualize, theta[insert_slice(interior, 4, 0)], 1.0)
 
-    @MethodTimer(cat="detect_smooth_extrema")
+    @MethodTimer(cat="limiter:detect_smooth_extrema")
     def detect_smooth_extrema(self, u: ArrayLike, scheme: InterpolationScheme):
         """
         Detect smooth extrema and write the result to the limiting variable slice of
@@ -1840,6 +1841,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         F[...] = _F_[self.flux_interior[dim]][..., 0]
 
+    @MethodTimer(cat="integrate_fluxes:primitive_reconstruction_fallback")
     def primitive_reconstruction_fallback(
         self, wp: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
     ):
@@ -1939,19 +1941,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.reset_MOOD_loop()
 
-        self.stepper_timer.start("compute_fallback_fluxes")
+        self.stepper_timer.start("MOOD_loop:compute_fallback_fluxes")
         MOOD.compute_fallback_fluxes(self, t)
-        self.stepper_timer.stop("compute_fallback_fluxes")
+        self.stepper_timer.stop("MOOD_loop:compute_fallback_fluxes")
 
         for _ in range(config.max_iters):
-            self.stepper_timer.start("detect_troubled_cells")
+            self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
-            self.stepper_timer.stop("detect_troubled_cells")
+            self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
 
             if n_revisable:
-                self.stepper_timer.start("revise_fluxes")
+                self.stepper_timer.start("MOOD_loop:revise_fluxes")
                 MOOD.revise_fluxes(self, t)
-                self.stepper_timer.stop("revise_fluxes")
+                self.stepper_timer.stop("MOOD_loop:revise_fluxes")
 
                 state.increment_MOOD_iteration()
             else:

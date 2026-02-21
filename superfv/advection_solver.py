@@ -329,7 +329,7 @@ class AdvectionSolver(FiniteVolumeSolver):
                 self.n_passive_vars
             )
 
-    @MethodTimer(cat="riemann_solver")
+    @MethodTimer(cat="integrate_fluxes:riemann_solver")
     def riemann_solver(
         self,
         wl: ArrayLike,
