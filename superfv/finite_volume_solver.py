@@ -1861,15 +1861,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         violations = self.reconstruction_fallback_mask(wp)
 
-        n = xp.sum(violations[self.interior]).item()
-        self.n_emergency_fallbacks += n
+        if self.log_limiter_scalars:
+            n = xp.sum(violations[self.interior]).item()
+            self.n_emergency_fallbacks += n
 
-        total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
-        freq = n / total_nodes
-        if freq > 0.05:
-            warnings.warn(
-                f"{freq * 100:.2f}% of face nodes required emergency fallback reconstruction."
-            )
+            total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
+            freq = n / total_nodes
+            if freq > 0.05:
+                warnings.warn(
+                    f"{freq * 100:.2f}% of face nodes required emergency fallback "
+                    "reconstruction."
+                )
 
         wp[...] = xp.where(violations, w0[..., xp.newaxis], wp)
 
