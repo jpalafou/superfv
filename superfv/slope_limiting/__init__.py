@@ -102,9 +102,10 @@ def compute_dmp(
         M = xp.empty_like(arr)
         m = xp.empty_like(arr)
         compute_dmp_kernel_helper(arr, M, m, include_corners)
-        out[..., 1] = M
-        out[..., 0] = m
-        return cast(Tuple[slice, ...], insert_slice(inner_slice, 4, slice(None, 2)))
+        out[insert_slice(inner_slice, 4, 1)] = M[inner_slice]
+        out[insert_slice(inner_slice, 4, 0)] = m[inner_slice]
+        modified = cast(Tuple[slice, ...], insert_slice(inner_slice, 4, slice(None, 2)))
+        return modified
 
     # stack views of neighbors
     all_views = [arr[slc] for slc in all_slices]
