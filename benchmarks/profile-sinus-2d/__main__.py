@@ -20,7 +20,6 @@ N_values = [32, 64, 128, 256, 512, 1024, 2048]
 
 common = dict(
     PAD={"rho": (0, None), "P": (0, None)},
-    SED=False,
     log_limiter_scalars=False,
     skip_trouble_counts=True,
 )

@@ -1064,7 +1064,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("_centroid_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, 1)))
         arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, 1)))
         arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, 1)))
