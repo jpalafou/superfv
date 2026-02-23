@@ -1954,18 +1954,36 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.reset_MOOD_loop()
 
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
         self.stepper_timer.start("MOOD_loop:compute_fallback_fluxes")
+
         MOOD.compute_fallback_fluxes(self, t)
+
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
         self.stepper_timer.stop("MOOD_loop:compute_fallback_fluxes")
 
         for _ in range(config.max_iters):
+            if hasattr(self.xp, "cuda"):
+                self.xp.cuda.Device().synchronize()
             self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
+
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
+
+            if hasattr(self.xp, "cuda"):
+                self.xp.cuda.Device().synchronize()
             self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
 
             if n_revisable:
+                if hasattr(self.xp, "cuda"):
+                    self.xp.cuda.Device().synchronize()
                 self.stepper_timer.start("MOOD_loop:revise_fluxes")
+
                 MOOD.revise_fluxes(self, t)
+
+                if hasattr(self.xp, "cuda"):
+                    self.xp.cuda.Device().synchronize()
                 self.stepper_timer.stop("MOOD_loop:revise_fluxes")
 
                 state.increment_MOOD_iteration()
@@ -1973,8 +1991,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 break
 
         if n_revisable and config.detect_closing_troubles:
+            if hasattr(self.xp, "cuda"):
+                self.xp.cuda.Device().synchronize()
             self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
+
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
+
+            if hasattr(self.xp, "cuda"):
+                self.xp.cuda.Device().synchronize()
             self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
 
         state.update_troubled_cell_count(n_total)
