@@ -79,8 +79,6 @@ class EulerSolver(FiniteVolumeSolver):
         SED: bool = True,
         check_uniformity: bool = True,
         uniformity_tol: float = 1e-15,
-        vis_rtol: float = 1e-1,
-        vis_atol: float = 1e-10,
         cupy: bool = False,
         sync_timing: bool = True,
         gamma: float = 1.4,
@@ -231,8 +229,6 @@ class EulerSolver(FiniteVolumeSolver):
                     <= uniformity_tol * |u_i|
             uniformity_tol: Tolerance for uniformity check when check_uniformity is
                 True.
-            vis_rtol, vis_atol: Relative and absolute tolerances for the visualization
-                threshold. See `compute_vis`.
             cupy: Whether to use CuPy for array operations.
             sync_timing: Whether to synchronize the GPU after each timed method call if
                 using CuPy. This ensures accurate timing measurements when profiling.
@@ -300,8 +296,6 @@ class EulerSolver(FiniteVolumeSolver):
             SED=SED,
             check_uniformity=check_uniformity,
             uniformity_tol=uniformity_tol,
-            vis_rtol=vis_rtol,
-            vis_atol=vis_atol,
             cupy=cupy,
             sync_timing=sync_timing,
         )

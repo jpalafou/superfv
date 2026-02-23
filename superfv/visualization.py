@@ -178,6 +178,9 @@ def _extract_variable_data(
             or 'passives'.
         ValueError: Failed to reduce variable data to three dimensions.
     """
+    if visualization:
+        raise NotImplementedError("Visualization mode is not currently implemented.")
+
     if theta and troubles:
         raise ValueError("Only one of theta or troubles can be True.")
 
@@ -211,10 +214,10 @@ def _extract_variable_data(
 
     if theta:
         # determine the key for theta
-        data = snapshot["theta_vis" if visualization else "theta"]
+        data = snapshot["theta"]
     elif troubles:
         # determine the key for troubles
-        data = snapshot["troubles_vis" if visualization else "troubles"]
+        data = snapshot["troubles"]
     else:
         # determine the key for the physical variable
         if variable == "cascade":
@@ -752,7 +755,6 @@ def plot_timeseries(
     one_minus_theta: bool = False,
     troubles: bool = False,
     fine: bool = True,
-    visualization: bool = True,
     **kwargs,
 ):
     """
@@ -770,8 +772,6 @@ def plot_timeseries(
             or "mean" (across all variables).
         fine: Additional option for `one_minus_theta` or `troubles` to plot the fine
             level values instead of the coarse level values.
-        visualization: Whether to use the post-processed values of `one_minus_theta` or
-            `troubles` for visualization (True) or the raw values (False).
         **kwargs: Keyword arguments for the plot.
 
     Raises:
@@ -781,15 +781,9 @@ def plot_timeseries(
         raise ValueError("Only one of one_minus_theta or troubles can be True.")
 
     if one_minus_theta:
-        if visualization:
-            key = "n" + ("fine" if fine else "") + "_1-theta_vis_" + variable
-        else:
-            key = "n" + ("fine" if fine else "") + "_1-theta_real_" + variable
+        key = "n" + ("fine" if fine else "") + "_1-theta_" + variable
     elif troubles:
-        if visualization:
-            key = "n" + ("fine" if fine else "") + "_troubles_vis_" + variable
-        else:
-            key = "n" + ("fine" if fine else "") + "_troubles_real_" + variable
+        key = "n" + ("fine" if fine else "") + "_troubles_" + variable
     else:
         key = variable
 

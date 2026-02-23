@@ -10,7 +10,7 @@ import numpy as np
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BCs, apply_bc
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
-from superfv.slope_limiting import compute_dmp, compute_vis
+from superfv.slope_limiting import compute_dmp
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices
@@ -244,8 +244,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     lim_slc = fv_solver.variable_index_map("limiting", keepdims=True)
     interior = fv_solver.interior
     dt = fv_solver.substep_dt
-    vis_rtol = fv_solver.vis_rtol
-    vis_atol = fv_solver.vis_atol
 
     # gather MOOD parameters
     iter_idx = MOOD_state.iter_idx
@@ -283,8 +281,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     troubles = arrays["troubles"]
     revisable_troubles = arrays["revisable_troubles"]
     cascade_idx = arrays["cascade_idx"]
-    visualize = arrays["visualize"][lim_slc]
-    troubles_vis = arrays["troubles_vis"]
 
     # reset troubles / cascade index array
     troubles[...] = False
@@ -378,11 +374,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         n_troubled_cells = xp.sum(any_troubles).item()
         revisable_troubles[...] = any_troubles & (cascade_idx < max_idx)
         n_revisable_troubled_cells = xp.sum(revisable_troubles).item()
-
-    # determine which troubled cells should be visualized
-    troubles_vis[...] = troubles
-    compute_vis(xp, _dmp_[interior], vis_rtol, vis_atol, out=visualize)
-    troubles_vis[lim_slc] = xp.where(visualize, troubles[lim_slc], False)
 
     return n_revisable_troubled_cells, n_troubled_cells
 
@@ -842,14 +833,11 @@ def init_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    step_log["nfine_troubles_real_mean"] = []
-    step_log["nfine_troubles_real_max"] = []
-    step_log["nfine_troubles_vis_mean"] = []
-    step_log["nfine_troubles_vis_max"] = []
+    step_log["nfine_troubles_mean"] = []
+    step_log["nfine_troubles_max"] = []
 
     for var in idx.var_idx_map.keys():
-        step_log[f"nfine_troubles_real_{var}"] = []
-        step_log[f"nfine_troubles_vis_{var}"] = []
+        step_log[f"nfine_troubles_{var}"] = []
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         step_log[f"nfine_cascade_idx{i}"] = []
@@ -866,14 +854,11 @@ def clear_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    step_log["nfine_troubles_real_mean"].clear()
-    step_log["nfine_troubles_real_max"].clear()
-    step_log["nfine_troubles_vis_mean"].clear()
-    step_log["nfine_troubles_vis_max"].clear()
+    step_log["nfine_troubles_mean"].clear()
+    step_log["nfine_troubles_max"].clear()
 
     for var in idx.var_idx_map.keys():
-        step_log[f"nfine_troubles_real_{var}"].clear()
-        step_log[f"nfine_troubles_vis_{var}"].clear()
+        step_log[f"nfine_troubles_{var}"].clear()
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         step_log[f"nfine_cascade_idx{i}"].clear()
@@ -883,12 +868,12 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     """
     Append troubled cell statistics from the finite volume solver's arrays to the step
     log. Specifically, log the sum of cells with 1 - theta > 0 using various criteria:
-        `nfine_troubles_real_mean`: Real values, mean over all variables.
-        `nfine_troubles_real_max`: Real values, max over all variables.
-        `nfine_troubles_vis_mean`: Visualized values, mean over all variables.
-        `nfine_troubles_vis_max`: Visualized values, max over all variables.
-        `nfine_troubles_real_{var}`: Real values for variable `var`.
-        `nfine_troubles_vis_{var}`: Visualized values for variable `var`.
+        `nfine_troubles_mean`: Sum over all cells of the mean trouble in [0, 1] over
+            all variables.
+        `nfine_troubles_max`: Sum over all cells of the maximum trouble in {0, 1} over
+            all variables.
+        `nfine_troubles_{var}`: Sum over all cells of the trouble in {0, 1} for the
+            variable `var`.
 
     Args:
         fv_solver: The finite volume solver instance.
@@ -901,39 +886,26 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     step_log = fv_solver.step_log  # gets mutated
 
     troubles = arrays["troubles"]
-    troubles_vis = arrays["troubles_vis"]
     cascade_idx = arrays["cascade_idx"]
     buffer = arrays["_buffer_"]
 
     check_buffer_slots(buffer, required=4)
-    mean_troubles_real = buffer[interior][0, ..., 0]
-    max_troubles_real = buffer[interior][0, ..., 1]
-    mean_troubles_vis = buffer[interior][0, ..., 2]
-    max_troubles_vis = buffer[interior][0, ..., 3]
+    mean_troubles = buffer[interior][0, ..., 0]
+    max_troubles = buffer[interior][0, ..., 1]
 
     # track scalar quantities
-    mean_troubles_real[...] = xp.mean(troubles, axis=0)
-    max_troubles_real[...] = xp.max(troubles, axis=0)
+    mean_troubles[...] = xp.mean(troubles, axis=0)
+    max_troubles[...] = xp.max(troubles, axis=0)
 
-    mean_troubles_vis[...] = xp.mean(troubles_vis, axis=0)
-    max_troubles_vis[...] = xp.max(troubles_vis, axis=0)
+    n_mean = xp.sum(mean_troubles).item()
+    n_max = xp.sum(max_troubles).item()
 
-    n_real_mean = xp.sum(mean_troubles_real).item()
-    n_real_max = xp.sum(max_troubles_real).item()
-    n_vis_mean = xp.sum(mean_troubles_vis).item()
-    n_vis_max = xp.sum(max_troubles_vis).item()
-
-    step_log["nfine_troubles_real_mean"].append(n_real_mean)
-    step_log["nfine_troubles_real_max"].append(n_real_max)
-    step_log["nfine_troubles_vis_mean"].append(n_vis_mean)
-    step_log["nfine_troubles_vis_max"].append(n_vis_max)
+    step_log["nfine_troubles_mean"].append(n_mean)
+    step_log["nfine_troubles_max"].append(n_max)
 
     for var in idx.var_idx_map.keys():
-        n_real = xp.sum(troubles[idx(var), ...]).item()
-        n_vis = xp.sum(troubles_vis[idx(var), ...]).item()
-
-        step_log[f"nfine_troubles_real_{var}"].append(n_real)
-        step_log[f"nfine_troubles_vis_{var}"].append(n_vis)
+        n = xp.sum(troubles[idx(var), ...]).item()
+        step_log[f"nfine_troubles_{var}"].append(n)
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         n_cascade_idx_i = xp.sum(cascade_idx == i).item()
@@ -960,21 +932,15 @@ def log_troubled_cell_scalar_statistics(
         return max(lst) if lst else 0.0
 
     new_data = {
-        "nfine_troubles_real_mean": step_log["nfine_troubles_real_mean"].copy(),
-        "nfine_troubles_real_max": step_log["nfine_troubles_real_max"].copy(),
-        "nfine_troubles_vis_mean": step_log["nfine_troubles_vis_mean"].copy(),
-        "nfine_troubles_vis_max": step_log["nfine_troubles_vis_max"].copy(),
-        "n_troubles_real_mean": zero_max(step_log["nfine_troubles_real_mean"]),
-        "n_troubles_real_max": zero_max(step_log["nfine_troubles_real_max"]),
-        "n_troubles_vis_mean": zero_max(step_log["nfine_troubles_vis_mean"]),
-        "n_troubles_vis_max": zero_max(step_log["nfine_troubles_vis_max"]),
+        "nfine_troubles_mean": step_log["nfine_troubles_mean"].copy(),
+        "nfine_troubles_max": step_log["nfine_troubles_max"].copy(),
+        "n_troubles_mean": zero_max(step_log["nfine_troubles_mean"]),
+        "n_troubles_max": zero_max(step_log["nfine_troubles_max"]),
     }
 
     for var in idx.var_idx_map.keys():
-        keys = ["troubles_real", "troubles_vis"]
-        for key in keys:
-            new_data[f"nfine_{key}_{var}"] = step_log[f"nfine_{key}_{var}"].copy()
-            new_data[f"n_{key}_{var}"] = zero_max(step_log[f"nfine_{key}_{var}"])
+        new_data[f"nfine_troubles_{var}"] = step_log[f"nfine_troubles_{var}"].copy()
+        new_data[f"n_troubles_{var}"] = zero_max(step_log[f"nfine_troubles_{var}"])
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         new_data[f"nfine_cascade_idx{i}"] = step_log[f"nfine_cascade_idx{i}"].copy()
@@ -994,10 +960,10 @@ def log_troubled_cell_scalar_statistics(
             "MOOD troubled cell count mismatch: "
             f"{nfine} != {state.troubled_cell_count}"
         )
-    if not config.skip_trouble_counts and nfine != step_log["nfine_troubles_real_max"]:
+    if not config.skip_trouble_counts and nfine != step_log["nfine_troubles_max"]:
         raise ValueError(
             "MOOD troubled cell history mismatch: "
-            f"{nfine} != {step_log['nfine_troubles_real_max']}"
+            f"{nfine} != {step_log['nfine_troubles_max']}"
         )
     data.update(
         {"n_MOOD_iters": state.iter_count, "nfine_MOOD_iters": state.iter_count_hist}

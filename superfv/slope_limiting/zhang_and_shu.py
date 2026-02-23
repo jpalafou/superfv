@@ -269,14 +269,11 @@ def init_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    step_log["nfine_1-theta_real_mean"] = []
-    step_log["nfine_1-theta_real_max"] = []
-    step_log["nfine_1-theta_vis_mean"] = []
-    step_log["nfine_1-theta_vis_max"] = []
+    step_log["nfine_1-theta_mean"] = []
+    step_log["nfine_1-theta_max"] = []
 
     for var in idx.var_idx_map.keys():
-        step_log[f"nfine_1-theta_real_{var}"] = []
-        step_log[f"nfine_1-theta_vis_{var}"] = []
+        step_log[f"nfine_1-theta_{var}"] = []
 
 
 def clear_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
@@ -289,14 +286,11 @@ def clear_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    step_log["nfine_1-theta_real_mean"].clear()
-    step_log["nfine_1-theta_real_max"].clear()
-    step_log["nfine_1-theta_vis_mean"].clear()
-    step_log["nfine_1-theta_vis_max"].clear()
+    step_log["nfine_1-theta_mean"].clear()
+    step_log["nfine_1-theta_max"].clear()
 
     for var in idx.var_idx_map.keys():
-        step_log[f"nfine_1-theta_real_{var}"].clear()
-        step_log[f"nfine_1-theta_vis_{var}"].clear()
+        step_log[f"nfine_1-theta_{var}"].clear()
 
 
 def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
@@ -304,12 +298,11 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     Append Zhang-Shu limiter statistics from the finite volume solver's arrays to the
     step log. Specifically, log the sum of cells with 1 - theta > 0 using various
     criteria:
-        nfine_1-theta_real_mean: Real values, mean over all variables.
-        nfine_1-theta_real_max: Real values, max over all variables.
-        nfine_1-theta_vis_mean: Visualized values, mean over all variables.
-        nfine_1-theta_vis_max: Visualized values, max over all variables.
-        nfine_1-theta_{var}_real: Real values for variable `var`.
-        nfine_1-theta_{var}_vis: Visualized values for variable `var`.
+        nfine_1-theta_mean: Sum over all cells of the mean over all variables of
+            1-theta.
+        nfine_1-theta_max: Sum over all cells of the max over all variables of
+            1-theta.
+        nfine_1-theta_{var}: Sum over all cells of 1-theta for variable `var`.
 
     Args:
         fv_solver: The finite volume solver instance.
@@ -325,46 +318,31 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     check_buffer_slots(arrays["_buffer_"], required=3)
     theta = arrays["_theta_"][interior][..., 0]
     buffer = arrays["_buffer_"]
-    theta_vis = arrays["theta_vis"]  # has no ghost cells
 
     if nvars < 4:
         raise ValueError(
             "Zhang-Shu limiter logging requires at least 4 variable slots."
         )
 
-    one_minus_theta_real = buffer[interior][..., 0]
-    one_minus_theta_vis = buffer[interior][..., 1]
-    mean_one_minus_theta_real = buffer[interior][0, ..., 2]
-    max_one_minus_theta_real = buffer[interior][1, ..., 2]
-    mean_one_minus_theta_vis = buffer[interior][2, ..., 2]
-    max_one_minus_theta_vis = buffer[interior][3, ..., 2]
+    one_minus_theta = buffer[interior][..., 0]
+    mean_one_minus_theta = buffer[interior][0, ..., 2]
+    max_one_minus_theta = buffer[interior][1, ..., 2]
 
     # track scalar quantities
-    one_minus_theta_real[...] = 1 - theta
-    one_minus_theta_vis[...] = 1 - theta_vis
+    one_minus_theta[...] = 1 - theta
 
-    xp.mean(one_minus_theta_real, axis=0, out=mean_one_minus_theta_real)
-    xp.max(one_minus_theta_real, axis=0, out=max_one_minus_theta_real)
+    xp.mean(one_minus_theta, axis=0, out=mean_one_minus_theta)
+    xp.max(one_minus_theta, axis=0, out=max_one_minus_theta)
 
-    xp.mean(one_minus_theta_vis, axis=0, out=mean_one_minus_theta_vis)
-    xp.max(one_minus_theta_vis, axis=0, out=max_one_minus_theta_vis)
+    n_mean = xp.sum(mean_one_minus_theta).item()
+    n_max = xp.sum(max_one_minus_theta).item()
 
-    n_real_mean = xp.sum(mean_one_minus_theta_real).item()
-    n_real_max = xp.sum(max_one_minus_theta_real).item()
-    n_vis_mean = xp.sum(mean_one_minus_theta_vis).item()
-    n_vis_max = xp.sum(max_one_minus_theta_vis).item()
-
-    step_log["nfine_1-theta_real_mean"].append(n_real_mean)
-    step_log["nfine_1-theta_real_max"].append(n_real_max)
-    step_log["nfine_1-theta_vis_mean"].append(n_vis_mean)
-    step_log["nfine_1-theta_vis_max"].append(n_vis_max)
+    step_log["nfine_1-theta_mean"].append(n_mean)
+    step_log["nfine_1-theta_max"].append(n_max)
 
     for var in idx.var_idx_map.keys():
-        n_real = xp.sum(one_minus_theta_real[idx(var), ...]).item()
-        n_vis = xp.sum(one_minus_theta_vis[idx(var), ...]).item()
-
-        step_log[f"nfine_1-theta_real_{var}"].append(n_real)
-        step_log[f"nfine_1-theta_vis_{var}"].append(n_vis)
+        n = xp.sum(one_minus_theta[idx(var), ...]).item()
+        step_log[f"nfine_1-theta_{var}"].append(n)
 
 
 def log_zhang_shu_scalar_statistics(
@@ -385,20 +363,14 @@ def log_zhang_shu_scalar_statistics(
         return max(lst) if lst else 0.0
 
     new_data = {
-        "nfine_1-theta_real_mean": step_log["nfine_1-theta_real_mean"].copy(),
-        "nfine_1-theta_real_max": step_log["nfine_1-theta_real_max"].copy(),
-        "nfine_1-theta_vis_mean": step_log["nfine_1-theta_vis_mean"].copy(),
-        "nfine_1-theta_vis_max": step_log["nfine_1-theta_vis_max"].copy(),
-        "n_1-theta_real_mean": zero_max(step_log["nfine_1-theta_real_mean"]),
-        "n_1-theta_real_max": zero_max(step_log["nfine_1-theta_real_max"]),
-        "n_1-theta_vis_mean": zero_max(step_log["nfine_1-theta_vis_mean"]),
-        "n_1-theta_vis_max": zero_max(step_log["nfine_1-theta_vis_max"]),
+        "nfine_1-theta_mean": step_log["nfine_1-theta_mean"].copy(),
+        "nfine_1-theta_max": step_log["nfine_1-theta_max"].copy(),
+        "n_1-theta_mean": zero_max(step_log["nfine_1-theta_mean"]),
+        "n_1-theta_max": zero_max(step_log["nfine_1-theta_max"]),
     }
 
     for var in idx.var_idx_map.keys():
-        keys = ["1-theta_real", "1-theta_vis"]
-        for key in keys:
-            new_data[f"nfine_{key}_{var}"] = step_log[f"nfine_{key}_{var}"].copy()
-            new_data[f"n_{key}_{var}"] = zero_max(step_log[f"nfine_{key}_{var}"])
+        new_data[f"nfine_1-theta_{var}"] = step_log[f"nfine_1-theta_{var}"].copy()
+        new_data[f"n_1-theta_{var}"] = zero_max(step_log[f"nfine_1-theta_{var}"])
 
     data.update(new_data)
