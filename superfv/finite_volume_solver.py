@@ -1068,9 +1068,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_shockless_", np.ones((1, _nx_, _ny_, _nz_), dtype=bool))
 
-        # Visualization array
-        arrays.add("visualize", np.ones((nvars, nx, ny, nz), dtype=bool))
-
         # Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
