@@ -1065,9 +1065,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("_centroid_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
-        arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
-        arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
+        arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, 1)))
+        arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, 1)))
+        arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, 1)))
+        arrays.add("_f_nodes_", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
+        arrays.add("_g_nodes_", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
+        arrays.add("_h_nodes_", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
         # General slope-limiting arrays
         arrays.add("_dmp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
@@ -1792,6 +1795,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         F = self.arrays[flux_name]
         _F_ = self.arrays[f"_{flux_name}_"]
         nodes = self.arrays[f"_{dim}_nodes_"]
+        fnodes = self.arrays[f"_{flux_name.lower()}_nodes_"]
 
         # convert to primitives if requested
         if convert_to_primitives:
@@ -1807,7 +1811,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         left_state = wr[crop(axis, (pad - 1, -pad))]
         right_state = wl[crop(axis, (pad, -pad + 1))]
-        self.riemann_solver(left_state, right_state, dim, out=left_state)
+        self.riemann_solver(left_state, right_state, dim, out=fnodes)
 
         # perform the integration
         if hasattr(self.xp, "cuda"):
@@ -1815,12 +1819,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.stepper_timer.start("integrate_fluxes:quadrature")
 
         if self.mesh.ndim == 1:
-            _F_[...] = left_state
+            _F_[...] = fnodes
         else:
             if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
                 fv.integrate_GaussLegendre_nodes(
                     self.xp,
-                    left_state,
+                    fnodes,
                     dim,
                     self.active_dims,
                     scheme.p,
@@ -1831,7 +1835,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ):
                 fv.transversely_integrate_nodes(
                     self.xp,
-                    left_state[..., 0],
+                    fnodes[..., 0],
                     dim,
                     self.active_dims,
                     scheme.p,

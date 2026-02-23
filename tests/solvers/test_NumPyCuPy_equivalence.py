@@ -20,6 +20,14 @@ from superfv.tools.norms import linf_norm
         dict(p=5),
         dict(p=6),
         dict(p=7),
+        dict(p=0, GL=True),
+        dict(p=1, GL=True),
+        dict(p=2, GL=True),
+        dict(p=3, GL=True),
+        dict(p=4, GL=True),
+        dict(p=5, GL=True),
+        dict(p=6, GL=True),
+        dict(p=7, GL=True),
         dict(p=1, MUSCL=True, MUSCL_limiter=None),
         dict(
             p=1, MUSCL=True, MUSCL_limiter="minmod", SED=False, check_uniformity=False
