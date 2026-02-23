@@ -1239,10 +1239,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "integrate_fluxes",
             "MOOD_loop",
             "compute_RHS",
-            "interpolate_faces:shock_detector",
-            "limiter:detect_smooth_extrema",
+            "update_workspaces:shock_detector",
+            "slope_limiter:detect_smooth_extrema",
+            "integrate_fluxes:fallback",
             "integrate_fluxes:riemann_solver",
-            "integrate_fluxes:primitive_reconstruction_fallback",
+            "integrate_fluxes:quadrature",
             "MOOD_loop:compute_fallback_fluxes",
             "MOOD_loop:detect_troubled_cells",
             "MOOD_loop:revise_fluxes",
@@ -1512,7 +1513,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             p=scheme.p,
         )
 
-    @MethodTimer(cat="interpolate_faces:shock_detector")
+    @MethodTimer(cat="update_workspaces:shock_detector")
     def shock_detector(self, scheme: InterpolationScheme, primitives: bool):
         """
         Compute the shock detector based on the `_w_` or `_u_` workspaces depending on
@@ -1733,7 +1734,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         compute_vis(xp, dmp[interior], self.vis_rtol, self.vis_atol, out=visualize)
         theta_vis[...] = xp.where(visualize, theta[insert_slice(interior, 4, 0)], 1.0)
 
-    @MethodTimer(cat="limiter:detect_smooth_extrema")
+    @MethodTimer(cat="slope_limiter:detect_smooth_extrema")
     def detect_smooth_extrema(self, u: ArrayLike, scheme: InterpolationScheme):
         """
         Detect smooth extrema and write the result to the limiting variable slice of
@@ -1809,6 +1810,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.riemann_solver(left_state, right_state, dim, out=left_state)
 
         # perform the integration
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
+        self.stepper_timer.start("integrate_fluxes:quadrature")
+
         if self.mesh.ndim == 1:
             _F_[...] = left_state
         else:
@@ -1839,9 +1844,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     "Expected polyInterpolationScheme or musclInterpolationScheme."
                 )
 
+        if hasattr(self.xp, "cuda"):
+            self.xp.cuda.Device().synchronize()
+        self.stepper_timer.stop("integrate_fluxes:quadrature")
+
         F[...] = _F_[self.flux_interior[dim]][..., 0]
 
-    @MethodTimer(cat="integrate_fluxes:primitive_reconstruction_fallback")
+    @MethodTimer(cat="integrate_fluxes:fallback")
     def primitive_reconstruction_fallback(
         self, wp: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
     ):
