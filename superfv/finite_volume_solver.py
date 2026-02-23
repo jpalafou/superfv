@@ -1238,6 +1238,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "apply_bc",
             "update_workspaces",
             "interpolate_faces",
+            "reconstruct_muscl_faces",
             "zhang_shu_limiter",
             "integrate_fluxes",
             "MOOD_loop",
@@ -2575,6 +2576,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.increment_substepwise_logs()
 
+    @MethodTimer(cat="reconstruct_muscl_faces")
     def reconstruct_muscl_faces(
         self,
         scheme: musclInterpolationScheme,
