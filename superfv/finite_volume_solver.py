@@ -1973,9 +1973,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 break
 
         if n_revisable and config.detect_closing_troubles:
-            self.stepper_timer.start("detect_troubled_cells")
+            self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
-            self.stepper_timer.stop("detect_troubled_cells")
+            self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
 
         state.update_troubled_cell_count(n_total)
 
@@ -2703,9 +2703,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Nicer labels + hierarchy
         children = {
             "MOOD_loop": [
-                "compute_fallback_fluxes",
-                "detect_troubled_cells",
-                "revise_fluxes",
+                "MOOD_loop:compute_fallback_fluxes",
+                "MOOD_loop:detect_troubled_cells",
+                "MOOD_loop:revise_fluxes",
             ]
         }
 
