@@ -2622,6 +2622,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         wcc_for_nodes = arrays["_buffer_"][..., 3]
         lim_buff = arrays["_buffer_"][..., 4:]
 
+        # compute smooth extrema
+        if scheme.limiter_config.smooth_extrema_detection:
+            self.detect_smooth_extrema(wcc, scheme)
+
         # compute limited slopes
         if scheme.limiter_config.limiter == "PP2D":
             dw1 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[0]]

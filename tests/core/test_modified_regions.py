@@ -75,11 +75,8 @@ def test_compute_dmp(dims: str, include_corners: bool):
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
-@pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("check_uniformity", [False, True])
-def test_compute_limited_slopes(
-    dims: str, limiter: str, SED: bool, check_uniformity: bool
-):
+def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool):
     xp = configure_xp()
 
     face_dim = dims[0]
@@ -89,7 +86,7 @@ def test_compute_limited_slopes(
 
     config = musclConfig(
         shock_detection=False,
-        smooth_extrema_detection=SED,
+        smooth_extrema_detection=False,
         check_uniformity=check_uniformity,
         limiter=limiter,
         physical_admissibility_detection=False,
@@ -109,16 +106,10 @@ def test_compute_limited_slopes(
     assert not xp.any(xp.isnan(out[modified]))
     # skipping all nan check since the stencils will leave some ghost cells non-nan
 
-    if SED:
-        assert not xp.any(xp.isnan(alpha[modified]))
-        alpha[modified] = xp.nan
-        assert xp.all(xp.isnan(alpha))
-
 
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
-@pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("check_uniformity", [False, True])
-def test_compute_PP2D_slopes(dims: str, SED: bool, check_uniformity: bool):
+def test_compute_PP2D_slopes(dims: str, check_uniformity: bool):
     xp = configure_xp()
 
     u, buffer, temp = sample_data(dims, nout=3, xp=xp)
@@ -128,7 +119,7 @@ def test_compute_PP2D_slopes(dims: str, SED: bool, check_uniformity: bool):
 
     config = musclConfig(
         shock_detection=False,
-        smooth_extrema_detection=SED,
+        smooth_extrema_detection=False,
         check_uniformity=check_uniformity,
         limiter="PP2D",
         physical_admissibility_detection=False,
@@ -141,11 +132,6 @@ def test_compute_PP2D_slopes(dims: str, SED: bool, check_uniformity: bool):
     assert not xp.any(xp.isnan(Sx[modified]))
     assert not xp.any(xp.isnan(Sy[modified]))
     # skipping all nan check since the 2D stencils will leave some ghost cells non-nan
-
-    if SED:
-        assert not xp.any(xp.isnan(alpha[modified]))
-        alpha[modified] = xp.nan
-        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

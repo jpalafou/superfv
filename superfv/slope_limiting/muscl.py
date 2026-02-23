@@ -5,7 +5,6 @@ from typing import Literal, Optional, Tuple, cast
 from superfv.axes import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
-from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
@@ -115,13 +114,8 @@ def compute_limited_slopes(
             interpolation of nodes along the face of a cell on a two-dimensional grid.
         out: Output array to store the limited slopes. Has shape
             (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on whether SED is used and the number (length) of
-            active dimensions:
-            - without SED: (nvars, nx, ny, nz, >=5)
-            - with SED, 1D: (nvars, nx, ny, nz, >=12)
-            - with SED, 2D: (nvars, nx, ny, nz, >=14)
-            - with SED, 3D: (nvars, nx, ny, nz, >=15)
+        buffer: Array to which temporary values are assigned with shape
+            (nvars, nx, ny, nz, >=5).
         config: The MUSCL limiter configuration to use.
         alpha: Array to store the smooth extrema detector values if SED is True. Has
             shape (nvars, nx, ny, nz, 1).
@@ -135,9 +129,7 @@ def compute_limited_slopes(
             xp,
             u,
             face_dim,
-            active_dims,
             out=out,
-            buffer=buffer,
             config=config,
             alpha=alpha,
         )
@@ -159,23 +151,6 @@ def compute_limited_slopes(
     dsgn = buffer[replace_slice(inner, 4, 3)]
     dslp = buffer[replace_slice(inner, 4, 4)]
 
-    # compute smooth extrema detector if requested
-    if SED:
-        if alpha is None:
-            raise ValueError("alpha array must be provided when SED is True.")
-        abuf = buffer[..., 5:]
-        modified = smooth_extrema_detector(
-            xp,
-            u,
-            active_dims,
-            config.check_uniformity,
-            out=alpha,
-            buffer=abuf,
-            uniformity_tol=config.uniformity_tol,
-        )
-    else:
-        modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
-
     # write slopes to `out` array
     match limiter:
         case "minmod":
@@ -186,9 +161,9 @@ def compute_limited_slopes(
             dslp[...] = dsgn * xp.minimum(xp.abs(dlft), xp.abs(drgt))
             out[inner] = xp.where(dlft * drgt <= 0, 0, dslp)
             if SED:
-                out[inner] = xp.where(
-                    cast(ArrayLike, alpha)[inner] < 1, out[inner], dcen
-                )
+                if alpha is None:
+                    raise ValueError("alpha array must be provided when SED is True.")
+                out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
         case "moncen":
             dlft[...] = u[slc_c] - u[slc_l]
             drgt[...] = u[slc_r] - u[slc_c]
@@ -199,9 +174,9 @@ def compute_limited_slopes(
             )
             out[inner] = xp.where(dlft * drgt <= 0, 0, dslp)
             if SED:
-                out[inner] = xp.where(
-                    cast(ArrayLike, alpha)[inner] < 1, out[inner], dcen
-                )
+                if alpha is None:
+                    raise ValueError("alpha array must be provided when SED is True.")
+                out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
         case "PP2D":
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
         case None:
@@ -209,6 +184,7 @@ def compute_limited_slopes(
         case _:
             raise ValueError(f"Unknown limiter: {limiter}.")
 
+    modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
     return modified
 
 
@@ -238,13 +214,8 @@ def compute_PP2D_slopes(
             shape (nvars, nx, ny, nz, 1).
         Sy: Output array to store the limited slopes in the second active dimension.
             Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on whether SED is used and the number (length) of
-            active dimensions:
-            - without SED: (nvars, nx, ny, nz, >=4)
-            - with SED, 1D: (nvars, nx, ny, nz, >=11)
-            - with SED, 2D: (nvars, nx, ny, nz, >=13)
-            - with SED, 3D: (nvars, nx, ny, nz, >=14)
+        buffer: Array to which temporary values are assigned with shape
+            (nvars, nx, ny, nz, >=4).
         eps: Small number to avoid division by zero.
         config: The MUSCL limiter configuration to use.
         alpha: Array to store the smooth extrema detector values if SED is True. Has
@@ -325,19 +296,9 @@ def compute_PP2D_slopes(
     if SED:
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is True.")
-        abuff = buffer[..., 4:]
-        modified = smooth_extrema_detector(
-            xp,
-            u,
-            active_dims,
-            config.check_uniformity,
-            out=alpha,
-            buffer=abuff,
-            uniformity_tol=config.uniformity_tol,
-        )
         theta[...] = xp.where(alpha < 1, theta, 1.0)
-    else:
-        modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
+
+    modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
 
     Sx[modified] = theta[modified] * Sx[modified]
     Sy[modified] = theta[modified] * Sy[modified]
@@ -446,10 +407,8 @@ def compute_MUSCL_slopes_kernel_helper(
     xp: ModuleType,
     u: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
     out: ArrayLike,
-    buffer: ArrayLike,
     config: musclConfig,
     alpha: Optional[ArrayLike] = None,
 ) -> Tuple[slice, ...]:
@@ -462,19 +421,8 @@ def compute_MUSCL_slopes_kernel_helper(
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
-        active_dims: Tuple indicating the active dimensions for interpolation. Can be
-            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
-            interpolation of nodes along the face of a cell on a two-dimensional grid.
         out: Output array to store the limited slopes. Has shape
             (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on whether SED is used and the number (length) of
-            active dimensions:
-            - without SED: (nvars, nx, ny, nz, >=5)
-            - with SED, 1D: (nvars, nx, ny, nz, >=12)
-            - with SED, 2D: (nvars, nx, ny, nz, >=14)
-            - with SED, 3D: (nvars, nx, ny, nz, >=15)
-        config: The MUSCL limiter configuration to use.
         alpha: Array to store the smooth extrema detector values if SED is True. Has
             shape (nvars, nx, ny, nz, 1).
 
@@ -505,22 +453,10 @@ def compute_MUSCL_slopes_kernel_helper(
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is True.")
 
-        abuf = buffer
-        modified = smooth_extrema_detector(
-            xp,
-            u,
-            active_dims,
-            config.check_uniformity,
-            out=alpha,
-            buffer=abuf,
-            uniformity_tol=config.uniformity_tol,
-        )
-
         dcen = 0.5 * (ur - ul)
-        out[inner] = xp.where(cast(ArrayLike, alpha)[inner] < 1, out[inner], dcen)
-    else:
-        modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
+        out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
 
+    modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
     return modified
 
 
@@ -551,13 +487,8 @@ def compute_PP2D_slopes_kernel_helper(
             shape (nvars, nx, ny, nz, 1).
         Sy: Output array to store the limited slopes in the second active dimension.
             Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on whether SED is used and the number (length) of
-            active dimensions:
-            - without SED: (nvars, nx, ny, nz, >=4)
-            - with SED, 1D: (nvars, nx, ny, nz, >=11)
-            - with SED, 2D: (nvars, nx, ny, nz, >=13)
-            - with SED, 3D: (nvars, nx, ny, nz, >=14)
+        buffer: Array to which temporary values are assigned with shape
+            (nvars, nx, ny, nz, >=1).
         eps: Small number to avoid division by zero.
         config: The MUSCL limiter configuration to use.
         alpha: Array to store the smooth extrema detector values if SED is True. Has
@@ -574,6 +505,7 @@ def compute_PP2D_slopes_kernel_helper(
     axis1 = DIM_TO_AXIS[active_dims[0]]
     axis2 = DIM_TO_AXIS[active_dims[1]]
 
+    check_buffer_slots(buffer, required=1)
     theta = buffer[..., :1]
 
     # gather slices
@@ -621,19 +553,9 @@ def compute_PP2D_slopes_kernel_helper(
     if SED:
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is True.")
-        abuff = buffer[..., 1:]
-        modified = smooth_extrema_detector(
-            xp,
-            u,
-            active_dims,
-            config.check_uniformity,
-            out=alpha,
-            buffer=abuff,
-            uniformity_tol=config.uniformity_tol,
-        )
         theta[...] = xp.where(alpha < 1, theta, 1.0)
-    else:
-        modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
+
+    modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
 
     # apply limiter
     Sx[modified] = theta[modified] * Sx[modified]
