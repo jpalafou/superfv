@@ -19,13 +19,10 @@ def test_compute_dmp(dims, include_corners):
         N if "z" in dims else 1,
     )
     arr = np.random.rand(*shape)
-    out = np.empty(shape + (2,))
+    M = np.empty(shape)
+    m = np.empty(shape)
 
-    modified = compute_dmp(
-        np, arr, tuple(dims), out=out, include_corners=include_corners
-    )
-    min_vals = out[:, :, :, :, 0]
-    max_vals = out[:, :, :, :, 1]
+    modified = compute_dmp(np, arr, tuple(dims), include_corners, M=M, m=m)
 
-    assert np.all(np.less_equal(min_vals, arr)[modified[:-1]])
-    assert np.all(np.greater_equal(max_vals, arr)[modified[:-1]])
+    assert np.all(np.less_equal(m, arr)[modified])
+    assert np.all(np.greater_equal(M, arr)[modified])

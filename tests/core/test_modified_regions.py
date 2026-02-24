@@ -68,12 +68,18 @@ def test_blend_troubled_cells(dims: str):
 def test_compute_dmp(dims: str, include_corners: bool):
     xp = configure_xp()
 
-    u, _, out = sample_data(dims, nout=2, xp=xp)
-    modified = compute_dmp(xp, u, tuple(dims), out=out, include_corners=include_corners)
+    u, _, M = sample_data(dims, nout=1, xp=xp)
+    _, _, m = sample_data(dims, nout=1, xp=xp)
+    modified = compute_dmp(
+        xp, u, tuple(dims), include_corners, M=M[..., 0], m=m[..., 0]
+    )
 
-    assert not xp.any(xp.isnan(out[modified]))
-    out[modified] = xp.nan
-    assert xp.all(xp.isnan(out))
+    assert not xp.any(xp.isnan(M[modified]))
+    assert not xp.any(xp.isnan(m[modified]))
+    M[modified] = xp.nan
+    m[modified] = xp.nan
+    assert xp.all(xp.isnan(M))
+    assert xp.all(xp.isnan(m))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

@@ -8,7 +8,7 @@ from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
-from superfv.tools.slicing import replace_slice
+from superfv.tools.slicing import insert_slice
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
@@ -163,8 +163,10 @@ def compute_theta(
     z_nodes: Optional[ArrayLike],
     *,
     out: ArrayLike,
-    dmp: ArrayLike,
-    node_mp: ArrayLike,
+    M: ArrayLike,
+    m: ArrayLike,
+    Mj: ArrayLike,
+    mj: ArrayLike,
     buffer: ArrayLike,
     config: ZhangShuConfig,
 ) -> Tuple[slice, ...]:
@@ -179,10 +181,14 @@ def compute_theta(
         x_nodes, y_nodes, z_nodes: Optional array of x,y,z-face node values. Has shape
             (nvars, nx, ny, nz, 2*n_nodes). If None, the x,y,z face is not considered.
         out: Array to which theta is written. Has shape (nvars, nx, ny, nz, >=1).
-        dmp: Array to which the discrete maximum principle is written. Has shape
-            (nvars, nx, ny, nz, >=2).
-        node_mp: Array to which the nodal maximum principle is written. Has shape
-            (nvars, nx, ny, nz, >=2).
+        M: Array to which the discrete maximum principle is written. Has shape
+            (nvars, nx, ny, nz).
+        m: Array to which the discrete minimum principle is written. Has shape
+            (nvars, nx, ny, nz).
+        Mj: Array to which the nodal maximum principle is written. Has shape
+            (nvars, nx, ny, nz).
+        mj: Array to which the nodal minimum principle is written. Has shape
+            (nvars, nx, ny, nz).
         buffer: Array to which temporary values are assigned. Has different shape
             requirements depending on whether SED is used and the number (length) of
             active dimensions:
@@ -208,25 +214,18 @@ def compute_theta(
         for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
         if arr is not None
     )
-    dmp_valid = compute_dmp(
-        xp, u, active_dims, out=dmp, include_corners=include_corners
-    )
+    dmp_valid = compute_dmp(xp, u, active_dims, include_corners, M=M, m=m)
 
     # compute nodal maximum principle
-    node_mp[..., 0] = center_nodes[..., 0]
-    node_mp[..., 1] = center_nodes[..., 0]
+    Mj[...] = center_nodes[..., 0]
+    mj[...] = center_nodes[..., 0]
     for nodes in [x_nodes, y_nodes, z_nodes]:
         if nodes is None:
             continue
-        xp.minimum(node_mp[..., 0], xp.min(nodes, axis=4), out=node_mp[..., 0])
-        xp.maximum(node_mp[..., 1], xp.max(nodes, axis=4), out=node_mp[..., 1])
+        xp.minimum(mj, xp.min(nodes, axis=4), out=mj)
+        xp.maximum(Mj, xp.max(nodes, axis=4), out=Mj)
 
     # compute theta
-    m = dmp[..., 0]
-    M = dmp[..., 1]
-    mj = node_mp[..., 0]
-    Mj = node_mp[..., 1]
-
     if hasattr(xp, "cuda"):
         theta_kernel(u, M, m, Mj, mj, tol, theta[..., 0])
     else:
@@ -238,25 +237,22 @@ def compute_theta(
             1.0,
         )
 
-    valid = cast(Tuple[slice, ...], replace_slice(dmp_valid, 4, slice(0, 1)))
+    valid = cast(Tuple[slice, ...], insert_slice(dmp_valid, 4, slice(0, 1)))
     out[valid] = theta[valid]
 
     return valid
 
 
-def zhang_shu_operator(u_ho: ArrayLike, u_fo: ArrayLike, theta: ArrayLike) -> ArrayLike:
+def zhang_shu_operator(wj: ArrayLike, w: ArrayLike, theta: ArrayLike):
     """
     Zhang and Shu operator for limiting the high-order solution.
 
     Args:
-        u_ho: Array of high-order interpolation values.
-        u_fo: Array of first-order interpolation values.
+        wj: Array of high-order interpolation values that is revised.
+        w: Array of first-order interpolation values.
         theta: Array of limiting coefficients.
-
-    Returns:
-        ArrayLike: Array of limited values.
     """
-    return theta * (u_ho - u_fo) + u_fo
+    wj[...] = theta * (wj - w) + w
 
 
 def init_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):

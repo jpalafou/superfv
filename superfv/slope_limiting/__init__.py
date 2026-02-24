@@ -1,11 +1,11 @@
 from functools import lru_cache
 from itertools import product
 from types import ModuleType
-from typing import List, Literal, Tuple, cast
+from typing import List, Literal, Tuple
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
-from superfv.tools.slicing import crop, insert_slice, merge_slices
+from superfv.tools.slicing import crop, merge_slices
 
 
 def gather_neighbor_slices(
@@ -74,9 +74,10 @@ def compute_dmp(
     xp: ModuleType,
     arr: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
+    include_corners: bool = True,
     *,
-    out: ArrayLike,
-    include_corners: bool,
+    M: ArrayLike,
+    m: ArrayLike,
 ) -> Tuple[slice, ...]:
     """
     Compute the minimum and maximum values of each point and its neighbors along
@@ -87,10 +88,9 @@ def compute_dmp(
         arr: Array. First axis is assumed to be variable axis. Has shape
             (nvars, nx, ny, nz).
         active_dims: Dimensions to check. Must be a subset of ("x", "y", "z").
-        out: Output array to store the results. Should have shape
-            (nvars, nx, ny, nz, >=2). The DMP min will be stored in the last axis at
-            index 0, and the DMP max at index 1.
         include_corners: Whether to include corners.
+        M: Output array for maximum values. Should have same shape as `arr`.
+        m: Output array for minimum values. Should have same shape as `arr`.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -99,25 +99,17 @@ def compute_dmp(
     inner_slice = all_slices[0]
 
     if hasattr(xp, "cuda"):
-        M = xp.empty_like(arr)
-        m = xp.empty_like(arr)
         compute_dmp_kernel_helper(arr, M, m, include_corners)
-        out[insert_slice(inner_slice, 4, 1)] = M[inner_slice]
-        out[insert_slice(inner_slice, 4, 0)] = m[inner_slice]
-        modified = cast(Tuple[slice, ...], insert_slice(inner_slice, 4, slice(None, 2)))
-        return modified
+    else:
+        # stack views of neighbors
+        all_views = [arr[slc] for slc in all_slices]
+        stacked = xp.stack(all_views, axis=0)
 
-    # stack views of neighbors
-    all_views = [arr[slc] for slc in all_slices]
-    stacked = xp.stack(all_views, axis=0)
+        # compute min an max
+        M[inner_slice] = xp.max(stacked, axis=0)
+        m[inner_slice] = xp.min(stacked, axis=0)
 
-    # compute min an max
-    out[insert_slice(inner_slice, 4, 0)] = xp.min(stacked, axis=0)
-    out[insert_slice(inner_slice, 4, 1)] = xp.max(stacked, axis=0)
-
-    # return inner slice
-    modified = cast(Tuple[slice, ...], insert_slice(inner_slice, 4, slice(None, 2)))
-    return modified
+    return inner_slice
 
 
 def compute_vis(
@@ -228,6 +220,13 @@ if CUPY_AVAILABLE:
         include_corners: bool,
     ):
         nvars, nx, ny, nz = w.shape
+
+        if not w.flags.c_contiguous:
+            raise ValueError("Input array must be C-contiguous")
+        if not M.flags.c_contiguous:
+            raise ValueError("Output array M must be C-contiguous")
+        if not m.flags.c_contiguous:
+            raise ValueError("Output array m must be C-contiguous")
 
         n = w.size
         threads = 256

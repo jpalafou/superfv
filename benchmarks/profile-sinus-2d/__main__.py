@@ -24,7 +24,7 @@ common = dict(
     skip_trouble_counts=True,
 )
 musclhancock = dict(p=1, MUSCL=True, **common)
-apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
+apriori = dict(ZS=True, lazy_primitives="adaptive", adaptive_dt=False, **common)
 aposteriori = dict(
     MOOD=True,
     face_fallback=False,

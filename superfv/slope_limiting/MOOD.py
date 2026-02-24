@@ -5,12 +5,13 @@ from functools import lru_cache
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cast
 
-import numpy as np
-
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BCs, apply_bc
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import compute_dmp
+from superfv.slope_limiting.physical_admissibility_detection import (
+    detect_PAD_violations,
+)
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import ArrayLike
 from superfv.tools.slicing import crop, merge_slices
@@ -270,14 +271,16 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     _w_old_ = arrays["_w_"]
     _u_new_ = arrays["_unew_"]
     _w_new_ = arrays["_wnew_"]
-    _dmp_ = arrays["_dmp_"][lim_slc]
-    _NAD_violations_ = arrays["_NAD_violations_"][lim_slc]
+    _M_ = arrays["_M_"]
+    _m_ = arrays["_m_"]
+    _NAD_violations_ = arrays["_NAD_violations_"]
     _alpha_ = arrays["_alpha_"][lim_slc]
-    _nbuff_ = arrays["_buffer_"][lim_slc]
+    _buff_ = arrays["_buffer_"]
     _troubles_ = arrays["_troubles_"]
     _any_troubles_ = arrays["_any_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
-    PAD_violations = arrays["_PAD_violations_"][interior]
+    _var_PAD_ = arrays["_var_PAD_"]
+    _any_PAD_ = arrays["_any_PAD_"]
     troubles = arrays["troubles"]
     revisable_troubles = arrays["revisable_troubles"]
     cascade_idx = arrays["cascade_idx"]
@@ -299,18 +302,18 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         NAD_atol_local: Optional[ArrayLike] = None
 
         if NAD_rtol is not None:
-            NAD_rtol_local = NAD_rtol[lim_slc].copy()
+            NAD_rtol_local = NAD_rtol.copy()
             if scale_NAD_rtol_by_dt:
                 NAD_rtol_local *= dt
         if NAD_gtol is not None:
-            NAD_gtol_local = NAD_gtol[lim_slc]
+            NAD_gtol_local = NAD_gtol
         if NAD_atol is not None:
-            NAD_atol_local = NAD_atol[lim_slc]
+            NAD_atol_local = NAD_atol
 
         detect_NAD_violations(
             xp,
-            (_w_new_ if primitive_NAD else _u_new_)[lim_slc],
-            (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
+            (_w_new_ if primitive_NAD else _u_new_),
+            (_w_old_ if primitive_NAD else _u_old_),
             active_dims=active_dims,
             delta=delta,
             rtol=NAD_rtol_local,
@@ -318,10 +321,11 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             atol=NAD_atol_local,
             include_corners=include_corners,
             out=_NAD_violations_,
-            dmp=_dmp_,
-            buffer=_nbuff_,
+            M=_M_,
+            m=_m_,
+            buffer=_buff_,
         )
-        NAD_violations = _NAD_violations_[interior]
+        NAD_violations = _NAD_violations_[interior][lim_slc]
 
         # compute smooth extrema
         if SED:
@@ -333,26 +337,17 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         else:
             troubles[lim_slc] = NAD_violations < 0
 
-    else:
-        # if not using NAD, still need DMP for visualization
-        compute_dmp(
-            xp,
-            (_w_old_ if primitive_NAD else _u_old_)[lim_slc],
-            active_dims,
-            out=_dmp_,
-            include_corners=include_corners,
-        )
-
     # compute PAD violations
     if PAD:
         detect_PAD_violations(
             xp,
-            _w_new_[interior],
+            _w_new_,
             cast(ArrayLike, PAD_bounds),
-            physical_tols=PAD_atol,
-            out=PAD_violations,
+            PAD_atol,
+            violated_vars=_var_PAD_,
+            violated_cells=_any_PAD_,
         )
-        xp.logical_or(troubles, PAD_violations < 0, out=troubles)
+        xp.logical_or(troubles, _var_PAD_[interior], out=troubles)
 
     # update troubles workspace
     _troubles_[interior] = troubles
@@ -390,7 +385,8 @@ def detect_NAD_violations(
     include_corners: bool = False,
     *,
     out: ArrayLike,
-    dmp: ArrayLike,
+    M: ArrayLike,
+    m: ArrayLike,
     buffer: ArrayLike,
 ) -> Tuple[slice, ...]:
     """
@@ -425,8 +421,8 @@ def detect_NAD_violations(
             Has shape (nvars,) or is treated as 0s if None. Ignored if delta is False.
         include_corners: Whether to include corner values in the DMP computation.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
-        dmp: Array to store the local minima and maxima. Negatives imply violations.
-            Has shape (nvars, nx, ny, nz, >=2).
+        M: Array to store the local maxima. Has shape (nvars, nx, ny, nz).
+        m: Array to store the local minima. Has shape (nvars, nx, ny, nz).
         buffer: Buffer array with shape (nvars, nx, ny, nz, >=6) to store intermediate
             values.
 
@@ -434,10 +430,6 @@ def detect_NAD_violations(
         Slice objects indicating the modified regions in the output array.
     """
     na = xp.newaxis
-
-    # allocate arrays
-    dmp_min = dmp[..., 0]
-    dmp_max = dmp[..., 1]
 
     check_buffer_slots(buffer, required=6)
     dmp_range = buffer[..., 0]
@@ -450,15 +442,12 @@ def detect_NAD_violations(
     delta_arr[...] = 0.0
 
     # compute discrete maximum principle (dmp)
-    dmp_modified = compute_dmp(
-        xp, u_old, active_dims, out=dmp, include_corners=include_corners
-    )
-    modified = dmp_modified[:-1]
+    modified = compute_dmp(xp, u_old, active_dims, include_corners, M=M, m=m)
 
     if delta:
         # relax bounds with local dmp range
         if rtol is not None:
-            dmp_range[...] = dmp_max - dmp_min
+            dmp_range[...] = M - m
             delta_arr += rtol[:, na, na, na] * dmp_range
 
         # relax bounds with global range
@@ -473,60 +462,19 @@ def detect_NAD_violations(
             delta_arr += atol[:, na, na, na]
 
         # compute violations
-        lower_bound[...] = dmp_min - delta_arr
-        upper_bound[...] = dmp_max + delta_arr
+        lower_bound[...] = m - delta_arr
+        upper_bound[...] = M + delta_arr
     elif rtol is None:
         raise ValueError("rtol must be provided if delta is False.")
     else:
-        lower_bound[...] = dmp_min - rtol[:, na, na, na] * xp.abs(dmp_min)
-        upper_bound[...] = dmp_max + rtol[:, na, na, na] * xp.abs(dmp_max)
+        lower_bound[...] = m - rtol[:, na, na, na] * xp.abs(m)
+        upper_bound[...] = M + rtol[:, na, na, na] * xp.abs(M)
 
     lower_violations[...] = u_new - lower_bound
     upper_violations[...] = upper_bound - u_new
     out[modified] = xp.minimum(lower_violations[modified], upper_violations[modified])
 
     return modified
-
-
-def detect_PAD_violations(
-    xp: ModuleType,
-    u_new: ArrayLike,
-    physical_ranges: ArrayLike,
-    physical_tols: float,
-    *,
-    out: ArrayLike,
-):
-    """
-    Compute the physical admissibility detection (PAD) violations.
-
-    Args:
-        xp: `np` namespace or equivalent.
-        u_new: New solution array. Has shape (nvars, nx, ny, nz).
-        physical_ranges: Physical ranges for each variable. Has shape (nvars, 2).
-        physical_tols: Physical tolerances for all variables as a single float.
-        out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
-
-    Notes:
-        - Creates temporary arrays in memory.
-    """
-    ndim = u_new.ndim
-
-    if ndim not in (4, 5):
-        raise ValueError("u_new must have 4 or 5 dimensions.")
-
-    slice1 = 0 if ndim == 4 else slice(0, 1)
-    slice2 = 1 if ndim == 4 else slice(1, 2)
-    physical_mins = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, slice1]
-    physical_maxs = physical_ranges[:, np.newaxis, np.newaxis, np.newaxis, slice2]
-
-    violations = (
-        xp.minimum(u_new - physical_mins, physical_maxs - u_new) + physical_tols
-    )
-
-    if ndim == 4:
-        out[...] = violations
-    else:
-        out[...] = xp.any(violations, axis=4)
 
 
 @lru_cache(maxsize=None)

@@ -26,7 +26,6 @@ from .slope_limiting.MOOD import (
     MOODState,
     append_troubled_cell_scalar_statistics,
     clear_troubled_cell_scalar_statistics,
-    detect_PAD_violations,
     init_troubled_cell_scalar_statistics,
     log_troubled_cell_scalar_statistics,
 )
@@ -36,6 +35,7 @@ from .slope_limiting.muscl import (
     musclConfig,
     musclInterpolationScheme,
 )
+from .slope_limiting.physical_admissibility_detection import detect_PAD_violations
 from .slope_limiting.shock_detection import (
     compute_shock_detector,
     compute_shocks_kernel_helper,
@@ -1066,7 +1066,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_h_nodes_", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
         # General slope-limiting arrays
-        arrays.add("_dmp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
+        arrays.add("_M_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_m_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_eta3d_", np.zeros((nvars, _nx_, _ny_, _nz_, 3)))
@@ -1075,7 +1076,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
-        arrays.add("_node_mp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
+        arrays.add("_Mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
         ntotal = _nx_ * _ny_ * _nz_
         flat_ninterpolations = 1 + self.mesh.ndim * max_ninterps
@@ -1102,7 +1104,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_unew_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_wnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_NAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_PAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_var_PAD_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("_any_PAD_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
         arrays.add("_troubles_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("_any_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
         arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
@@ -1420,8 +1423,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _wp_ = arrays["_wp_"]  # shape (..., 1)
         _w_ = arrays["_w_"]
         _has_shock_ = arrays["_has_shock_"]
-        _PAD_violations_ = arrays["_PAD_violations_"]
-        _any_PAD_violations_ = arrays["_any_troubles_"]
+        _var_PAD_ = arrays["_var_PAD_"]
+        _any_PAD_ = arrays["_any_PAD_"]
         _buff_ = arrays["_buffer_"]
 
         # 0) conservatives FV averages + BC
@@ -1455,21 +1458,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     xp,
                     _w_,
                     self.arrays["PAD_bounds"],
-                    physical_tols=scheme.limiter_config.PAD_atol,
-                    out=_PAD_violations_,
+                    scheme.limiter_config.PAD_atol,
+                    violated_vars=_var_PAD_,
+                    violated_cells=_any_PAD_,
                 )
-                _any_PAD_violations_[...] = xp.any(
-                    _PAD_violations_ < 0, axis=0, keepdims=True
-                )
+                xp.logical_or(_has_shock_, _any_PAD_, out=_has_shock_)
 
-                _w_[...] = xp.where(
-                    xp.logical_or(_has_shock_, _any_PAD_violations_ < 0),
-                    _w_,
-                    _wp_[..., 0],
-                )
-
-            else:
-                _w_[...] = xp.where(_has_shock_, _w_, _wp_[..., 0])
+            _w_[...] = xp.where(_has_shock_, _w_, _wp_[..., 0])
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
@@ -1618,28 +1613,28 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lim_slc = self.variable_index_map("limiting", keepdims=True)
 
         # define array references
-        w = self.arrays["_w_"][lim_slc] if primitives else self.arrays["_u_"][lim_slc]
-        wcc = (
-            self.arrays["_wcc_"][lim_slc]
-            if primitives
-            else self.arrays["_ucc_"][lim_slc]
-        )
-        wx = self.arrays["_x_nodes_"][lim_slc] if mesh.x_is_active else None
-        wy = self.arrays["_y_nodes_"][lim_slc] if mesh.y_is_active else None
-        wz = self.arrays["_z_nodes_"][lim_slc] if mesh.z_is_active else None
-        theta = self.arrays["_theta_"][lim_slc]
-        dmp = self.arrays["_dmp_"][lim_slc]
-        node_mp = self.arrays["_node_mp_"][lim_slc]
-        alpha = self.arrays["_alpha_"][lim_slc]
-        PAD_violations = self.arrays["_PAD_violations_"][lim_slc]
-        buffer = self.arrays["_buffer_"][lim_slc]
-        wflat = self.arrays["_flat_w_"][lim_slc]
-        wjflat = self.arrays["_flat_wj_"][lim_slc]
-        Mflat = self.arrays["_flat_M_"][lim_slc]
-        mflat = self.arrays["_flat_m_"][lim_slc]
-        Mjflat = self.arrays["_flat_Mj_"][lim_slc]
-        mjflat = self.arrays["_flat_mj_"][lim_slc]
-        thetaflat = self.arrays["_flat_theta_"][lim_slc]
+        w = self.arrays["_w_"] if primitives else self.arrays["_u_"]
+        wcc = self.arrays["_wcc_"] if primitives else self.arrays["_ucc_"]
+
+        wx = self.arrays["_x_nodes_"] if mesh.x_is_active else None
+        wy = self.arrays["_y_nodes_"] if mesh.y_is_active else None
+        wz = self.arrays["_z_nodes_"] if mesh.z_is_active else None
+        theta = self.arrays["_theta_"]
+        M = self.arrays["_M_"]
+        m = self.arrays["_m_"]
+        Mj = self.arrays["_Mj_"]
+        mj = self.arrays["_mj_"]
+        alpha = self.arrays["_alpha_"]
+        var_PAD = self.arrays["_var_PAD_"]
+        any_PAD = self.arrays["_any_PAD_"]
+        buffer = self.arrays["_buffer_"]
+        wflat = self.arrays["_flat_w_"]
+        wjflat = self.arrays["_flat_wj_"]
+        Mflat = self.arrays["_flat_M_"]
+        mflat = self.arrays["_flat_m_"]
+        Mjflat = self.arrays["_flat_Mj_"]
+        mjflat = self.arrays["_flat_mj_"]
+        thetaflat = self.arrays["_flat_theta_"]
 
         # compute theta
         if hasattr(xp, "cuda"):
@@ -1666,11 +1661,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 xp,
                 w,
                 self.active_dims,
-                out=dmp,
-                include_corners=scheme.limiter_config.include_corners,
+                scheme.limiter_config.include_corners,
+                M=M,
+                m=m,
             )
-            Mflat[...] = dmp[..., 1].reshape(nvars, ntotal)
-            mflat[...] = dmp[..., 0].reshape(nvars, ntotal)
+            Mflat[...] = M.reshape(nvars, ntotal)
+            mflat[...] = m.reshape(nvars, ntotal)
 
             compute_theta_kernel_helper(
                 wflat,
@@ -1683,8 +1679,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 scheme.limiter_config.theta_denom_tol,
             )
             theta[...] = thetaflat.reshape(nvars, nx, ny, nz, 1)
-            node_mp[..., 0] = mjflat.reshape(nvars, nx, ny, nz)
-            node_mp[..., 1] = Mjflat.reshape(nvars, nx, ny, nz)
+            Mj[...] = Mjflat.reshape(nvars, nx, ny, nz)
+            mj[...] = mjflat.reshape(nvars, nx, ny, nz)
         else:
             compute_theta(
                 xp,
@@ -1694,8 +1690,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 wy,
                 wz,
                 out=theta,
-                dmp=dmp,
-                node_mp=node_mp,
+                M=M,
+                m=m,
+                Mj=Mj,
+                mj=mj,
                 buffer=buffer,
                 config=scheme.limiter_config,
             )
@@ -1715,20 +1713,37 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         "physical_admissibility_detection is True."
                     )
 
+                # check Mj and mj for PAD violations
                 detect_PAD_violations(
-                    xp, node_mp, PAD_bounds[lim_slc], PAD_atol, out=PAD_violations
+                    xp,
+                    Mj,
+                    PAD_bounds,
+                    PAD_atol,
+                    violated_vars=var_PAD,
+                    violated_cells=any_PAD,
                 )
-                alpha[..., 0] = xp.where(PAD_violations < 0, -1.0, alpha[..., 0])
+                alpha[..., 0] = xp.where(var_PAD, -1.0, alpha[..., 0])
+
+                detect_PAD_violations(
+                    xp,
+                    mj,
+                    PAD_bounds,
+                    PAD_atol,
+                    violated_vars=var_PAD,
+                    violated_cells=any_PAD,
+                )
+                alpha[..., 0] = xp.where(var_PAD, -1.0, alpha[..., 0])
 
             theta[...] = xp.where(alpha < 1.0, theta, 1.0)
 
         # limit the face nodes
+        w0 = w[..., xp.newaxis]
         if wx is not None:
-            wx[...] = zhang_shu_operator(wx, w[..., np.newaxis], theta)
+            zhang_shu_operator(wx[lim_slc], w0[lim_slc], theta[lim_slc])
         if wy is not None:
-            wy[...] = zhang_shu_operator(wy, w[..., np.newaxis], theta)
+            zhang_shu_operator(wy[lim_slc], w0[lim_slc], theta[lim_slc])
         if wz is not None:
-            wz[...] = zhang_shu_operator(wz, w[..., np.newaxis], theta)
+            zhang_shu_operator(wz[lim_slc], w0[lim_slc], theta[lim_slc])
 
     @MethodTimer(cat="slope_limiter:detect_smooth_extrema")
     def detect_smooth_extrema(self, u: ArrayLike, scheme: InterpolationScheme):
@@ -2096,16 +2111,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if scheme.limiter_config.PAD_bounds is None:
             raise ValueError("PAD bounds are required to enable adaptive dt.")
 
-        PAD_violations = self.arrays["_PAD_violations_"][self.interior]
-        MOOD.detect_PAD_violations(
+        # allocate arrays
+        var_PAD = xp.zeros(unew.shape, dtype=np.int32)
+        any_PAD = xp.zeros(unew[:1, ...].shape, dtype=np.int32)
+
+        detect_PAD_violations(
             xp,
             self.primitives_from_conservatives(unew),
             scheme.limiter_config.PAD_bounds,
             scheme.limiter_config.PAD_atol,
-            out=PAD_violations,
+            violated_vars=var_PAD,
+            violated_cells=any_PAD,
         )
 
-        return not xp.any(PAD_violations < 0)
+        return not xp.any(any_PAD)
 
     def adaptive_dt_revision(self, t, u, dt):
         """

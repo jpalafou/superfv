@@ -345,7 +345,7 @@ def compute_shocks_kernel_helper(
             along the x, y, and z dimensions, respectively. Slices along the last axis
             corresponding to inactive dimensions are left uninitialized.
         has_shock: Array to which the shock detector is written. Has shape
-            (1, nx, ny, nz).
+            (1, nx, ny, nz). Must be int32 dtype.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
