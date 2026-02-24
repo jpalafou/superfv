@@ -1,1 +1,5 @@
 - [ ] log_limiter_scalars should default to false
+- [ ] all RawKernel helpers should check that arrays are contiguous
+- [ ] all RawKernel helpers should that aren’t called in parent functions should be in test_modified_regions
+- [ ] PAD kernel
+- [ ] conservative interpolation kernel
