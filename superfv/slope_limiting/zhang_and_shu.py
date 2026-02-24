@@ -107,8 +107,8 @@ if CUPY_AVAILABLE:
             const int ninterps,
             const double eps
         ) {
-            int tid = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-            int stride = (int)(blockDim.x * gridDim.x);
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
 
             int n = nvars * nx;
 
