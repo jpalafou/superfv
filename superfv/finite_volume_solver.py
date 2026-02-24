@@ -1069,6 +1069,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_dmp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_eta3d_", np.zeros((nvars, _nx_, _ny_, _nz_, 3)))
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
 
         # Zhang-Shu limiter arrays
@@ -1523,6 +1524,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Shock detection is not enabled in the scheme.")
 
         eta = arrays["_eta_"]
+        eta3d = arrays["_eta3d_"]
         has_shock = arrays["_has_shock_"]
         w1 = arrays["_w_"] if primitives else arrays["_u_"]
         buffer = arrays["_buffer_"]
@@ -1533,20 +1535,20 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 w1,
                 scheme.limiter_config.eta_max,
                 1e-16,
-                eta=eta,
+                eta=eta3d,
                 has_shock=has_shock,
             )
-
-        compute_shock_detector(
-            xp,
-            w1,
-            w1,
-            active_dims,
-            scheme.limiter_config.eta_max,
-            out=has_shock,
-            eta=eta,
-            buffer=buffer,
-        )
+        else:
+            compute_shock_detector(
+                xp,
+                w1,
+                w1,
+                active_dims,
+                scheme.limiter_config.eta_max,
+                out=has_shock,
+                eta=eta,
+                buffer=buffer,
+            )
 
     @MethodTimer(cat="interpolate_faces")
     def interpolate_faces(
