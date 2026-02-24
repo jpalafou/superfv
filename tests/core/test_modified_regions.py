@@ -196,13 +196,14 @@ def test_compute_theta(
 ):
     xp = configure_xp()
 
-    u, mega_buffer, out = sample_data(dims, nout=1, xp=xp)
+    u, buffer, out = sample_data(dims, nout=1, xp=xp)
     nodes, _, _ = sample_data(dims, nout=1, xp=xp)
     nodes = nodes[..., xp.newaxis]
 
-    dmp = mega_buffer[..., :2]
-    node_mp = mega_buffer[..., 2:4]
-    buffer = mega_buffer[..., 4:]
+    M = xp.empty(u.shape)
+    m = xp.empty(u.shape)
+    Mj =xp.empty(u.shape)
+    mj = xp.empty(u.shape)
 
     config = ZhangShuConfig(
         shock_detection=False,
@@ -222,8 +223,10 @@ def test_compute_theta(
         nodes if "y" in dims else None,
         nodes if "z" in dims else None,
         out=out,
-        dmp=dmp,
-        node_mp=node_mp,
+        M=M,
+        m=m,
+        Mj=Mj,
+        mj=mj,
         buffer=buffer,
         config=config,
     )
@@ -255,6 +258,8 @@ def test_detect_NAD_violations(
     uold, buffer, out1 = sample_data(dims, nout=1, xp=xp)
     unew, _, dmp = sample_data(dims, nout=2, xp=xp)
 
+    M = xp.empty(uold.shape)
+    m = xp.empty(uold.shape)
     out = out1[..., 0]
 
     for key in ["rtol", "gtol", "atol"]:
@@ -268,7 +273,8 @@ def test_detect_NAD_violations(
         tuple(dims),
         include_corners=include_corners,
         out=out,
-        dmp=dmp,
+        M=M,
+        m=m,
         buffer=buffer,
         **NAD_config,
     )
