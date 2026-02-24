@@ -81,7 +81,7 @@ def compute_shock_detector(
 ):
     """
     Compute the shock detector using the method of Berta et al. (2024), where a value
-    of 1 indicates a smooth region and 0 indicates a shock.
+    of 0 indicates a smooth region and 1 indicates a shock.
 
     Args:
         xp: `np` namespace.
@@ -147,7 +147,7 @@ def compute_shock_detector(
         raise ValueError("active_dims must have length 1, 2, or 3.")
 
     eta_max[...] = xp.max(eta, axis=0, keepdims=True)  # maximum over all variables
-    out[inner] = xp.where(eta_max[inner] < eta_threshold, 1.0, 0.0)
+    out[inner] = xp.where(eta_max[inner] < eta_threshold, 0, 1)
 
     return inner
 
@@ -174,6 +174,114 @@ if CUPY_AVAILABLE:
         ),
         name="compute_eta_kernel",
         no_return=True,
+    )
+
+    compute_shocks_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void compute_shocks_kernel(
+            const double *w,
+            const double *wref,
+            double *eta,
+            int *has_shock,
+            const double eta_threshold,
+            const double eps,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz
+        ){
+            // w shape          (nvars, nx, ny, nz)
+            // wref shape       (nvars, nx, ny, nz)
+            // eta shape        (nvars, nx, ny, nz, 3)
+            // has_shock shape  (nx, ny, nz)
+
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long nxyz = (long long)nx * ny * nz;
+            bool usingx = nx > 1, usingy = ny > 1, usingz = nz > 1;
+
+            for (long long ixyz = tid; ixyz < nxyz; ixyz += stride) {
+                long long t = ixyz;
+                int iz = (int)(t % nz); t /= nz;
+                int iy = (int)(t % ny); t /= ny;
+                int ix = (int)(t % nx); t /= nx;
+
+                // skip boundary cells
+                if ((usingx && (ix < 2 || ix >= nx - 2))
+                || (usingy && (iy < 2 || iy >= ny - 2))
+                || (usingz && (iz < 2 || iz >= nz - 2))) {
+                    continue;
+                }
+
+                // init has_shock to 0
+                has_shock[ixyz] = 0;
+
+                // loop over dimensions and variables
+                for (int id = 0; id < 3; id++) {
+                    switch (id) {
+                        case 0: if (!usingx) continue; break;
+                        case 1: if (!usingy) continue; break;
+                        case 2: if (!usingz) continue; break;
+                    }
+
+                    for (int iv = 0; iv < nvars; iv++) {
+                        long long ivxyz = iv * nxyz + ixyz;
+                        long long i = ivxyz * 3 + id; // eta idx
+
+                        long long j0, j1, j2, j3, j4;
+                        switch (id) {
+                            case 0:
+                                j0 = (((long long)iv * nx + (ix - 2)) * ny + iy) * nz + iz;
+                                j1 = (((long long)iv * nx + (ix - 1)) * ny + iy) * nz + iz;
+                                j2 = ivxyz;
+                                j3 = (((long long)iv * nx + (ix + 1)) * ny + iy) * nz + iz;
+                                j4 = (((long long)iv * nx + (ix + 2)) * ny + iy) * nz + iz;
+                                break;
+                            case 1:
+                                j0 = (((long long)iv * nx + ix) * ny + (iy - 2)) * nz + iz;
+                                j1 = (((long long)iv * nx + ix) * ny + (iy - 1)) * nz + iz;
+                                j2 = ivxyz;
+                                j3 = (((long long)iv * nx + ix) * ny + (iy + 1)) * nz + iz;
+                                j4 = (((long long)iv * nx + ix) * ny + (iy + 2)) * nz + iz;
+                                break;
+                            case 2:
+                                j0 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 2);
+                                j1 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 1);
+                                j2 = ivxyz;
+                                j3 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 1);
+                                j4 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 2);
+                                break;
+                        }
+
+                        // gather neighbors
+                        double wl2 = w[j0];
+                        double wl1 = w[j1];
+                        double wc = w[j2];
+                        double wr1 = w[j3];
+                        double wr2 = w[j4];
+                        double wrefval = wref[j2];
+
+                        // compute eta
+                        double delta1 = 0.5 * (wr1 - wl1);
+                        double delta2 = wr1 - 2.0 * wc + wl1;
+                        double delta3 = 0.5 * (wr2 - 2.0 * wr1 + 2.0 * wl1 - wl2);
+                        double delta4 = wr2 - 4.0 * wr1 + 6.0 * wc - 4.0 * wl1 + wl2;
+                        double eta_o = fabs(delta3)
+                            / (fabs(wrefval) + fabs(delta1) + fabs(delta3) + eps);
+                        double eta_e = fabs(delta4)
+                            / (fabs(wrefval) + fabs(delta2) + fabs(delta4) + eps);
+                        eta[i] = fmax(eta_o, eta_e);
+
+                        // set to 1 if eta exceeds threshold
+                        if (!has_shock[ixyz] && eta[i] > eta_threshold) has_shock[ixyz] = 1;
+                    }
+                }
+            }
+        }
+        """,
+        name="compute_shocks_kernel",
     )
 
 
@@ -211,4 +319,61 @@ def compute_eta_kernel_helper(
 
     compute_eta_kernel(wl2, wl1, wc, wr1, wr2, wref, eps, eta_inner)
 
+    return inner_slice
+
+
+def compute_shocks_kernel_helper(
+    w1: ArrayLike,
+    wr: ArrayLike,
+    eta_threshold: float,
+    eps: float,
+    *,
+    eta: ArrayLike,
+    has_shock: ArrayLike,
+) -> Tuple[slice, ...]:
+    """
+    Compute the shock detector using the method of Berta et al. (2024) with a custom
+    CuPy kernel, where a value of 0 indicates a smooth region and 1 indicates a shock.
+
+    Args:
+        w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
+        wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
+        eta_threshold: Threshold value for eta above which a shock is detected.
+        eps: Small value to avoid division by zero.
+        eta: Array to which intermediate eta values are written. Has shape
+            (nvars, nx, ny, nz, 3), where the last axis corresponds to eta computed
+            along the x, y, and z dimensions, respectively. Slices along the last axis
+            corresponding to inactive dimensions are left uninitialized.
+        has_shock: Array to which the shock detector is written. Has shape
+            (1, nx, ny, nz).
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
+    """
+    nvars, nx, ny, nz = w1.shape
+    threads_per_block = 256
+    blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
+
+    # check arrays are contiguous
+    if not w1.flags["C_CONTIGUOUS"]:
+        raise ValueError("w1 must be C-contiguous.")
+    if not wr.flags["C_CONTIGUOUS"]:
+        raise ValueError("wr must be C-contiguous.")
+    if not eta.flags["C_CONTIGUOUS"]:
+        raise ValueError("eta must be C-contiguous.")
+    if not has_shock.flags["C_CONTIGUOUS"]:
+        raise ValueError("has_shock must be C-contiguous.")
+
+    compute_shocks_kernel(
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (w1, wr, eta, has_shock, eta_threshold, eps, nvars, nx, ny, nz),
+    )
+
+    inner_slice = merge_slices(
+        crop(0, (None, None), ndim=4),
+        crop(1, (2, -2), ndim=4) if nx > 1 else crop(1, (None, None), ndim=4),
+        crop(2, (2, -2), ndim=4) if ny > 1 else crop(2, (None, None), ndim=4),
+        crop(3, (2, -2), ndim=4) if nz > 1 else crop(3, (None, None), ndim=4),
+    )
     return inner_slice

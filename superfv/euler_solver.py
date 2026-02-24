@@ -2,7 +2,10 @@ from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
-from superfv.slope_limiting.shock_detection import compute_shock_detector
+from superfv.slope_limiting.shock_detection import (
+    compute_shock_detector,
+    compute_shocks_kernel_helper,
+)
 
 from . import riemann_solvers
 from .axes import DIM_TO_AXIS
@@ -717,7 +720,7 @@ class EulerSolver(FiniteVolumeSolver):
             raise ValueError("Shock detection is not enabled in the scheme.")
 
         eta = arrays["_eta_"]
-        shockless = arrays["_shockless_"]
+        has_shock = arrays["_has_shock_"]
         w1 = arrays["_w_"]
         u1 = arrays["_u_"]
         wr = arrays["_wr_"]
@@ -732,13 +735,23 @@ class EulerSolver(FiniteVolumeSolver):
             wr[...] = u1
             wr[idx("m")] = c * u1[idx("rho")]
 
+        if hasattr(self.xp, "cuda"):
+            compute_shocks_kernel_helper(
+                w1 if primitives else u1,
+                wr,
+                scheme.limiter_config.eta_max,
+                1e-16,
+                eta=eta,
+                has_shock=has_shock,
+            )
+
         compute_shock_detector(
             xp,
             w1 if primitives else u1,
             wr,
             active_dims,
             scheme.limiter_config.eta_max,
-            out=shockless,
+            out=has_shock,
             eta=eta,
             buffer=buffer,
         )

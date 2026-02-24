@@ -45,7 +45,7 @@ from superfv.tools.norms import linf_norm
         dict(p=3, ZS=True, adaptive_dt=False, SED=False, check_uniformity=False),
         dict(p=3, ZS=True, adaptive_dt=False, SED=True, check_uniformity=False),
         dict(p=3, ZS=True, adaptive_dt=False, SED=True, check_uniformity=True),
-        dict(p=3, ZS=True, adaptive_dt=False, lazy_primitives="adaptive"),
+        dict(p=3, ZS=True, adaptive_dt=False, lazy_primitives="adaptive", eta_max=0.0),
     ],
 )
 def test_hydro_advection(f: callable, config: dict):

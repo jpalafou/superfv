@@ -36,7 +36,10 @@ from .slope_limiting.muscl import (
     musclConfig,
     musclInterpolationScheme,
 )
-from .slope_limiting.shock_detection import compute_shock_detector
+from .slope_limiting.shock_detection import (
+    compute_shock_detector,
+    compute_shocks_kernel_helper,
+)
 from .slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
@@ -1066,7 +1069,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_dmp_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_shockless_", np.ones((1, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
 
         # Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -1415,7 +1418,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _wcc_ = arrays["_wcc_"]  # shape (..., 1)
         _wp_ = arrays["_wp_"]  # shape (..., 1)
         _w_ = arrays["_w_"]
-        _shockless_ = arrays["_shockless_"]
+        _has_shock_ = arrays["_has_shock_"]
         _PAD_violations_ = arrays["_PAD_violations_"]
         _any_PAD_violations_ = arrays["_any_troubles_"]
         _buff_ = arrays["_buffer_"]
@@ -1444,7 +1447,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _w_[...] = self.primitives_from_conservatives(_u_)
 
             primitives = scheme.flux_recipe in (2, 3)
-            self.shock_detector(scheme, primitives)  # writes to _eta_, _shockless_
+            self.shock_detector(scheme, primitives)  # writes to _eta_, _has_shock_
 
             if scheme.limiter_config.physical_admissibility_detection:
                 detect_PAD_violations(
@@ -1459,12 +1462,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
                 _w_[...] = xp.where(
-                    xp.logical_and(_shockless_, _any_PAD_violations_ >= 0),
-                    _wp_[..., 0],
+                    xp.logical_or(_has_shock_, _any_PAD_violations_ < 0),
                     _w_,
+                    _wp_[..., 0],
                 )
+
             else:
-                _w_[...] = xp.where(_shockless_, _wp_[..., 0], _w_)
+                _w_[...] = xp.where(_has_shock_, _w_, _wp_[..., 0])
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
@@ -1519,9 +1523,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("Shock detection is not enabled in the scheme.")
 
         eta = arrays["_eta_"]
-        shockless = arrays["_shockless_"]
+        has_shock = arrays["_has_shock_"]
         w1 = arrays["_w_"] if primitives else arrays["_u_"]
         buffer = arrays["_buffer_"]
+
+        if hasattr(self.xp, "cuda"):
+            compute_shocks_kernel_helper(
+                w1,
+                w1,
+                scheme.limiter_config.eta_max,
+                1e-16,
+                eta=eta,
+                has_shock=has_shock,
+            )
 
         compute_shock_detector(
             xp,
@@ -1529,7 +1543,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             w1,
             active_dims,
             scheme.limiter_config.eta_max,
-            out=shockless,
+            out=has_shock,
             eta=eta,
             buffer=buffer,
         )

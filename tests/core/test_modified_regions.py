@@ -16,7 +16,10 @@ from superfv.slope_limiting.muscl import (
     compute_PP2D_slopes,
     musclConfig,
 )
-from superfv.slope_limiting.shock_detection import compute_shock_detector
+from superfv.slope_limiting.shock_detection import (
+    compute_shock_detector,
+    compute_shocks_kernel_helper,
+)
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
 from superfv.tools.device_management import CUPY_AVAILABLE
@@ -151,6 +154,30 @@ def test_compute_shock_detector(dims: str):
     out[modified] = xp.nan
     eta[modified] = xp.nan
     assert xp.all(xp.isnan(out))
+    assert xp.all(xp.isnan(eta))
+
+
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+def test_compute_shocks_kernel_helper(dims: str):
+    xp = configure_xp()
+
+    if not hasattr(xp, "cuda"):
+        pytest.skip("compute_shocks_kernel_helper is only implemented for CuPy")
+
+    u, _, eta = sample_data(dims, nout=3, xp=xp)
+    has_shock = xp.full((1, *eta.shape[1:4]), -1, dtype=np.int32)
+
+    modified = compute_shocks_kernel_helper(
+        u, u, 0.025, 1e-16, eta=eta, has_shock=has_shock
+    )
+
+    assert not xp.any(has_shock[modified] == -1)
+    for i, dim in enumerate(["x", "y", "z"]):
+        if dim in dims:
+            assert not xp.any(xp.isnan(eta[..., i][modified]))
+    has_shock[modified] = -1
+    eta[modified] = xp.nan
+    assert xp.all(has_shock == -1)
     assert xp.all(xp.isnan(eta))
 
 
