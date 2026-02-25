@@ -18,6 +18,7 @@ from .tools.slicing import merge_slices
 
 if CUPY_AVAILABLE:
     from .fv_cp import interpolation_kernel_helper
+    from .fv_cuda import gauss_legendre_quadrature_kernel_helper
 
 SingleInterpCoord = Union[int, float]
 MultiInterpCoords = Tuple[SingleInterpCoord, ...]
@@ -999,96 +1000,4 @@ def transversely_integrate_nodes(
         p,
         out=out,
         buffer=buffer,
-    )
-
-
-if CUPY_AVAILABLE:
-    import cupy as cp  # type: ignore
-
-    gauss_legendre_quadrature_kernel = cp.RawKernel(
-        """
-        extern "C" __global__
-        void gauss_legendre_quadrature_kernel(
-            const double* wj,
-            double* out,
-            const int nvars,
-            const int nx,
-            const int ny,
-            const int nz,
-            const int nquadrature
-        ){
-            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-            const long long stride = (long long)blockDim.x * gridDim.x;
-
-            const long long ntotal = (long long)nvars * nx * ny * nz;
-
-            double w0=0, w1=0, w2=0, w3=0, w4=0;
-            switch (nquadrature) {
-                case 1:
-                    w0 = 1.0;
-                    break;
-                case 2:
-                    w0 = 0.5;
-                    w1 = w0;
-                    break;
-                case 3:
-                    w0 = 5.0 / 18.0;
-                    w1 = 4.0 / 9.0;
-                    w2 = w0;
-                    break;
-                case 4:
-                    w0 = (18.0 - sqrt(30.0)) / 72.0;
-                    w1 = (18.0 + sqrt(30.0)) / 72.0;
-                    w2 = w1;
-                    w3 = w0;
-                    break;
-                case 5:
-                    w0 = (322.0 - 13.0 * sqrt(70.0)) / 1800.0;
-                    w1 = (322.0 + 13.0 * sqrt(70.0)) / 1800.0;
-                    w2 = 64.0 / 225;
-                    w3 = w1;
-                    w4 = w0;
-                    break;
-                default:
-                    return;
-                }
-
-            for (long long i = tid; i < ntotal; i += stride) {
-                const double* row = wj + ((size_t)i * nquadrature);
-                double result = 0.0;
-                for (int j = 0; j < nquadrature; j++) {
-                    double wq = row[j];
-                    switch (j) {
-                        case 0: result += w0 * wq; break;
-                        case 1: result += w1 * wq; break;
-                        case 2: result += w2 * wq; break;
-                        case 3: result += w3 * wq; break;
-                        case 4: result += w4 * wq; break;
-                    }
-                }
-                out[i] = result;
-            }
-    }
-        """,
-        "gauss_legendre_quadrature_kernel",
-    )
-
-
-def gauss_legendre_quadrature_kernel_helper(u: ArrayLike, p: int, out: ArrayLike):
-    nquadrature = -(-(p + 1) // 2)
-
-    if not out.flags.c_contiguous:
-        raise ValueError("Output array must be C-contiguous for CUDA kernel.")
-    if not u[..., :nquadrature].flags.c_contiguous:
-        raise ValueError("Input array must be C-contiguous for CUDA kernel.")
-
-    nvars, nx, ny, nz, _ = u.shape
-    threads_per_block = 256
-    blocks_per_grid = (
-        nvars * nx * ny * nz + threads_per_block - 1
-    ) // threads_per_block
-    gauss_legendre_quadrature_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (u[..., :nquadrature], out, nvars, nx, ny, nz, nquadrature),
     )
