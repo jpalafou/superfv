@@ -43,8 +43,8 @@ def detect_PAD_violations(
     lower = physical_bounds[:, 0].reshape(-1, 1, 1, 1)
     upper = physical_bounds[:, 1].reshape(-1, 1, 1, 1)
 
-    violated_vars[...] = wj < lower + tol
-    xp.logical_or(violated_vars, wj > upper - tol, out=violated_vars)
+    violated_vars[...] = wj < lower - tol
+    xp.logical_or(violated_vars, wj > upper + tol, out=violated_vars)
     violated_cells[...] = xp.any(violated_vars > 0, axis=0)
 
 
@@ -90,8 +90,8 @@ if CUPY_AVAILABLE:
                     const double lower_bound = physical_bounds[iv * 2];
                     const double upper_bound = physical_bounds[iv * 2 + 1];
 
-                    const int var_violated = (val < lower_bound + tol
-                        || val > upper_bound - tol) ? 1 : 0;
+                    const int var_violated = (val < lower_bound - tol
+                        || val > upper_bound + tol) ? 1 : 0;
                     violated_vars[i] = var_violated;
 
                     if (var_violated) {

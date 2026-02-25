@@ -48,8 +48,8 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3/lazy": dict(p=3, GL=True, **(apriori | dict(lazy_primitives="full"))),
     "ZS7/lazy": dict(p=7, GL=True, **(apriori | dict(lazy_primitives="full"))),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "ZS3t": dict(p=3, **apriori),
+    "ZS7t": dict(p=7, **apriori),
     "MM3/1rev/no_delta/rtol_1e-5": dict(
         p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
     ),

@@ -202,7 +202,7 @@ def test_compute_theta(
 
     M = xp.empty(u.shape)
     m = xp.empty(u.shape)
-    Mj =xp.empty(u.shape)
+    Mj = xp.empty(u.shape)
     mj = xp.empty(u.shape)
 
     config = ZhangShuConfig(
