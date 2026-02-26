@@ -150,8 +150,12 @@ if CUPY_AVAILABLE:
             const int nvars,
             const int nx,
             const int ny,
-            const int nz,
+            const int nz
         ){
+            // w    shape (nvars, nx, ny, nz)
+            // wj   shape (nvars, nx, ny, nz, ninterps)
+            // p    polynomial degree {0, ..., 7}, determines ninterps
+
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
 
@@ -167,7 +171,7 @@ if CUPY_AVAILABLE:
             double x3w5 = 0.0, x3w6 = 0.0, x3w7 = 0.0, x3w8 = 0.0;
 
             // assign quadrature weights for each node
-            int nquadrature, reach;
+            int ninterps, quadsize;
             switch (p) {
                 case 0:
                     // first node
@@ -175,7 +179,7 @@ if CUPY_AVAILABLE:
                     // w_0: 1
                     x0w0 = 1.0;
 
-                    nquadrature = 1, reach = 0;
+                    ninterps = 1, quadsize = 1;
                     break;
                 case 1:
                     // first node
@@ -183,7 +187,7 @@ if CUPY_AVAILABLE:
                     // w_0: 1
                     x0w0 = 1.0;
 
-                    nquadrature = 1, reach = 0;
+                    ninterps = 1, quadsize = 1;
                     break;
                 case 2:
                     // first node
@@ -200,7 +204,7 @@ if CUPY_AVAILABLE:
                     // w_1: sqrt(3)/12
                     x1w0 = x0w2, x1w1 = x0w1, x1w2 = x0w0;
 
-                    nquadrature = 2, reach = 1;
+                    ninterps = 2, quadsize = 3;
                     break;
                 case 3:
                     // first node
@@ -222,7 +226,7 @@ if CUPY_AVAILABLE:
                     // w_2: -7*sqrt(3)/432
                     x1w0 = x0w4, x1w1 = x0w3, x1w2 = x0w2, x1w3 = x0w1, x1w4 = x0w0;
 
-                    nquadrature = 2, reach = 2;
+                    ninterps = 2, quadsize = 5;
                     break;
                 case 4:
                     // first node
@@ -257,7 +261,7 @@ if CUPY_AVAILABLE:
                     // w_2: -11*sqrt(15)/1200 - 3/800
                     x2w0 = x0w4, x2w1 = x0w3, x2w2 = x0w2, x2w3 = x0w1, x2w4 = x0w0;
 
-                    nquadrature = 3, reach = 2;
+                    ninterps = 3, quadsize = 5;
                     break;
                 case 5:
                     // first node
@@ -298,7 +302,7 @@ if CUPY_AVAILABLE:
                     x2w0 = x0w6, x2w1 = x0w5, x2w2 = x0w4, x2w3 = x0w3;
                     x2w4 = x0w2, x2w5 = x0w1, x2w6 = x0w0;
 
-                    nquadrature = 3, reach = 3;
+                    ninterps = 3, quadsize = 7;
                     break;
                 case 6:
                     // first node
@@ -389,7 +393,7 @@ if CUPY_AVAILABLE:
                     x3w0 = x0w6, x3w1 = x0w5, x3w2 = x0w4, x3w3 = x0w3, x3w4 = x0w2;
                     x3w5 = x0w1, x3w6 = x0w0;
 
-                    nquadrature = 4, reach = 3;
+                    ninterps = 4, quadsize = 7;
                     break;
                 case 7:
                     // first node
@@ -493,8 +497,99 @@ if CUPY_AVAILABLE:
                     x3w0 = x0w8, x3w1 = x0w7, x3w2 = x0w6, x3w3 = x0w5, x3w4 = x0w4;
                     x3w5 = x0w3, x3w6 = x0w2, x3w7 = x0w1, x3w8 = x0w0;
 
-                    nquadrature = 4, reach = 4;
+                    ninterps = 4, quadsize = 9;
                     break;
+                default:
+                    throw "Unsupported number of quadrature points";
+            }
+            const int reach = (quadsize - 1) / 2;
+
+            for (long long i = tid; i < ntotal; i += stride) {
+                long long t = i;
+                int iz = t % nz; t /= nz;
+                int iy = t % ny; t /= ny;
+                int ix = t % nx; t /= nx;
+                int iv = t % nvars;
+
+                switch (dim) {
+                    case 0: if (ix < reach || ix >= nx - reach) continue; break;
+                    case 1: if (iy < reach || iy >= ny - reach) continue; break;
+                    case 2: if (iz < reach || iz >= nz - reach) continue; break;
+                }
+
+                for (int interp_idx = 0; interp_idx < ninterps; interp_idx++) {
+                    double result = 0.0;
+                    long long output_idx
+                        = (((long long)iv * nx + ix) * ny * nz + iy * nz + iz)
+                        * ninterps + interp_idx;
+
+                    for (int qj = 0; qj < quadsize; qj++) {
+                        // get neighbor index
+                        int offset = qj - reach;
+                        int jv = iv, jx = ix, jy = iy, jz = iz;
+                        switch (dim) {
+                            case 0: jx += offset; break;
+                            case 1: jy += offset; break;
+                            case 2: jz += offset; break;
+                        }
+                        long long j = (((long long)jv * nx + jx) * ny + jy) * nz + jz;
+
+                        // get weight
+                        double w;
+                        switch (interp_idx) {
+                            case 0:
+                                switch (qj) {
+                                    case 0: w = x0w0; break;
+                                    case 1: w = x0w1; break;
+                                    case 2: w = x0w2; break;
+                                    case 3: w = x0w3; break;
+                                    case 4: w = x0w4; break;
+                                    case 5: w = x0w5; break;
+                                    case 6: w = x0w6; break;
+                                    case 7: w = x0w7; break;
+                                    case 8: w = x0w8; break;
+                                } break;
+                            case 1:
+                                switch (qj) {
+                                    case 0: w = x1w0; break;
+                                    case 1: w = x1w1; break;
+                                    case 2: w = x1w2; break;
+                                    case 3: w = x1w3; break;
+                                    case 4: w = x1w4; break;
+                                    case 5: w = x1w5; break;
+                                    case 6: w = x1w6; break;
+                                    case 7: w = x1w7; break;
+                                    case 8: w = x1w8; break;
+                                } break;
+                            case 2:
+                                switch (qj) {
+                                    case 0: w = x2w0; break;
+                                    case 1: w = x2w1; break;
+                                    case 2: w = x2w2; break;
+                                    case 3: w = x2w3; break;
+                                    case 4: w = x2w4; break;
+                                    case 5: w = x2w5; break;
+                                    case 6: w = x2w6; break;
+                                    case 7: w = x2w7; break;
+                                    case 8: w = x2w8; break;
+                                } break;
+                            case 3:
+                                switch (qj) {
+                                    case 0: w = x3w0; break;
+                                    case 1: w = x3w1; break;
+                                    case 2: w = x3w2; break;
+                                    case 3: w = x3w3; break;
+                                    case 4: w = x3w4; break;
+                                    case 5: w = x3w5; break;
+                                    case 6: w = x3w6; break;
+                                    case 7: w = x3w7; break;
+                                    case 8: w = x3w8; break;
+                                } break;
+                        }
+                        result += w * w[j];
+                    }
+                    wj[output_idx] = result;
+                }
             }
         }
         """
