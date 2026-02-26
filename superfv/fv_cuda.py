@@ -152,14 +152,14 @@ if CUPY_AVAILABLE:
             const int ny,
             const int nz
         ){
-            // w    shape (nvars, nx, ny, nz)
-            // wj   shape (nvars, nx, ny, nz, ninterps)
+            // w    shape (nvars, nx, ny, nz, 2)
+            // wj   shape (nvars, nx, ny, nz, 2 * ninterps)
             // p    polynomial degree {0, ..., 7}, determines ninterps
 
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
 
-            const long long ntotal = (long long)nvars * nx * ny * nz;
+            const long long ntotal = (long long)nvars * nx * ny * nz * 2;
 
             double x0w0 = 0.0, x0w1 = 0.0, x0w2 = 0.0, x0w3 = 0.0, x0w4 = 0.0;
             double x0w5 = 0.0, x0w6 = 0.0, x0w7 = 0.0, x0w8 = 0.0;
@@ -500,12 +500,14 @@ if CUPY_AVAILABLE:
                     ninterps = 4, quadsize = 9;
                     break;
                 default:
-                    throw "Unsupported number of quadrature points";
+                    // unsupported quadrature order
+                    return;
             }
             const int reach = (quadsize - 1) / 2;
 
             for (long long i = tid; i < ntotal; i += stride) {
                 long long t = i;
+                int iface = t % 2; t /= 2;
                 int iz = t % nz; t /= nz;
                 int iy = t % ny; t /= ny;
                 int ix = t % nx; t /= nx;
@@ -521,7 +523,7 @@ if CUPY_AVAILABLE:
                     double result = 0.0;
                     long long output_idx
                         = (((long long)iv * nx + ix) * ny * nz + iy * nz + iz)
-                        * ninterps + interp_idx;
+                        * (2 * ninterps) + iface * ninterps + interp_idx;
 
                     for (int qj = 0; qj < quadsize; qj++) {
                         // get neighbor index
@@ -532,7 +534,8 @@ if CUPY_AVAILABLE:
                             case 1: jy += offset; break;
                             case 2: jz += offset; break;
                         }
-                        long long j = (((long long)jv * nx + jx) * ny + jy) * nz + jz;
+                        long long j = ((((long long)jv * nx + jx) * ny + jy) * nz + jz)
+                            * 2 + iface;
 
                         // get weight
                         double w;
@@ -778,9 +781,7 @@ def gauss_legendre_quadrature_kernel_helper(u: ArrayLike, p: int, out: ArrayLike
 
     nvars, nx, ny, nz, _ = u.shape
     threads_per_block = 256
-    blocks_per_grid = (
-        nvars * nx * ny * nz + threads_per_block - 1
-    ) // threads_per_block
+    blocks_per_grid = (u.size + threads_per_block - 1) // threads_per_block
     gauss_legendre_quadrature_kernel(
         (blocks_per_grid,),
         (threads_per_block,),
@@ -794,20 +795,23 @@ def interpolate_gauss_legendre_nodes_kernel_helper(
     dim_int = {"x": 0, "y": 1, "z": 2}[dim]
 
     if p in {0, 1}:
-        out[..., 0] = u.copy()
-        return (slice(None), slice(None), slice(None), slice(None), slice(None, 1))
+        out[..., :2] = u
+        return (slice(None), slice(None), slice(None), slice(None), slice(None, 2))
     if p not in {2, 3, 4, 5, 6, 7}:
         raise ValueError("Expected `p` in {0,...,7}")
 
     ninterps = p // 2 + 1
     reach = -(-p // 2)
 
-    nvars, nx, ny, nz = u.shape
+    nvars, nx, ny, nz, nfaces = u.shape
 
-    if not (out.ndim == 5 and out.shape[4] == ninterps):
+    if nfaces != 2:
+        raise ValueError("Expected input `u` with shape (nvars, nx, ny, nz, 2)")
+
+    if not (out.ndim == 5 and out.shape[4] == 2 * ninterps):
         raise ValueError(
             "Expected `out` to have 5 dimensions with the last one having length "
-            f"{ninterps}"
+            f"{2 * ninterps}"
         )
 
     if not u.flags.c_contiguous:
@@ -830,5 +834,5 @@ def interpolate_gauss_legendre_nodes_kernel_helper(
     )
 
     return replace_slice(
-        crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=5), 4, slice(None, ninterps)
+        crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=5), 4, slice(None, 2 * ninterps)
     )
