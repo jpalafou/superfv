@@ -2,7 +2,7 @@ from typing import Literal, Optional, Tuple
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
-from superfv.tools.slicing import crop, merge_slices
+from superfv.tools.slicing import crop, merge_slices, replace_slice
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
@@ -785,4 +785,50 @@ def gauss_legendre_quadrature_kernel_helper(u: ArrayLike, p: int, out: ArrayLike
         (blocks_per_grid,),
         (threads_per_block,),
         (u[..., :nquadrature], out, nvars, nx, ny, nz, nquadrature),
+    )
+
+
+def interpolate_gauss_legendre_nodes_kernel_helper(
+    u: ArrayLike, out: ArrayLike, p: int, dim: Literal["x", "y", "z"]
+) -> Tuple[slice, ...]:
+    dim_int = {"x": 0, "y": 1, "z": 2}[dim]
+
+    if p in {0, 1}:
+        out[..., 0] = u.copy()
+        return (slice(None), slice(None), slice(None), slice(None), slice(None, 1))
+    if p not in {2, 3, 4, 5, 6, 7}:
+        raise ValueError("Expected `p` in {0,...,7}")
+
+    ninterps = p // 2 + 1
+    reach = -(-p // 2)
+
+    nvars, nx, ny, nz = u.shape
+
+    if not (out.ndim == 5 and out.shape[4] == ninterps):
+        raise ValueError(
+            "Expected `out` to have 5 dimensions with the last one having length "
+            f"{ninterps}"
+        )
+
+    if not u.flags.c_contiguous:
+        raise ValueError("Input array must be C-contiguous for CUDA kernel.")
+    if not out.flags.c_contiguous:
+        raise ValueError("Output array must be C-contiguous for CUDA kernel.")
+    if not u.dtype == cp.float64:
+        raise ValueError("Input array must be of type float64 for CUDA kernel.")
+    if not out.dtype == cp.float64:
+        raise ValueError("Output array must be of type float64 for CUDA kernel.")
+
+    threads_per_block = 256
+    blocks_per_grid = (
+        nvars * nx * ny * nz + threads_per_block - 1
+    ) // threads_per_block
+    interpolate_gauss_legendre_nodes_kernel(
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (u, out, p, dim_int, nvars, nx, ny, nz),
+    )
+
+    return replace_slice(
+        crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=5), 4, slice(None, ninterps)
     )
