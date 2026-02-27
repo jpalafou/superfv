@@ -296,8 +296,8 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void interpolate_gauss_legendre_nodes_kernel(
-            __restrict__ const double* w,
-            __restrict__ double* wj,
+            const double* __restrict__ u,
+            double* __restrict__ uj,
             const int p,
             const int dim,
             const int nvars,
@@ -305,8 +305,8 @@ if CUPY_AVAILABLE:
             const int ny,
             const int nz
         ){
-            // w    shape (nvars, nx, ny, nz, 2)
-            // wj   shape (nvars, nx, ny, nz, 2 * ninterps)
+            // u    shape (nvars, nx, ny, nz, 2)
+            // uj   shape (nvars, nx, ny, nz, 2 * ninterps)
             // p    polynomial degree {0, ..., 7}, determines ninterps
 
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -742,14 +742,14 @@ if CUPY_AVAILABLE:
                                     case 8: w = x3w8; break;
                                 } break;
                         }
-                        result += w * w[j];
+                        result += w * u[j];
                     }
-                    wj[output_idx] = result;
+                    uj[output_idx] = result;
                 }
             }
         }
         """,
-        name="lr_conservative_interpolation_kernel",
+        name="interpolate_gauss_legendre_nodes_kernel",
     )
 
     gauss_legendre_quadrature_kernel = cp.RawKernel(

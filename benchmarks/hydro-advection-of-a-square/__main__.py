@@ -40,20 +40,20 @@ configs = {
     # "MM3/3revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori3),
     # "MM7/3revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori3),
     "p0gl": dict(p=0, GL=True),
-    "p1gl": dict(p=1, GL=True),
-    "p2gl": dict(p=2, GL=True),
-    "p3gl": dict(p=3, GL=True),
-    "p4gl": dict(p=4, GL=True),
-    "p5gl": dict(p=5, GL=True),
-    "p6gl": dict(p=6, GL=True),
-    "p7gl": dict(p=7, GL=True),
     "p0t": dict(p=0),
+    "p1gl": dict(p=1, GL=True),
     "p1t": dict(p=1),
+    "p2gl": dict(p=2, GL=True),
     "p2t": dict(p=2),
+    "p3gl": dict(p=3, GL=True),
     "p3t": dict(p=3),
+    "p4gl": dict(p=4, GL=True),
     "p4t": dict(p=4),
+    "p5gl": dict(p=5, GL=True),
     "p5t": dict(p=5),
+    "p6gl": dict(p=6, GL=True),
     "p6t": dict(p=6),
+    "p7gl": dict(p=7, GL=True),
     "p7t": dict(p=7),
 }
 
@@ -157,7 +157,7 @@ for (name, config), N in product(configs.items(), N_values):
         print(f"- - - Starting simulation: {name}, N={N} - - -")
         print(f"\tRunning config with name '{name}' and writing to path '{sim_path}'.")
 
-        sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=N >= 64, **config)
+        sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=True, **config)
 
         try:
             sim.run(

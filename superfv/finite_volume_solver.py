@@ -1622,24 +1622,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             left face interpolations are written along [:, :, :, :, :ni] and the right
             face interpolations are written along [:, :, :, :, ni:2*ni].
         """
-        xp = self.xp
-        adims = self.active_dims
-
-        out = self.arrays[f"_{dim}_nodes_"]
-        buffer = self.arrays["_buffer_"]
-
-        # perform interpolation
         p = scheme.p
+        nodes = self.arrays[f"_{dim}_nodes_"]
+
         if scheme.gauss_legendre:
-            fv.interpolate_GaussLegendre_nodes(
-                xp, u, dim, adims, p, out=out, buffer=buffer
-            )
+            self.interpolate_GaussLegendre_nodes(u, dim, p)  # updates nodes
         else:
-            fv.interpolate_face_centers(xp, u, dim, adims, p, out=out, buffer=buffer)
+            self.interpolate_face_centers(u, dim, p)  # updates nodes
 
         if convert_to_primitives:
-            # convert to primitive variables if requested
-            out[...] = self.primitives_from_conservatives(out)
+            nodes[...] = self.primitives_from_conservatives(nodes)
 
     @MethodTimer(cat="interpolate_faces:GL")
     def interpolate_GaussLegendre_nodes(
@@ -1669,7 +1661,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         active_dims = self.active_dims
         ndim = self.mesh.ndim
 
-        midline = arrays["_buffer1_"]
+        midline = arrays["_buffer1_"][..., 0]
         nodes = arrays[f"_{dim}_nodes_"]
         buffer = arrays["_buffer_"]
 
