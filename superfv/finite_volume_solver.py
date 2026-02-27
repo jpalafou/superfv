@@ -9,6 +9,7 @@ import pandas as pd
 
 from superfv.fv_cuda import (
     gauss_legendre_quadrature_kernel_helper,
+    interpolate_central_quantity,
     interpolate_central_quantity_kernel_helper,
     interpolate_gauss_legendre_nodes_kernel_helper,
     lr_conservative_interpolation_kernel_helper,
@@ -1235,6 +1236,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "compute_dt",
             "apply_bc",
             "update_workspaces",
+            "update_workspaces:ucc",
+            "update_workspaces:wp",
+            "update_workspaces:shock_detector",
             "interpolate_faces",
             "interpolate_faces:GL",
             "interpolate_faces:transverse",
@@ -1247,7 +1251,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "integrate_fluxes:transverse",
             "MOOD_loop",
             "compute_RHS",
-            "update_workspaces:shock_detector",
             "slope_limiter:detect_smooth_extrema",
             "MOOD_loop:compute_fallback_fluxes",
             "MOOD_loop:detect_troubled_cells",
@@ -1421,7 +1424,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Returns:
             None. The workspace arrays `_u_` and maybe `_w_` are updated in place.
         """
-        active_dims = self.active_dims
         p = scheme.p
         xp = self.xp
         arrays = self.arrays
@@ -1436,19 +1438,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _has_shock_ = arrays["_has_shock_"]
         _var_PAD_ = arrays["_var_PAD_"]
         _any_PAD_ = arrays["_any_PAD_"]
-        _buff_ = arrays["_buffer_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
         self.apply_bc(t, _u_, scheme=scheme)
 
         # 1) conservative and primitive centroids
-        fv.interpolate_cell_centers(xp, _u_, active_dims, p, out=_ucc_, buffer=_buff_)
+        self.interpolate_cell_centers(_u_, p)  # writes to _ucc_
         _wcc_[...] = self.primitives_from_conservatives(_ucc_)
 
         # 2) primitive FV averages
         if lazy_primitives == "none":
-            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=_buff_)
+            self.integrate_fv_averages(_wcc_, p)  # writes to _wp_
             _w_[...] = _wp_[..., 0]
         elif lazy_primitives == "full":
             _w_[...] = self.primitives_from_conservatives(_u_)
@@ -1458,7 +1459,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     "Adaptive lazy primitives can only be used with polyInterpolationScheme."
                 )
 
-            fv.integrate_fv_averages(xp, _wcc_, active_dims, p, out=_wp_, buffer=_buff_)
+            self.integrate_fv_averages(_wcc_, p)  # writes to _wp_
             _w_[...] = self.primitives_from_conservatives(_u_)
 
             primitives = scheme.flux_recipe in (2, 3)
@@ -1478,6 +1479,42 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _w_[...] = xp.where(_has_shock_, _w_, _wp_[..., 0])
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
+
+    @MethodTimer(cat="update_workspaces:ucc")
+    def interpolate_cell_centers(self, u: ArrayLike, p: int):
+        xp = self.xp
+        ndim = self.mesh.ndim
+        active_dims = self.active_dims
+        arrays = self.arrays
+
+        u_midline = arrays["_buffer1_"]
+        ucc = arrays["_ucc_"]
+        _buff_ = arrays["_buffer_"]
+
+        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+            interpolate_central_quantity(
+                u_midline[..., 0], ucc[..., 0], 0, p, active_dims, uu=u
+            )
+        else:
+            fv.interpolate_cell_centers(xp, u, active_dims, p, out=ucc, buffer=_buff_)
+
+    @MethodTimer(cat="update_workspaces:wp")
+    def integrate_fv_averages(self, wcc: ArrayLike, p: int):
+        xp = self.xp
+        ndim = self.mesh.ndim
+        active_dims = self.active_dims
+        arrays = self.arrays
+
+        w = arrays["_wp_"]
+        w_midline = arrays["_buffer1_"]
+        _buff_ = arrays["_buffer_"]
+
+        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+            interpolate_central_quantity(
+                w_midline[..., 0], w[..., 0], 1, p, active_dims, uu=wcc[..., 0]
+            )
+        else:
+            fv.integrate_fv_averages(xp, wcc, active_dims, p, out=w, buffer=_buff_)
 
     @MethodTimer(cat="apply_bc")
     def apply_bc(

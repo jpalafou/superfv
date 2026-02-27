@@ -157,7 +157,7 @@ for (name, config), N in product(configs.items(), N_values):
         print(f"- - - Starting simulation: {name}, N={N} - - -")
         print(f"\tRunning config with name '{name}' and writing to path '{sim_path}'.")
 
-        sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=True, **config)
+        sim = EulerSolver(ic=sinus, nx=N, ny=N, gamma=gamma, cupy=N >= 64, **config)
 
         try:
             sim.run(

@@ -958,10 +958,10 @@ def interpolate_central_quantity(
                 "Intermediate array uu must be provided for 2D interpolation"
             )
         slc1 = interpolate_central_quantity_kernel_helper(
-            u, uu, mode, p, active_dims[0]
+            uu, u, mode, p, active_dims[0]
         )
         slc2 = interpolate_central_quantity_kernel_helper(
-            uu, uj, mode, p, active_dims[1]
+            u, uj, mode, p, active_dims[1]
         )
         return merge_slices(slc1, slc2)
 
@@ -971,13 +971,13 @@ def interpolate_central_quantity(
                 "Intermediate arrays uu and uuu must be provided for 3D interpolation"
             )
         slc1 = interpolate_central_quantity_kernel_helper(
-            u, uu, mode, p, active_dims[0]
+            uuu, uu, mode, p, active_dims[0]
         )
         slc2 = interpolate_central_quantity_kernel_helper(
-            uu, uuu, mode, p, active_dims[1]
+            uu, u, mode, p, active_dims[1]
         )
         slc3 = interpolate_central_quantity_kernel_helper(
-            uuu, uj, mode, p, active_dims[2]
+            u, uj, mode, p, active_dims[2]
         )
         return merge_slices(slc1, slc2, slc3)
 
