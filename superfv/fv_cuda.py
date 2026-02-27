@@ -7,6 +7,159 @@ from superfv.tools.slicing import crop, merge_slices, replace_slice
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
+    lr_conservative_interpolation_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void lr_conservative_interpolation_kernel(
+            const double* __restrict__ u,
+            double* __restrict__ uj,
+            const int p,
+            const int dim,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz
+        ){
+            // u    shape (nvars, nx, ny, nz)
+            // uj   shape (nvars, nx, ny, nz, 2)
+            // p    polynomial degree {0, ..., 7}
+            // dim  dimension to interpolate along {0, 1, 2} for (x, y, z, respectively)
+
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long ntotal = (long long)nvars * nx * ny * nz;
+
+            double wl0 = 0.0, wl1 = 0.0, wl2 = 0.0, wl3 = 0.0, wl4 = 0.0, wl5 = 0.0,
+                wl6 = 0.0, wl7 = 0.0, wl8 = 0.0;
+            double wr0 = 0.0, wr1 = 0.0, wr2 = 0.0, wr3 = 0.0, wr4 = 0.0, wr5 = 0.0,
+                wr6 = 0.0, wr7 = 0.0, wr8 = 0.0;
+
+            int quadsize;
+            switch (p) {
+                case 0:
+                    wl0 = 1.0;
+                    wr0 = 1.0;
+
+                    quadsize = 1;
+                    break;
+                case 1:
+                    wl0 = 1.0/4.0, wl1 = 1.0, wl2 = -1.0/4.0;
+                    wr0 = wl2, wr1 = wl1, wr2 = wl0;
+
+                    quadsize = 3;
+                    break;
+                case 2:
+                    wl0 = 1.0/3.0, wl1 = 5.0/6.0, wl2 = -1.0/6.0;
+                    wr0 = wl2, wr1 = wl1, wr2 = wl0;
+
+                    quadsize = 3;
+                    break;
+                case 3:
+                    wl0 = -1.0/24.0, wl1 = 5.0/12.0, wl2 = 5.0/6.0, wl3 = -1.0/4.0,
+                        wl4 = 1.0/24.0;
+                    wr0 = wl4, wr1 = wl3, wr2 = wl2, wr3 = wl1, wr4 = wl0;
+
+                    quadsize = 5;
+                    break;
+                case 4:
+                    wl0 = -1.0/20.0, wl1 = 9.0/20.0, wl2 = 47.0/60.0, wl3 = -13.0/60.0,
+                        wl4 = 1.0/30.0;
+                    wr0 = wl4, wr1 = wl3, wr2 = wl2, wr3 = wl1, wr4 = wl0;
+
+                    quadsize = 5;
+                    break;
+                case 5:
+                    wl0 = 1.0/120.0, wl1 = -1.0/12.0, wl2 = 59.0/120.0,
+                        wl3 = 47.0/60.0, wl4 = -31.0/120.0, wl5 = 1.0/15.0,
+                        wl6 = -1.0/120.0;
+                    wr0 = wl6, wr1 = wl5, wr2 = wl4, wr3 = wl3, wr4 = wl2, wr5 = wl1,
+                        wr6 = wl0;
+
+                    quadsize = 7;
+                    break;
+                case 6:
+                    wl0 = 1.0/105.0, wl1 = -19.0/210.0, wl2 = 107.0/210.0,
+                        wl3 = 319.0/420.0, wl4 = -101.0/420.0, wl5 = 5.0/84.0,
+                        wl6 = -1.0/140.0;
+                    wr0 = wl6, wr1 = wl5, wr2 = wl4, wr3 = wl3, wr4 = wl2, wr5 = wl1,
+                        wr6 = wl0;
+
+                    quadsize = 7;
+                    break;
+                case 7:
+                    wl0 = -1.0/560.0, wl1 = 17.0/840.0, wl2 = -97.0/840.0,
+                        wl3 = 449.0/840.0, wl4 = 319.0/420.0, wl5 = -223.0/840.0,
+                        wl6 = 71.0/840.0, wl7 = -1.0/56.0, wl8 = 1.0/560.0;
+                    wr0 = wl8, wr1 = wl7, wr2 = wl6, wr3 = wl5, wr4 = wl4, wr5 = wl3,
+                        wr6 = wl2, wr7 = wl1, wr8 = wl0;
+
+                    quadsize = 9;
+                    break;
+                default:
+                    // higher-order interpolation not implemented
+                    return; // early return if p is not supported
+            }
+
+            const int reach = (quadsize - 1) / 2;
+
+            for (long long i = tid; i < ntotal; i += stride) {
+                long long t = i;
+                int iz = t % nz; t /= nz;
+                int iy = t % ny; t /= ny;
+                int ix = t % nx; t /= nx;
+                int iv = t;
+
+                // skip threads which reach out of bounds
+                switch (dim) {
+                    case 0: if (ix < reach || ix >= nx - reach) continue; break;
+                    case 1: if (iy < reach || iy >= ny - reach) continue; break;
+                    case 2: if (iz < reach || iz >= nz - reach) continue; break;
+                    default: return; // invalid dimension
+                }
+
+                double result_left = 0.0;
+                double result_right = 0.0;
+                for (int qj = 0; qj < quadsize; qj++) {
+                    // compute neighbor index
+                    int off = qj - reach;
+                    int jv = iv, jx = ix, jy = iy, jz = iz;
+                    switch (dim) {
+                        case 0: jx += off; break;
+                        case 1: jy += off; break;
+                        case 2: jz += off; break;
+                    }
+                    long long j = ((((long long)jv * nx + jx) * ny + jy) * nz + jz);
+
+                    double wleft = 0.0;
+                    double wright = 0.0;
+                    switch (qj) {
+                        case 0: wleft = wl0; wright = wr0; break;
+                        case 1: wleft = wl1; wright = wr1; break;
+                        case 2: wleft = wl2; wright = wr2; break;
+                        case 3: wleft = wl3; wright = wr3; break;
+                        case 4: wleft = wl4; wright = wr4; break;
+                        case 5: wleft = wl5; wright = wr5; break;
+                        case 6: wleft = wl6; wright = wr6; break;
+                        case 7: wleft = wl7; wright = wr7; break;
+                        case 8: wleft = wl8; wright = wr8; break;
+                        default: continue;
+                    }
+
+                    result_left += wleft * u[j];
+                    result_right += wright * u[j];
+                }
+
+                long long out_idx = ((((long long)iv * nx + ix) * ny + iy) * nz + iz) * 2;
+                uj[out_idx] = result_left;
+                uj[out_idx + 1] = result_right;
+            }
+        }
+
+        """,
+        name="lr_conservative_interpolation_kernel",
+    )
+
     interpolate_central_quantity_kernel = cp.RawKernel(
         """
         extern "C" __global__
@@ -666,40 +819,127 @@ if CUPY_AVAILABLE:
         "gauss_legendre_quadrature_kernel",
     )
 
-    def interpolate_central_quantity_kernel_helper(
-        u: ArrayLike,
-        uj: ArrayLike,
-        mode: Literal[0, 1],
-        p: int,
-        dim: Literal["x", "y", "z"],
-    ) -> Tuple[slice, ...]:
-        nvars, nx, ny, nz = u.shape
-        dim_int = {"x": 0, "y": 1, "z": 2}[dim]
-        reach = p // 2
 
-        if mode not in {0, 1}:
-            raise ValueError("Mode must be 0 for interpolation or 1 for integration")
-        if p not in {0, 1, 2, 3, 4, 5, 6, 7}:
+def lr_conservative_interpolation_kernel_helper(
+    u: ArrayLike, out: ArrayLike, p: int, dim: Literal["x", "y", "z"]
+) -> Tuple[slice, ...]:
+    dim_int = {"x": 0, "y": 1, "z": 2}[dim]
+
+    if p == 0:
+        if not (out.ndim == 5 and out.shape[4] == 2):
             raise ValueError(
-                "Polynomial degree p must be an integer in the range [0, 7]"
+                "Expected `out` to have 5 dimensions with the last one having "
+                "length 2"
             )
-        if not u.flags.c_contiguous:
-            raise ValueError("Input array u must be C-contiguous")
-        if not uj.flags.c_contiguous:
-            raise ValueError("Output array uj must be C-contiguous")
-        if u.dtype != cp.float64:
-            raise ValueError("Input array u must be of type float64")
-        if uj.dtype != cp.float64:
-            raise ValueError("Output array uj must be of type float64")
+        out[..., 0] = u
+        out[..., 1] = u
+        return (slice(None), slice(None), slice(None), slice(None), slice(None, 2))
+    if p not in {1, 2, 3, 4, 5, 6, 7}:
+        raise ValueError("Expected `p` in {0,...,7}")
 
-        n = u.size
-        threads = 256
-        blocks = (n + threads - 1) // threads
+    reach = -(-p // 2)
+    nvars, nx, ny, nz = u.shape
 
-        interpolate_central_quantity_kernel(
-            (blocks,), (threads,), (u, uj, mode, p, dim_int, nvars, nx, ny, nz)
+    if not (out.ndim == 5 and out.shape[4] == 2):
+        raise ValueError(
+            "Expected `out` to have 5 dimensions with the last one having " "length 2"
         )
-        return crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=4)
+    if out.shape[:4] != u.shape:
+        raise ValueError(
+            "Expected `out` to have shape (nvars, nx, ny, nz, 2) matching `u`"
+        )
+
+    if not u.flags.c_contiguous:
+        raise ValueError("Input array must be C-contiguous for CUDA kernel.")
+    if not out.flags.c_contiguous:
+        raise ValueError("Output array must be C-contiguous for CUDA kernel.")
+    if not u.dtype == cp.float64:
+        raise ValueError("Input array must be of type float64 for CUDA kernel.")
+    if not out.dtype == cp.float64:
+        raise ValueError("Output array must be of type float64 for CUDA kernel.")
+
+    threads_per_block = 256
+    blocks_per_grid = (
+        nvars * nx * ny * nz + threads_per_block - 1
+    ) // threads_per_block
+    lr_conservative_interpolation_kernel(
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (u, out, p, dim_int, nvars, nx, ny, nz),
+    )
+
+    return replace_slice(
+        crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=5), 4, slice(None, 2)
+    )
+
+
+def lr_conservative_interpolation(
+    u: ArrayLike,
+    uj: ArrayLike,
+    p: int,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    uu: Optional[ArrayLike] = None,
+    uuu: Optional[ArrayLike] = None,
+) -> Tuple[slice, ...]:
+    ndim = len(active_dims)
+
+    if ndim == 1:
+        return lr_conservative_interpolation_kernel_helper(u, uj, p, active_dims[0])
+
+    if ndim == 2:
+        if uu is None:
+            raise ValueError(
+                "Intermediate array uu must be provided for 2D interpolation"
+            )
+        slc1 = lr_conservative_interpolation_kernel_helper(uu, u, p, active_dims[0])
+        slc2 = lr_conservative_interpolation_kernel_helper(u, uj, p, active_dims[1])
+        return merge_slices(slc1, slc2)
+
+    if ndim == 3:
+        if uu is None or uuu is None:
+            raise ValueError(
+                "Intermediate arrays uu and uuu must be provided for 3D interpolation"
+            )
+        slc1 = lr_conservative_interpolation_kernel_helper(uuu, uu, p, active_dims[0])
+        slc2 = lr_conservative_interpolation_kernel_helper(uu, u, p, active_dims[1])
+        slc3 = lr_conservative_interpolation_kernel_helper(u, uj, p, active_dims[2])
+        return merge_slices(slc1, slc2, slc3)
+
+    raise ValueError("active_dims must have length 1, 2, or 3")
+
+
+def interpolate_central_quantity_kernel_helper(
+    u: ArrayLike,
+    uj: ArrayLike,
+    mode: Literal[0, 1],
+    p: int,
+    dim: Literal["x", "y", "z"],
+) -> Tuple[slice, ...]:
+    nvars, nx, ny, nz = u.shape
+    dim_int = {"x": 0, "y": 1, "z": 2}[dim]
+    reach = p // 2
+
+    if mode not in {0, 1}:
+        raise ValueError("Mode must be 0 for interpolation or 1 for integration")
+    if p not in {0, 1, 2, 3, 4, 5, 6, 7}:
+        raise ValueError("Polynomial degree p must be an integer in the range [0, 7]")
+    if not u.flags.c_contiguous:
+        raise ValueError("Input array u must be C-contiguous")
+    if not uj.flags.c_contiguous:
+        raise ValueError("Output array uj must be C-contiguous")
+    if u.dtype != cp.float64:
+        raise ValueError("Input array u must be of type float64")
+    if uj.dtype != cp.float64:
+        raise ValueError("Output array uj must be of type float64")
+
+    n = u.size
+    threads = 256
+    blocks = (n + threads - 1) // threads
+
+    interpolate_central_quantity_kernel(
+        (blocks,), (threads,), (u, uj, mode, p, dim_int, nvars, nx, ny, nz)
+    )
+    return crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=4)
 
 
 def interpolate_central_quantity(
