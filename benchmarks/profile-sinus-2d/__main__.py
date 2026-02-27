@@ -46,8 +46,6 @@ configs = {
     "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3/lazy": dict(p=3, GL=True, **(apriori | dict(lazy_primitives="full"))),
-    "ZS7/lazy": dict(p=7, GL=True, **(apriori | dict(lazy_primitives="full"))),
     "ZS3t": dict(p=3, **apriori),
     "ZS7t": dict(p=7, **apriori),
     "MM3/1rev/no_delta/rtol_1e-5": dict(
