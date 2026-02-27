@@ -7,6 +7,12 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from superfv.fv_cuda import (
+    gauss_legendre_quadrature_kernel_helper,
+    interpolate_central_quantity_kernel_helper,
+    interpolate_gauss_legendre_nodes_kernel_helper,
+    lr_conservative_interpolation_kernel_helper,
+)
 from superfv.tools.buffer import check_buffer_slots
 
 from . import fv
@@ -1055,6 +1061,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_wp_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
+        arrays.add("_buffer1_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_buffer2_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
         arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
         arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
@@ -1228,16 +1236,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "apply_bc",
             "update_workspaces",
             "interpolate_faces",
+            "interpolate_faces:GL",
+            "interpolate_faces:transverse",
             "reconstruct_muscl_faces",
             "zhang_shu_limiter",
             "integrate_fluxes",
+            "integrate_fluxes:fallback",
+            "integrate_fluxes:riemann_solver",
+            "integrate_fluxes:GL",
+            "integrate_fluxes:transverse",
             "MOOD_loop",
             "compute_RHS",
             "update_workspaces:shock_detector",
             "slope_limiter:detect_smooth_extrema",
-            "integrate_fluxes:fallback",
-            "integrate_fluxes:riemann_solver",
-            "integrate_fluxes:quadrature",
             "MOOD_loop:compute_fallback_fluxes",
             "MOOD_loop:detect_troubled_cells",
             "MOOD_loop:revise_fluxes",
@@ -1593,6 +1604,47 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # convert to primitive variables if requested
             out[...] = self.primitives_from_conservatives(out)
 
+    @MethodTimer(cat="interpolate_faces:GL")
+    def interpolate_GaussLegendre_nodes(
+        self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
+    ):
+        arrays = self.arrays
+        active_dims = self.active_dims
+        ndim = self.mesh.ndim
+
+        faces = arrays["_buffer2_"]
+        nodes = arrays[f"_{dim}_nodes_"]
+        buffer = arrays["_buffer_"]
+
+        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+            lr_conservative_interpolation_kernel_helper(u, faces, p, dim)
+            interpolate_gauss_legendre_nodes_kernel_helper(faces, nodes, p, dim)
+        else:
+            fv.interpolate_GaussLegendre_nodes(
+                self.xp, u, dim, active_dims, p, out=nodes, buffer=buffer
+            )
+
+    @MethodTimer(cat="interpolate_faces:transverse")
+    def interpolate_face_centers(
+        self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
+    ):
+        arrays = self.arrays
+        active_dims = self.active_dims
+        ndim = self.mesh.ndim
+
+        midline = arrays["_buffer1_"]
+        nodes = arrays[f"_{dim}_nodes_"]
+        buffer = arrays["_buffer_"]
+
+        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+            transverse_dim = [d for d in active_dims if d != dim][0]
+            interpolate_central_quantity_kernel_helper(u, midline, 0, p, transverse_dim)
+            lr_conservative_interpolation_kernel_helper(midline, nodes, p, dim)
+        else:
+            fv.interpolate_face_centers(
+                self.xp, u, dim, active_dims, p, out=nodes, buffer=buffer
+            )
+
     @MethodTimer(cat="zhang_shu_limiter")
     def zhang_shu_limiter(
         self, scheme: polyInterpolationScheme, primitives: bool = False
@@ -1822,45 +1874,65 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.riemann_solver(left_state, right_state, dim, out=fnodes)
 
         # perform the integration
-        if hasattr(self.xp, "cuda"):
-            self.xp.cuda.Device().synchronize()
-        self.stepper_timer.start("integrate_fluxes:quadrature")
-
         if self.mesh.ndim == 1:
             _F_[...] = fnodes
         else:
             if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
-                fv.integrate_GaussLegendre_nodes(
-                    self.xp,
-                    fnodes,
-                    dim,
-                    self.active_dims,
-                    scheme.p,
-                    out=_F_[..., 0],
-                )
+                self.integrate_GaussLegendre_nodes(fnodes, _F_[..., 0], dim, scheme.p)
             elif isinstance(
                 scheme, (polyInterpolationScheme, musclInterpolationScheme)
             ):
-                fv.transversely_integrate_nodes(
-                    self.xp,
-                    fnodes[..., 0],
-                    dim,
-                    self.active_dims,
-                    scheme.p,
-                    out=_F_,
-                    buffer=right_state,
-                )
+                self.integrate_tranverse_nodes(fnodes, _F_, dim, scheme.p)
             else:
                 raise ValueError(
                     f"Unknown interpolation scheme: {scheme}. "
                     "Expected polyInterpolationScheme or musclInterpolationScheme."
                 )
 
-        if hasattr(self.xp, "cuda"):
-            self.xp.cuda.Device().synchronize()
-        self.stepper_timer.stop("integrate_fluxes:quadrature")
-
         F[...] = _F_[self.flux_interior[dim]][..., 0]
+
+    @MethodTimer(cat="integrate_fluxes:GL")
+    def integrate_GaussLegendre_nodes(
+        self, f: ArrayLike, F: ArrayLike, dim: Literal["x", "y", "z"], p: int
+    ):
+        ndim = self.mesh.ndim
+
+        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+            gauss_legendre_quadrature_kernel_helper(f, p, F)
+        else:
+            fv.integrate_GaussLegendre_nodes(
+                self.xp,
+                f,
+                dim,
+                self.active_dims,
+                p,
+                out=F,
+            )
+
+    @MethodTimer(cat="integrate_fluxes:transverse")
+    def integrate_tranverse_nodes(
+        self, f: ArrayLike, F: ArrayLike, dim: Literal["x", "y", "z"], p: int
+    ):
+        arrays = self.arrays
+        ndim = self.mesh.ndim
+
+        buffer = arrays["_buffer_"]
+
+        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+            transverse_dim = [d for d in self.active_dims if d != dim][0]
+            interpolate_central_quantity_kernel_helper(
+                f[..., 0], F[..., 0], 1, p, transverse_dim
+            )
+        else:
+            fv.transversely_integrate_nodes(
+                self.xp,
+                f[..., 0],
+                dim,
+                self.active_dims,
+                p,
+                out=F,
+                buffer=buffer,
+            )
 
     @MethodTimer(cat="integrate_fluxes:fallback")
     def primitive_reconstruction_fallback(
