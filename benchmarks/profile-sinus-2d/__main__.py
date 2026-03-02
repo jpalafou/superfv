@@ -102,6 +102,7 @@ for (name, config), N in product(configs.items(), N_values):
                 q_max=2,
                 muscl_hancock=config.get("MUSCL", False),
                 path=sim_path,
+                snapshot_mode="none",
                 overwrite=True,
             )
             sim.write_timings()
