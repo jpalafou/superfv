@@ -409,7 +409,7 @@ class EulerSolver(FiniteVolumeSolver):
                 *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
             )
         else:
-            return cons_to_prim(
+            w[...] = cons_to_prim(
                 self.xp,
                 self.variable_index_map,
                 u,
