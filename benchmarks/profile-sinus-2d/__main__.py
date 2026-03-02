@@ -37,35 +37,35 @@ aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
 aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
 
 configs = {
-    "p0": dict(p=0),
-    "p1": dict(p=1),
-    "p3": dict(p=3),
-    "p7": dict(p=7),
-    "p3/GL": dict(p=3, GL=True),
+    # "p0": dict(p=0),
+    # "p1": dict(p=1),
+    # "p3": dict(p=3),
+    # "p7": dict(p=7),
+    # "p3/GL": dict(p=3, GL=True),
     "p7/GL": dict(p=7, GL=True),
-    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
-    "ZS3": dict(p=3, GL=True, **apriori),
+    # "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
+    # "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3t": dict(p=3, **apriori),
-    "ZS7t": dict(p=7, **apriori),
-    "MM3/1rev/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM3/2revs/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
-    ),
-    "MM7/2revs/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
-    ),
-    "MM3/3revs/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    ),
+    # "ZS3t": dict(p=3, **apriori),
+    # "ZS7t": dict(p=7, **apriori),
+    # "MM3/1rev/no_delta/rtol_1e-5": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    # ),
+    # "MM7/1rev/no_delta/rtol_1e-5": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    # ),
+    # "MM3/2revs/no_delta/rtol_1e-5": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    # ),
+    # "MM7/2revs/no_delta/rtol_1e-5": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    # ),
+    # "MM3/3revs/no_delta/rtol_1e-5": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    # ),
+    # "MM7/3revs/no_delta/rtol_1e-5": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    # ),
 }
 
 # simulation parameters
