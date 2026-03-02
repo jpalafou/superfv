@@ -1910,7 +1910,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             elif isinstance(
                 scheme, (polyInterpolationScheme, musclInterpolationScheme)
             ):
-                self.integrate_tranverse_nodes(fnodes, _F_, dim, scheme.p)
+                self.integrate_tranverse_nodes(fnodes, _F_, dim, scheme.p, right_state)
             else:
                 raise ValueError(
                     f"Unknown interpolation scheme: {scheme}. "
@@ -1939,12 +1939,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="integrate_fluxes:transverse")
     def integrate_tranverse_nodes(
-        self, f: ArrayLike, F: ArrayLike, dim: Literal["x", "y", "z"], p: int
+        self,
+        f: ArrayLike,
+        F: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        p: int,
+        buffer: Optional[ArrayLike] = None,
     ):
-        arrays = self.arrays
         ndim = self.mesh.ndim
-
-        buffer = arrays["_buffer_"]
 
         if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
             transverse_dim = [d for d in self.active_dims if d != dim][0]
@@ -1952,6 +1954,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 f[..., 0], F[..., 0], 1, p, transverse_dim
             )
         else:
+            if buffer is None:
+                raise ValueError(
+                    "Buffer array must be provided for transverse integration."
+                )
             fv.transversely_integrate_nodes(
                 self.xp,
                 f[..., 0],
