@@ -1084,6 +1084,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_eta3d_", np.zeros((nvars, _nx_, _ny_, _nz_, 3)))
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add(
+            "_face_fallback_mask_",
+            np.zeros((1, _nx_, _ny_, _nz_, max_ninterps), dtype=np.int32),
+        )
 
         # Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -1878,21 +1882,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pad = getattr(self.mesh, f"{dim}_slab_depth")
         axis = DIM_TO_AXIS[dim]
         flux_name = self.flux_names[dim]
+        arrays = self.arrays
 
         # allocate arrays
-        F = self.arrays[flux_name]
-        _F_ = self.arrays[f"_{flux_name}_"]
-        nodes = self.arrays[f"_{dim}_nodes_"]
-        fnodes = self.arrays[f"_{flux_name.lower()}_nodes_"]
+        F = arrays[flux_name]
+        _F_ = arrays[f"_{flux_name}_"]
+        nodes = arrays[f"_{dim}_nodes_"]
+        fnodes = arrays[f"_{flux_name.lower()}_nodes_"]
+        w0 = arrays["_w_"]
 
         # convert to primitives if requested
         if convert_to_primitives:
             self.conservatives_to_primitives(nodes, nodes)
 
         # sanitize face reconstruction
-        self.primitive_reconstruction_fallback(
-            nodes[crop(4, (None, 2 * n))], self.arrays["_w_"], scheme
-        )
+        if self.face_fallback:
+            self.primitive_reconstruction_fallback(nodes, w0, scheme)
 
         wl = nodes[crop(4, (None, n))]
         wr = nodes[crop(4, (n, 2 * n))]
@@ -1970,53 +1975,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="integrate_fluxes:fallback")
     def primitive_reconstruction_fallback(
-        self, wp: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
+        self, wj: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
     ):
         """
         Overwrite the reconstructed face states `wp` with fallback values `w0` in place
         based on physical constraints which must be enforced in a subclass.
 
         Args:
-            wp: Array of primitive reconstructed face states. Has shape
+            wj: Array of primitive reconstructed face states. Has shape
                 (nvars, nx, ny, nz, ninterpolations).
             w0: Array of primitive fallback values. Has shape (nvars, nx, ny, nz).
             scheme: Interpolation scheme to use for the reconstruction.
+
+        Notes:
+            - Should update `self.n_emergency_fallbacks`.
+            - May modify `self.arrays["_face_fallback_mask_"]` which has shape
+                (1, _nx_, _ny_, _nz_, max_ninterps) and has type int32.
         """
-        if not self.face_fallback:
-            return
-
-        xp = self.xp
-        mesh = self.mesh
-
-        violations = self.reconstruction_fallback_mask(wp)
-
-        if self.log_limiter_scalars:
-            n = xp.sum(violations[self.interior]).item()
-            self.n_emergency_fallbacks += n
-
-            total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
-            freq = n / total_nodes
-            if freq > 0.05:
-                warnings.warn(
-                    f"{freq * 100:.2f}% of face nodes required emergency fallback "
-                    "reconstruction."
-                )
-
-        wp[...] = xp.where(violations, w0[..., xp.newaxis], wp)
-
-    def reconstruction_fallback_mask(self, wp: ArrayLike) -> ArrayLike:
-        """
-        Determine where to apply an emergency reconstruction fallback to first order.
-
-        Args:
-            wp: Array of primitive reconstructed face states. Has shape
-                (nvars, nx, ny, nz, ninterpolations).
-
-        Returns:
-            ArrayLike: Boolean mask indicating where to apply the fallback. Has shape
-                (1, nx, ny, nz, ninterpolations).
-        """
-        return xp.zeros_like(wp[:1, :, :, :, :], dtype=bool)
+        return
 
     def compute_fluxes(self, t: float, scheme: InterpolationScheme):
         """

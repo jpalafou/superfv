@@ -1,3 +1,4 @@
+import warnings
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -512,6 +513,65 @@ class EulerSolver(FiniteVolumeSolver):
                 self.iso_cs,
             )
 
+    @MethodTimer(cat="integrate_fluxes:fallback")
+    def primitive_reconstruction_fallback(
+        self, wj: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
+    ):
+        """
+        Overwrite the reconstructed face states `wp` with fallback values `w0` in place
+        based on physical constraints which must be enforced in a subclass.
+
+        Args:
+            wj: Array of primitive reconstructed face states. Has shape
+                (nvars, nx, ny, nz, ninterpolations).
+            w0: Array of primitive fallback values. Has shape (nvars, nx, ny, nz).
+            scheme: Interpolation scheme to use for the reconstruction.
+
+        Notes:
+            - Should update `self.n_emergency_fallbacks`.
+            - May modify `self.arrays["_face_fallback_mask_"]` which has shape
+                (1, _nx_, _ny_, _nz_, max_ninterps) and has type int32.
+        """
+        xp = self.xp
+        idx = self.variable_index_map
+        mesh = self.mesh
+        interior = self.interior
+        arrays = self.arrays
+        rho_min = self.rho_min
+        P_min = self.P_min
+
+        fallback_mask = arrays["_face_fallback_mask_"]
+
+        if self.cupy:
+            primitive_reconstruction_fallback_kernel_helper(
+                wj,
+                w0,
+                fallback_mask,
+                idx,
+                rho_min,
+                P_min,
+            )
+        else:
+            fallback_mask[...] = 0
+            xp.logical_or(wj[idx("rho")] < rho_min, fallback_mask, out=fallback_mask)
+            xp.logical_or(xp.isnan(wj[idx("rho")]), fallback_mask, out=fallback_mask)
+            xp.logical_or(wj[idx("P")] < P_min, fallback_mask, out=fallback_mask)
+            xp.logical_or(xp.isnan(wj[idx("P")]), fallback_mask, out=fallback_mask)
+
+            wj[...] = xp.where(fallback_mask, w0[..., xp.newaxis], wj)
+
+        if self.log_limiter_scalars:
+            n_fallbacks = xp.sum(xp.any(fallback_mask[interior], axis=4)).item()
+            self.n_emergency_fallbacks += n_fallbacks
+
+            total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
+            freq = n_fallbacks / total_nodes
+            if freq > 0.05:
+                warnings.warn(
+                    f"{freq * 100:.2f}% of face nodes required emergency fallback "
+                    "reconstruction."
+                )
+
     def reconstruction_fallback_mask(self, wp: ArrayLike) -> ArrayLike:
         """
         Determine where to apply an emergency reconstruction fallback to first order.
@@ -782,3 +842,138 @@ class EulerSolver(FiniteVolumeSolver):
         out["rho_min"] = self.rho_min
         out["P_min"] = self.P_min
         return out
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+    primitive_reconstruction_fallback_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void primitive_reconstruction_fallback_kernel(
+            double* __restrict__ wj,
+            const double* __restrict__ w0,
+            int* __restrict__ fallback_mask,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const int ninterps,
+            const int rho_idx,
+            const int P_idx,
+            const double rho_min,
+            const double P_min
+        ){
+            // wj               high-order interpolated nodes, has shape
+            //                  (nvars, nx, ny, nz, ninterps)
+            // w0               first-order nodal fallback values, has shape
+            //                  (nvars, nx, ny, nz)
+            // fallback_mask    boolean mask indicating where the fallback was applied,
+            //                  has shape (1, nx, ny, nz, ninterps)
+
+            const long long tid    = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long nfaces = (long long)nx * ny * nz * ninterps;
+
+            for (long long i = tid; i < nfaces; i += stride) {
+                long long t = i;
+                int ii = t % ninterps; t /= ninterps;
+                const int iz = t % nz; t /= nz;
+                const int iy = t % ny; t /= ny;
+                const int ix = t % nx; t /= nx;
+
+                const long long irho = ((((long long)rho_idx * nx + ix) * ny + iy) * nz + iz)
+                        * ninterps + ii;
+                const long long iP = ((((long long)P_idx * nx + ix) * ny + iy) * nz + iz)
+                        * ninterps + ii;
+                bool violated_node = wj[irho] < rho_min || wj[iP] < P_min
+                    || isnan(wj[irho]) || isnan(wj[iP]);
+
+                if (!violated_node) {
+                    fallback_mask[i] = 0;
+                    continue;
+                }
+
+                fallback_mask[i] = 1;
+                for (int iv = 0; iv < nvars; iv++){
+                    const long long j = ((((long long)iv * nx + ix) * ny + iy) * nz + iz)
+                        * ninterps + ii;
+                    const long long j0 = (((long long)iv * nx + ix) * ny + iy) * nz + iz;
+                    wj[j] = w0[j0];
+                }
+            }
+        }
+        """,
+        name="primitive_reconstruction_fallback_kernel",
+    )
+
+    def primitive_reconstruction_fallback_kernel_helper(
+        wj: cp.ndarray,
+        w0: cp.ndarray,
+        fallback_mask: cp.ndarray,
+        idx: VariableIndexMap,
+        rho_min: float,
+        P_min: float,
+    ):
+        """
+        Helper function to call the primitive_reconstruction_fallback_kernel.
+
+        Args:
+            wj: High-order interpolated nodes, has shape (nvars, nx, ny, nz, ninterps).
+            w0: First-order nodal fallback values, has shape (nvars, nx, ny, nz).
+            fallback_mask: int32 mask indicating where the fallback was applied,
+                has shape (1, nx, ny, nz, ninterps).
+            idx: VariableIndexMap object.
+            rho_min: Density floor.
+            P_min: Pressure floor.
+        """
+        if (
+            not wj.flags.c_contiguous
+            or not w0.flags.c_contiguous
+            or not fallback_mask.flags.c_contiguous
+        ):
+            raise ValueError("Input arrays must be C-contiguous.")
+        if wj.dtype != cp.float64 or w0.dtype != cp.float64:
+            raise ValueError("wj and w0 must be of dtype float64.")
+        if fallback_mask.dtype != cp.int32:
+            raise ValueError("fallback_mask must be of dtype int32.")
+        if wj.ndim != 5:
+            raise ValueError("wj must have 5 dimensions.")
+        if w0.ndim != 4 or w0.shape != wj.shape[:4]:
+            raise ValueError(
+                "w0 must have 4 dimensions and match the first 4 dimensions of wj."
+            )
+        if (
+            fallback_mask.ndim != 5
+            or fallback_mask.shape[0] != 1
+            or fallback_mask.shape[1:4] != w0.shape[1:4]
+        ):
+            raise ValueError(
+                "fallback_mask must have 5 dimensions, with shape "
+                "(1, nx, ny, nz, ninterps) where (nx, ny, nz) match w0."
+            )
+
+        nvars, nx, ny, nz, ninterps = wj.shape
+        threads_per_block = 256
+        n_faces = nx * ny * nz * ninterps
+        blocks_per_grid = (n_faces + threads_per_block - 1) // threads_per_block
+
+        primitive_reconstruction_fallback_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                wj,
+                w0,
+                fallback_mask,
+                nvars,
+                nx,
+                ny,
+                nz,
+                ninterps,
+                idx("rho"),
+                idx("P"),
+                rho_min,
+                P_min,
+            ),
+        )
