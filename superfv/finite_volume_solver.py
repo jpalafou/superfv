@@ -795,9 +795,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             blend=blend,
             max_iters=max_MOOD_iters,
             include_corners=include_corners,
-            NAD_rtol=self.arrays["NAD_rtol"] if NAD and NAD_rtol else None,
-            NAD_gtol=self.arrays["NAD_gtol"] if NAD and NAD_gtol else None,
-            NAD_atol=self.arrays["NAD_atol"] if NAD and NAD_atol else None,
+            NAD_rtol=(
+                self.arrays["NAD_rtol"] if NAD and (NAD_rtol is not None) else None
+            ),
+            NAD_gtol=(
+                self.arrays["NAD_gtol"] if NAD and (NAD_gtol is not None) else None
+            ),
+            NAD_atol=(
+                self.arrays["NAD_atol"] if NAD and (NAD_atol is not None) else None
+            ),
             scale_NAD_rtol_by_dt=scale_NAD_rtol_by_dt,
             skip_trouble_counts=skip_trouble_counts,
             detect_closing_troubles=detect_closing_troubles,

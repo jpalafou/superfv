@@ -48,23 +48,21 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     # "ZS3t": dict(p=3, **apriori),
     # "ZS7t": dict(p=7, **apriori),
-    # "MM3/1rev/no_delta/rtol_1e-5": dict(
-    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    # "MM3/1rev/no_delta/rtol_git": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=0, **aposteriori1
     # ),
-    # "MM7/1rev/no_delta/rtol_1e-5": dict(
-    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
+    "MM7/1rev/no_delta/rtol_0": dict(p=7, NAD_delta=False, NAD_rtol=0, **aposteriori1),
+    # "MM3/2revs/no_delta/rtol_0": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=0, **aposteriori2
     # ),
-    # "MM3/2revs/no_delta/rtol_1e-5": dict(
-    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    # "MM7/2revs/no_delta/rtol_0": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=0, **aposteriori2
     # ),
-    # "MM7/2revs/no_delta/rtol_1e-5": dict(
-    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori2
+    # "MM3/3revs/no_delta/rtol_0": dict(
+    #     p=3, NAD_delta=False, NAD_rtol=0, **aposteriori3
     # ),
-    # "MM3/3revs/no_delta/rtol_1e-5": dict(
-    #     p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    # ),
-    # "MM7/3revs/no_delta/rtol_1e-5": dict(
-    #     p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
+    # "MM7/3revs/no_delta/rtol_0": dict(
+    #     p=7, NAD_delta=False, NAD_rtol=0, **aposteriori3
     # ),
 }
 
