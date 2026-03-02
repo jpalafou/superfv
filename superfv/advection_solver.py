@@ -284,17 +284,17 @@ class AdvectionSolver(FiniteVolumeSolver):
             },
         )
 
-    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
+    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
         """
         Trivial transformation for linear avection.
         """
-        return w
+        u[...] = w
 
-    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
         """
         Trivial transformation for linear avection.
         """
-        return u
+        w[...] = u
 
     def init_riemann_solver(self, riemann_solver: str):
         """

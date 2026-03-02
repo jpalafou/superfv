@@ -117,7 +117,8 @@ def compute_velocity_rms(sim):
     xp = sim.xp
 
     u = sim.arrays["u"]
-    w = sim.primitives_from_conservatives(u)
+    w = xp.empty_like(u)
+    sim.conservatives_to_primitives(u, w)
 
     v = xp.sqrt(xp.mean(xp.sum(xp.square(w[idx("v")]), axis=0))).item()
 

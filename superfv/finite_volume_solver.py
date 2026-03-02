@@ -415,7 +415,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             *,
             xp: ModuleType,
         ) -> ArrayLike:
-            return self.conservatives_from_primitives(f(idx, x, y, z, t, xp=xp))
+            w = f(idx, x, y, z, t, xp=xp)
+            u = xp.empty_like(w)
+            self.primitives_to_conservatives(w, u)
+            return u
 
         return g
 
@@ -1270,28 +1273,24 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pass
 
     @abstractmethod
-    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
+    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
         """
-        Convert primitive variables to conservative variables.
+        Convert primitive variables to conservative variables in place.
 
         Args:
             w: Array of primitive variables.
-
-        Returns:
-            Array of conservative variables.
+            u: Output array of conservative variables.
         """
         pass
 
     @abstractmethod
-    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
         """
-        Convert conservative variables to primitive variables.
+        Convert conservative variables to primitive variables in place.
 
         Args:
             u: Array of conservative variables.
-
-        Returns:
-            Array of primitive variables.
+            w: Output array of primitive variables.
         """
         pass
 
@@ -1445,14 +1444,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # 1) conservative and primitive centroids
         self.interpolate_cell_centers(_u_, p)  # writes to _ucc_
-        _wcc_[...] = self.primitives_from_conservatives(_ucc_)
+        self.conservatives_to_primitives(_ucc_, _wcc_)
 
         # 2) primitive FV averages
         if lazy_primitives == "none":
             self.integrate_fv_averages(_wcc_, p)  # writes to _wp_
             _w_[...] = _wp_[..., 0]
         elif lazy_primitives == "full":
-            _w_[...] = self.primitives_from_conservatives(_u_)
+            self.conservatives_to_primitives(_u_, _w_)
         elif lazy_primitives == "adaptive":
             if not isinstance(scheme, polyInterpolationScheme):
                 raise ValueError(
@@ -1460,7 +1459,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
             self.integrate_fv_averages(_wcc_, p)  # writes to _wp_
-            _w_[...] = self.primitives_from_conservatives(_u_)
+            self.conservatives_to_primitives(_u_, _w_)
 
             primitives = scheme.flux_recipe in (2, 3)
             self.shock_detector(scheme, primitives)  # writes to _eta_, _has_shock_
@@ -1631,7 +1630,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.interpolate_face_centers(u, dim, p)  # updates nodes
 
         if convert_to_primitives:
-            nodes[...] = self.primitives_from_conservatives(nodes)
+            self.conservatives_to_primitives(nodes, nodes)
 
     @MethodTimer(cat="interpolate_faces:GL")
     def interpolate_GaussLegendre_nodes(
@@ -1888,7 +1887,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # convert to primitives if requested
         if convert_to_primitives:
-            nodes[...] = self.primitives_from_conservatives(nodes)
+            self.conservatives_to_primitives(nodes, nodes)
 
         # sanitize face reconstruction
         self.primitive_reconstruction_fallback(
@@ -2215,10 +2214,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # allocate arrays
         var_PAD = xp.zeros(unew.shape, dtype=np.int32)
         any_PAD = xp.zeros(unew[:1, ...].shape, dtype=np.int32)
+        wnew = xp.empty_like(unew)
+        self.conservatives_to_primitives(unew, wnew)
 
         detect_PAD_violations(
             xp,
-            self.primitives_from_conservatives(unew),
+            wnew,
             scheme.limiter_config.PAD_bounds,
             scheme.limiter_config.PAD_atol,
             violated_vars=var_PAD,

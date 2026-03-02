@@ -6,4 +6,3 @@
 - [ ] conservative interpolation kernel
 - [ ] troubles only saved as (1, nx, ny, nz). PAD_violations and NAD_violations now
         saved separately as (nvars, nx, ny, nz).
-- [ ] clean up unallocated memory in `adaptive_dt_criterion`

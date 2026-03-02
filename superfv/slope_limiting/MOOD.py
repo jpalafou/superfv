@@ -294,7 +294,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     # compute candidate solution
     _u_new_[interior] = _u_old_[interior] + dt * fv_solver.compute_RHS()
     fv_solver.apply_bc(t, _u_new_, scheme=fv_solver.base_scheme)
-    _w_new_[...] = fv_solver.primitives_from_conservatives(_u_new_)
+    fv_solver.conservatives_to_primitives(_u_new_, _w_new_)
 
     if NAD:
         NAD_rtol_local: Optional[ArrayLike] = None

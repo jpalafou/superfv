@@ -348,68 +348,65 @@ class EulerSolver(FiniteVolumeSolver):
             },
         )
 
-    def conservatives_from_primitives(self, w: ArrayLike) -> ArrayLike:
+    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
         """
-        Convert primitive variables to conservative variables.
+        Convert primitive variables to conservative variables in place.
 
         Args:
             w: Array of primitive variables.
-
-        Returns:
-            Array of conservative variables.
+            u: Output array of conservative variables.
         """
         xp = self.xp
         idx = self.variable_index_map
         gamma = self.gamma
 
         if self.cupy and hasattr(self, "prim_to_cons_cp"):
-            return xp.asarray(
-                [
-                    w[idx("rho")],
-                    *self.prim_to_cons_cp(
-                        w[idx("rho")],
-                        w[idx("vx")],
-                        w[idx("vy")],
-                        w[idx("vz")],
-                        w[idx("P")],
-                        gamma,
-                        *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
-                    ),
-                ]
+            self.prim_to_cons_cp(
+                w[idx("rho")],
+                w[idx("vx")],
+                w[idx("vy")],
+                w[idx("vz")],
+                w[idx("P")],
+                gamma,
+                *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
+                u[idx("rho")],
+                u[idx("mx")],
+                u[idx("my")],
+                u[idx("mz")],
+                u[idx("E")],
+                *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
             )
         else:
-            return prim_to_cons(xp, idx, w, gamma)
+            u[...] = prim_to_cons(xp, idx, w, gamma)
 
-    def primitives_from_conservatives(self, u: ArrayLike) -> ArrayLike:
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
         """
-        Convert conservative variables to primitive variables.
+        Convert conservative variables to primitive variables in place.
 
         Args:
             u: Array of conservative variables.
-
-        Returns:
-            Array of primitive variables.
+            w: Output array of primitive variables.
         """
-        xp = self.xp
         idx = self.variable_index_map
         gamma = self.gamma
 
         if self.cupy and hasattr(self, "cons_to_prim_cp"):
-            return xp.asarray(
-                [
-                    u[idx("rho")],
-                    *self.cons_to_prim_cp(
-                        u[idx("rho")],
-                        u[idx("mx")],
-                        u[idx("my")],
-                        u[idx("mz")],
-                        u[idx("E")],
-                        gamma,
-                        self.isothermal,
-                        self.iso_cs,
-                        *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
-                    ),
-                ]
+            self.cons_to_prim_cp(
+                u[idx("rho")],
+                u[idx("mx")],
+                u[idx("my")],
+                u[idx("mz")],
+                u[idx("E")],
+                gamma,
+                self.isothermal,
+                self.iso_cs,
+                *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
+                w[idx("rho")],
+                w[idx("vx")],
+                w[idx("vy")],
+                w[idx("vz")],
+                w[idx("P")],
+                *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
             )
         else:
             return cons_to_prim(
@@ -627,7 +624,8 @@ class EulerSolver(FiniteVolumeSolver):
 
         sum_of_s_over_h = self.arrays["sum_of_s_over_h"]
 
-        w = self.primitives_from_conservatives(u)
+        w = xp.empty_like(u)
+        self.conservatives_to_primitives(u, w)
         c = self.compute_sound_speed(w)
 
         sum_of_s_over_h[...] = 0.0

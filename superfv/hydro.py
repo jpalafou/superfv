@@ -268,9 +268,10 @@ if CUPY_AVAILABLE:
         in_params = (
             "float64 rho, float64 vx, float64 vy, float64 vz, float64 P, float64 gamma"
         )
-        out_params = "float64 mx, float64 my, float64 mz, float64 E"
+        out_params = "float64 rho_out, float64 mx, float64 my, float64 mz, float64 E"
 
         body = """
+        rho_out = rho;
         mx = rho * vx;
         my = rho * vy;
         mz = rho * vz;
@@ -288,6 +289,7 @@ if CUPY_AVAILABLE:
             out_params=out_params,
             operation=body,
             name=f"prim_to_cons_npass_{npassives}",
+            no_return=True,
         )
 
     def make_cons_to_prim_elementwise_kernel(npassives: int):
@@ -295,9 +297,10 @@ if CUPY_AVAILABLE:
             "float64 rho, float64 mx, float64 my, float64 mz, float64 E, "
             "float64 gamma, bool isothermal, float64 iso_cs"
         )
-        out_params = "float64 vx, float64 vy, float64 vz, float64 P"
+        out_params = "float64 rho_out, float64 vx, float64 vy, float64 vz, float64 P"
 
         body = """
+        rho_out = rho;
         vx = mx / rho;
         vy = my / rho;
         vz = mz / rho;
@@ -315,4 +318,5 @@ if CUPY_AVAILABLE:
             out_params=out_params,
             operation=body,
             name=f"cons_to_prim_npass_{npassives}",
+            no_return=True,
         )
