@@ -284,13 +284,75 @@ if CUPY_AVAILABLE:
         name="compute_shocks_kernel",
     )
 
+    def compute_shocks_kernel_helper(
+        w1: cp.ndarray,
+        wr: cp.ndarray,
+        eta: cp.ndarray,
+        has_shock: cp.ndarray,
+        eta_threshold: float,
+        eps: float,
+    ) -> Tuple[slice, ...]:
+        """
+        Compute the shock detector using the method of Berta et al. (2024) with a
+        custom CuPy kernel, where a value of 0 indicates a smooth region and 1
+        indicates a shock.
+
+        Args:
+            w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
+            wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
+            eta: Array to which intermediate eta values are written. Has shape
+                (nvars, nx, ny, nz, 3), where the last axis corresponds to eta computed
+                along the x, y, and z dimensions, respectively. Slices along the last
+                axis corresponding to inactive dimensions are left uninitialized.
+            has_shock: Array to which the shock detector is written. Has shape
+                (1, nx, ny, nz). Must be int32 dtype.
+            eta_threshold: Threshold value for eta above which a shock is detected.
+            eps: Small value to avoid division by zero.
+
+        Returns:
+            Slice objects indicating the modified regions in the output array.
+        """
+        nvars, nx, ny, nz = w1.shape
+        threads_per_block = 256
+        blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
+
+        # check arrays are contiguous
+        if not w1.flags["C_CONTIGUOUS"]:
+            raise ValueError("w1 must be C-contiguous.")
+        if not wr.flags["C_CONTIGUOUS"]:
+            raise ValueError("wr must be C-contiguous.")
+        if not eta.flags["C_CONTIGUOUS"]:
+            raise ValueError("eta must be C-contiguous.")
+        if not has_shock.flags["C_CONTIGUOUS"]:
+            raise ValueError("has_shock must be C-contiguous.")
+        if has_shock.dtype != cp.int32:
+            raise ValueError("has_shock must be of dtype int32.")
+        if eta.dtype != cp.float64:
+            raise ValueError("eta must be of dtype float64.")
+        if w1.dtype != cp.float64 or wr.dtype != cp.float64:
+            raise ValueError("w1 and wr must be of dtype float64.")
+
+        compute_shocks_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (w1, wr, eta, has_shock, eta_threshold, eps, nvars, nx, ny, nz),
+        )
+
+        inner_slice = merge_slices(
+            crop(0, (None, None), ndim=4),
+            crop(1, (2, -2), ndim=4) if nx > 1 else crop(1, (None, None), ndim=4),
+            crop(2, (2, -2), ndim=4) if ny > 1 else crop(2, (None, None), ndim=4),
+            crop(3, (2, -2), ndim=4) if nz > 1 else crop(3, (None, None), ndim=4),
+        )
+        return inner_slice
+
 
 def compute_eta_kernel_helper(
-    w1: cp.ndarray,
-    wr: cp.ndarray,
+    w1: ArrayLike,
+    wr: ArrayLike,
     axis: int,
     *,
-    out: cp.ndarray,
+    out: ArrayLike,
     eps: float = 1e-16,
 ) -> Tuple[slice, ...]:
     """
@@ -319,66 +381,4 @@ def compute_eta_kernel_helper(
 
     compute_eta_kernel(wl2, wl1, wc, wr1, wr2, wref, eps, eta_inner)
 
-    return inner_slice
-
-
-def compute_shocks_kernel_helper(
-    w1: cp.ndarray,
-    wr: cp.ndarray,
-    eta: cp.ndarray,
-    has_shock: cp.ndarray,
-    eta_threshold: float,
-    eps: float,
-) -> Tuple[slice, ...]:
-    """
-    Compute the shock detector using the method of Berta et al. (2024) with a custom
-    CuPy kernel, where a value of 0 indicates a smooth region and 1 indicates a shock.
-
-    Args:
-        w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
-        wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
-        eta: Array to which intermediate eta values are written. Has shape
-            (nvars, nx, ny, nz, 3), where the last axis corresponds to eta computed
-            along the x, y, and z dimensions, respectively. Slices along the last axis
-            corresponding to inactive dimensions are left uninitialized.
-        has_shock: Array to which the shock detector is written. Has shape
-            (1, nx, ny, nz). Must be int32 dtype.
-        eta_threshold: Threshold value for eta above which a shock is detected.
-        eps: Small value to avoid division by zero.
-
-    Returns:
-        Slice objects indicating the modified regions in the output array.
-    """
-    nvars, nx, ny, nz = w1.shape
-    threads_per_block = 256
-    blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
-
-    # check arrays are contiguous
-    if not w1.flags["C_CONTIGUOUS"]:
-        raise ValueError("w1 must be C-contiguous.")
-    if not wr.flags["C_CONTIGUOUS"]:
-        raise ValueError("wr must be C-contiguous.")
-    if not eta.flags["C_CONTIGUOUS"]:
-        raise ValueError("eta must be C-contiguous.")
-    if not has_shock.flags["C_CONTIGUOUS"]:
-        raise ValueError("has_shock must be C-contiguous.")
-    if has_shock.dtype != cp.int32:
-        raise ValueError("has_shock must be of dtype int32.")
-    if eta.dtype != cp.float64:
-        raise ValueError("eta must be of dtype float64.")
-    if w1.dtype != cp.float64 or wr.dtype != cp.float64:
-        raise ValueError("w1 and wr must be of dtype float64.")
-
-    compute_shocks_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (w1, wr, eta, has_shock, eta_threshold, eps, nvars, nx, ny, nz),
-    )
-
-    inner_slice = merge_slices(
-        crop(0, (None, None), ndim=4),
-        crop(1, (2, -2), ndim=4) if nx > 1 else crop(1, (None, None), ndim=4),
-        crop(2, (2, -2), ndim=4) if ny > 1 else crop(2, (None, None), ndim=4),
-        crop(3, (2, -2), ndim=4) if nz > 1 else crop(3, (None, None), ndim=4),
-    )
     return inner_slice

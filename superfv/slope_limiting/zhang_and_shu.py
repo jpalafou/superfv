@@ -74,86 +74,6 @@ class ZhangShuConfig(LimiterConfig):
         return out
 
 
-if CUPY_AVAILABLE:
-    import cupy as cp  # type: ignore
-
-    theta_kernel = cp.ElementwiseKernel(
-        in_params=(
-            "float64 u, float64 M, float64 m, float64 Mj, float64 mj, float64 tol"
-        ),
-        out_params="float64 theta",
-        operation="""
-        double theta_M = fabs(M - u) / (fabs(Mj - u) + tol);
-        double theta_m = fabs(m - u) / (fabs(mj - u) + tol);
-        theta = fmin(fmin(theta_M, theta_m), 1.0);
-        """,
-        name="theta_kernel",
-        no_return=True,
-    )
-
-    compute_theta_kernel = cp.RawKernel(
-        """
-        extern "C" __global__
-        void compute_theta_kernel(
-            const double* w,
-            const double* wj,
-            const double* M,
-            const double* m,
-            double* Mj,
-            double* mj,
-            double* out,
-            const int nvars,
-            const int nx,
-            const int ninterps,
-            const double eps
-        ) {
-            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-            const long long stride = (long long)blockDim.x * gridDim.x;
-
-            int n = nvars * nx;
-
-            for (int i = tid; i < n; i += stride) {
-                const double* row = wj + ((size_t)i) * (size_t)ninterps;
-
-                mj[i] = row[0];
-                Mj[i] = row[0];
-                for (int j = 1; j < ninterps; ++j) {
-                    double vj = row[j];
-                    mj[i] = (vj < mj[i]) ? vj : mj[i];
-                    Mj[i] = (vj > Mj[i]) ? vj : Mj[i];
-                }
-
-                out[i] = 1.0;
-                out[i] = fmin(fabs(M[i] - w[i]) / (fabs(Mj[i] - w[i]) + eps), out[i]);
-                out[i] = fmin(fabs(m[i] - w[i]) / (fabs(mj[i] - w[i]) + eps), out[i]);
-            }
-        }
-        """,
-        "compute_theta_kernel",
-    )
-
-
-def compute_theta_kernel_helper(
-    w: cp.ndarray,
-    wj: cp.ndarray,
-    M: cp.ndarray,
-    m: cp.ndarray,
-    Mj: cp.ndarray,
-    mj: cp.ndarray,
-    out: cp.ndarray,
-    eps: float,
-):
-    nvars, nx = w.shape
-    ninterps = wj.shape[2]
-    threads_per_block = 256
-    blocks_per_grid = (nvars * nx + threads_per_block - 1) // threads_per_block
-    compute_theta_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (w, wj, M, m, Mj, mj, out, nvars, nx, ninterps, eps),
-    )
-
-
 def compute_theta(
     xp: ModuleType,
     u: ArrayLike,
@@ -370,3 +290,82 @@ def log_zhang_shu_scalar_statistics(
         new_data[f"n_1-theta_{var}"] = zero_max(step_log[f"nfine_1-theta_{var}"])
 
     data.update(new_data)
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+    theta_kernel = cp.ElementwiseKernel(
+        in_params=(
+            "float64 u, float64 M, float64 m, float64 Mj, float64 mj, float64 tol"
+        ),
+        out_params="float64 theta",
+        operation="""
+        double theta_M = fabs(M - u) / (fabs(Mj - u) + tol);
+        double theta_m = fabs(m - u) / (fabs(mj - u) + tol);
+        theta = fmin(fmin(theta_M, theta_m), 1.0);
+        """,
+        name="theta_kernel",
+        no_return=True,
+    )
+
+    compute_theta_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void compute_theta_kernel(
+            const double* w,
+            const double* wj,
+            const double* M,
+            const double* m,
+            double* Mj,
+            double* mj,
+            double* out,
+            const int nvars,
+            const int nx,
+            const int ninterps,
+            const double eps
+        ) {
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            int n = nvars * nx;
+
+            for (int i = tid; i < n; i += stride) {
+                const double* row = wj + ((size_t)i) * (size_t)ninterps;
+
+                mj[i] = row[0];
+                Mj[i] = row[0];
+                for (int j = 1; j < ninterps; ++j) {
+                    double vj = row[j];
+                    mj[i] = (vj < mj[i]) ? vj : mj[i];
+                    Mj[i] = (vj > Mj[i]) ? vj : Mj[i];
+                }
+
+                out[i] = 1.0;
+                out[i] = fmin(fabs(M[i] - w[i]) / (fabs(Mj[i] - w[i]) + eps), out[i]);
+                out[i] = fmin(fabs(m[i] - w[i]) / (fabs(mj[i] - w[i]) + eps), out[i]);
+            }
+        }
+        """,
+        "compute_theta_kernel",
+    )
+
+    def compute_theta_kernel_helper(
+        w: cp.ndarray,
+        wj: cp.ndarray,
+        M: cp.ndarray,
+        m: cp.ndarray,
+        Mj: cp.ndarray,
+        mj: cp.ndarray,
+        out: cp.ndarray,
+        eps: float,
+    ):
+        nvars, nx = w.shape
+        ninterps = wj.shape[2]
+        threads_per_block = 256
+        blocks_per_grid = (nvars * nx + threads_per_block - 1) // threads_per_block
+        compute_theta_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (w, wj, M, m, Mj, mj, out, nvars, nx, ninterps, eps),
+        )

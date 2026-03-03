@@ -106,60 +106,59 @@ if CUPY_AVAILABLE:
         "PAD_kernel",
     )
 
+    def PAD_kernel_helper(
+        wj: cp.ndarray,
+        physical_bounds: cp.ndarray,
+        violated_vars: cp.ndarray,
+        violated_cells: cp.ndarray,
+        tol: float = 1e-15,
+    ):
+        """
+        Helper function to launch the PAD kernel on the GPU.
 
-def PAD_kernel_helper(
-    wj: cp.ndarray,
-    physical_bounds: cp.ndarray,
-    violated_vars: cp.ndarray,
-    violated_cells: cp.ndarray,
-    tol: float = 1e-15,
-):
-    """
-    Helper function to launch the PAD kernel on the GPU.
+        Args:
+            wj: The input array of shape (nvars, nx, ny, nz)
+            physical_bounds: An array of shape (nvars, 2) containing the physical
+                bounds for each variable.
+            violated_vars: An array to which the variable-wise violation mask is
+                written. Has shape (nvars, nx, ny, nz). Must be int32 dtype.
+            violated_cells: An array to which the cell-wise violation mask is written.
+                Has shape (1, nx, ny, nz). Must be int32 dtype.
+            tol: A small tolerance value to determine if a violation has occurred.
+        """
+        if wj.ndim != 4:
+            raise ValueError("wj must be 4D with shape (nvars, nx, ny, nz).")
 
-    Args:
-        wj: The input array of shape (nvars, nx, ny, nz)
-        physical_bounds: An array of shape (nvars, 2) containing the physical bounds
-            for each variable.
-        violated_vars: An array to which the variable-wise violation mask is written. Has shape
-            (nvars, nx, ny, nz). Must be int32 dtype.
-        violated_cells: An array to which the cell-wise violation mask is written. Has shape
-            (1, nx, ny, nz). Must be int32 dtype.
-        tol: A small tolerance value to determine if a violation has occurred.
-    """
-    if wj.ndim != 4:
-        raise ValueError("wj must be 4D with shape (nvars, nx, ny, nz).")
+        nvars, nx, ny, nz = wj.shape
 
-    nvars, nx, ny, nz = wj.shape
+        if not wj.flags.c_contiguous:
+            raise ValueError("wj must be C-contiguous.")
+        if not physical_bounds.flags.c_contiguous:
+            raise ValueError("physical_bounds must be C-contiguous.")
+        if not violated_vars.flags.c_contiguous:
+            raise ValueError("violated_vars must be C-contiguous.")
+        if not violated_cells.flags.c_contiguous:
+            raise ValueError("violated_cells must be C-contiguous.")
+        if violated_vars.dtype != cp.int32:
+            raise ValueError("violated_vars must be of dtype int32.")
+        if violated_cells.dtype != cp.int32:
+            raise ValueError("violated_cells must be of dtype int32.")
 
-    if not wj.flags.c_contiguous:
-        raise ValueError("wj must be C-contiguous.")
-    if not physical_bounds.flags.c_contiguous:
-        raise ValueError("physical_bounds must be C-contiguous.")
-    if not violated_vars.flags.c_contiguous:
-        raise ValueError("violated_vars must be C-contiguous.")
-    if not violated_cells.flags.c_contiguous:
-        raise ValueError("violated_cells must be C-contiguous.")
-    if violated_vars.dtype != cp.int32:
-        raise ValueError("violated_vars must be of dtype int32.")
-    if violated_cells.dtype != cp.int32:
-        raise ValueError("violated_cells must be of dtype int32.")
+        threads_per_block = 256
+        blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
 
-    threads_per_block = 256
-    blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
-
-    PAD_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (
-            wj,
-            physical_bounds,
-            violated_vars,
-            violated_cells,
-            tol,
-            nvars,
-            nx,
-            ny,
-            nz,
-        ),
-    )
+        PAD_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                wj,
+                physical_bounds,
+                violated_vars,
+                violated_cells,
+                tol,
+                nvars,
+                nx,
+                ny,
+                nz,
+            ),
+        )

@@ -160,6 +160,59 @@ if CUPY_AVAILABLE:
         name="lr_conservative_interpolation_kernel",
     )
 
+    def lr_conservative_interpolation_kernel_helper(
+        u: cp.ndarray, out: cp.ndarray, p: int, dim: Literal["x", "y", "z"]
+    ) -> Tuple[slice, ...]:
+        dim_int = {"x": 0, "y": 1, "z": 2}[dim]
+
+        if p == 0:
+            if not (out.ndim == 5 and out.shape[4] == 2):
+                raise ValueError(
+                    "Expected `out` to have 5 dimensions with the last one having "
+                    "length 2"
+                )
+            out[..., 0] = u
+            out[..., 1] = u
+            return (slice(None), slice(None), slice(None), slice(None), slice(None, 2))
+        if p not in {1, 2, 3, 4, 5, 6, 7}:
+            raise ValueError("Expected `p` in {0,...,7}")
+
+        reach = -(-p // 2)
+        nvars, nx, ny, nz = u.shape
+
+        if not (out.ndim == 5 and out.shape[4] == 2):
+            raise ValueError(
+                "Expected `out` to have 5 dimensions with the last one having "
+                "length 2"
+            )
+        if out.shape[:4] != u.shape:
+            raise ValueError(
+                "Expected `out` to have shape (nvars, nx, ny, nz, 2) matching `u`"
+            )
+
+        if not u.flags.c_contiguous:
+            raise ValueError("Input array must be C-contiguous for CUDA kernel.")
+        if not out.flags.c_contiguous:
+            raise ValueError("Output array must be C-contiguous for CUDA kernel.")
+        if not u.dtype == cp.float64:
+            raise ValueError("Input array must be of type float64 for CUDA kernel.")
+        if not out.dtype == cp.float64:
+            raise ValueError("Output array must be of type float64 for CUDA kernel.")
+
+        threads_per_block = 256
+        blocks_per_grid = (
+            nvars * nx * ny * nz + threads_per_block - 1
+        ) // threads_per_block
+        lr_conservative_interpolation_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (u, out, p, dim_int, nvars, nx, ny, nz),
+        )
+
+        axis = DIM_TO_AXIS[dim]
+        valid = replace_slice(crop(axis, (reach, -reach), ndim=5), 4, slice(None, 2))
+        return cast(Tuple[slice, ...], valid)
+
     interpolate_central_quantity_kernel = cp.RawKernel(
         """
         extern "C" __global__
@@ -291,6 +344,118 @@ if CUPY_AVAILABLE:
         """,
         "interpolate_central_quantity_kernel",
     )
+
+    def interpolate_central_quantity_kernel_helper(
+        u: cp.ndarray,
+        uj: cp.ndarray,
+        mode: Literal[0, 1],
+        p: int,
+        dim: Literal["x", "y", "z"],
+    ) -> Tuple[slice, ...]:
+        if mode not in {0, 1}:
+            raise ValueError("Mode must be 0 for interpolation or 1 for integration")
+        if p not in {0, 1, 2, 3, 4, 5, 6, 7}:
+            raise ValueError(
+                "Polynomial degree p must be an integer in the range [0, 7]"
+            )
+        if u.ndim != 4:
+            raise ValueError("Input array u must have 4 dimensions (nvars, nx, ny, nz)")
+        if not (u.shape == uj.shape):
+            raise ValueError(
+                "Input and output arrays must have the same shape. "
+                f"Got {u.shape=} and {uj.shape=}"
+            )
+        if not u.flags.c_contiguous:
+            raise ValueError("Input array u must be C-contiguous")
+        if not uj.flags.c_contiguous:
+            raise ValueError("Output array uj must be C-contiguous")
+        if u.dtype != cp.float64:
+            raise ValueError("Input array u must be of type float64")
+        if uj.dtype != cp.float64:
+            raise ValueError("Output array uj must be of type float64")
+
+        nvars, nx, ny, nz = u.shape
+        dim_int = {"x": 0, "y": 1, "z": 2}[dim]
+        reach = p // 2
+
+        n = u.size
+        threads = 256
+        blocks = (n + threads - 1) // threads
+
+        interpolate_central_quantity_kernel(
+            (blocks,), (threads,), (u, uj, mode, p, dim_int, nvars, nx, ny, nz)
+        )
+        return crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=4)
+
+    def interpolate_central_quantity(
+        u: cp.ndarray,
+        uj: cp.ndarray,
+        mode: Literal[0, 1],
+        p: int,
+        active_dims: Tuple[Literal["x", "y", "z"], ...],
+        uu: Optional[cp.ndarray] = None,
+        uuu: Optional[cp.ndarray] = None,
+    ) -> Tuple[slice, ...]:
+        """
+        Perform a central sweep interpolation or integration along the specified
+        active dimensions.
+
+        Args:
+            u: Input array of shape (nvars, nx, ny, nz) containing the original data.
+            uj: Output array of shape (nvars, nx, ny, nz) to store the results of the
+                interpolation/integration.
+            mode: 0 for cell-center interpolation, 1 for finite-volume integration.
+            p: Polynomial degree for the interpolation/integration (0 to 7).
+            active_dims: Tuple of active dimensions to perform the sweep along, each
+                being "x", "y", or "z". The length of this tuple determines the number
+                of sweeps.
+            uu: Optional intermediate array for 2D interpolation with shape
+                (nvars, nx, ny, nz).
+            uuu: Optional intermediate array for 3D interpolation with shape
+                (nvars, nx, ny, nz).
+
+        Returns:
+            A tuple of slices corresponding to the valid region of the output array
+            after performing the central sweep along the specified dimensions.
+        """
+        ndim = len(active_dims)
+
+        if ndim == 1:
+            return interpolate_central_quantity_kernel_helper(
+                u, uj, mode, p, active_dims[0]
+            )
+
+        if ndim == 2:
+            if uu is None:
+                raise ValueError(
+                    "Intermediate array uu must be provided for 2D interpolation"
+                )
+            slc1 = interpolate_central_quantity_kernel_helper(
+                uu, u, mode, p, active_dims[0]
+            )
+            slc2 = interpolate_central_quantity_kernel_helper(
+                u, uj, mode, p, active_dims[1]
+            )
+            return merge_slices(slc1, slc2)
+
+        if ndim == 3:
+            if uu is None or uuu is None:
+                raise ValueError(
+                    "Intermediate arrays uu and uuu must be provided for 3D "
+                    "interpolation"
+                )
+            slc1 = interpolate_central_quantity_kernel_helper(
+                uuu, uu, mode, p, active_dims[0]
+            )
+            slc2 = interpolate_central_quantity_kernel_helper(
+                uu, u, mode, p, active_dims[1]
+            )
+            slc3 = interpolate_central_quantity_kernel_helper(
+                u, uj, mode, p, active_dims[2]
+            )
+            return merge_slices(slc1, slc2, slc3)
+
+        raise ValueError("active_dims must have length 1, 2, or 3")
 
     interpolate_gauss_legendre_nodes_kernel = cp.RawKernel(
         """
@@ -752,6 +917,56 @@ if CUPY_AVAILABLE:
         name="interpolate_gauss_legendre_nodes_kernel",
     )
 
+    def interpolate_gauss_legendre_nodes_kernel_helper(
+        u: cp.ndarray, out: cp.ndarray, p: int, dim: Literal["x", "y", "z"]
+    ) -> Tuple[slice, ...]:
+        dim_int = {"x": 0, "y": 1, "z": 2}[dim]
+        ninterps = p // 2 + 1
+        reach = -(-p // 2)
+
+        if p in {0, 1}:
+            out[..., :2] = u
+            return (slice(None), slice(None), slice(None), slice(None), slice(None, 2))
+        if p not in {2, 3, 4, 5, 6, 7}:
+            raise ValueError("Expected `p` in {0,...,7}")
+        if u.ndim != 5 or u.shape[4] != 2:
+            raise ValueError("Expected input `u` with shape (nvars, nx, ny, nz, 2)")
+        if out.ndim != 5 or out.shape[4] != 2 * ninterps:
+            raise ValueError(
+                "Expected `out` to have 5 dimensions with the last one having length "
+                f"{2 * ninterps}"
+            )
+        if out.shape[:4] != u.shape[:4]:
+            raise ValueError(
+                "Expected `out` to have the same shape as the first 4 dimensions of "
+                "`u`"
+            )
+        if not u.flags.c_contiguous:
+            raise ValueError("Input array must be C-contiguous for CUDA kernel.")
+        if not out.flags.c_contiguous:
+            raise ValueError("Output array must be C-contiguous for CUDA kernel.")
+        if not u.dtype == cp.float64:
+            raise ValueError("Input array must be of type float64 for CUDA kernel.")
+        if not out.dtype == cp.float64:
+            raise ValueError("Output array must be of type float64 for CUDA kernel.")
+
+        nvars, nx, ny, nz, _ = u.shape
+
+        threads_per_block = 256
+        blocks_per_grid = (
+            nvars * nx * ny * nz + threads_per_block - 1
+        ) // threads_per_block
+        interpolate_gauss_legendre_nodes_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (u, out, p, dim_int, nvars, nx, ny, nz),
+        )
+
+        axis = DIM_TO_AXIS[dim]
+        ninterps_slc = slice(None, 2 * ninterps)
+        valid = replace_slice(crop(axis, (reach, -reach), ndim=5), 4, ninterps_slc)
+        return cast(Tuple[slice, ...], valid)
+
     gauss_legendre_quadrature_kernel = cp.RawKernel(
         """
         extern "C" __global__
@@ -820,247 +1035,33 @@ if CUPY_AVAILABLE:
         name="gauss_legendre_quadrature_kernel",
     )
 
+    def gauss_legendre_quadrature_kernel_helper(u: cp.ndarray, out: cp.ndarray, p: int):
+        nquadrature = -(-(p + 1) // 2)
 
-def lr_conservative_interpolation_kernel_helper(
-    u: cp.ndarray, out: cp.ndarray, p: int, dim: Literal["x", "y", "z"]
-) -> Tuple[slice, ...]:
-    dim_int = {"x": 0, "y": 1, "z": 2}[dim]
-
-    if p == 0:
-        if not (out.ndim == 5 and out.shape[4] == 2):
+        if u.ndim != 5 or u.shape[4] != nquadrature:
             raise ValueError(
-                "Expected `out` to have 5 dimensions with the last one having "
-                "length 2"
+                "Expected input `u` to have 5 dimensions with the last one having "
+                f"length {nquadrature}"
             )
-        out[..., 0] = u
-        out[..., 1] = u
-        return (slice(None), slice(None), slice(None), slice(None), slice(None, 2))
-    if p not in {1, 2, 3, 4, 5, 6, 7}:
-        raise ValueError("Expected `p` in {0,...,7}")
-
-    reach = -(-p // 2)
-    nvars, nx, ny, nz = u.shape
-
-    if not (out.ndim == 5 and out.shape[4] == 2):
-        raise ValueError(
-            "Expected `out` to have 5 dimensions with the last one having " "length 2"
-        )
-    if out.shape[:4] != u.shape:
-        raise ValueError(
-            "Expected `out` to have shape (nvars, nx, ny, nz, 2) matching `u`"
-        )
-
-    if not u.flags.c_contiguous:
-        raise ValueError("Input array must be C-contiguous for CUDA kernel.")
-    if not out.flags.c_contiguous:
-        raise ValueError("Output array must be C-contiguous for CUDA kernel.")
-    if not u.dtype == cp.float64:
-        raise ValueError("Input array must be of type float64 for CUDA kernel.")
-    if not out.dtype == cp.float64:
-        raise ValueError("Output array must be of type float64 for CUDA kernel.")
-
-    threads_per_block = 256
-    blocks_per_grid = (
-        nvars * nx * ny * nz + threads_per_block - 1
-    ) // threads_per_block
-    lr_conservative_interpolation_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (u, out, p, dim_int, nvars, nx, ny, nz),
-    )
-
-    axis = DIM_TO_AXIS[dim]
-    valid = replace_slice(crop(axis, (reach, -reach), ndim=5), 4, slice(None, 2))
-    return cast(Tuple[slice, ...], valid)
-
-
-def interpolate_central_quantity_kernel_helper(
-    u: cp.ndarray,
-    uj: cp.ndarray,
-    mode: Literal[0, 1],
-    p: int,
-    dim: Literal["x", "y", "z"],
-) -> Tuple[slice, ...]:
-    if mode not in {0, 1}:
-        raise ValueError("Mode must be 0 for interpolation or 1 for integration")
-    if p not in {0, 1, 2, 3, 4, 5, 6, 7}:
-        raise ValueError("Polynomial degree p must be an integer in the range [0, 7]")
-    if u.ndim != 4:
-        raise ValueError("Input array u must have 4 dimensions (nvars, nx, ny, nz)")
-    if not (u.shape == uj.shape):
-        raise ValueError(
-            "Input and output arrays must have the same shape. "
-            f"Got {u.shape=} and {uj.shape=}"
-        )
-    if not u.flags.c_contiguous:
-        raise ValueError("Input array u must be C-contiguous")
-    if not uj.flags.c_contiguous:
-        raise ValueError("Output array uj must be C-contiguous")
-    if u.dtype != cp.float64:
-        raise ValueError("Input array u must be of type float64")
-    if uj.dtype != cp.float64:
-        raise ValueError("Output array uj must be of type float64")
-
-    nvars, nx, ny, nz = u.shape
-    dim_int = {"x": 0, "y": 1, "z": 2}[dim]
-    reach = p // 2
-
-    n = u.size
-    threads = 256
-    blocks = (n + threads - 1) // threads
-
-    interpolate_central_quantity_kernel(
-        (blocks,), (threads,), (u, uj, mode, p, dim_int, nvars, nx, ny, nz)
-    )
-    return crop(DIM_TO_AXIS[dim], (reach, -reach), ndim=4)
-
-
-def interpolate_central_quantity(
-    u: cp.ndarray,
-    uj: cp.ndarray,
-    mode: Literal[0, 1],
-    p: int,
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
-    uu: Optional[cp.ndarray] = None,
-    uuu: Optional[cp.ndarray] = None,
-) -> Tuple[slice, ...]:
-    """
-    Perform a central sweep interpolation or integration along the specified
-    active dimensions.
-
-    Args:
-        u: Input array of shape (nvars, nx, ny, nz) containing the original data.
-        uj: Output array of shape (nvars, nx, ny, nz) to store the results of the
-            interpolation/integration.
-        mode: 0 for cell-center interpolation, 1 for finite-volume integration.
-        p: Polynomial degree for the interpolation/integration (0 to 7).
-        active_dims: Tuple of active dimensions to perform the sweep along, each being
-            "x", "y", or "z". The length of this tuple determines the number of sweeps.
-        uu: Optional intermediate array for 2D interpolation with shape
-            (nvars, nx, ny, nz).
-        uuu: Optional intermediate array for 3D interpolation with shape
-            (nvars, nx, ny, nz).
-
-    Returns:
-        A tuple of slices corresponding to the valid region of the output array after
-        performing the central sweep along the specified dimensions.
-    """
-    ndim = len(active_dims)
-
-    if ndim == 1:
-        return interpolate_central_quantity_kernel_helper(
-            u, uj, mode, p, active_dims[0]
-        )
-
-    if ndim == 2:
-        if uu is None:
+        if out.ndim != 4 or out.shape != u.shape[:4]:
             raise ValueError(
-                "Intermediate array uu must be provided for 2D interpolation"
+                "Expected output `out` to have 4 dimensions and the same shape as the "
+                "first 4 dimensions of `u`"
             )
-        slc1 = interpolate_central_quantity_kernel_helper(
-            uu, u, mode, p, active_dims[0]
+        if not out.flags.c_contiguous:
+            raise ValueError("Output array must be C-contiguous for CUDA kernel.")
+        if not u.flags.c_contiguous:
+            raise ValueError("Input array must be C-contiguous for CUDA kernel.")
+        if not out.dtype == cp.float64:
+            raise ValueError("Output array must be of type float64 for CUDA kernel.")
+        if not u.dtype == cp.float64:
+            raise ValueError("Input array must be of type float64 for CUDA kernel.")
+
+        nvars, nx, ny, nz, _ = u.shape
+        threads_per_block = 256
+        blocks_per_grid = (u.size + threads_per_block - 1) // threads_per_block
+        gauss_legendre_quadrature_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (u[..., :nquadrature], out, nvars, nx, ny, nz, nquadrature),
         )
-        slc2 = interpolate_central_quantity_kernel_helper(
-            u, uj, mode, p, active_dims[1]
-        )
-        return merge_slices(slc1, slc2)
-
-    if ndim == 3:
-        if uu is None or uuu is None:
-            raise ValueError(
-                "Intermediate arrays uu and uuu must be provided for 3D interpolation"
-            )
-        slc1 = interpolate_central_quantity_kernel_helper(
-            uuu, uu, mode, p, active_dims[0]
-        )
-        slc2 = interpolate_central_quantity_kernel_helper(
-            uu, u, mode, p, active_dims[1]
-        )
-        slc3 = interpolate_central_quantity_kernel_helper(
-            u, uj, mode, p, active_dims[2]
-        )
-        return merge_slices(slc1, slc2, slc3)
-
-    raise ValueError("active_dims must have length 1, 2, or 3")
-
-
-def gauss_legendre_quadrature_kernel_helper(u: cp.ndarray, out: cp.ndarray, p: int):
-    nquadrature = -(-(p + 1) // 2)
-
-    if u.ndim != 5 or u.shape[4] != nquadrature:
-        raise ValueError(
-            "Expected input `u` to have 5 dimensions with the last one having length "
-            f"{nquadrature}"
-        )
-    if out.ndim != 4 or out.shape != u.shape[:4]:
-        raise ValueError(
-            "Expected output `out` to have 4 dimensions and the same shape as the first "
-            "4 dimensions of `u`"
-        )
-    if not out.flags.c_contiguous:
-        raise ValueError("Output array must be C-contiguous for CUDA kernel.")
-    if not u.flags.c_contiguous:
-        raise ValueError("Input array must be C-contiguous for CUDA kernel.")
-    if not out.dtype == cp.float64:
-        raise ValueError("Output array must be of type float64 for CUDA kernel.")
-    if not u.dtype == cp.float64:
-        raise ValueError("Input array must be of type float64 for CUDA kernel.")
-
-    nvars, nx, ny, nz, _ = u.shape
-    threads_per_block = 256
-    blocks_per_grid = (u.size + threads_per_block - 1) // threads_per_block
-    gauss_legendre_quadrature_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (u[..., :nquadrature], out, nvars, nx, ny, nz, nquadrature),
-    )
-
-
-def interpolate_gauss_legendre_nodes_kernel_helper(
-    u: cp.ndarray, out: cp.ndarray, p: int, dim: Literal["x", "y", "z"]
-) -> Tuple[slice, ...]:
-    dim_int = {"x": 0, "y": 1, "z": 2}[dim]
-    ninterps = p // 2 + 1
-    reach = -(-p // 2)
-
-    if p in {0, 1}:
-        out[..., :2] = u
-        return (slice(None), slice(None), slice(None), slice(None), slice(None, 2))
-    if p not in {2, 3, 4, 5, 6, 7}:
-        raise ValueError("Expected `p` in {0,...,7}")
-    if u.ndim != 5 or u.shape[4] != 2:
-        raise ValueError("Expected input `u` with shape (nvars, nx, ny, nz, 2)")
-    if out.ndim != 5 or out.shape[4] != 2 * ninterps:
-        raise ValueError(
-            "Expected `out` to have 5 dimensions with the last one having length "
-            f"{2 * ninterps}"
-        )
-    if out.shape[:4] != u.shape[:4]:
-        raise ValueError(
-            "Expected `out` to have the same shape as the first 4 dimensions of `u`"
-        )
-    if not u.flags.c_contiguous:
-        raise ValueError("Input array must be C-contiguous for CUDA kernel.")
-    if not out.flags.c_contiguous:
-        raise ValueError("Output array must be C-contiguous for CUDA kernel.")
-    if not u.dtype == cp.float64:
-        raise ValueError("Input array must be of type float64 for CUDA kernel.")
-    if not out.dtype == cp.float64:
-        raise ValueError("Output array must be of type float64 for CUDA kernel.")
-
-    nvars, nx, ny, nz, _ = u.shape
-
-    threads_per_block = 256
-    blocks_per_grid = (
-        nvars * nx * ny * nz + threads_per_block - 1
-    ) // threads_per_block
-    interpolate_gauss_legendre_nodes_kernel(
-        (blocks_per_grid,),
-        (threads_per_block,),
-        (u, out, p, dim_int, nvars, nx, ny, nz),
-    )
-
-    axis = DIM_TO_AXIS[dim]
-    ninterps_slc = slice(None, 2 * ninterps)
-    valid = replace_slice(crop(axis, (reach, -reach), ndim=5), 4, ninterps_slc)
-    return cast(Tuple[slice, ...], valid)
