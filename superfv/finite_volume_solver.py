@@ -61,6 +61,10 @@ if CUPY_AVAILABLE:
         interpolate_gauss_legendre_nodes_kernel_helper,
         lr_conservative_interpolation_kernel_helper,
     )
+    from .slope_limiting.muscl import (
+        MUSCL_slopes_kernel_helper,
+        PP2D_slopes_kernel_helper,
+    )
     from .slope_limiting.shock_detection import compute_shocks_kernel_helper
     from .slope_limiting.smooth_extrema_detection import compute_alpha_kernel_helper
     from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
@@ -1096,6 +1100,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "_face_fallback_mask_",
             np.zeros((1, _nx_, _ny_, _nz_, max_ninterps), dtype=np.int32),
         )
+        arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
 
         # Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -2711,9 +2718,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         alpha = arrays["_alpha_"]
 
         check_buffer_slots(arrays["_buffer_"], required=4)
-        dwx = arrays["_buffer_"][..., 0:1]
-        dwy = arrays["_buffer_"][..., 1:2]
-        dwz = arrays["_buffer_"][..., 2:3]
+        dwx = arrays["_xslopes_"]
+        dwy = arrays["_yslopes_"]
+        dwz = arrays["_zslopes_"]
         wcc_for_nodes = arrays["_buffer_"][..., 3]
         lim_buff = arrays["_buffer_"][..., 4:]
 
@@ -2726,30 +2733,51 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dw1 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[0]]
             dw2 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[1]]
 
-            compute_PP2D_slopes(
-                xp,
-                wcc,
-                active_dims,
-                Sx=dw1,
-                Sy=dw2,
-                buffer=lim_buff,
-                alpha=alpha,
-                config=scheme.limiter_config,
-            )
-        else:
-            for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-                if dim not in active_dims:
-                    continue
-                compute_limited_slopes(
+            if self.cupy:
+                PP2D_slopes_kernel_helper(
+                    wcc,
+                    dw1[..., 0],
+                    dw2[..., 0],
+                    active_dims[0],
+                    active_dims[1],
+                    1e-20,
+                    scheme.limiter_config.smooth_extrema_detection,
+                    alpha[..., 0],
+                )
+            else:
+                compute_PP2D_slopes(
                     xp,
                     wcc,
-                    dim,
                     active_dims,
-                    out=slope_arr,
+                    Sx=dw1,
+                    Sy=dw2,
                     buffer=lim_buff,
                     alpha=alpha,
                     config=scheme.limiter_config,
                 )
+        else:
+            for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
+                if dim not in active_dims:
+                    continue
+                if self.cupy:
+                    MUSCL_slopes_kernel_helper(
+                        wcc,
+                        slope_arr[..., 0],
+                        dim,
+                        scheme.limiter_config.limiter,
+                        scheme.limiter_config.smooth_extrema_detection,
+                        alpha[..., 0],
+                    )
+                else:
+                    compute_limited_slopes(
+                        xp,
+                        wcc,
+                        dim,
+                        out=slope_arr,
+                        buffer=lim_buff,
+                        alpha=alpha,
+                        config=scheme.limiter_config,
+                    )
 
         # evolve the cell-center by 1/2 dt
         if hancock:

@@ -21,8 +21,6 @@ def test_uniform_field(
     if SED and limiter != "moncen":
         pytest.skip("SED is only applicable with certain limiters")
 
-    active_dims_tuple = tuple(active_dims)
-
     config = musclConfig(
         shock_detection=False,
         smooth_extrema_detection=SED,
@@ -54,7 +52,6 @@ def test_uniform_field(
         np,
         u,
         face_dim,
-        active_dims_tuple,
         out=du,
         alpha=alpha,
         buffer=buffer,
@@ -82,8 +79,6 @@ def test_linear_ramp(
     if SED and limiter != "moncen":
         pytest.skip("SED is only applicable with certain limiters")
 
-    active_dims_tuple = tuple(active_dims)
-
     config = musclConfig(
         shock_detection=False,
         smooth_extrema_detection=SED,
@@ -115,7 +110,6 @@ def test_linear_ramp(
         np,
         u,
         face_dim,
-        active_dims_tuple,
         out=du,
         alpha=alpha,
         buffer=buffer,

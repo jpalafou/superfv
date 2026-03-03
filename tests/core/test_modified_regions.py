@@ -24,6 +24,10 @@ from superfv.tools.device_management import CUPY_AVAILABLE
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
+    from superfv.slope_limiting.muscl import (
+        MUSCL_slopes_kernel_helper,
+        PP2D_slopes_kernel_helper,
+    )
     from superfv.slope_limiting.shock_detection import compute_shocks_kernel_helper
     from superfv.slope_limiting.smooth_extrema_detection import (
         compute_alpha_kernel_helper,
@@ -129,7 +133,6 @@ def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool)
         xp,
         u,
         face_dim,
-        tuple(dims),
         out=out,
         buffer=buffer,
         alpha=alpha,
@@ -331,6 +334,69 @@ def test_map_cells_values_to_face_values(dims: str):
     assert not xp.any(xp.isnan(out[modified]))
     out[modified] = xp.nan
     assert xp.all(xp.isnan(out))
+
+
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+@pytest.mark.parametrize("SED", [False, True])
+def test_MUSCL_slopes_kernel_helper(dims: str, SED: bool):
+    xp = configure_xp()
+
+    if not hasattr(xp, "cuda"):
+        pytest.skip("MUSCL_slopes_kernel_helper is only implemented for CuPy")
+
+    face_dim = dims[0]
+    u, _, _ = sample_data(dims, nout=2, xp=xp)
+    slopes = xp.empty_like(u) * xp.nan
+    alpha = xp.empty_like(u) * xp.nan if SED else None
+
+    modified = MUSCL_slopes_kernel_helper(
+        u,
+        slopes,
+        face_dim,
+        "minmod",
+        SED,
+        alpha,
+    )
+
+    assert not xp.any(xp.isnan(slopes[modified]))
+    slopes[modified] = xp.nan
+    assert xp.all(xp.isnan(slopes))
+    if SED:
+        assert xp.all(xp.isnan(alpha))
+
+
+@pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
+@pytest.mark.parametrize("SED", [False, True])
+def test_PP2D_slopes_kernel_helper(dims: str, SED: bool):
+    xp = configure_xp()
+
+    if not hasattr(xp, "cuda"):
+        pytest.skip("PP2D_slopes_kernel_helper is only implemented for CuPy")
+
+    u, _, _ = sample_data(dims, nout=3, xp=xp)
+    Sx = xp.empty_like(u) * xp.nan
+    Sy = xp.empty_like(u) * xp.nan
+    alpha = xp.empty_like(u) * xp.nan if SED else None
+
+    modified = PP2D_slopes_kernel_helper(
+        u,
+        Sx,
+        Sy,
+        dims[0],
+        dims[1],
+        1e-20,
+        SED,
+        alpha,
+    )
+
+    assert not xp.any(xp.isnan(Sx[modified]))
+    assert not xp.any(xp.isnan(Sy[modified]))
+    Sx[modified] = xp.nan
+    Sy[modified] = xp.nan
+    assert xp.all(xp.isnan(Sx))
+    assert xp.all(xp.isnan(Sy))
+    if SED:
+        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

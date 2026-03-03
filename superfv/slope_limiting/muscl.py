@@ -93,7 +93,6 @@ def compute_limited_slopes(
     xp: ModuleType,
     u: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
     out: ArrayLike,
     buffer: ArrayLike,
@@ -109,9 +108,6 @@ def compute_limited_slopes(
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
-        active_dims: Tuple indicating the active dimensions for interpolation. Can be
-            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
-            interpolation of nodes along the face of a cell on a two-dimensional grid.
         out: Output array to store the limited slopes. Has shape
             (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
         buffer: Array to which temporary values are assigned with shape
@@ -125,7 +121,7 @@ def compute_limited_slopes(
     """
     if hasattr(xp, "cuda"):
         # early escape for CuPy implementation
-        return compute_MUSCL_slopes_kernel_helper(
+        return compute_MUSCL_slopes_elementwise_kernel_helper(
             xp,
             u,
             face_dim,
@@ -311,7 +307,7 @@ def compute_PP2D_slopes(
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
-    MUSCL_slopes_kernel = cp.ElementwiseKernel(
+    MUSCL_slopes_elementwise_kernel = cp.ElementwiseKernel(
         in_params="float64 ul, float64 u, float64 ur, int32 limiter",
         out_params="float64 slope",
         operation=(
@@ -349,7 +345,7 @@ if CUPY_AVAILABLE:
             }
             """
         ),
-        name="MUSCL_slopes_kernel",
+        name="MUSCL_slopes_elementwise_kernel",
         no_return=True,
     )
 
@@ -399,11 +395,411 @@ if CUPY_AVAILABLE:
         no_return=True,
     )
 
+    MUSCL_slopes_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void MUSCL_slopes_kernel(
+            const double* u,
+            double* slopes,
+            const int dim,
+            const int slope_type,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const bool SED,
+            const double* alpha
+        ){
+            // u        (nvars, nx, ny, nz)
+            // slopes   (nvars, nx, ny, nz)
+            // alpha    (nvars, nx, ny, nz)
 
-# - - - - - DEFINE HELPER FUNCTIONS FOR CUPY IMPLEMENTATION- - - - -
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long ntotal = (long long)nvars * nx * ny * nz;
+
+            for (long long i = tid; i < ntotal; i += stride) {
+                long long t = i;
+                int iz = (int)(t % nz); t /= nz;
+                int iy = (int)(t % ny); t /= ny;
+                int ix = (int)(t % nx); t /= nx;
+                int iv = (int)t;
+
+                // get neighbor indices
+                long long jl, jr;
+
+                switch (dim) {
+                    case 1: // x-slope
+                        if (ix < 1 || ix >= nx - 1) {continue;}
+                        jl = (((long long)iv * nx + (ix - 1)) * ny + iy) * nz + iz;
+                        jr = (((long long)iv * nx + (ix + 1)) * ny + iy) * nz + iz;
+                        break;
+                    case 2: // y-slope
+                        if (iy < 1 || iy >= ny - 1) {continue;}
+                        jl = (((long long)iv * nx + ix) * ny + (iy - 1)) * nz + iz;
+                        jr = (((long long)iv * nx + ix) * ny + (iy + 1)) * nz + iz;
+                        break;
+                    case 3: // z-slope
+                        if (iz < 1 || iz >= nz - 1) {continue;}
+                        jl = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 1);
+                        jr = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 1);
+                        break;
+                    default:
+                        slopes[i] = 0.0 / 0.0;
+                        continue;
+                }
+
+                // gather neighbor values
+                double ul = u[jl];
+                double uc = u[i];
+                double ur = u[jr];
+
+                // compute slopes
+                double dl = uc - ul;
+                double dr = ur - uc;
+                double dc = 0.5 * (dl + dr);
+                double slope;
+
+                // SED relaxation
+                if (SED && alpha[i] >= 1.0) {
+                    slopes[i] = dc;
+                    continue;
+                }
+
+                // apply limiter
+                switch (slope_type) {
+                    case 0: // no limiter
+                        slope = dc;
+                        break;
+                    case 1: // minmod
+                        if (dl * dr <= 0) {
+                            slope = 0.0;
+                        } else {
+                            double sgn = (dl > 0) ? 1.0 : -1.0;
+                            slope = sgn * fmin(fabs(dl), fabs(dr));
+                        }
+                        break;
+                    case 2: // moncen
+                        if (dl * dr <= 0) {
+                            slope = 0.0;
+                        } else {
+                            double sgn = (dc > 0) ? 1.0 : -1.0;
+                            slope = sgn * fmin(
+                                fmin(fabs(2.0 * dl), fabs(2.0 * dr)),
+                                fabs(dc)
+                            );
+                        }
+                        break;
+                    default: // undefined limiter, sabotage with NaN
+                        slope = 0.0 / 0.0;
+                        break;
+                }
+                slopes[i] = slope;
+            }
+        }
+        """,
+        name="MUSCL_slopes_kernel",
+    )
+
+    def MUSCL_slopes_kernel_helper(
+        u: cp.ndarray,
+        slopes: cp.ndarray,
+        dim: Literal["x", "y", "z"],
+        slope_type: Literal[None, "minmod", "moncen", "PP2D"],
+        SED: bool,
+        alpha: Optional[cp.ndarray],
+    ) -> Tuple[slice, ...]:
+        if slope_type == "PP2D":
+            raise ValueError(
+                "PP2D slopes should be computed with the compute_PP2D_slopes "
+                "function, not the MUSCL_slopes_kernel."
+            )
+        if u.ndim != 4 or slopes.ndim != 4:
+            raise ValueError(
+                "u and slopes must be 4D arrays with shape (nvars, nx, ny, nz)"
+            )
+        if u.shape != slopes.shape:
+            raise ValueError("u and slopes must have the same shape")
+        if not u.flags.c_contiguous or not slopes.flags.c_contiguous:
+            raise ValueError("u and slopes must be C-contiguous arrays")
+        if u.dtype != cp.float64 or slopes.dtype != cp.float64:
+            raise ValueError("u and slopes must be of dtype float64")
+        if SED:
+            if alpha is None:
+                raise ValueError("alpha array must be provided when SED is True")
+            if alpha.ndim != 4 or alpha.shape != u.shape:
+                raise ValueError(
+                    "alpha must be a 4D array with the same shape as u when SED is "
+                    "True"
+                )
+            if not alpha.flags.c_contiguous:
+                raise ValueError("alpha must be a C-contiguous array when SED is True")
+            if alpha.dtype != cp.float64:
+                raise ValueError("alpha must be of dtype float64 when SED is True")
+
+        nvars, nx, ny, nz = u.shape
+        threads_per_block = 256
+        blocks_per_grid = (
+            nvars * nx * ny * nz + threads_per_block - 1
+        ) // threads_per_block
+        alpha_arg = alpha if SED else u
+        MUSCL_slopes_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                u,
+                slopes,
+                DIM_TO_AXIS[dim],
+                {"minmod": 1, "moncen": 2, None: 0}[slope_type],
+                nvars,
+                nx,
+                ny,
+                nz,
+                SED,
+                alpha_arg,
+            ),
+        )
+
+        return (
+            slice(None),
+            slice(1, -1) if dim == "x" else slice(None),
+            slice(1, -1) if dim == "y" else slice(None),
+            slice(1, -1) if dim == "z" else slice(None),
+        )
+
+    PP2D_slopes_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void PP2D_slopes_kernel(
+            const double* u,
+            double* xslopes,
+            double* yslopes,
+            const int xdim,
+            const int ydim,
+            const double eps,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const bool SED,
+            const double* alpha
+        ){
+            // u        (nvars, nx, ny, nz)
+            // slopes   (nvars, nx, ny, nz)
+            // alpha    (nvars, nx, ny, nz)
+
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long ntotal = (long long)nvars * nx * ny * nz;
+
+            for (long long i = tid; i < ntotal; i += stride) {
+                long long t = i;
+                int iz = (int)(t % nz); t /= nz;
+                int iy = (int)(t % ny); t /= ny;
+                int ix = (int)(t % nx); t /= nx;
+                int iv = (int)t;
+
+                // skip boundary cells only along active slope dimensions
+                switch (xdim) {
+                    case 1: if (ix < 1 || ix >= nx - 1) continue; break;
+                    case 2: if (iy < 1 || iy >= ny - 1) continue; break;
+                    case 3: if (iz < 1 || iz >= nz - 1) continue; break;
+                    default: break;
+                }
+                switch (ydim) {
+                    case 1: if (ix < 1 || ix >= nx - 1) continue; break;
+                    case 2: if (iy < 1 || iy >= ny - 1) continue; break;
+                    case 3: if (iz < 1 || iz >= nz - 1) continue; break;
+                    default: break;
+                }
+
+                // get neighbor indices
+                // j0, j1, j2
+                // j3, j4, j5
+                // j6, j7, j8
+
+                int j0v = iv, j0x = ix, j0y = iy, j0z = iz;
+                int j1v = iv, j1x = ix, j1y = iy, j1z = iz;
+                int j2v = iv, j2x = ix, j2y = iy, j2z = iz;
+                int j3v = iv, j3x = ix, j3y = iy, j3z = iz;
+                int j4v = iv, j4x = ix, j4y = iy, j4z = iz;
+                int j5v = iv, j5x = ix, j5y = iy, j5z = iz;
+                int j6v = iv, j6x = ix, j6y = iy, j6z = iz;
+                int j7v = iv, j7x = ix, j7y = iy, j7z = iz;
+                int j8v = iv, j8x = ix, j8y = iy, j8z = iz;
+
+                switch (xdim) {
+                    case 1:
+                        j0x -= 1; j3x -= 1; j6x -= 1;
+                        j2x += 1; j5x += 1; j8x += 1;
+                        break;
+                    case 2:
+                        j0y -= 1; j3y -= 1; j6y -= 1;
+                        j2y += 1; j5y += 1; j8y += 1;
+                        break;
+                    case 3:
+                        j0z -= 1; j3z -= 1; j6z -= 1;
+                        j2z += 1; j5z += 1; j8z += 1;
+                        break;
+                }
+
+                switch (ydim) {
+                    case 1:
+                        j0x -= 1; j1x -= 1; j2x -= 1;
+                        j6x += 1; j7x += 1; j8x += 1;
+                        break;
+                    case 2:
+                        j0y -= 1; j1y -= 1; j2y -= 1;
+                        j6y += 1; j7y += 1; j8y += 1;
+                        break;
+                    case 3:
+                        j0z -= 1; j1z -= 1; j2z -= 1;
+                        j6z += 1; j7z += 1; j8z += 1;
+                        break;
+                }
+
+                long long j0 = (((long long)j0v * nx + j0x) * ny + j0y) * nz + j0z;
+                long long j1 = (((long long)j1v * nx + j1x) * ny + j1y) * nz + j1z;
+                long long j2 = (((long long)j2v * nx + j2x) * ny + j2y) * nz + j2z;
+                long long j3 = (((long long)j3v * nx + j3x) * ny + j3y) * nz + j3z;
+                long long j4 = (((long long)j4v * nx + j4x) * ny + j4y) * nz + j4z;
+                long long j5 = (((long long)j5v * nx + j5x) * ny + j5y) * nz + j5z;
+                long long j6 = (((long long)j6v * nx + j6x) * ny + j6y) * nz + j6z;
+                long long j7 = (((long long)j7v * nx + j7x) * ny + j7y) * nz + j7z;
+                long long j8 = (((long long)j8v * nx + j8x) * ny + j8y) * nz + j8z;
+
+                // compute slopes
+                double sx = 0.5 * (u[j5] - u[j3]);
+                double sy = 0.5 * (u[j7] - u[j1]);
+
+                double uc = u[i];
+                double du0 = u[j0] - uc;
+                double du1 = u[j1] - uc;
+                double du2 = u[j2] - uc;
+                double du3 = u[j3] - uc;
+                double du5 = u[j5] - uc;
+                double du6 = u[j6] - uc;
+                double du7 = u[j7] - uc;
+                double du8 = u[j8] - uc;
+
+                double vmin = -eps;
+                vmin = fmin(vmin, du0);
+                vmin = fmin(vmin, du1);
+                vmin = fmin(vmin, du2);
+                vmin = fmin(vmin, du3);
+                vmin = fmin(vmin, du5);
+                vmin = fmin(vmin, du6);
+                vmin = fmin(vmin, du7);
+                vmin = fmin(vmin, du8);
+
+                double vmax = eps;
+                vmax = fmax(vmax, du0);
+                vmax = fmax(vmax, du1);
+                vmax = fmax(vmax, du2);
+                vmax = fmax(vmax, du3);
+                vmax = fmax(vmax, du5);
+                vmax = fmax(vmax, du6);
+                vmax = fmax(vmax, du7);
+                vmax = fmax(vmax, du8);
+
+                double v = 2.0 * fmin(fabs(vmin), fabs(vmax)) / (fabs(sx) + fabs(sy));
+                double theta = fmin(v, 1.0);
+
+                // SED relaxation
+                if (SED && alpha[i] >= 1.0) {
+                    theta = 1.0;
+                }
+
+                // limit slopes
+                sx *= theta;
+                sy *= theta;
+
+                xslopes[i] = sx;
+                yslopes[i] = sy;
+            }
+        }
+        """,
+        name="PP2D_slopes_kernel",
+    )
+
+    def PP2D_slopes_kernel_helper(
+        u: cp.ndarray,
+        xslopes: cp.ndarray,
+        yslopes: cp.ndarray,
+        xdim: Literal["x", "y", "z"],
+        ydim: Literal["x", "y", "z"],
+        eps: float,
+        SED: bool,
+        alpha: Optional[cp.ndarray],
+    ) -> Tuple[slice, ...]:
+        if u.ndim != 4 or xslopes.ndim != 4 or yslopes.ndim != 4:
+            raise ValueError(
+                "u, xslopes, and yslopes must be 4D arrays with shape "
+                "(nvars, nx, ny, nz)"
+            )
+        if u.shape != xslopes.shape or u.shape != yslopes.shape:
+            raise ValueError("u, xslopes, and yslopes must have the same shape")
+        if (
+            not u.flags.c_contiguous
+            or not xslopes.flags.c_contiguous
+            or not yslopes.flags.c_contiguous
+        ):
+            raise ValueError("u, xslopes, and yslopes must be C-contiguous arrays")
+        if (
+            u.dtype != cp.float64
+            or xslopes.dtype != cp.float64
+            or yslopes.dtype != cp.float64
+        ):
+            raise ValueError("u, xslopes, and yslopes must be of dtype float64")
+        if SED:
+            if alpha is None:
+                raise ValueError("alpha array must be provided when SED is True")
+            if alpha.ndim != 4 or alpha.shape != u.shape:
+                raise ValueError(
+                    "alpha must be a 4D array with the same shape as u when SED is "
+                    "True"
+                )
+            if not alpha.flags.c_contiguous:
+                raise ValueError("alpha must be a C-contiguous array when SED is True")
+            if alpha.dtype != cp.float64:
+                raise ValueError("alpha must be of dtype float64 when SED is True")
+
+        nvars, nx, ny, nz = u.shape
+        threads_per_block = 256
+        blocks_per_grid = (
+            nvars * nx * ny * nz + threads_per_block - 1
+        ) // threads_per_block
+        alpha_arg = alpha if SED else u
+        PP2D_slopes_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                u,
+                xslopes,
+                yslopes,
+                DIM_TO_AXIS[xdim],
+                DIM_TO_AXIS[ydim],
+                eps,
+                nvars,
+                nx,
+                ny,
+                nz,
+                SED,
+                alpha_arg,
+            ),
+        )
+
+        return (
+            slice(None),
+            slice(1, -1) if "x" in (xdim, ydim) else slice(None),
+            slice(1, -1) if "y" in (xdim, ydim) else slice(None),
+            slice(1, -1) if "z" in (xdim, ydim) else slice(None),
+        )
 
 
-def compute_MUSCL_slopes_kernel_helper(
+def compute_MUSCL_slopes_elementwise_kernel_helper(
     xp: ModuleType,
     u: ArrayLike,
     face_dim: Literal["x", "y", "z"],
@@ -446,7 +842,7 @@ def compute_MUSCL_slopes_kernel_helper(
 
     # compute limited slopes
     inner = replace_slice(crop(axis, (1, -1), ndim=5), 4, 0)
-    MUSCL_slopes_kernel(ul, uc, ur, limiter_int, out[inner])
+    MUSCL_slopes_elementwise_kernel(ul, uc, ur, limiter_int, out[inner])
 
     # compute smooth extrema detector if requested
     if SED:
