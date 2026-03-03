@@ -7,12 +7,6 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from superfv.fv_cuda import (
-    interpolate_central_quantity,
-    interpolate_central_quantity_kernel_helper,
-    interpolate_gauss_legendre_nodes_kernel_helper,
-    lr_conservative_interpolation_kernel_helper,
-)
 from superfv.tools.buffer import check_buffer_slots
 
 from . import fv
@@ -64,7 +58,13 @@ from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
 if CUPY_AVAILABLE:
-    from .fv_cuda import gauss_legendre_quadrature_kernel_helper
+    from .fv_cuda import (
+        gauss_legendre_quadrature_kernel_helper,
+        interpolate_central_quantity,
+        interpolate_central_quantity_kernel_helper,
+        interpolate_gauss_legendre_nodes_kernel_helper,
+        lr_conservative_interpolation_kernel_helper,
+    )
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
