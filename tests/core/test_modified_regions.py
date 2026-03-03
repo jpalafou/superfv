@@ -25,6 +25,9 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
     from superfv.slope_limiting.shock_detection import compute_shocks_kernel_helper
+    from superfv.slope_limiting.smooth_extrema_detection import (
+        compute_alpha_kernel_helper,
+    )
 
 
 def configure_xp():
@@ -60,6 +63,28 @@ def test_blend_troubled_cells(dims: str):
     assert not xp.any(xp.isnan(troubles1[modified]))
     troubles1[modified] = xp.nan
     assert xp.all(xp.isnan(troubles1))
+
+
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+@pytest.mark.parametrize("check_uniformity", [False, True])
+def test_compute_alpha_kernel_helper(dims: str, check_uniformity: bool):
+    xp = configure_xp()
+
+    if not hasattr(xp, "cuda"):
+        pytest.skip("compute_alpha_kernel_helper is only implemented for CuPy")
+
+    u, _, alpha = sample_data(dims, nout=1, xp=xp)
+    modified = compute_alpha_kernel_helper(
+        u,
+        alpha[..., 0],
+        1e-16,
+        check_uniformity,
+        1e-16,
+    )
+
+    assert not xp.any(xp.isnan(alpha[modified]))
+    alpha[modified] = xp.nan
+    assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

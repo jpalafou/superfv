@@ -62,6 +62,7 @@ if CUPY_AVAILABLE:
         lr_conservative_interpolation_kernel_helper,
     )
     from .slope_limiting.shock_detection import compute_shocks_kernel_helper
+    from .slope_limiting.smooth_extrema_detection import compute_alpha_kernel_helper
     from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
 
 
@@ -1850,20 +1851,26 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
         active_dims = self.active_dims
         arrays = self.arrays
-        lim_slc = self.variable_index_map("limiting", keepdims=True)
+        check_uniformity = scheme.limiter_config.check_uniformity
+        uniformity_tol = scheme.limiter_config.uniformity_tol
 
-        alpha = arrays["_alpha_"][lim_slc]
-        buffer = arrays["_buffer_"][lim_slc]
+        alpha = arrays["_alpha_"]
+        buffer = arrays["_buffer_"]
 
-        smooth_extrema_detector(
-            xp,
-            u[lim_slc],
-            active_dims,
-            scheme.limiter_config.check_uniformity,
-            out=alpha,
-            buffer=buffer,
-            uniformity_tol=scheme.limiter_config.uniformity_tol,
-        )
+        if self.cupy:
+            compute_alpha_kernel_helper(
+                u, alpha[..., 0], 1e-16, check_uniformity, uniformity_tol
+            )
+        else:
+            smooth_extrema_detector(
+                xp,
+                u,
+                active_dims,
+                check_uniformity,
+                out=alpha,
+                buffer=buffer,
+                uniformity_tol=uniformity_tol,
+            )
 
     @MethodTimer(cat="integrate_fluxes")
     def integrate_fluxes(

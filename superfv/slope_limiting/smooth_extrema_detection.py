@@ -476,6 +476,188 @@ if CUPY_AVAILABLE:
         no_return=True,
     )
 
+    compute_alpha_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void compute_alpha_kernel(
+            const double *u,
+            double *alpha,
+            const double eps,
+            const bool check_uniformity,
+            const double uniformity_tol,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz
+        ){
+            // u        (nvars, nx, ny, nz)
+            // alpha    (nvars, nx, ny, nz)
+
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long ntotal = (long long)nvars * nx * ny * nz;
+            bool usingx = nx > 1, usingy = ny > 1, usingz = nz > 1;
+
+            for (long long i = tid; i < ntotal; i += stride) {
+                long long t = i;
+                int iz = (int)(t % nz); t /= nz;
+                int iy = (int)(t % ny); t /= ny;
+                int ix = (int)(t % nx); t /= nx;
+                int iv = (int)t;
+
+                // skip boundary cells (ghost zones remain unmodified)
+                if ((usingx && (ix < 3 || ix >= nx - 3))
+                || (usingy && (iy < 3 || iy >= ny - 3))
+                || (usingz && (iz < 3 || iz >= nz - 3))) {
+                    continue;
+                }
+
+                double alpha_i = 1.0;
+
+                for (int id = 0; id < 3; id++) {
+                    // skip inactive dimensions
+                    switch (id) {
+                        case 0: if (!usingx) continue; break;
+                        case 1: if (!usingy) continue; break;
+                        case 2: if (!usingz) continue; break;
+                    }
+
+                    double alpha_dim_i = 1.0;
+
+                    for (int off = -1; off <= 1; off++) {
+                        int jv = iv, jx = ix, jy = iy, jz = iz;
+                        long long j0, j1, j2, j3, j4;
+                        switch (id) {
+                            case 0:
+                                jx += off;
+                                j0 = (((long long)jv * nx + (jx - 2)) * ny + jy) * nz
+                                    + jz;
+                                j1 = (((long long)jv * nx + (jx - 1)) * ny + jy) * nz
+                                    + jz;
+                                j2 = (((long long)jv * nx + jx) * ny + jy) * nz + jz;
+                                j3 = (((long long)jv * nx + (jx + 1)) * ny + jy) * nz
+                                    + jz;
+                                j4 = (((long long)jv * nx + (jx + 2)) * ny + jy) * nz
+                                    + jz;
+                                break;
+                            case 1:
+                                jy += off;
+                                j0 = (((long long)jv * nx + ix) * ny + (jy - 2)) * nz
+                                    + jz;
+                                j1 = (((long long)jv * nx + ix) * ny + (jy - 1)) * nz
+                                    + jz;
+                                j2 = (((long long)jv * nx + ix) * ny + jy) * nz + jz;
+                                j3 = (((long long)jv * nx + ix) * ny + (jy + 1)) * nz
+                                    + jz;
+                                j4 = (((long long)jv * nx + ix) * ny + (jy + 2)) * nz
+                                    + jz;
+                                break;
+                            case 2:
+                                jz += off;
+                                j0 = (((long long)jv * nx + ix) * ny + iy) * nz
+                                    + (jz - 2);
+                                j1 = (((long long)jv * nx + ix) * ny + iy) * nz
+                                    + (jz - 1);
+                                j2 = (((long long)jv * nx + ix) * ny + iy) * nz + jz;
+                                j3 = (((long long)jv * nx + ix) * ny + iy) * nz
+                                    + (jz + 1);
+                                j4 = (((long long)jv * nx + ix) * ny + iy) * nz
+                                    + (jz + 2);
+                        }
+
+                        // compute alpha for this dimension using a 5-point stencil
+                        double dul = 0.5 * (u[j2] - u[j0]);
+                        double duc = 0.5 * (u[j3] - u[j1]);
+                        double dur = 0.5 * (u[j4] - u[j2]);
+
+                        double dv = 0.25 * (dur - dul);
+                        double dv_safe = (fabs(dv) > eps ? dv : (dv > 0 ? eps : -eps));
+
+                        double dvl = dul - duc;
+                        double alphal = -((dv < 0) ? fmax(dvl, 0.0) : fmin(dvl, 0.0)) / dv_safe;
+
+                        double dvr = dur - duc;
+                        double alphar = ((dv > 0) ? fmax(dvr, 0.0) : fmin(dvr, 0.0)) / dv_safe;
+
+                        double alpha_dim_j = fmin(fmin(alphal, alphar), 1.0);
+
+                        // relax alpha in uniform regions
+                        if (check_uniformity) {
+                            double m = fmin(fmin(u[j1], u[j2]), u[j3]);
+                            double M = fmax(fmax(u[j1], u[j2]), u[j3]);
+                            bool uniform = fabs(M - m) <= uniformity_tol * fabs(u[j2]);
+
+                            if (uniform) {
+                                alpha_dim_j = 1.0;
+                            }
+                        }
+
+                        // update dimension-wise alpha using neighbor min
+                        if (alpha_dim_j < alpha_dim_i) {
+                            alpha_dim_i = alpha_dim_j;
+                        }
+                    }
+                    // update overall alpha using dimension-wise min
+                    if (alpha_dim_i < alpha_i) {
+                        alpha_i = alpha_dim_i;
+                    }
+                }
+                alpha[i] = alpha_i;
+            }
+        }
+        """,
+        name="compute_alpha_kernel",
+    )
+
+    def compute_alpha_kernel_helper(
+        u: cp.ndarray,
+        alpha: cp.ndarray,
+        eps: float,
+        check_uniformity: bool,
+        uniformity_tol: float,
+    ) -> Tuple[slice, ...]:
+        if not u.flags.c_contiguous or not alpha.flags.c_contiguous:
+            raise ValueError("u and alpha must be C-contiguous for the kernel.")
+        if u.dtype != cp.float64 or alpha.dtype != cp.float64:
+            raise ValueError("u and alpha must be of type float64 for the kernel.")
+        if u.ndim != 4 or alpha.ndim != 4:
+            raise ValueError(
+                "u and alpha must be 4D arrays with shape (nvars, nx, ny, nz)."
+            )
+        if u.shape != alpha.shape:
+            raise ValueError("u and alpha must have the same shape.")
+
+        nvars, nx, ny, nz = u.shape
+        threads_per_block = 256
+        blocks_per_grid = (
+            nvars * nx * ny * nz + threads_per_block - 1
+        ) // threads_per_block
+
+        compute_alpha_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                u,
+                alpha,
+                eps,
+                check_uniformity,
+                uniformity_tol,
+                nvars,
+                nx,
+                ny,
+                nz,
+            ),
+        )
+
+        return (
+            slice(None),
+            slice(3, -3) if nx > 1 else slice(None),
+            slice(3, -3) if ny > 1 else slice(None),
+            slice(3, -3) if nz > 1 else slice(None),
+            slice(None, 1),
+        )
+
 
 def smooth_extrema_detector_kernel_helper(
     u: ArrayLike,
