@@ -134,13 +134,13 @@ if CUPY_AVAILABLE:
 
 
 def compute_theta_kernel_helper(
-    w: ArrayLike,
-    wj: ArrayLike,
-    M: ArrayLike,
-    m: ArrayLike,
-    Mj: ArrayLike,
-    mj: ArrayLike,
-    out: ArrayLike,
+    w: cp.ndarray,
+    wj: cp.ndarray,
+    M: cp.ndarray,
+    m: cp.ndarray,
+    Mj: cp.ndarray,
+    mj: cp.ndarray,
+    out: cp.ndarray,
     eps: float,
 ):
     nvars, nx = w.shape

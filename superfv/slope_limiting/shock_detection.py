@@ -286,11 +286,11 @@ if CUPY_AVAILABLE:
 
 
 def compute_eta_kernel_helper(
-    w1: ArrayLike,
-    wr: ArrayLike,
+    w1: cp.ndarray,
+    wr: cp.ndarray,
     axis: int,
     *,
-    out: ArrayLike,
+    out: cp.ndarray,
     eps: float = 1e-16,
 ) -> Tuple[slice, ...]:
     """
@@ -323,13 +323,13 @@ def compute_eta_kernel_helper(
 
 
 def compute_shocks_kernel_helper(
-    w1: ArrayLike,
-    wr: ArrayLike,
+    w1: cp.ndarray,
+    wr: cp.ndarray,
     eta_threshold: float,
     eps: float,
     *,
-    eta: ArrayLike,
-    has_shock: ArrayLike,
+    eta: cp.ndarray,
+    has_shock: cp.ndarray,
 ) -> Tuple[slice, ...]:
     """
     Compute the shock detector using the method of Berta et al. (2024) with a custom

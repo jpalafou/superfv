@@ -1,7 +1,7 @@
 from typing import Literal, Optional, Tuple, cast
 
 from superfv.axes import DIM_TO_AXIS
-from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.slicing import crop, merge_slices, replace_slice
 
 if CUPY_AVAILABLE:
@@ -822,7 +822,7 @@ if CUPY_AVAILABLE:
 
 
 def lr_conservative_interpolation_kernel_helper(
-    u: ArrayLike, out: ArrayLike, p: int, dim: Literal["x", "y", "z"]
+    u: cp.ndarray, out: cp.ndarray, p: int, dim: Literal["x", "y", "z"]
 ) -> Tuple[slice, ...]:
     dim_int = {"x": 0, "y": 1, "z": 2}[dim]
 
@@ -875,8 +875,8 @@ def lr_conservative_interpolation_kernel_helper(
 
 
 def interpolate_central_quantity_kernel_helper(
-    u: ArrayLike,
-    uj: ArrayLike,
+    u: cp.ndarray,
+    uj: cp.ndarray,
     mode: Literal[0, 1],
     p: int,
     dim: Literal["x", "y", "z"],
@@ -916,13 +916,13 @@ def interpolate_central_quantity_kernel_helper(
 
 
 def interpolate_central_quantity(
-    u: ArrayLike,
-    uj: ArrayLike,
+    u: cp.ndarray,
+    uj: cp.ndarray,
     mode: Literal[0, 1],
     p: int,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    uu: Optional[ArrayLike] = None,
-    uuu: Optional[ArrayLike] = None,
+    uu: Optional[cp.ndarray] = None,
+    uuu: Optional[cp.ndarray] = None,
 ) -> Tuple[slice, ...]:
     """
     Perform a central sweep interpolation or integration along the specified
@@ -984,7 +984,7 @@ def interpolate_central_quantity(
     raise ValueError("active_dims must have length 1, 2, or 3")
 
 
-def gauss_legendre_quadrature_kernel_helper(u: ArrayLike, p: int, out: ArrayLike):
+def gauss_legendre_quadrature_kernel_helper(u: cp.ndarray, p: int, out: cp.ndarray):
     nquadrature = -(-(p + 1) // 2)
 
     if u.ndim != 5 or u.shape[4] != nquadrature:
@@ -1017,7 +1017,7 @@ def gauss_legendre_quadrature_kernel_helper(u: ArrayLike, p: int, out: ArrayLike
 
 
 def interpolate_gauss_legendre_nodes_kernel_helper(
-    u: ArrayLike, out: ArrayLike, p: int, dim: Literal["x", "y", "z"]
+    u: cp.ndarray, out: cp.ndarray, p: int, dim: Literal["x", "y", "z"]
 ) -> Tuple[slice, ...]:
     dim_int = {"x": 0, "y": 1, "z": 2}[dim]
     ninterps = p // 2 + 1

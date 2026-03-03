@@ -108,11 +108,11 @@ if CUPY_AVAILABLE:
 
 
 def PAD_kernel_helper(
-    wj: ArrayLike,
-    physical_bounds: ArrayLike,
+    wj: cp.ndarray,
+    physical_bounds: cp.ndarray,
     *,
-    violated_vars: ArrayLike,
-    violated_cells: ArrayLike,
+    violated_vars: cp.ndarray,
+    violated_cells: cp.ndarray,
     tol: float = 1e-15,
 ):
     """

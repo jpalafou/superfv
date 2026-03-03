@@ -214,9 +214,9 @@ if CUPY_AVAILABLE:
     )
 
     def compute_dmp_kernel_helper(
-        w: ArrayLike,
-        M: ArrayLike,
-        m: ArrayLike,
+        w: cp.ndarray,
+        M: cp.ndarray,
+        m: cp.ndarray,
         include_corners: bool,
     ):
         nvars, nx, ny, nz = w.shape
