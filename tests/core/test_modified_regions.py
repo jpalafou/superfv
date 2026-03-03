@@ -16,16 +16,15 @@ from superfv.slope_limiting.muscl import (
     compute_PP2D_slopes,
     musclConfig,
 )
-from superfv.slope_limiting.shock_detection import (
-    compute_shock_detector,
-    compute_shocks_kernel_helper,
-)
+from superfv.slope_limiting.shock_detection import compute_shock_detector
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
 from superfv.tools.device_management import CUPY_AVAILABLE
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
+
+    from superfv.slope_limiting.shock_detection import compute_shocks_kernel_helper
 
 
 def configure_xp():
@@ -173,9 +172,7 @@ def test_compute_shocks_kernel_helper(dims: str):
     u, _, eta = sample_data(dims, nout=3, xp=xp)
     has_shock = xp.full((1, *eta.shape[1:4]), -1, dtype=np.int32)
 
-    modified = compute_shocks_kernel_helper(
-        u, u, 0.025, 1e-16, eta=eta, has_shock=has_shock
-    )
+    modified = compute_shocks_kernel_helper(u, u, eta, has_shock, 0.025, 1e-16)
 
     assert not xp.any(has_shock[modified] == -1)
     for i, dim in enumerate(["x", "y", "z"]):
