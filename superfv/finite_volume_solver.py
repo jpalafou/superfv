@@ -43,7 +43,6 @@ from .slope_limiting.zhang_and_shu import (
     append_zhang_shu_scalar_statistics,
     clear_zhang_shu_scalar_statistics,
     compute_theta,
-    compute_theta_kernel_helper,
     init_zhang_shu_scalar_statistics,
     log_zhang_shu_scalar_statistics,
     zhang_shu_operator,
@@ -63,6 +62,7 @@ if CUPY_AVAILABLE:
         lr_conservative_interpolation_kernel_helper,
     )
     from .slope_limiting.shock_detection import compute_shocks_kernel_helper
+    from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
