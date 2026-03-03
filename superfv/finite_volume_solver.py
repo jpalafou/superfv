@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 
 from superfv.fv_cuda import (
-    gauss_legendre_quadrature_kernel_helper,
     interpolate_central_quantity,
     interpolate_central_quantity_kernel_helper,
     interpolate_gauss_legendre_nodes_kernel_helper,
@@ -63,6 +62,10 @@ from .tools.slicing import VariableIndexMap, crop, merge_slices
 from .tools.timer import MethodTimer, StepperTimer
 from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
+
+if CUPY_AVAILABLE:
+    from .fv_cuda import gauss_legendre_quadrature_kernel_helper
+
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
