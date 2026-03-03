@@ -36,10 +36,7 @@ from .slope_limiting.muscl import (
     musclInterpolationScheme,
 )
 from .slope_limiting.physical_admissibility_detection import detect_PAD_violations
-from .slope_limiting.shock_detection import (
-    compute_shock_detector,
-    compute_shocks_kernel_helper,
-)
+from .slope_limiting.shock_detection import compute_shock_detector
 from .slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
@@ -65,6 +62,7 @@ if CUPY_AVAILABLE:
         interpolate_gauss_legendre_nodes_kernel_helper,
         lr_conservative_interpolation_kernel_helper,
     )
+    from .slope_limiting.shock_detection import compute_shocks_kernel_helper
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
