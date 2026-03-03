@@ -3,10 +3,7 @@ from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
-from superfv.slope_limiting.shock_detection import (
-    compute_shock_detector,
-    compute_shocks_kernel_helper,
-)
+from superfv.slope_limiting.shock_detection import compute_shock_detector
 
 from . import riemann_solvers
 from .axes import DIM_TO_AXIS
@@ -27,6 +24,7 @@ if CUPY_AVAILABLE:
         sound_speed_cp,
     )
     from .riemann_solvers import make_hllc_elementwise_kernel
+    from .slope_limiting.shock_detection import compute_shocks_kernel_helper
 
 
 class EulerSolver(FiniteVolumeSolver):
