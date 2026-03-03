@@ -1585,10 +1585,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             compute_shocks_kernel_helper(
                 w1,
                 w1,
+                eta3d,
+                has_shock,
                 scheme.limiter_config.eta_max,
                 1e-16,
-                eta=eta3d,
-                has_shock=has_shock,
             )
         else:
             compute_shock_detector(
@@ -1937,7 +1937,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ndim = self.mesh.ndim
 
         if self.cupy and ndim == 2 and p <= 7:
-            gauss_legendre_quadrature_kernel_helper(f, p, F)
+            gauss_legendre_quadrature_kernel_helper(f, F, p)
         else:
             fv.integrate_GaussLegendre_nodes(
                 self.xp,

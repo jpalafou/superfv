@@ -31,8 +31,8 @@ def detect_PAD_violations(
         PAD_kernel_helper(
             wj,
             physical_bounds,
-            violated_vars=violated_vars,
-            violated_cells=violated_cells,
+            violated_vars,
+            violated_cells,
             tol=tol,
         )
         return
@@ -110,7 +110,6 @@ if CUPY_AVAILABLE:
 def PAD_kernel_helper(
     wj: cp.ndarray,
     physical_bounds: cp.ndarray,
-    *,
     violated_vars: cp.ndarray,
     violated_cells: cp.ndarray,
     tol: float = 1e-15,

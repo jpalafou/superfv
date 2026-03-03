@@ -798,10 +798,10 @@ class EulerSolver(FiniteVolumeSolver):
             compute_shocks_kernel_helper(
                 w1 if primitives else u1,
                 wr,
+                eta3d,
+                has_shock,
                 scheme.limiter_config.eta_max,
                 1e-16,
-                eta=eta3d,
-                has_shock=has_shock,
             )
         else:
             compute_shock_detector(

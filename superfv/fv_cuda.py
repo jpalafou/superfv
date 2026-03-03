@@ -984,7 +984,7 @@ def interpolate_central_quantity(
     raise ValueError("active_dims must have length 1, 2, or 3")
 
 
-def gauss_legendre_quadrature_kernel_helper(u: cp.ndarray, p: int, out: cp.ndarray):
+def gauss_legendre_quadrature_kernel_helper(u: cp.ndarray, out: cp.ndarray, p: int):
     nquadrature = -(-(p + 1) // 2)
 
     if u.ndim != 5 or u.shape[4] != nquadrature:

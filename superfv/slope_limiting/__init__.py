@@ -227,6 +227,14 @@ if CUPY_AVAILABLE:
             raise ValueError("Output array M must be C-contiguous")
         if not m.flags.c_contiguous:
             raise ValueError("Output array m must be C-contiguous")
+        if w.dtype != cp.float64 or M.dtype != cp.float64 or m.dtype != cp.float64:
+            raise ValueError("Input array must be of type float64")
+        if w.ndim != 4:
+            raise ValueError("Input array must have 4 dimensions (nvars, nx, ny, nz)")
+        if M.shape != w.shape or m.shape != w.shape:
+            raise ValueError(
+                "Output arrays M and m must have the same shape as input array w"
+            )
 
         n = w.size
         threads = 256

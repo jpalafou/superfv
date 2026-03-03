@@ -18,7 +18,6 @@ from .tools.slicing import merge_slices
 
 if CUPY_AVAILABLE:
     from .fv_cp import interpolation_kernel_helper
-    from .fv_cuda import gauss_legendre_quadrature_kernel_helper
 
 SingleInterpCoord = Union[int, float]
 MultiInterpCoords = Tuple[SingleInterpCoord, ...]
@@ -833,10 +832,6 @@ def integrate_GaussLegendre_nodes(
             "At least two active dimensions are required for Gauss-Legendre node "
             "integration."
         )
-
-    if hasattr(xp, "cuda") and p <= 7 and len(active_dims) == 2:
-        gauss_legendre_quadrature_kernel_helper(u, p, out)
-        return
 
     _, w2 = _get_GaussLegendre_nodes_and_weights(xp, face_dim, active_dims, p)
     nquadrature = w2.shape[4] // 2
