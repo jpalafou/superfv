@@ -794,7 +794,7 @@ class EulerSolver(FiniteVolumeSolver):
             wr[...] = u1
             wr[idx("m")] = c * u1[idx("rho")]
 
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             compute_shocks_kernel_helper(
                 w1 if primitives else u1,
                 wr,

@@ -1500,7 +1500,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ucc = arrays["_ucc_"]
         _buff_ = arrays["_buffer_"]
 
-        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+        if self.cupy and ndim == 2 and p <= 7:
             interpolate_central_quantity(
                 u_midline[..., 0], ucc[..., 0], 0, p, active_dims, uu=u
             )
@@ -1518,7 +1518,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         w_midline = arrays["_buffer1_"]
         _buff_ = arrays["_buffer_"]
 
-        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+        if self.cupy and ndim == 2 and p <= 7:
             interpolate_central_quantity(
                 w_midline[..., 0], w[..., 0], 1, p, active_dims, uu=wcc[..., 0]
             )
@@ -1581,7 +1581,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         w1 = arrays["_w_"] if primitives else arrays["_u_"]
         buffer = arrays["_buffer_"]
 
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             compute_shocks_kernel_helper(
                 w1,
                 w1,
@@ -1654,7 +1654,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         nodes = arrays[f"_{dim}_nodes_"]
         buffer = arrays["_buffer_"]
 
-        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+        if self.cupy and ndim == 2 and p <= 7:
             lr_conservative_interpolation_kernel_helper(u, faces, p, dim)
             interpolate_gauss_legendre_nodes_kernel_helper(faces, nodes, p, dim)
         else:
@@ -1674,7 +1674,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         nodes = arrays[f"_{dim}_nodes_"]
         buffer = arrays["_buffer_"]
 
-        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+        if self.cupy and ndim == 2 and p <= 7:
             transverse_dim = [d for d in active_dims if d != dim][0]
             interpolate_central_quantity_kernel_helper(u, midline, 0, p, transverse_dim)
             lr_conservative_interpolation_kernel_helper(midline, nodes, p, dim)
@@ -1727,7 +1727,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         thetaflat = self.arrays["_flat_theta_"]
 
         # compute theta
-        if hasattr(xp, "cuda"):
+        if self.cupy:
             nvars = w.shape[0]
             nx = w.shape[1]
             ny = w.shape[2]
@@ -1936,7 +1936,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         ndim = self.mesh.ndim
 
-        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+        if self.cupy and ndim == 2 and p <= 7:
             gauss_legendre_quadrature_kernel_helper(f, p, F)
         else:
             fv.integrate_GaussLegendre_nodes(
@@ -1959,7 +1959,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         ndim = self.mesh.ndim
 
-        if hasattr(self.xp, "cuda") and ndim == 2 and p <= 7:
+        if self.cupy and ndim == 2 and p <= 7:
             transverse_dim = [d for d in self.active_dims if d != dim][0]
             interpolate_central_quantity_kernel_helper(
                 f[..., 0], F[..., 0], 1, p, transverse_dim
@@ -2050,35 +2050,35 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         state.reset_MOOD_loop()
 
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             self.xp.cuda.Device().synchronize()
         self.stepper_timer.start("MOOD_loop:compute_fallback_fluxes")
 
         MOOD.compute_fallback_fluxes(self, t)
 
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             self.xp.cuda.Device().synchronize()
         self.stepper_timer.stop("MOOD_loop:compute_fallback_fluxes")
 
         for _ in range(config.max_iters):
-            if hasattr(self.xp, "cuda"):
+            if self.cupy:
                 self.xp.cuda.Device().synchronize()
             self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
 
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
 
-            if hasattr(self.xp, "cuda"):
+            if self.cupy:
                 self.xp.cuda.Device().synchronize()
             self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
 
             if n_revisable:
-                if hasattr(self.xp, "cuda"):
+                if self.cupy:
                     self.xp.cuda.Device().synchronize()
                 self.stepper_timer.start("MOOD_loop:revise_fluxes")
 
                 MOOD.revise_fluxes(self, t)
 
-                if hasattr(self.xp, "cuda"):
+                if self.cupy:
                     self.xp.cuda.Device().synchronize()
                 self.stepper_timer.stop("MOOD_loop:revise_fluxes")
 
@@ -2087,13 +2087,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 break
 
         if n_revisable and config.detect_closing_troubles:
-            if hasattr(self.xp, "cuda"):
+            if self.cupy:
                 self.xp.cuda.Device().synchronize()
             self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
 
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
 
-            if hasattr(self.xp, "cuda"):
+            if self.cupy:
                 self.xp.cuda.Device().synchronize()
             self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
 
@@ -2252,7 +2252,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Helper function called at the beginning of each step starting with a timer
         start preceded by a CUDA synchronization if using CuPy.
         """
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             self.xp.cuda.Device().synchronize()
         super().called_at_beginning_of_step()
 
@@ -2262,7 +2262,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         followed by a CUDA synchronization if using CuPy.
         """
         super().called_at_end_of_step()
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             self.xp.cuda.Device().synchronize()
 
     def take_snapshot(self):
@@ -2270,10 +2270,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Log and time snapshot data at time `self.t` and write it to `self.path` if not
         None, all wrapped in CUDA synchronizations if using CuPy.
         """
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             self.xp.cuda.Device().synchronize()
         super().take_snapshot()
-        if hasattr(self.xp, "cuda"):
+        if self.cupy:
             self.xp.cuda.Device().synchronize()
 
     def prepare_snapshot_data(self) -> Dict[str, np.ndarray]:
