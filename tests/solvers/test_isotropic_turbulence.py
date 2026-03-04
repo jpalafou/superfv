@@ -35,6 +35,7 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
         ),
         isothermal=True,
         nx=N,
+        cupy=True,
         **config,
     )
 
@@ -64,6 +65,7 @@ def test_2d_isotropic_decaying_turbulence(config: dict, seed: int):
         isothermal=True,
         nx=N,
         ny=N,
+        cupy=True,
         **config,
     )
 

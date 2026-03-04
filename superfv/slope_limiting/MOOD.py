@@ -267,34 +267,29 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     max_idx = len(cascade) - 1
 
     # allocate arrays
-    _u_old_ = arrays["_u_"]
-    _w_old_ = arrays["_w_"]
-    _u_new_ = arrays["_unew_"]
-    _w_new_ = arrays["_wnew_"]
-    _M_ = arrays["_M_"]
-    _m_ = arrays["_m_"]
-    _NAD_violations_ = arrays["_NAD_violations_"]
-    _alpha_ = arrays["_alpha_"][lim_slc]
-    _buff_ = arrays["_buffer_"]
-    _troubles_ = arrays["_troubles_"]
-    _any_troubles_ = arrays["_any_troubles_"]
-    _cascade_idx_ = arrays["_cascade_idx_"]
-    _var_PAD_ = arrays["_var_PAD_"]
-    _any_PAD_ = arrays["_any_PAD_"]
-    troubles = arrays["troubles"]
-    revisable_troubles = arrays["revisable_troubles"]
-    cascade_idx = arrays["cascade_idx"]
+    uold = arrays["_u_"]
+    wold = arrays["_w_"]
+    unew = arrays["_unew_"]
+    wnew = arrays["_wnew_"]
+    dmp_M = arrays["_M_"]
+    dmp_m = arrays["_m_"]
+    alpha = arrays["_alpha_"]
+    buffer = arrays["_buffer_"]
+    troubles = arrays["_troubles_"]
+    troubles_temp = arrays["_troubles2_"]
+    cascade_idx = arrays["_cascade_idx_"]
+    NAD_violations = arrays["_NAD_violations_"]
+    PAD_violations = arrays["_PAD_violations_"]
 
     # reset troubles / cascade index array
     troubles[...] = False
     if iter_idx == 0:
-        _cascade_idx_[...] = 0
         cascade_idx[...] = 0
 
     # compute candidate solution
-    _u_new_[interior] = _u_old_[interior] + dt * fv_solver.compute_RHS()
-    fv_solver.apply_bc(t, _u_new_, scheme=fv_solver.base_scheme)
-    fv_solver.conservatives_to_primitives(_u_new_, _w_new_)
+    unew[interior] = uold[interior] + dt * fv_solver.compute_RHS()
+    fv_solver.apply_bc(t, unew, scheme=fv_solver.base_scheme)
+    fv_solver.conservatives_to_primitives(unew, wnew)
 
     if NAD:
         NAD_rtol_local: Optional[ArrayLike] = None
@@ -312,48 +307,44 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
         detect_NAD_violations(
             xp,
-            (_w_new_ if primitive_NAD else _u_new_),
-            (_w_old_ if primitive_NAD else _u_old_),
+            (wnew if primitive_NAD else unew),
+            (wold if primitive_NAD else uold),
             active_dims=active_dims,
             delta=delta,
             rtol=NAD_rtol_local,
             gtol=NAD_gtol_local,
             atol=NAD_atol_local,
             include_corners=include_corners,
-            out=_NAD_violations_,
-            M=_M_,
-            m=_m_,
-            buffer=_buff_,
+            out=NAD_violations,
+            M=dmp_M,
+            m=dmp_m,
+            buffer=buffer,
         )
-        NAD_violations = _NAD_violations_[interior][lim_slc]
 
         # compute smooth extrema
         if SED:
-            fv_solver.detect_smooth_extrema(
-                (_w_new_ if primitive_NAD else _u_new_), scheme
-            )
-            alpha = _alpha_[..., 0][interior]
-            troubles[lim_slc] = xp.logical_and(NAD_violations < 0, alpha < 1)
-        else:
-            troubles[lim_slc] = NAD_violations < 0
+            fv_solver.detect_smooth_extrema((wnew if primitive_NAD else unew), scheme)
+            NAD_violations *= alpha[..., 0] < 1
+
+        # update troubles
+        xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
 
     # compute PAD violations
     if PAD:
         detect_PAD_violations(
             xp,
-            _w_new_,
+            wnew,
             cast(ArrayLike, PAD_bounds),
             PAD_atol,
-            violated_vars=_var_PAD_,
-            violated_cells=_any_PAD_,
+            violation_amounts=PAD_violations,
+            cell_violated=troubles_temp,
         )
-        xp.logical_or(troubles, _var_PAD_[interior], out=troubles)
+        troubles |= troubles_temp
 
     # update troubles workspace
-    _troubles_[interior] = troubles
     apply_bc(
         xp,
-        _troubles_,
+        troubles,
         pad_width=fv_solver.bc_pad_width,
         mode=normalize_troubles_bc(fv_solver.bc_mode),
     )
@@ -363,12 +354,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         n_troubled_cells = -1
         n_revisable_troubled_cells = -1
     else:
-        _any_troubles_[...] = xp.any(_troubles_, axis=0, keepdims=True)
-        any_troubles = _any_troubles_[interior]
-
-        n_troubled_cells = xp.sum(any_troubles).item()
-        revisable_troubles[...] = any_troubles & (cascade_idx < max_idx)
-        n_revisable_troubled_cells = xp.sum(revisable_troubles).item()
+        n_troubled_cells = xp.sum(troubles[interior]).item()
+        revisable_troubles = xp.logical_and(troubles, cascade_idx < max_idx)
+        n_revisable_troubled_cells = xp.sum(revisable_troubles[interior]).item()
 
     return n_revisable_troubled_cells, n_troubled_cells
 
@@ -421,6 +409,7 @@ def detect_NAD_violations(
             Has shape (nvars,) or is treated as 0s if None. Ignored if delta is False.
         include_corners: Whether to include corner values in the DMP computation.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
+            Negative values in `out` indicate violations of the NAD criterion.
         M: Array to store the local maxima. Has shape (nvars, nx, ny, nz).
         m: Array to store the local minima. Has shape (nvars, nx, ny, nz).
         buffer: Buffer array with shape (nvars, nx, ny, nz, >=6) to store intermediate
@@ -472,7 +461,9 @@ def detect_NAD_violations(
 
     lower_violations[...] = u_new - lower_bound
     upper_violations[...] = upper_bound - u_new
-    out[modified] = xp.minimum(lower_violations[modified], upper_violations[modified])
+    out[modified] = 0.0
+    xp.minimum(lower_violations[modified], out[modified], out=out[modified])
+    xp.minimum(upper_violations[modified], out[modified], out=out[modified])
 
     return modified
 
@@ -539,13 +530,11 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     _Fmask_ = arrays["_mask_"][:, :, :-1, :-1]
     _Gmask_ = arrays["_mask_"][:, :-1, :, :-1]
     _Hmask_ = arrays["_mask_"][:, :-1, :-1, :]
-    _any_troubles_ = arrays["_any_troubles_"]
+    _troubles_ = arrays["_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
-    cascade_idx = arrays["cascade_idx"]
 
     # assuming `troubles` has just been updated, update the cascade index arrays
-    xp.minimum(_cascade_idx_ + _any_troubles_, max_idx, out=_cascade_idx_)
-    cascade_idx[...] = _cascade_idx_[interior]
+    xp.minimum(_cascade_idx_ + _troubles_, max_idx, out=_cascade_idx_)
 
     # broadcast cascade index to each face
     if "x" in active_dims:
@@ -603,45 +592,42 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
     _Fmask_ = arrays["_fmask_"][:, :, :-1, :-1]
     _Gmask_ = arrays["_fmask_"][:, :-1, :, :-1]
     _Hmask_ = arrays["_fmask_"][:, :-1, :-1, :]
-    _any_troubles_ = arrays["_any_troubles_"]
+    _troubles_ = arrays["_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
-    cascade_idx = arrays["cascade_idx"]
-    _blended_cascade_idx_ = arrays["_blended_cascade_idx_"]
+    _blended_cascade_idx_ = arrays["_blended_cascade_idx_"]  # float64 dtype
     _troubles_buffer_ = arrays["_buffer_"][:1, ..., 1:]
 
     # assuming `troubles` has just been updated, update the cascade index arrays
-    xp.minimum(_cascade_idx_ + _any_troubles_, 1, out=_cascade_idx_)
-    cascade_idx[...] = _cascade_idx_[interior]  # does not include blending information
+    xp.minimum(_cascade_idx_ + _troubles_, 1, out=_cascade_idx_)
+    _blended_cascade_idx_[...] = _cascade_idx_
 
     # blend cascade index
     if blend:
-        _blended_cascade_idx_[...] = _cascade_idx_
         blend_troubled_cells(
             xp,
             _blended_cascade_idx_,
             active_dims,
             buffer=_troubles_buffer_,
         )
-        _cascade_idx_ = _blended_cascade_idx_
 
     # broadcast cascade index to each face
     if "x" in active_dims:
         F[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_, 1, out=_Fmask_)
+        map_cells_values_to_face_values(xp, _blended_cascade_idx_, 1, out=_Fmask_)
         mask = _Fmask_[interior]
         xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
         xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
 
     if "y" in active_dims:
         G[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_, 2, out=_Gmask_)
+        map_cells_values_to_face_values(xp, _blended_cascade_idx_, 2, out=_Gmask_)
         mask = _Gmask_[interior]
         xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
         xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
 
     if "z" in active_dims:
         H[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_, 3, out=_Hmask_)
+        map_cells_values_to_face_values(xp, _blended_cascade_idx_, 3, out=_Hmask_)
         mask = _Hmask_[interior]
         xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
         xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
@@ -781,11 +767,13 @@ def init_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    step_log["nfine_troubles_mean"] = []
-    step_log["nfine_troubles_max"] = []
+    step_log["nfine_troubles"] = []
 
+    step_log["nfine_NAD_violations"] = []
+    step_log["nfine_PAD_violations"] = []
     for var in idx.var_idx_map.keys():
-        step_log[f"nfine_troubles_{var}"] = []
+        step_log[f"nfine_NAD_violations_{var}"] = []
+        step_log[f"nfine_PAD_violations_{var}"] = []
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         step_log[f"nfine_cascade_idx{i}"] = []
@@ -802,11 +790,13 @@ def clear_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    step_log["nfine_troubles_mean"].clear()
-    step_log["nfine_troubles_max"].clear()
+    step_log["nfine_troubles"].clear()
 
+    step_log["nfine_NAD_violations"].clear()
+    step_log["nfine_PAD_violations"].clear()
     for var in idx.var_idx_map.keys():
-        step_log[f"nfine_troubles_{var}"].clear()
+        step_log[f"nfine_NAD_violations_{var}"].clear()
+        step_log[f"nfine_PAD_violations_{var}"].clear()
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         step_log[f"nfine_cascade_idx{i}"].clear()
@@ -816,12 +806,11 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     """
     Append troubled cell statistics from the finite volume solver's arrays to the step
     log. Specifically, log the sum of cells with 1 - theta > 0 using various criteria:
-        `nfine_troubles_mean`: Sum over all cells of the mean trouble in [0, 1] over
-            all variables.
-        `nfine_troubles_max`: Sum over all cells of the maximum trouble in {0, 1} over
-            all variables.
-        `nfine_troubles_{var}`: Sum over all cells of the trouble in {0, 1} for the
-            variable `var`.
+        `nfine_troubles`: Number of troubled cells in the interior of the troubles
+                            array.
+        `nfine_cascade_idx{i}`: Number of cells in the interior of the troubles array
+                                with cascade index i, for i in the cascade indices
+                                corresponding to fallback schemes (i.e. excluding 0).
 
     Args:
         fv_solver: The finite volume solver instance.
@@ -833,27 +822,23 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
     idx = fv_solver.variable_index_map
     step_log = fv_solver.step_log  # gets mutated
 
-    troubles = arrays["troubles"]
-    cascade_idx = arrays["cascade_idx"]
-    buffer = arrays["_buffer_"]
-
-    check_buffer_slots(buffer, required=4)
-    mean_troubles = buffer[interior][0, ..., 0]
-    max_troubles = buffer[interior][0, ..., 1]
+    troubles = arrays["_troubles_"][interior]
+    NAD_violations = arrays["_NAD_violations_"][interior]
+    PAD_violations = arrays["_PAD_violations_"][interior]
+    cascade_idx = arrays["_cascade_idx_"][interior]
 
     # track scalar quantities
-    mean_troubles[...] = xp.mean(troubles, axis=0)
-    max_troubles[...] = xp.max(troubles, axis=0)
+    step_log["nfine_troubles"].append(xp.sum(troubles).item())
 
-    n_mean = xp.sum(mean_troubles).item()
-    n_max = xp.sum(max_troubles).item()
-
-    step_log["nfine_troubles_mean"].append(n_mean)
-    step_log["nfine_troubles_max"].append(n_max)
-
+    nfine_NAD_violations = xp.sum(xp.any(NAD_violations, axis=0)).item()
+    nfine_PAD_violations = xp.sum(xp.any(PAD_violations, axis=0)).item()
+    step_log["nfine_NAD_violations"].append(nfine_NAD_violations)
+    step_log["nfine_PAD_violations"].append(nfine_PAD_violations)
     for var in idx.var_idx_map.keys():
-        n = xp.sum(troubles[idx(var), ...]).item()
-        step_log[f"nfine_troubles_{var}"].append(n)
+        nfine_NAD_violations_var = xp.sum(NAD_violations[idx(var)]).item()
+        nfine_PAD_violations_var = xp.sum(PAD_violations[idx(var)]).item()
+        step_log[f"nfine_NAD_violations_{var}"].append(nfine_NAD_violations_var)
+        step_log[f"nfine_PAD_violations_{var}"].append(nfine_PAD_violations_var)
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         n_cascade_idx_i = xp.sum(cascade_idx == i).item()
@@ -880,15 +865,18 @@ def log_troubled_cell_scalar_statistics(
         return max(lst) if lst else 0.0
 
     new_data = {
-        "nfine_troubles_mean": step_log["nfine_troubles_mean"].copy(),
-        "nfine_troubles_max": step_log["nfine_troubles_max"].copy(),
-        "n_troubles_mean": zero_max(step_log["nfine_troubles_mean"]),
-        "n_troubles_max": zero_max(step_log["nfine_troubles_max"]),
+        "nfine_troubles": step_log["nfine_troubles"].copy(),
+        "nfine_NAD_violations": step_log["nfine_NAD_violations"].copy(),
+        "nfine_PAD_violations": step_log["nfine_PAD_violations"].copy(),
+        "n_troubles": zero_max(step_log["nfine_troubles"]),
+        "n_NAD_violations": zero_max(step_log["nfine_NAD_violations"]),
+        "n_PAD_violations": zero_max(step_log["nfine_PAD_violations"]),
     }
 
     for var in idx.var_idx_map.keys():
-        new_data[f"nfine_troubles_{var}"] = step_log[f"nfine_troubles_{var}"].copy()
-        new_data[f"n_troubles_{var}"] = zero_max(step_log[f"nfine_troubles_{var}"])
+        for key in ["NAD_violations", "PAD_violations"]:
+            new_data[f"nfine_{key}_{var}"] = step_log[f"nfine_{key}_{var}"].copy()
+            new_data[f"n_{key}_{var}"] = zero_max(step_log[f"nfine_{key}_{var}"])
 
     for i, _ in enumerate(config.cascade[1:], start=1):
         new_data[f"nfine_cascade_idx{i}"] = step_log[f"nfine_cascade_idx{i}"].copy()
@@ -908,7 +896,7 @@ def log_troubled_cell_scalar_statistics(
             "MOOD troubled cell count mismatch: "
             f"{nfine} != {state.troubled_cell_count}"
         )
-    if not config.skip_trouble_counts and nfine != step_log["nfine_troubles_max"]:
+    if not config.skip_trouble_counts and nfine != step_log["nfine_troubles"]:
         raise ValueError(
             "MOOD troubled cell history mismatch: "
             f"{nfine} != {step_log['nfine_troubles_max']}"

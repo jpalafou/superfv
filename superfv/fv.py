@@ -694,7 +694,7 @@ def interpolate_cell_centers(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    if hasattr(xp, "cuda") and p <= 7:
+    if hasattr(xp, "cuda") and len(active_dims) <= 2 and p <= 7:
         return interpolation_kernel_helper(
             u, "-", active_dims, p, center=True, integrate=False, out=out, buffer=buffer
         )
@@ -738,7 +738,7 @@ def integrate_fv_averages(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    if hasattr(xp, "cuda") and p <= 7:
+    if hasattr(xp, "cuda") and len(active_dims) <= 2 and p <= 7:
         return interpolation_kernel_helper(
             u[..., 0],
             "-",
@@ -920,7 +920,7 @@ def interpolate_face_centers(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    if hasattr(xp, "cuda") and p <= 7:
+    if hasattr(xp, "cuda") and len(active_dims) <= 2 and p <= 7:
         return interpolation_kernel_helper(
             u,
             face_dim,
@@ -972,7 +972,7 @@ def transversely_integrate_nodes(
             integrations, is ignored for single-sweep integrations. Has shape
             (nvars, nx, ny, nz, nbuffer).
     """
-    if hasattr(xp, "cuda") and p <= 7:
+    if hasattr(xp, "cuda") and len(active_dims) <= 2 and p <= 7:
         return interpolation_kernel_helper(
             u,
             face_dim,

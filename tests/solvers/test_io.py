@@ -17,8 +17,8 @@ TEST_PATH = Path("tests/data")
 def test_discarding_snapshots(
     snapshot_mode: Literal["target", "every"], fixed_n_steps: bool
 ):
-    sim1 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0)
-    sim2 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0)
+    sim1 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=True)
+    sim2 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=True)
 
     if fixed_n_steps:
         sim1.run(n=20, snapshot_mode=snapshot_mode)
@@ -52,7 +52,13 @@ def test_discarding_snapshots(
 @pytest.mark.parametrize("fixed_n_steps", [True, False])
 def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: bool):
     sim = EulerSolver(
-        sod_shock_tube_1d, bcx="free", nx=100, p=1, ZS=True, adaptive_dt=False
+        sod_shock_tube_1d,
+        bcx="free",
+        nx=100,
+        p=1,
+        ZS=True,
+        adaptive_dt=False,
+        cupy=True,
     )
 
     if fixed_n_steps:

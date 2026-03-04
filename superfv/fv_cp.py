@@ -574,8 +574,11 @@ def interpolation_kernel_helper(
     """
     if len(active_dims) == 1:
         if face_dim == "-":
+            face_dim = active_dims[0]
+        elif face_dim != active_dims[0]:
             raise ValueError(
-                "face_dim must be specified when there is only one active dimension."
+                "face_dim must be the same as the active dimension or '-' if there is "
+                "only one active dimension."
             )
 
         interpolation_kernel_helper_1d(

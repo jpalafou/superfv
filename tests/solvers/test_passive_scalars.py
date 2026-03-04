@@ -19,6 +19,7 @@ def test_AdvectionSolver_passive_scalar_invariance():
         ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=np),
         nx=N,
         p=p,
+        cupy=True,
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=np),
@@ -27,6 +28,7 @@ def test_AdvectionSolver_passive_scalar_invariance():
         },
         nx=N,
         p=p,
+        cupy=True,
     )
 
     # run solvers
@@ -57,12 +59,13 @@ def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: st
         else {"MOOD": True, "NAD": 1e-5}
     )
     solver1 = EulerSolver(
-        ic=ic.sod_shock_tube_1d, **{f"n{dim}": N}, p=p, **limiting_config
+        ic=ic.sod_shock_tube_1d, **{f"n{dim}": N}, p=p, cupy=True, **limiting_config
     )
     solver2 = EulerSolver(
         ic=ic.sod_shock_tube_1d,
         **{f"n{dim}": N},
         p=p,
+        cupy=True,
         **limiting_config,
         ic_passives={
             "passive_square": lambda x, y, z, t, xp: xp.where(

@@ -33,6 +33,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
         max_MOOD_iters=max_MOOD_iters,
         PAD={"rho": (0, 1)},
         PAD_atol=PAD_atol,
+        cupy=True,
         **config,
     )
     sim.run(n=n_steps, q_max=2)
@@ -73,6 +74,7 @@ def test_mpp_2d(N: int, p: int, config: dict):
         NAD_gtol=tol,
         PAD={"rho": (0.0, 1.0)},
         PAD_atol=tol,
+        cupy=True,
         **config,
     )
     sim.run(n=n_steps, q_max=2)
@@ -105,6 +107,7 @@ def test_mpp_3d(cascade: str):
         NAD=True,
         PAD={"rho": (0.0, 1.0)},
         PAD_atol=PAD_atol,
+        cupy=True,
     )
     sim.run(n=n_steps, q_max=2)
 

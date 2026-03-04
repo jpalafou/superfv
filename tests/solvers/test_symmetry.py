@@ -22,11 +22,13 @@ def test_AdvectionSolver_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
     solver1 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{dim1}": 1}, xp=xp),
         p=p,
+        cupy=True,
         **{f"n{dim1}": N},
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{dim2}": 1}, xp=xp),
         p=p,
+        cupy=True,
         **{f"n{dim2}": N},
     )
 
@@ -61,6 +63,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, s
         ),
         p=p,
         GL=GL,
+        cupy=True,
         **{f"n{d1x}": N, f"n{d1y}": N},
     )
     solver2 = AdvectionSolver(
@@ -69,6 +72,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, s
         ),
         p=p,
         GL=GL,
+        cupy=True,
         **{f"n{d2x}": N, f"n{d2y}": N},
     )
 
@@ -104,6 +108,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
         nx=N,
         ny=N,
         GL=GL,
+        cupy=True,
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: slotted_disk(idx, x, y, z, rotation="cw", xp=xp),
@@ -113,6 +118,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
         nx=N,
         ny=N,
         GL=GL,
+        cupy=True,
     )
 
     # run solvers
@@ -145,6 +151,7 @@ def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
         nx=N,
         ny=N,
         nz=N,
+        cupy=True,
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=-1, vy=-1, vz=-1, xp=xp),
@@ -153,6 +160,7 @@ def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
         nx=N,
         ny=N,
         nz=N,
+        cupy=True,
     )
 
     # run solvers
@@ -203,6 +211,7 @@ def test_Sod_shock_tube_symmetry_1D(
         p=p,
         flux_recipe=flux_recipe,
         lazy_primitives=lazy_primitives,
+        cupy=True,
         **limiting_config,
     )
     solver2 = EulerSolver(
@@ -211,6 +220,7 @@ def test_Sod_shock_tube_symmetry_1D(
         p=p,
         flux_recipe=flux_recipe,
         lazy_primitives=lazy_primitives,
+        cupy=True,
         **limiting_config,
     )
 

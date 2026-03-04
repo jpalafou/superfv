@@ -1121,12 +1121,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_flat_theta_", np.ones((nvars, ntotal)))
 
         # MOOD arrays
-        arrays.add("troubles", np.zeros((nvars, nx, ny, nz), dtype=bool))
-        arrays.add("troubles_log", np.zeros((nvars, nx, ny, nz)))
-        arrays.add("revisable_troubles", np.zeros((1, nx, ny, nz), dtype=bool))
-        arrays.add("cascade_idx", np.zeros((1, nx, ny, nz), dtype=int))
-        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
-
         for scheme in self.MOOD_config.cascade:
             arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
             arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
@@ -1134,15 +1128,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         arrays.add("_unew_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_wnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_NAD_violations_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_var_PAD_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=np.int32))
-        arrays.add("_any_PAD_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-        arrays.add("_troubles_", np.zeros((nvars, _nx_, _ny_, _nz_), dtype=bool))
-        arrays.add("_any_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=bool))
+        arrays.add("_NAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_PAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("_troubles2_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
         arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
         arrays.add("_blended_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_)))
         arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
         arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
+        arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
+        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
         # helper attribute
         self.flux_names = {"x": "F", "y": "G", "z": "H"}
@@ -1454,8 +1449,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _wp_ = arrays["_wp_"]  # shape (..., 1)
         _w_ = arrays["_w_"]
         _has_shock_ = arrays["_has_shock_"]
-        _var_PAD_ = arrays["_var_PAD_"]
-        _any_PAD_ = arrays["_any_PAD_"]
+        _PAD_violations_ = arrays["_PAD_violations_"]
+        _any_violations_ = arrays["_troubles2_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
@@ -1489,10 +1484,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     _w_,
                     self.arrays["PAD_bounds"],
                     scheme.limiter_config.PAD_atol,
-                    violated_vars=_var_PAD_,
-                    violated_cells=_any_PAD_,
+                    violation_amounts=_PAD_violations_,
+                    cell_violated=_any_violations_,
                 )
-                xp.logical_or(_has_shock_, _any_PAD_, out=_has_shock_)
+                _has_shock_ |= _any_violations_
 
             _w_[...] = xp.where(_has_shock_, _w_, _wp_[..., 0])
         else:
@@ -1724,8 +1719,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Mj = self.arrays["_Mj_"]
         mj = self.arrays["_mj_"]
         alpha = self.arrays["_alpha_"]
-        var_PAD = self.arrays["_var_PAD_"]
-        any_PAD = self.arrays["_any_PAD_"]
+        PAD_violations = self.arrays["_PAD_violations_"]
+        any_violations = self.arrays["_troubles2_"]
         buffer = self.arrays["_buffer_"]
         wflat = self.arrays["_flat_w_"]
         wjflat = self.arrays["_flat_wj_"]
@@ -1736,7 +1731,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         thetaflat = self.arrays["_flat_theta_"]
 
         # compute theta
-        if self.cupy:
+        if self.cupy and mesh.ndim == 2 and scheme.p <= 7:
             nvars = w.shape[0]
             nx = w.shape[1]
             ny = w.shape[2]
@@ -1748,9 +1743,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wflat[...] = w.reshape(nvars, ntotal)
             wjflat[..., 0] = wcc.reshape(nvars, ntotal)
 
-            for i, wj in enumerate([wx, wy, wz]):
-                if wj is None:
-                    continue
+            for i, wj in enumerate([wt for wt in [wx, wy, wz] if wt is not None]):
                 idx1 = 1 + i * max_ninterps
                 idx2 = 1 + (i + 1) * max_ninterps
                 wjflat[..., slice(idx1, idx2)] = wj.reshape(nvars, ntotal, max_ninterps)
@@ -1818,22 +1811,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     Mj,
                     PAD_bounds,
                     PAD_atol,
-                    violated_vars=var_PAD,
-                    violated_cells=any_PAD,
+                    violation_amounts=PAD_violations,
+                    cell_violated=any_violations,
                 )
-                alpha[..., 0] = xp.where(var_PAD, -1.0, alpha[..., 0])
-
-                detect_PAD_violations(
-                    xp,
-                    mj,
-                    PAD_bounds,
-                    PAD_atol,
-                    violated_vars=var_PAD,
-                    violated_cells=any_PAD,
-                )
-                alpha[..., 0] = xp.where(var_PAD, -1.0, alpha[..., 0])
-
-            theta[...] = xp.where(alpha < 1.0, theta, 1.0)
+                alpha[..., 0] *= ~PAD_violations.astype(bool)
+            xp.maximum(alpha >= 1, theta, out=theta)
 
         # limit the face nodes
         w0 = w[..., xp.newaxis]
@@ -2145,11 +2127,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         axis = DIM_TO_AXIS[dim]
 
         F = self.arrays[flux_name]
-        self.xp.add(
-            out,
-            -(1 / h) * (F[crop(axis, (1, None))] - F[crop(axis, (None, -1))]),
-            out=out,
-        )
+        out += -(1 / h) * (F[crop(axis, (1, None))] - F[crop(axis, (None, -1))])
 
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         """
@@ -2215,21 +2193,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError("PAD bounds are required to enable adaptive dt.")
 
         # allocate arrays
-        var_PAD = xp.zeros(unew.shape, dtype=np.int32)
-        any_PAD = xp.zeros(unew[:1, ...].shape, dtype=np.int32)
         wnew = xp.empty_like(unew)
         self.conservatives_to_primitives(unew, wnew)
+        PAD_violations = xp.zeros_like(unew)
+        any_violations = xp.zeros_like(unew[:1, ...], dtype=np.int32)
 
         detect_PAD_violations(
             xp,
             wnew,
             scheme.limiter_config.PAD_bounds,
             scheme.limiter_config.PAD_atol,
-            violated_vars=var_PAD,
-            violated_cells=any_PAD,
+            violation_amounts=PAD_violations,
+            cell_violated=any_violations,
         )
 
-        return not xp.any(any_PAD)
+        return not xp.any(any_violations)
 
     def adaptive_dt_revision(self, t, u, dt):
         """
@@ -2401,8 +2379,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 clear_zhang_shu_scalar_statistics(self)
 
         if self.MOOD:
-            self.arrays["troubles_log"].fill(0)
-            self.arrays["cascade_idx_log"].fill(0)
+            self.arrays["troubles_log"].fill(0.0)
+            self.arrays["cascade_idx_log"].fill(0.0)
             if self.log_limiter_scalars:
                 clear_troubled_cell_scalar_statistics(self)
 
@@ -2412,7 +2390,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         super().increment_substepwise_logs()
 
-        xp = self.xp
+        interior = self.interior
 
         self.n_updates += self.mesh.size
 
@@ -2424,19 +2402,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             theta = self.arrays["_theta_"][self.interior][..., 0]
             theta_log = self.arrays["theta_log"]
 
-            xp.add(theta_log, theta, out=theta_log)
+            theta_log += theta
 
             if self.log_limiter_scalars:
                 append_zhang_shu_scalar_statistics(self)
 
         if self.MOOD:
-            troubles = self.arrays["troubles"]
+            troubles = self.arrays["_troubles_"][interior]
             troubles_log = self.arrays["troubles_log"]
-            cascade_idx = self.arrays["cascade_idx"]
+            cascade_idx = self.arrays["_cascade_idx_"][interior]
             cascade_idx_log = self.arrays["cascade_idx_log"]
 
-            xp.add(troubles_log, troubles, out=troubles_log)
-            xp.add(cascade_idx_log, cascade_idx, out=cascade_idx_log)
+            troubles_log += troubles
+            cascade_idx_log += cascade_idx
 
             self.MOOD_state.increment_substep_hists()
 

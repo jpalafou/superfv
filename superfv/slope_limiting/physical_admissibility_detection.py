@@ -9,8 +9,8 @@ def detect_PAD_violations(
     physical_bounds: ArrayLike,
     tol: float = 1e-15,
     *,
-    violated_vars: ArrayLike,
-    violated_cells: ArrayLike,
+    violation_amounts: ArrayLike,
+    cell_violated: ArrayLike,
 ):
     """
     Detects physical admissibility violations in the input array `wj`.
@@ -20,9 +20,9 @@ def detect_PAD_violations(
         wj: The input array of shape (nvars, nx, ny, nz).
         physical_bounds: An array of shape (nvars, 2) containing the physical bounds
             for each variable.
-        violated_vars: Output array for variable-wise violations. Has shape
-            (nvars, nx, ny, nz). 1 indicates a violation, 0 indicates no violation.
-        violated_cells: Output array for cell-wise violations. Has shape
+        violation_amounts: Output array for the amount of violation for each variable.
+            Has shape (nvars, nx, ny, nz).
+        cell_violated: Output array for cell-wise violations. Has shape
             (1, nx, ny, nz). 1 indicates a violation, 0 indicates no violation.
         tol: A small tolerance value to determine if a violation has occurred. Default
             is 1e-15.
@@ -31,8 +31,8 @@ def detect_PAD_violations(
         PAD_kernel_helper(
             wj,
             physical_bounds,
-            violated_vars,
-            violated_cells,
+            violation_amounts,
+            cell_violated,
             tol=tol,
         )
         return
@@ -40,12 +40,13 @@ def detect_PAD_violations(
     if wj.ndim != 4:
         raise ValueError("wj must be 4D with shape (nvars, nx, ny, nz).")
 
-    lower = physical_bounds[:, 0].reshape(-1, 1, 1, 1)
-    upper = physical_bounds[:, 1].reshape(-1, 1, 1, 1)
+    lower = physical_bounds[:, 0].reshape(-1, 1, 1, 1) - tol
+    upper = physical_bounds[:, 1].reshape(-1, 1, 1, 1) + tol
 
-    violated_vars[...] = wj < lower - tol
-    xp.logical_or(violated_vars, wj > upper + tol, out=violated_vars)
-    violated_cells[...] = xp.any(violated_vars > 0, axis=0)
+    violation_amounts[...] = 0.0
+    xp.minimum(wj - lower, violation_amounts, out=violation_amounts)
+    xp.minimum(upper - wj, violation_amounts, out=violation_amounts)
+    xp.any(violation_amounts, axis=0, keepdims=True, out=cell_violated)
 
 
 if CUPY_AVAILABLE:
@@ -57,18 +58,18 @@ if CUPY_AVAILABLE:
         void PAD_kernel(
             const double* __restrict__ wj,
             const double* __restrict__ physical_bounds,
-            int* __restrict__ violated_vars,
-            int* __restrict__ violated_cells,
+            double* __restrict__ violation_amounts,
+            int* __restrict__ cell_violated,
             const double tol,
             const int nvars,
             const int nx,
             const int ny,
             const int nz
         ){
-            // wj               : (nvars, nx, ny, nz)
-            // physical_bounds  : (nvars, 2)
-            // violated_cells   : (nx, ny, nz)
-            // violated_vars    : (nvars, nx, ny, nz)
+            // wj                   : (nvars, nx, ny, nz)
+            // physical_bounds      : (nvars, 2)
+            // violation_amounts    : (nvars, nx, ny, nz)
+            // cell_violated        : (1, nx, ny, nz)
 
             const long long tid    = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
@@ -87,19 +88,20 @@ if CUPY_AVAILABLE:
                     const long long i = (((long long)iv * nx + ix) * ny + iy) * nz + iz;
                     const double val = wj[i];
 
-                    const double lower_bound = physical_bounds[iv * 2];
-                    const double upper_bound = physical_bounds[iv * 2 + 1];
+                    const double lower_bound = physical_bounds[iv * 2] - tol;
+                    const double upper_bound = physical_bounds[iv * 2 + 1] + tol;
 
-                    const int var_violated = (val < lower_bound - tol
-                        || val > upper_bound + tol) ? 1 : 0;
-                    violated_vars[i] = var_violated;
+                    double violation_amount = 0.0;
+                    violation_amount = fmin(val - lower_bound, violation_amount);
+                    violation_amount = fmin(upper_bound - val, violation_amount);
 
-                    if (var_violated) {
+                    if (violation_amount < 0.0) {
                         violated = true;
                     }
-                }
 
-                violated_cells[ixyz] = violated ? 1 : 0;
+                    violation_amounts[i] = violation_amount;
+                }
+                cell_violated[ixyz] = violated ? 1 : 0;
             }
         }
         """,
@@ -109,8 +111,8 @@ if CUPY_AVAILABLE:
     def PAD_kernel_helper(
         wj: cp.ndarray,
         physical_bounds: cp.ndarray,
-        violated_vars: cp.ndarray,
-        violated_cells: cp.ndarray,
+        violation_amounts: cp.ndarray,
+        cell_violated: cp.ndarray,
         tol: float = 1e-15,
     ):
         """
@@ -120,29 +122,42 @@ if CUPY_AVAILABLE:
             wj: The input array of shape (nvars, nx, ny, nz)
             physical_bounds: An array of shape (nvars, 2) containing the physical
                 bounds for each variable.
-            violated_vars: An array to which the variable-wise violation mask is
-                written. Has shape (nvars, nx, ny, nz). Must be int32 dtype.
-            violated_cells: An array to which the cell-wise violation mask is written.
+            violation_amounts: An array to which the violation amounts are written.
+                Has shape (nvars, nx, ny, nz). Must be float64 dtype.
+            cell_violated: An array to which the cell-wise violation mask is written.
                 Has shape (1, nx, ny, nz). Must be int32 dtype.
             tol: A small tolerance value to determine if a violation has occurred.
         """
-        if wj.ndim != 4:
-            raise ValueError("wj must be 4D with shape (nvars, nx, ny, nz).")
-
-        nvars, nx, ny, nz = wj.shape
-
         if not wj.flags.c_contiguous:
             raise ValueError("wj must be C-contiguous.")
         if not physical_bounds.flags.c_contiguous:
             raise ValueError("physical_bounds must be C-contiguous.")
-        if not violated_vars.flags.c_contiguous:
-            raise ValueError("violated_vars must be C-contiguous.")
-        if not violated_cells.flags.c_contiguous:
-            raise ValueError("violated_cells must be C-contiguous.")
-        if violated_vars.dtype != cp.int32:
-            raise ValueError("violated_vars must be of dtype int32.")
-        if violated_cells.dtype != cp.int32:
-            raise ValueError("violated_cells must be of dtype int32.")
+        if not violation_amounts.flags.c_contiguous:
+            raise ValueError("violation_amounts must be C-contiguous.")
+        if not cell_violated.flags.c_contiguous:
+            raise ValueError("cell_violated must be C-contiguous.")
+        if wj.ndim != 4 or violation_amounts.ndim != 4 or cell_violated.ndim != 4:
+            raise ValueError(
+                "wj, violation_amounts, and cell_violated must be 4D arrays."
+            )
+        if (
+            physical_bounds.ndim != 2
+            or physical_bounds.shape[0] != wj.shape[0]
+            or physical_bounds.shape[1] != 2
+        ):
+            raise ValueError(
+                "physical_bounds must be a 2D array with shape (nvars, 2)."
+            )
+        if not wj.dtype == cp.float64:
+            raise ValueError("wj must be of dtype float64.")
+        if not physical_bounds.dtype == cp.float64:
+            raise ValueError("physical_bounds must be of dtype float64.")
+        if violation_amounts.dtype != cp.float64:
+            raise ValueError("violation_amounts must be of dtype float64.")
+        if cell_violated.dtype != cp.int32:
+            raise ValueError("cell_violated must be of dtype int32.")
+
+        nvars, nx, ny, nz = wj.shape
 
         threads_per_block = 256
         blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
@@ -153,8 +168,8 @@ if CUPY_AVAILABLE:
             (
                 wj,
                 physical_bounds,
-                violated_vars,
-                violated_cells,
+                violation_amounts,
+                cell_violated,
                 tol,
                 nvars,
                 nx,
