@@ -16,7 +16,7 @@ if args.cupy:
 overwrite = True
 
 # loop parameters
-N_values = [32, 64, 128, 256, 512, 1024, 1600]
+N_values = [32, 64, 128, 256, 512, 1024, 2048]
 
 common = dict(
     PAD={"rho": (0, None), "P": (0, None)},

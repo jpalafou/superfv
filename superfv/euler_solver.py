@@ -1,4 +1,5 @@
 import warnings
+from functools import cached_property
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -23,7 +24,6 @@ if CUPY_AVAILABLE:
         make_prim_to_cons_elementwise_kernel,
         sound_speed_cp,
     )
-    from .riemann_solvers import make_hllc_elementwise_kernel
     from .slope_limiting.shock_detection import compute_shocks_kernel_helper
 
 
@@ -312,13 +312,6 @@ class EulerSolver(FiniteVolumeSolver):
         self.arrays.add("_c_", np.empty((1, _nx_, _ny_, _nz_)))
         self.arrays.add("_wr_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
-        # special cupy functions
-        if self.cupy:
-            n_passives = self.n_passive_vars
-            self.prim_to_cons_cp = make_prim_to_cons_elementwise_kernel(n_passives)
-            self.cons_to_prim_cp = make_cons_to_prim_elementwise_kernel(n_passives)
-            self.hllc_cp = make_hllc_elementwise_kernel(n_passives)
-
     def define_vars(self) -> VariableIndexMap:
         """
         Returns an VariableIndexMap object with the following variables:
@@ -359,7 +352,7 @@ class EulerSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
         gamma = self.gamma
 
-        if self.cupy and hasattr(self, "prim_to_cons_cp"):
+        if self.cupy:
             self.prim_to_cons_cp(
                 w[idx("rho")],
                 w[idx("vx")],
@@ -378,6 +371,10 @@ class EulerSolver(FiniteVolumeSolver):
         else:
             u[...] = prim_to_cons(xp, idx, w, gamma)
 
+    @cached_property
+    def prim_to_cons_cp(self):
+        return make_prim_to_cons_elementwise_kernel(self.n_passive_vars)
+
     def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
         """
         Convert conservative variables to primitive variables in place.
@@ -389,7 +386,7 @@ class EulerSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
         gamma = self.gamma
 
-        if self.cupy and hasattr(self, "cons_to_prim_cp"):
+        if self.cupy:
             self.cons_to_prim_cp(
                 u[idx("rho")],
                 u[idx("mx")],
@@ -416,6 +413,10 @@ class EulerSolver(FiniteVolumeSolver):
                 self.isothermal,
                 self.iso_cs,
             )
+
+    @cached_property
+    def cons_to_prim_cp(self):
+        return make_cons_to_prim_elementwise_kernel(self.n_passive_vars)
 
     def init_riemann_solver(self, riemann_solver: str):
         """
