@@ -5,6 +5,8 @@ from functools import lru_cache
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cast
 
+import numpy as np
+
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BCs, apply_bc
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
@@ -236,6 +238,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             - SED is not enabled: (nvars, nx, ny, nz, 2)
     """
     # gather solver parameters
+    idx = fv_solver.variable_index_map
     config = fv_solver.MOOD_config
     MOOD_state = fv_solver.MOOD_state
     xp = fv_solver.xp
@@ -291,56 +294,73 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     fv_solver.apply_bc(t, unew, scheme=fv_solver.base_scheme)
     fv_solver.conservatives_to_primitives(unew, wnew)
 
-    if NAD:
-        NAD_rtol_local: Optional[ArrayLike] = None
-        NAD_gtol_local: Optional[ArrayLike] = None
-        NAD_atol_local: Optional[ArrayLike] = None
+    if fv_solver.cupy:
+        if NAD_gtol is not None:
+            raise NotImplementedError("NAD gtol is not yet implemented for GPU arrays.")
 
-        if fv_solver.cupy:
-            fv_solver.xp.cuda.Device().synchronize()
-        fv_solver.stepper_timer.start("detect_troubles:NAD")
-
-        if fv_solver.cupy:
-            if NAD_gtol is not None:
-                raise NotImplementedError(
-                    "Global range-based NAD is not implemented for CuPy."
-                )
-            if not delta and NAD_rtol is None:
-                raise ValueError("rtol must be provided if delta is False.")
-
-            qold = wold if primNAD else uold
-            qnew = wnew if primNAD else unew
-
-            NAD_rtol_float = NAD_rtol[0].item() if NAD_rtol is not None else 0.0
-            if scale_NAD_rtol_by_dt:
-                NAD_rtol_float *= dt
-            NAD_atol_float = NAD_atol[0].item() if NAD_atol is not None else 0.0
-
-            if SED:
-                fv_solver.detect_smooth_extrema(qnew, scheme)
-            compute_dmp(
-                xp,
-                qold,
-                active_dims,
-                include_corners,
-                M=dmp_M,
-                m=dmp_m,
-            )
-            NAD_kernel_helper(
-                qnew,
-                dmp_M,
-                dmp_m,
-                NAD_violations,
-                troubles_temp,
-                NAD_rtol_float,
-                NAD_atol_float,
-                delta,
-                SED,
-                alpha[..., 0],
-            )
-            xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
-
+        # get lim_slc mask
+        nvars = wnew.shape[0]
+        if "NAD_mask" in arrays:
+            NAD_mask = arrays["NAD_mask"]
         else:
+            lim_idxs_list: List[int]
+
+            lim_idxs = idx("limiting")
+            if isinstance(lim_idxs, int):
+                lim_idxs_list = [lim_idxs]
+            elif isinstance(lim_idxs, slice):
+                lim_idxs_list = list(range(*lim_idxs.indices(nvars)))
+            elif isinstance(lim_idxs, np.ndarray):
+                lim_idxs_list = [x.item() for x in lim_idxs]
+            else:
+                raise ValueError(
+                    f"Unsupported slice type for lim_slc: {type(lim_idxs)}"
+                )
+
+            NAD_mask = xp.array(
+                [1 if i in lim_idxs_list else 0 for i in range(nvars)], dtype=cp.int32
+            )
+            arrays.add("NAD_mask", NAD_mask)
+
+        # detect troubled cells
+        if SED:
+            fv_solver.detect_smooth_extrema(wnew if primNAD else unew, scheme)
+        compute_dmp(
+            xp,
+            wold if primNAD else uold,
+            active_dims,
+            include_corners,
+            M=dmp_M,
+            m=dmp_m,
+        )
+        detect_troubles_kernel_helper(
+            unew,
+            wnew,
+            dmp_M,
+            dmp_m,
+            NAD_mask,
+            alpha[..., 0],
+            PAD_bounds if PAD_bounds is not None else xp.empty((nvars, 2)),
+            NAD_violations,
+            PAD_violations,
+            troubles,
+            NAD,
+            PAD,
+            SED,
+            primNAD,
+            delta,
+            NAD_rtol[0].item() if NAD_rtol is not None else 0.0,
+            NAD_atol[0].item() if NAD_atol is not None else 0.0,
+            PAD_atol,
+        )
+    else:
+        if NAD:
+            fv_solver.stepper_timer.start("detect_troubles:NAD")
+
+            NAD_rtol_local: Optional[ArrayLike] = None
+            NAD_gtol_local: Optional[ArrayLike] = None
+            NAD_atol_local: Optional[ArrayLike] = None
+
             if NAD_rtol is not None:
                 NAD_rtol_local = NAD_rtol.copy()
                 if scale_NAD_rtol_by_dt:
@@ -374,29 +394,23 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             # update troubles
             xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
 
-        if fv_solver.cupy:
-            fv_solver.xp.cuda.Device().synchronize()
-        fv_solver.stepper_timer.stop("detect_troubles:NAD")
+            fv_solver.stepper_timer.stop("detect_troubles:NAD")
 
-    # compute PAD violations
-    if PAD:
-        if fv_solver.cupy:
-            fv_solver.xp.cuda.Device().synchronize()
-        fv_solver.stepper_timer.start("detect_troubles:PAD")
+        # compute PAD violations
+        if PAD:
+            fv_solver.stepper_timer.start("detect_troubles:PAD")
 
-        detect_PAD_violations(
-            xp,
-            wnew,
-            cast(ArrayLike, PAD_bounds),
-            PAD_atol,
-            violation_amounts=PAD_violations,
-            cell_violated=troubles_temp,
-        )
-        troubles |= troubles_temp
+            detect_PAD_violations(
+                xp,
+                wnew,
+                cast(ArrayLike, PAD_bounds),
+                PAD_atol,
+                violation_amounts=PAD_violations,
+                cell_violated=troubles_temp,
+            )
+            troubles |= troubles_temp
 
-        if fv_solver.cupy:
-            fv_solver.xp.cuda.Device().synchronize()
-        fv_solver.stepper_timer.stop("detect_troubles:PAD")
+            fv_solver.stepper_timer.stop("detect_troubles:PAD")
 
     # update troubles workspace
     apply_bc(
@@ -1112,6 +1126,210 @@ if CUPY_AVAILABLE:
                 nz,
                 SED,
                 alpha,
+            ),
+        )
+
+        return (slice(None), slice(None), slice(None), slice(None))
+
+    detect_troubles_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void detect_troubles_kernel(
+            const double* __restrict__ unew,
+            const double* __restrict__ wnew,
+            const double* __restrict__ M,
+            const double* __restrict__ m,
+            const int* __restrict__ NAD_mask,
+            const double* __restrict__ alpha,
+            const double* __restrict__ physical_bounds,
+            double* __restrict__ NAD_violation_amounts,
+            double* __restrict__ PAD_violation_amounts,
+            int* __restrict__ troubles,
+            const bool NAD,
+            const bool SED,
+            const bool PAD,
+            const bool primNAD,
+            const bool delta,
+            const double NAD_rtol,
+            const double NAD_atol,
+            const double PAD_atol,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz
+        ) {
+            // unew                     (nvars, nx, ny, nz)
+            // wnew                     (nvars, nx, ny, nz)
+            // M                        (nvars, nx, ny, nz)
+            // m                        (nvars, nx, ny, nz)
+            // NAD_mask                 (nvars,)
+            // alpha                    (nvars, nx, ny, nz)
+            // physical_bounds          (nvars, 2)
+            // NAD_violation_amounts    (nvars, nx, ny, nz)
+            // PAD_violation_amounts    (nvars, nx, ny, nz)
+            // troubles                 (1, nx, ny, nz)
+
+            const long long tid    = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long nxyz = (long long)nx * (long long)ny * (long long)nz;
+
+            for (long long ixyz = tid; ixyz < nxyz; ixyz += stride) {
+                long long t = ixyz;
+                const int iz = t % nz; t /= nz;
+                const int iy = t % ny; t /= ny;
+                const int ix = t % nx; t /= nx;
+
+                bool troubled = false;
+
+                for (int iv = 0; iv < nvars; iv++) {
+                    const long long i = (((long long)iv * nx + ix) * ny + iy) * nz + iz;
+
+                    // - - - compute NAD violations - - -
+                    double NAD_violation = 0.0;
+
+                    if (NAD && NAD_mask[iv] == 1) {
+                        double lower_NAD_bound, upper_NAD_bound;
+
+                        if (delta) {
+                            double delta_amount = NAD_rtol * (M[i] - m[i]) + NAD_atol;
+                            lower_NAD_bound = m[i] - delta_amount;
+                            upper_NAD_bound = M[i] + delta_amount;
+                        } else {
+                            lower_NAD_bound = m[i] - NAD_rtol * fabs(m[i]);
+                            upper_NAD_bound = M[i] + NAD_rtol * fabs(M[i]);
+                        }
+
+                        double val2check = primNAD ? wnew[i] : unew[i];
+                        NAD_violation = fmin(NAD_violation, val2check - lower_NAD_bound);
+                        NAD_violation = fmin(NAD_violation, upper_NAD_bound - val2check);
+                    }
+
+                    // - - - apply SED relaxation - - -
+                    if (SED && alpha[i] >= 1.0) {
+                        NAD_violation = 0.0;
+                    }
+
+                    NAD_violation_amounts[i] = NAD_violation;
+
+                    // - - - compute PAD violations - - -
+                    double PAD_violation = 0.0;
+
+                    if (PAD) {
+                        double lower_PAD_bound = physical_bounds[iv * 2] - PAD_atol;
+                        double upper_PAD_bound = physical_bounds[iv * 2 + 1] + PAD_atol;
+
+                        PAD_violation = fmin(PAD_violation, wnew[i] - lower_PAD_bound);
+                        PAD_violation = fmin(PAD_violation, upper_PAD_bound - wnew[i]);
+
+                        PAD_violation_amounts[i] = PAD_violation;
+                    }
+
+                    // update troubled status
+                    if (NAD_violation < 0.0 || PAD_violation < 0.0) {
+                        troubled = true;
+                    }
+                }
+                troubles[ixyz] = troubled ? 1 : 0;
+            }
+        }
+        """,
+        name="detect_troubles_kernel",
+    )
+
+    def detect_troubles_kernel_helper(
+        unew: cp.ndarray,
+        wnew: cp.ndarray,
+        M: cp.ndarray,
+        m: cp.ndarray,
+        NAD_mask: cp.ndarray,
+        alpha: cp.ndarray,
+        physical_bounds: cp.ndarray,
+        NAD_violation_amounts: cp.ndarray,
+        PAD_violation_amounts: cp.ndarray,
+        troubles: cp.ndarray,
+        NAD: bool,
+        PAD: bool,
+        SED: bool,
+        primNAD: bool,
+        delta: bool,
+        NAD_rtol: float,
+        NAD_atol: float,
+        PAD_atol: float,
+    ) -> Tuple[slice, ...]:
+        if not wnew.flags.c_contiguous or wnew.dtype != cp.float64:
+            raise ValueError("wnew must be a C-contiguous array of dtype float64.")
+        if not M.flags.c_contiguous or M.dtype != cp.float64:
+            raise ValueError("M must be a C-contiguous array of dtype float64.")
+        if not m.flags.c_contiguous or m.dtype != cp.float64:
+            raise ValueError("m must be a C-contiguous array of dtype float64.")
+        if (
+            not physical_bounds.flags.c_contiguous
+            or physical_bounds.dtype != cp.float64
+            or physical_bounds.ndim != 2
+            or physical_bounds.shape[1] != 2
+        ):
+            raise ValueError(
+                "physical_bounds must be a C-contiguous array of shape (nvars, 2) and "
+                "dtype float64."
+            )
+        if (
+            not NAD_violation_amounts.flags.c_contiguous
+            or NAD_violation_amounts.dtype != cp.float64
+        ):
+            raise ValueError(
+                "NAD_violation_amounts must be a C-contiguous array of dtype float64."
+            )
+        if (
+            not PAD_violation_amounts.flags.c_contiguous
+            or PAD_violation_amounts.dtype != cp.float64
+        ):
+            raise ValueError(
+                "PAD_violation_amounts must be a C-contiguous array of dtype float64."
+            )
+        if not troubles.flags.c_contiguous or troubles.dtype != cp.int32:
+            raise ValueError("troubles must be a C-contiguous array of dtype int32.")
+        if troubles.shape != (1, wnew.shape[1], wnew.shape[2], wnew.shape[3]):
+            raise ValueError(
+                "troubles must have shape (1, nx, ny, nz) where (nx, ny, nz) are the "
+                "spatial dimensions of wnew."
+            )
+        if not alpha.flags.c_contiguous or alpha.dtype != cp.float64:
+            raise ValueError("alpha must be a C-contiguous array of dtype float64.")
+        if alpha.shape != wnew.shape:
+            raise ValueError("alpha must have the same shape as wnew.")
+
+        # launch kernel
+        nvars, nx, ny, nz = wnew.shape
+        threads_per_block = 256
+        n_blocks = (nx * ny * nz + threads_per_block - 1) // threads_per_block
+
+        detect_troubles_kernel(
+            (n_blocks,),
+            (threads_per_block,),
+            (
+                unew,
+                wnew,
+                M,
+                m,
+                NAD_mask,
+                alpha,
+                physical_bounds,
+                NAD_violation_amounts,
+                PAD_violation_amounts,
+                troubles,
+                NAD,
+                SED,
+                PAD,
+                primNAD,
+                delta,
+                NAD_rtol,
+                NAD_atol,
+                PAD_atol,
+                nvars,
+                nx,
+                ny,
+                nz,
             ),
         )
 
