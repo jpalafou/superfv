@@ -13,7 +13,7 @@ from superfv.slope_limiting.physical_admissibility_detection import (
     detect_PAD_violations,
 )
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
 if TYPE_CHECKING:
@@ -263,7 +263,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     skip_trouble_counts = config.skip_trouble_counts
 
     # determine limiting style
-    primitive_NAD = scheme.flux_recipe in (2, 3)
+    primNAD = scheme.flux_recipe in (2, 3)
     max_idx = len(cascade) - 1
 
     # allocate arrays
@@ -292,46 +292,87 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     fv_solver.conservatives_to_primitives(unew, wnew)
 
     if NAD:
-        if fv_solver.cupy:
-            fv_solver.xp.cuda.Device().synchronize()
-        fv_solver.stepper_timer.start("detect_troubles:NAD")
-
         NAD_rtol_local: Optional[ArrayLike] = None
         NAD_gtol_local: Optional[ArrayLike] = None
         NAD_atol_local: Optional[ArrayLike] = None
 
-        if NAD_rtol is not None:
-            NAD_rtol_local = NAD_rtol.copy()
+        if fv_solver.cupy:
+            fv_solver.xp.cuda.Device().synchronize()
+        fv_solver.stepper_timer.start("detect_troubles:NAD")
+
+        if fv_solver.cupy:
+            if NAD_gtol is not None:
+                raise NotImplementedError(
+                    "Global range-based NAD is not implemented for CuPy."
+                )
+            if not delta and NAD_rtol is None:
+                raise ValueError("rtol must be provided if delta is False.")
+
+            qold = wold if primNAD else uold
+            qnew = wnew if primNAD else unew
+
+            NAD_rtol_float = NAD_rtol[0].item() if NAD_rtol is not None else 0.0
             if scale_NAD_rtol_by_dt:
-                NAD_rtol_local *= dt
-        if NAD_gtol is not None:
-            NAD_gtol_local = NAD_gtol
-        if NAD_atol is not None:
-            NAD_atol_local = NAD_atol
+                NAD_rtol_float *= dt
+            NAD_atol_float = NAD_atol[0].item() if NAD_atol is not None else 0.0
 
-        detect_NAD_violations(
-            xp,
-            (wnew if primitive_NAD else unew),
-            (wold if primitive_NAD else uold),
-            active_dims=active_dims,
-            delta=delta,
-            rtol=NAD_rtol_local,
-            gtol=NAD_gtol_local,
-            atol=NAD_atol_local,
-            include_corners=include_corners,
-            out=NAD_violations,
-            M=dmp_M,
-            m=dmp_m,
-            buffer=buffer,
-        )
+            if SED:
+                fv_solver.detect_smooth_extrema(qnew, scheme)
+            compute_dmp(
+                xp,
+                qold,
+                active_dims,
+                include_corners,
+                M=dmp_M,
+                m=dmp_m,
+            )
+            NAD_kernel_helper(
+                qnew,
+                dmp_M,
+                dmp_m,
+                NAD_violations,
+                troubles_temp,
+                NAD_rtol_float,
+                NAD_atol_float,
+                delta,
+                SED,
+                alpha[..., 0],
+            )
+            xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
 
-        # compute smooth extrema
-        if SED:
-            fv_solver.detect_smooth_extrema((wnew if primitive_NAD else unew), scheme)
-            NAD_violations *= alpha[..., 0] < 1
+        else:
+            if NAD_rtol is not None:
+                NAD_rtol_local = NAD_rtol.copy()
+                if scale_NAD_rtol_by_dt:
+                    NAD_rtol_local *= dt
+            if NAD_gtol is not None:
+                NAD_gtol_local = NAD_gtol
+            if NAD_atol is not None:
+                NAD_atol_local = NAD_atol
 
-        # update troubles
-        xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
+            detect_NAD_violations(
+                xp,
+                (wnew if primNAD else unew),
+                (wold if primNAD else uold),
+                active_dims=active_dims,
+                delta=delta,
+                rtol=NAD_rtol_local,
+                gtol=NAD_gtol_local,
+                atol=NAD_atol_local,
+                include_corners=include_corners,
+                out=NAD_violations,
+                M=dmp_M,
+                m=dmp_m,
+                buffer=buffer,
+            )
+
+            # compute smooth extrema
+            if SED:
+                fv_solver.detect_smooth_extrema((wnew if primNAD else unew), scheme)
+                NAD_violations *= alpha[..., 0] < 1
+
+            # update troubles
+            xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
 
         if fv_solver.cupy:
             fv_solver.xp.cuda.Device().synchronize()
@@ -920,3 +961,158 @@ def log_troubled_cell_scalar_statistics(
     data.update(
         {"n_MOOD_iters": state.iter_count, "nfine_MOOD_iters": state.iter_count_hist}
     )
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+    NAD_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void NAD_kernel(
+            const double* __restrict__ wnew,
+            const double* __restrict__ M,
+            const double* __restrict__ m,
+            double* __restrict__ violation_amounts,
+            int* __restrict__ cell_violated,
+            const double rtol,
+            const double atol,
+            const bool delta,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const bool SED,
+            const double* __restrict__ alpha
+        ) {
+            // wnew                 (nvars, nx, ny, nz)
+            // M                    (nvars, nx, ny, nz)
+            // m                    (nvars, nx, ny, nz)
+            // violation_amounts    (nvars, nx, ny, nz)
+            // cell_violated        (1, nx, ny, nz)
+
+            const long long tid    = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long nxyz = (long long)nx * (long long)ny * (long long)nz;
+
+            for (long long ixyz = tid; ixyz < nxyz; ixyz += stride) {
+                long long t = ixyz;
+                const int iz = t % nz; t /= nz;
+                const int iy = t % ny; t /= ny;
+                const int ix = t % nx; t /= nx;
+
+                bool violated = false;
+
+                for (int iv = 0; iv < nvars; iv++) {
+                    const long long i = (((long long)iv * nx + ix) * ny + iy) * nz + iz;
+
+                    // compute NAD violations
+                    double lower_bound, upper_bound;
+                    double violation_amount = 0.0;
+
+                    if (delta) {
+                        double delta_amount = rtol * (M[i] - m[i]) + atol;
+                        lower_bound = m[i] - delta_amount;
+                        upper_bound = M[i] + delta_amount;
+                    } else {
+                        lower_bound = m[i] - rtol * fabs(m[i]);
+                        upper_bound = M[i] + rtol * fabs(M[i]);
+                    }
+
+                    violation_amount = fmin(violation_amount, wnew[i] - lower_bound);
+                    violation_amount = fmin(violation_amount, upper_bound - wnew[i]);
+
+                    // apply SED relaxation
+                    if (SED && alpha[i] >= 1.0) {
+                        violation_amount = 0.0;
+                    }
+
+                    // update violated status and violation amounts
+                    if (violation_amount < 0.0) {
+                        violated = true;
+                    }
+
+                    violation_amounts[i] = violation_amount;
+                }
+                cell_violated[ixyz] = violated ? 1 : 0;
+            }
+        }
+        """,
+        name="NAD_kernel",
+    )
+
+    def NAD_kernel_helper(
+        wnew: cp.ndarray,
+        M: cp.ndarray,
+        m: cp.ndarray,
+        violation_amounts: cp.ndarray,
+        cell_violated: cp.ndarray,
+        rtol: float,
+        atol: float,
+        delta: bool,
+        SED: bool,
+        alpha: cp.ndarray,
+    ) -> Tuple[slice, ...]:
+        if not wnew.flags.c_contiguous or wnew.dtype != cp.float64:
+            raise ValueError("wnew must be a C-contiguous array of dtype float64.")
+        if not M.flags.c_contiguous or M.dtype != cp.float64:
+            raise ValueError("M must be a C-contiguous array of dtype float64.")
+        if not m.flags.c_contiguous or m.dtype != cp.float64:
+            raise ValueError("m must be a C-contiguous array of dtype float64.")
+        if (
+            not violation_amounts.flags.c_contiguous
+            or violation_amounts.dtype != cp.float64
+        ):
+            raise ValueError(
+                "violation_amounts must be a C-contiguous array of dtype float64."
+            )
+        if not cell_violated.flags.c_contiguous or cell_violated.dtype != cp.int32:
+            raise ValueError(
+                "cell_violated must be a C-contiguous array of dtype int32."
+            )
+        if (
+            M.shape != wnew.shape
+            or m.shape != wnew.shape
+            or violation_amounts.shape != wnew.shape
+        ):
+            raise ValueError(
+                "M, m, and violation_amounts must have the same shape as wnew."
+            )
+        if cell_violated.shape != (1, wnew.shape[1], wnew.shape[2], wnew.shape[3]):
+            raise ValueError(
+                "cell_violated must have shape (1, nx, ny, nz) where (nx, ny, nz) are "
+                "the spatial dimensions of wnew."
+            )
+        if not alpha.flags.c_contiguous or alpha.dtype != cp.float64:
+            raise ValueError("alpha must be a C-contiguous array of dtype float64.")
+        if alpha.shape != wnew.shape:
+            raise ValueError("alpha must have the same shape as wnew.")
+
+        # launch kernel
+        nvars, nx, ny, nz = wnew.shape
+
+        threads_per_block = 256
+        n_blocks = (nx * ny * nz + threads_per_block - 1) // threads_per_block
+        NAD_kernel(
+            (n_blocks,),
+            (threads_per_block,),
+            (
+                wnew,
+                M,
+                m,
+                violation_amounts,
+                cell_violated,
+                rtol,
+                atol,
+                delta,
+                nvars,
+                nx,
+                ny,
+                nz,
+                SED,
+                alpha,
+            ),
+        )
+
+        return (slice(None), slice(None), slice(None), slice(None))

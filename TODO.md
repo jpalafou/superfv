@@ -3,3 +3,4 @@
 - [ ] troubles only saved as (1, nx, ny, nz). PAD_violations and NAD_violations now
         saved separately as (nvars, nx, ny, nz).
 - [ ] NAD/detect troubles RawKernel
+- [ ] NumPy MOOD supports multivar NAD tols, CuPy MOOD does not

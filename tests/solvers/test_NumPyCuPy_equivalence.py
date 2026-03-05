@@ -7,6 +7,17 @@ from superfv.initial_conditions import sinus, square
 from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.norms import linf_norm
 
+aposteriori = dict(
+    MOOD=True,
+    NAD_rtol=1e-5,
+    cascade="muscl",
+    max_MOOD_iters=1,
+    face_fallback=False,
+    lazy_primitives="full",
+    MUSCL_limiter="PP2D",
+    PAD={"rho": (0, None), "P": (0, None)},
+)
+
 
 @pytest.mark.parametrize("f", [square, sinus])
 @pytest.mark.parametrize(
@@ -46,6 +57,9 @@ from superfv.tools.norms import linf_norm
         dict(p=3, ZS=True, adaptive_dt=False, SED=True, check_uniformity=False),
         dict(p=3, ZS=True, adaptive_dt=False, SED=True, check_uniformity=True),
         dict(p=3, ZS=True, adaptive_dt=False, lazy_primitives="adaptive", eta_max=0.0),
+        dict(p=3, NAD_delta=True, NAD_atol=1e-10, SED=False, **aposteriori),
+        dict(p=3, NAD_delta=False, SED=False, **aposteriori),
+        dict(p=3, NAD_delta=True, NAD_atol=1e-10, SED=True, **aposteriori),
     ],
 )
 def test_hydro_advection(f: callable, config: dict):
@@ -63,6 +77,5 @@ def test_hydro_advection(f: callable, config: dict):
     sim1.run(n=n_steps, muscl_hancock=config.get("MUSCL", False))
     sim2.run(n=n_steps, muscl_hancock=config.get("MUSCL", False))
 
-    tol = 1e-13 if config["p"] > 2 else 1e-14
-    assert linf_norm(sim2.snapshots[-1]["u"] - sim1.snapshots[-1]["u"]) < tol
-    assert linf_norm(sim2.snapshots[-1]["ucc"] - sim1.snapshots[-1]["ucc"]) < tol
+    assert linf_norm(sim2.snapshots[-1]["u"] - sim1.snapshots[-1]["u"]) < 1e-12
+    assert linf_norm(sim2.snapshots[-1]["ucc"] - sim1.snapshots[-1]["ucc"]) < 1e-12
