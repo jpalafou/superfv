@@ -1267,11 +1267,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             "integrate_fluxes:GL",
             "integrate_fluxes:transverse",
             "MOOD_loop",
-            "compute_RHS",
-            "slope_limiter:detect_smooth_extrema",
             "MOOD_loop:compute_fallback_fluxes",
-            "MOOD_loop:detect_troubled_cells",
+            "MOOD_loop:detect_troubles",
+            "detect_troubles:NAD",
+            "detect_troubles:PAD",
             "MOOD_loop:revise_fluxes",
+            "slope_limiter:detect_smooth_extrema",
+            "compute_RHS",
         ]
         new_stepper_timer = StepperTimer(self.stepper_timer.cats + new_timer_cats)
         self.stepper_timer = new_stepper_timer
@@ -2060,13 +2062,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for _ in range(config.max_iters):
             if self.cupy:
                 self.xp.cuda.Device().synchronize()
-            self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
+            self.stepper_timer.start("MOOD_loop:detect_troubles")
 
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
 
             if self.cupy:
                 self.xp.cuda.Device().synchronize()
-            self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
+            self.stepper_timer.stop("MOOD_loop:detect_troubles")
 
             if n_revisable:
                 if self.cupy:
@@ -2086,13 +2088,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if n_revisable and config.detect_closing_troubles:
             if self.cupy:
                 self.xp.cuda.Device().synchronize()
-            self.stepper_timer.start("MOOD_loop:detect_troubled_cells")
+            self.stepper_timer.start("MOOD_loop:detect_troubles")
 
             n_revisable, n_total = MOOD.detect_troubled_cells(self, t)
 
             if self.cupy:
                 self.xp.cuda.Device().synchronize()
-            self.stepper_timer.stop("MOOD_loop:detect_troubled_cells")
+            self.stepper_timer.stop("MOOD_loop:detect_troubles")
 
         state.update_troubled_cell_count(n_total)
 
@@ -2835,7 +2837,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         children = {
             "MOOD_loop": [
                 "MOOD_loop:compute_fallback_fluxes",
-                "MOOD_loop:detect_troubled_cells",
+                "MOOD_loop:detect_troubles",
                 "MOOD_loop:revise_fluxes",
             ]
         }

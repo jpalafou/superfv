@@ -292,6 +292,10 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     fv_solver.conservatives_to_primitives(unew, wnew)
 
     if NAD:
+        if fv_solver.cupy:
+            fv_solver.xp.cuda.Device().synchronize()
+        fv_solver.stepper_timer.start("detect_troubles:NAD")
+
         NAD_rtol_local: Optional[ArrayLike] = None
         NAD_gtol_local: Optional[ArrayLike] = None
         NAD_atol_local: Optional[ArrayLike] = None
@@ -329,8 +333,16 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         # update troubles
         xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
 
+        if fv_solver.cupy:
+            fv_solver.xp.cuda.Device().synchronize()
+        fv_solver.stepper_timer.stop("detect_troubles:NAD")
+
     # compute PAD violations
     if PAD:
+        if fv_solver.cupy:
+            fv_solver.xp.cuda.Device().synchronize()
+        fv_solver.stepper_timer.start("detect_troubles:PAD")
+
         detect_PAD_violations(
             xp,
             wnew,
@@ -340,6 +352,10 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             cell_violated=troubles_temp,
         )
         troubles |= troubles_temp
+
+        if fv_solver.cupy:
+            fv_solver.xp.cuda.Device().synchronize()
+        fv_solver.stepper_timer.stop("detect_troubles:PAD")
 
     # update troubles workspace
     apply_bc(
