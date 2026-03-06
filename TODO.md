@@ -12,7 +12,7 @@
 - [ ] simplify Riemann solver init
 - [ ] remove compute_vis
 - [ ] add cupy test support for
-  - [ ] test_compute_dmp.py
+  - [x] test_compute_dmp.py
   - [ ] test_fv.py
   - [ ] test_muscl_slopes.py
 - [ ] remove `xp` backend
