@@ -348,7 +348,6 @@ class EulerSolver(FiniteVolumeSolver):
             w: Array of primitive variables.
             u: Output array of conservative variables.
         """
-        xp = self.xp
         idx = self.variable_index_map
         gamma = self.gamma
 
@@ -369,7 +368,7 @@ class EulerSolver(FiniteVolumeSolver):
                 *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
             )
         else:
-            u[...] = prim_to_cons(xp, idx, w, gamma)
+            u[...] = prim_to_cons(idx, w, gamma)
 
     @cached_property
     def prim_to_cons_cp(self):
@@ -406,7 +405,6 @@ class EulerSolver(FiniteVolumeSolver):
             )
         else:
             w[...] = cons_to_prim(
-                self.xp,
                 self.variable_index_map,
                 u,
                 self.gamma,
@@ -662,7 +660,7 @@ class EulerSolver(FiniteVolumeSolver):
         elif self.cupy:
             return sound_speed_cp(w[idx("rho")], w[idx("P")], gamma)
         else:
-            return sound_speed(self.xp, idx, w, gamma)
+            return sound_speed(idx, w, gamma)
 
     @MethodTimer(cat="compute_dt")
     def compute_dt(self, t: float, u: ArrayLike) -> float:

@@ -102,17 +102,17 @@ def llf(
     Returns:
         F: Flux array. Has shape (nvars, nx, ny, nz, ...).
     """
-    ul = prim_to_cons(xp, idx, wl, gamma)
-    ur = prim_to_cons(xp, idx, wr, gamma)
+    ul = prim_to_cons(idx, wl, gamma)
+    ur = prim_to_cons(idx, wr, gamma)
 
-    csl = iso_cs if isothermal else sound_speed(xp, idx, wl, gamma)
-    csr = iso_cs if isothermal else sound_speed(xp, idx, wr, gamma)
+    csl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
+    csr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
     sl = csl + xp.abs(wl[idx("v" + dim)])
     sr = csr + xp.abs(wr[idx("v" + dim)])
     smax = xp.maximum(sl, sr)
 
-    Fl = fluxes(xp, idx, wl, dim, gamma)
-    Fr = fluxes(xp, idx, wr, dim, gamma)
+    Fl = fluxes(idx, wl, dim, gamma)
+    Fr = fluxes(idx, wr, dim, gamma)
 
     F = 0.5 * (Fl + Fr - smax * (ur - ul))
 
@@ -150,8 +150,8 @@ def hllc(
     d1 = dim
     d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
 
-    ul = prim_to_cons(xp, idx, wl, gamma)
-    ur = prim_to_cons(xp, idx, wr, gamma)
+    ul = prim_to_cons(idx, wl, gamma)
+    ur = prim_to_cons(idx, wr, gamma)
 
     rhol = wl[idx("rho")]
     v1l = wl[idx("v" + d1)]
@@ -166,8 +166,8 @@ def hllc(
     Pr = wr[idx("P")]
     Er = ur[idx("E")]
 
-    cl = iso_cs if isothermal else sound_speed(xp, idx, wl, gamma)
-    cr = iso_cs if isothermal else sound_speed(xp, idx, wr, gamma)
+    cl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
+    cr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
     cmax = xp.maximum(cl, cr)
 
     sl = xp.minimum(v1l, v1r) - cmax
@@ -262,8 +262,8 @@ def hllct(
     d1 = dim
 
     flux = 0.0 * wl
-    uleft = prim_to_cons(xp, idx, wl, gamma)
-    uright = prim_to_cons(xp, idx, wr, gamma)
+    uleft = prim_to_cons(idx, wl, gamma)
+    uright = prim_to_cons(idx, wr, gamma)
     # left state
     dl = wl[idx("rho")]
     vl = wl[idx("v" + d1)]

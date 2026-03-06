@@ -1,21 +1,17 @@
-from types import ModuleType
 from typing import Literal, Tuple
 
 import numpy as np
 
 from .mesh import UniformFVMesh
-from .tools.device_management import CUPY_AVAILABLE, ArrayLike
+from .tools.device_management import CUPY_AVAILABLE
 from .tools.slicing import VariableIndexMap
 
 
-def sound_speed(
-    xp: ModuleType, idx: VariableIndexMap, w: ArrayLike, gamma: float
-) -> ArrayLike:
+def sound_speed(idx: VariableIndexMap, w: np.ndarray, gamma: float) -> np.ndarray:
     """
     Compute the sound speed from primitive variables.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
         gamma: Adiabatic index.
@@ -26,21 +22,19 @@ def sound_speed(
     rho = w[idx("rho", keepdims=True)]
     P = w[idx("P", keepdims=True)]
     cs2 = gamma * P / rho
-    cs = xp.sqrt(xp.maximum(cs2, 0.0))
+    cs = np.sqrt(np.maximum(cs2, 0.0))
     return cs
 
 
 def prim_to_cons(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    w: ArrayLike,
+    w: np.ndarray,
     gamma: float,
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Convert primitive variables to conservative variables.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
         gamma: Adiabatic index.
@@ -56,7 +50,7 @@ def prim_to_cons(
 
     K = 0.5 * rho * (vx**2 + vy**2 + vz**2)
 
-    u = xp.empty_like(w)
+    u = np.empty_like(w)
 
     u[idx("rho")] = rho
     u[idx("mx")] = rho * vx
@@ -71,18 +65,16 @@ def prim_to_cons(
 
 
 def cons_to_prim(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    u: ArrayLike,
+    u: np.ndarray,
     gamma: float,
     isothermal: bool = False,
     iso_cs: float = 1.0,
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Convert conservative variables to primitive variables.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         u: Array of conservative variables. Has shape (nvars, nx, ny, nz, ...).
         gamma: Adiabatic index.
@@ -103,7 +95,7 @@ def cons_to_prim(
     vz = mz / rho
     K = 0.5 * rho * (vx**2 + vy**2 + vz**2)
 
-    w = xp.empty_like(u)
+    w = np.empty_like(u)
 
     w[idx("rho")] = rho
     w[idx("vx")] = vx
@@ -118,17 +110,15 @@ def cons_to_prim(
 
 
 def fluxes(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    w: ArrayLike,
+    w: np.ndarray,
     dim: Literal["x", "y", "z"],
     gamma: float,
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Compute the fluxes for the Euler equations in the specified dimension.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
         dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
@@ -148,7 +138,7 @@ def fluxes(
 
     K = 0.5 * rho * (v1**2 + v2**2 + v3**2)
 
-    F = xp.empty_like(w)
+    F = np.empty_like(w)
 
     F[idx("rho")] = rho * v1
     F[idx("m" + d1)] = rho * v1**2 + P
@@ -163,18 +153,16 @@ def fluxes(
 
 
 def turbulent_power_specta(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    w: ArrayLike,
+    w: np.ndarray,
     mesh: UniformFVMesh,
     nbins: int,
     binmode: Literal["linear", "log"] = "linear",
-) -> Tuple[ArrayLike, ArrayLike]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute the turbulent kinetic energy power spectrum from the velocity field.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
         mesh: UniformFVMesh object defining the computational mesh.
@@ -196,32 +184,32 @@ def turbulent_power_specta(
     vy = w[idx("vy")] - w[idx("vy")].mean()
     vz = w[idx("vz")] - w[idx("vz")].mean()
 
-    Vx = xp.fft.fftn(vx, axes=active_axes, norm="ortho")
-    Vy = xp.fft.fftn(vy, axes=active_axes, norm="ortho")
-    Vz = xp.fft.fftn(vz, axes=active_axes, norm="ortho")
+    Vx = np.fft.fftn(vx, axes=active_axes, norm="ortho")
+    Vy = np.fft.fftn(vy, axes=active_axes, norm="ortho")
+    Vz = np.fft.fftn(vz, axes=active_axes, norm="ortho")
 
     # Per-mode kinetic energy (per *sum* convention). We'll rescale for "mean" below.
-    P = 0.5 * (xp.abs(Vx) ** 2 + xp.abs(Vy) ** 2 + xp.abs(Vz) ** 2)
+    P = 0.5 * (np.abs(Vx) ** 2 + np.abs(Vy) ** 2 + np.abs(Vz) ** 2)
     P = P / N  # rescale to get mean(|v|^2) = sum P
 
     # Angular wavenumbers (rad/length)
     kx = (
-        2.0 * np.pi * xp.fft.fftfreq(nx, d=dx)
+        2.0 * np.pi * np.fft.fftfreq(nx, d=dx)
         if "x" in active_dims
-        else xp.array([0.0])
+        else np.array([0.0])
     )
     ky = (
-        2.0 * np.pi * xp.fft.fftfreq(ny, d=dy)
+        2.0 * np.pi * np.fft.fftfreq(ny, d=dy)
         if "y" in active_dims
-        else xp.array([0.0])
+        else np.array([0.0])
     )
     kz = (
-        2.0 * np.pi * xp.fft.fftfreq(nz, d=dz)
+        2.0 * np.pi * np.fft.fftfreq(nz, d=dz)
         if "z" in active_dims
-        else xp.array([0.0])
+        else np.array([0.0])
     )
-    KX, KY, KZ = xp.meshgrid(kx, ky, kz, indexing="ij")
-    Kmag = xp.sqrt(KX**2 + KY**2 + KZ**2)
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing="ij")
+    Kmag = np.sqrt(KX**2 + KY**2 + KZ**2)
 
     k = Kmag.ravel()
     p = P.ravel()
@@ -231,20 +219,20 @@ def turbulent_power_specta(
     p = p[mask]
 
     if binmode == "linear":
-        edges = xp.linspace(k.min(), k.max(), nbins + 1)
+        edges = np.linspace(k.min(), k.max(), nbins + 1)
         k_centers = 0.5 * (edges[:-1] + edges[1:])
     elif binmode == "log":
-        edges = xp.logspace(xp.log10(k.min()), xp.log10(k.max()), nbins + 1)
-        k_centers = xp.sqrt(edges[:-1] * edges[1:])
+        edges = np.logspace(np.log10(k.min()), np.log10(k.max()), nbins + 1)
+        k_centers = np.sqrt(edges[:-1] * edges[1:])
     else:
         raise ValueError("binmode must be 'linear' or 'log'")
 
-    bin_idx = xp.digitize(k, edges) - 1
+    bin_idx = np.digitize(k, edges) - 1
     valid = (bin_idx >= 0) & (bin_idx < nbins)
     bin_idx = bin_idx[valid]
     p = p[valid]
 
-    E_shell = xp.bincount(bin_idx, weights=p, minlength=nbins)
+    E_shell = np.bincount(bin_idx, weights=p, minlength=nbins)
     widths = edges[1:] - edges[:-1]
     E_k = E_shell / widths
 
