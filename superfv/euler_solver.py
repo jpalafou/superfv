@@ -767,7 +767,6 @@ class EulerSolver(FiniteVolumeSolver):
             primitives: Whether to use primitive variables for shock detection.
                 Otherwise, conservative variables are used.
         """
-        xp = self.xp
         arrays = self.arrays
         active_dims = self.active_dims
         idx = self.variable_index_map
@@ -803,7 +802,6 @@ class EulerSolver(FiniteVolumeSolver):
             )
         else:
             compute_shock_detector(
-                xp,
                 w1 if primitives else u1,
                 wr,
                 active_dims,

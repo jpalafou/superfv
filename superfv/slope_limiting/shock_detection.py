@@ -1,5 +1,6 @@
-from types import ModuleType
 from typing import Literal, Tuple
+
+import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.stencil import stencil_sweep
@@ -9,20 +10,18 @@ from superfv.tools.slicing import crop, merge_slices
 
 
 def compute_eta(
-    xp: ModuleType,
-    w1: ArrayLike,
-    wr: ArrayLike,
+    w1: np.ndarray,
+    wr: np.ndarray,
     axis: int,
     *,
-    out: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    buffer: np.ndarray,
     eps: float = 1e-16,
 ) -> Tuple[slice, ...]:
     """
     Compute the shock detector eta in 1D using the method of Berta et al. (2024).
 
     Args:
-        xp: `np` namespace.
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
         axis: Axis along which to compute the shock detector.
@@ -44,35 +43,34 @@ def compute_eta(
     eta_e = buffer[..., 5]
 
     # compute stencils
-    stencil1 = 0.5 * xp.array([-1.0, 0.0, 1.0])
-    stencil2 = xp.array([1.0, -2.0, 1.0])
-    stencil3 = 0.5 * xp.array([-1.0, 2.0, 0.0, -2.0, 1.0])
-    stencil4 = xp.array([1.0, -4.0, 6.0, -4.0, 1.0])
+    stencil1 = 0.5 * np.array([-1.0, 0.0, 1.0])
+    stencil2 = np.array([1.0, -2.0, 1.0])
+    stencil3 = 0.5 * np.array([-1.0, 2.0, 0.0, -2.0, 1.0])
+    stencil4 = np.array([1.0, -4.0, 6.0, -4.0, 1.0])
     inner = crop(axis, (2, -2), ndim=4)
 
     # compute deltas using stencil sweeps
-    stencil_sweep(xp, w1, stencil1, axis, out=delta1)
-    stencil_sweep(xp, w1, stencil2, axis, out=delta2)
-    stencil_sweep(xp, w1, stencil3, axis, out=delta3)
-    stencil_sweep(xp, w1, stencil4, axis, out=delta4)
+    stencil_sweep(np, w1, stencil1, axis, out=delta1)
+    stencil_sweep(np, w1, stencil2, axis, out=delta2)
+    stencil_sweep(np, w1, stencil3, axis, out=delta3)
+    stencil_sweep(np, w1, stencil4, axis, out=delta4)
 
     # compute eta values
-    eta_o[...] = xp.abs(delta3) / (xp.abs(wr) + xp.abs(delta1) + xp.abs(delta3) + eps)
-    eta_e[...] = xp.abs(delta4) / (xp.abs(wr) + xp.abs(delta2) + xp.abs(delta4) + eps)
-    out[inner] = xp.maximum(eta_o[inner], eta_e[inner])
+    eta_o[...] = np.abs(delta3) / (np.abs(wr) + np.abs(delta1) + np.abs(delta3) + eps)
+    eta_e[...] = np.abs(delta4) / (np.abs(wr) + np.abs(delta2) + np.abs(delta4) + eps)
+    out[inner] = np.maximum(eta_o[inner], eta_e[inner])
 
     return inner
 
 
 def compute_shock_detector(
-    xp: ModuleType,
-    w1: ArrayLike,
-    wr: ArrayLike,
+    w1: np.ndarray,
+    wr: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     eta_threshold: float,
     *,
-    out: ArrayLike,
-    eta: ArrayLike,
+    out: np.ndarray,
+    eta: np.ndarray,
     buffer: ArrayLike,
     eps: float = 1e-16,
 ):
@@ -81,7 +79,6 @@ def compute_shock_detector(
     of 0 indicates a smooth region and 1 indicates a shock.
 
     Args:
-        xp: `np` namespace.
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
         active_dims: Tuple of active dimensions along which to compute the shock
@@ -106,7 +103,7 @@ def compute_shock_detector(
         eta_max = buffer[:1, ..., 0]
         eta_buff = buffer[..., 1:]
 
-        inner = compute_eta(xp, w1, wr, axis, out=eta, buffer=eta_buff, eps=eps)
+        inner = compute_eta(w1, wr, axis, out=eta, buffer=eta_buff, eps=eps)
 
     elif ndim == 2:
         axis1 = DIM_TO_AXIS[active_dims[0]]
@@ -117,10 +114,10 @@ def compute_shock_detector(
         eta_max = buffer[:1, ..., 2]
         eta_buff = buffer[..., 3:]
 
-        inner1 = compute_eta(xp, w1, wr, axis1, out=eta1, buffer=eta_buff, eps=eps)
-        inner2 = compute_eta(xp, w1, wr, axis2, out=eta2, buffer=eta_buff, eps=eps)
+        inner1 = compute_eta(w1, wr, axis1, out=eta1, buffer=eta_buff, eps=eps)
+        inner2 = compute_eta(w1, wr, axis2, out=eta2, buffer=eta_buff, eps=eps)
         inner = merge_slices(inner1, inner2)
-        eta[inner] = xp.maximum(eta1[inner], eta2[inner])
+        eta[inner] = np.maximum(eta1[inner], eta2[inner])
 
     elif ndim == 3:
         axis1 = DIM_TO_AXIS[active_dims[0]]
@@ -133,18 +130,18 @@ def compute_shock_detector(
         eta_max = buffer[:1, ..., 3]
         eta_buff = buffer[..., 4:]
 
-        inner1 = compute_eta(xp, w1, wr, axis1, out=eta1, buffer=eta_buff, eps=eps)
-        inner2 = compute_eta(xp, w1, wr, axis2, out=eta2, buffer=eta_buff, eps=eps)
-        inner3 = compute_eta(xp, w1, wr, axis3, out=eta3, buffer=eta_buff, eps=eps)
+        inner1 = compute_eta(w1, wr, axis1, out=eta1, buffer=eta_buff, eps=eps)
+        inner2 = compute_eta(w1, wr, axis2, out=eta2, buffer=eta_buff, eps=eps)
+        inner3 = compute_eta(w1, wr, axis3, out=eta3, buffer=eta_buff, eps=eps)
         inner = merge_slices(inner1, inner2, inner3)
-        eta[inner] = xp.maximum(eta1[inner], eta2[inner])
-        eta[inner] = xp.maximum(eta3[inner], eta[inner])
+        eta[inner] = np.maximum(eta1[inner], eta2[inner])
+        eta[inner] = np.maximum(eta3[inner], eta[inner])
 
     else:
         raise ValueError("active_dims must have length 1, 2, or 3.")
 
-    eta_max[...] = xp.max(eta, axis=0, keepdims=True)  # maximum over all variables
-    out[inner] = xp.where(eta_max[inner] < eta_threshold, 0, 1)
+    eta_max[...] = np.max(eta, axis=0, keepdims=True)  # maximum over all variables
+    out[inner] = np.where(eta_max[inner] < eta_threshold, 0, 1)
 
     return inner
 

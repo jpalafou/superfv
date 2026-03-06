@@ -179,7 +179,7 @@ def test_compute_shock_detector(dims: str):
     eta = temp[..., 1]
 
     modified = compute_shock_detector(
-        xp, u, u, tuple(dims), 0.025, out=out, eta=eta, buffer=buffer
+        u, u, tuple(dims), 0.025, out=out, eta=eta, buffer=buffer
     )
 
     assert not xp.any(xp.isnan(out[modified]))

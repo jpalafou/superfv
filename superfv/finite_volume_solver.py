@@ -1571,7 +1571,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             primitives: Whether to use primitive variables for shock detection.
                 Otherwise, conservative variables are used.
         """
-        xp = self.xp
         arrays = self.arrays
         active_dims = self.active_dims
 
@@ -1595,7 +1594,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         else:
             compute_shock_detector(
-                xp,
                 w1,
                 w1,
                 active_dims,

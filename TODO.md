@@ -10,13 +10,12 @@
 - [ ] rm: gtol, make rtol a scalar again
 - [ ] symmetry bug `p = 7, GL = True, dims1_dims2 = ('xy', 'yz')`
 - [ ] simplify Riemann solver init
-- [x] remove compute_vis
 - [ ] add cupy test support for
   - [x] test_compute_dmp.py
   - [ ] test_fv.py
   - [ ] test_muscl_slopes.py
 - [ ] remove `xp` backend
-  - [ ] shock detection
+  - [x] shock detection
   - [ ] ZS limiter
   - [ ] MUSCL slopes
   - [ ] detect PAD violations
