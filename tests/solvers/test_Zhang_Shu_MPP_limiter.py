@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from superfv import AdvectionSolver, initial_conditions
+from superfv.tools.device_management import CUPY_AVAILABLE
 
 p_CFL_map = {
     0: 1 / 2,
@@ -36,7 +37,7 @@ def test_1D_advection_mpp(adaptive_dt, p, SED, dim, limiting_vars):
         PAD={"rho": (0, 1)},
         SED=SED,
         check_uniformity=False,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     solver.run(n=10)
 
@@ -65,7 +66,7 @@ def test_2D_advection_mpp(p, SED, dim1_dim2):
         SED=SED,
         check_uniformity=False,
         uniformity_tol=1e-15,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     solver.run(n=10)
 
@@ -88,7 +89,7 @@ def test_3D_advection_mpp(p):
         ZS=True,
         PAD={"rho": (0, 1)},
         check_uniformity=False,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     solver.run(n=3)
 

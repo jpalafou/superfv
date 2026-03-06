@@ -3,6 +3,7 @@ import pytest
 
 import superfv.initial_conditions as ic
 from superfv.advection_solver import AdvectionSolver
+from superfv.tools.device_management import CUPY_AVAILABLE
 
 
 @pytest.mark.parametrize("N", [32, 40, 64])
@@ -33,7 +34,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
         max_MOOD_iters=max_MOOD_iters,
         PAD={"rho": (0, 1)},
         PAD_atol=PAD_atol,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **config,
     )
     sim.run(n=n_steps, q_max=2)
@@ -76,7 +77,7 @@ def test_mpp_2d(N: int, p: int, config: dict):
         NAD_gtol=tol,
         PAD={"rho": (0.0, 1.0)},
         PAD_atol=tol,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **config,
     )
     sim.run(n=n_steps, q_max=2)
@@ -109,7 +110,7 @@ def test_mpp_3d(cascade: str):
         NAD=True,
         PAD={"rho": (0.0, 1.0)},
         PAD_atol=PAD_atol,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     sim.run(n=n_steps, q_max=2)
 

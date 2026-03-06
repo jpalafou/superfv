@@ -5,6 +5,7 @@ import pytest
 
 from superfv import AdvectionSolver, EulerSolver
 from superfv.initial_conditions import slotted_disk, sod_shock_tube_1d, square
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.norms import l1_norm
 
 
@@ -22,13 +23,13 @@ def test_AdvectionSolver_symmetry_1D(p: int, dim1_dim2: Tuple[str, str]):
     solver1 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{dim1}": 1}, xp=xp),
         p=p,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{f"n{dim1}": N},
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{dim2}": 1}, xp=xp),
         p=p,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{f"n{dim2}": N},
     )
 
@@ -63,7 +64,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, s
         ),
         p=p,
         GL=GL,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{f"n{d1x}": N, f"n{d1y}": N},
     )
     solver2 = AdvectionSolver(
@@ -72,7 +73,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, s
         ),
         p=p,
         GL=GL,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{f"n{d2x}": N, f"n{d2y}": N},
     )
 
@@ -108,7 +109,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
         nx=N,
         ny=N,
         GL=GL,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: slotted_disk(idx, x, y, z, rotation="cw", xp=xp),
@@ -118,7 +119,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
         nx=N,
         ny=N,
         GL=GL,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
 
     # run solvers
@@ -151,7 +152,7 @@ def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
         nx=N,
         ny=N,
         nz=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, vx=-1, vy=-1, vz=-1, xp=xp),
@@ -160,7 +161,7 @@ def test_AdvectionSolver_translational_symmetry_3D(GL: bool):
         nx=N,
         ny=N,
         nz=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
 
     # run solvers
@@ -211,7 +212,7 @@ def test_Sod_shock_tube_symmetry_1D(
         p=p,
         flux_recipe=flux_recipe,
         lazy_primitives=lazy_primitives,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **limiting_config,
     )
     solver2 = EulerSolver(
@@ -220,7 +221,7 @@ def test_Sod_shock_tube_symmetry_1D(
         p=p,
         flux_recipe=flux_recipe,
         lazy_primitives=lazy_primitives,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **limiting_config,
     )
 

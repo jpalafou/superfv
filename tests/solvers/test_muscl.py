@@ -3,6 +3,7 @@ import pytest
 
 from superfv import AdvectionSolver, EulerSolver
 from superfv.initial_conditions import square
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.norms import l1_norm
 
 
@@ -17,7 +18,7 @@ def test_null_limiter_1d(dim: str):
             array_slicer, x, y, z, xp=xp, **{"v" + dim: 1}
         ),
         p=1,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim: N},
     )
     sim2 = AdvectionSolver(
@@ -27,7 +28,7 @@ def test_null_limiter_1d(dim: str):
         p=1,
         MUSCL=True,
         MUSCL_limiter=None,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim: N},
     )
 
@@ -53,7 +54,7 @@ def test_null_limiter_2d(dim1_dim2: tuple):
             array_slicer, x, y, z, xp=xp, **{"v" + dim1: 2, "v" + dim2: 1}
         ),
         p=1,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim1: N, "n" + dim2: N},
     )
     sim2 = AdvectionSolver(
@@ -63,7 +64,7 @@ def test_null_limiter_2d(dim1_dim2: tuple):
         p=1,
         MUSCL=True,
         MUSCL_limiter=None,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim1: N, "n" + dim2: N},
     )
 
@@ -96,7 +97,7 @@ def test_null_limiter_3d():
         nx=N,
         ny=N,
         nz=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     sim2 = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: square(
@@ -115,7 +116,7 @@ def test_null_limiter_3d():
         nx=N,
         ny=N,
         nz=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
 
     # run simulations
@@ -142,7 +143,7 @@ def test_advection_of_a_1d_square(limiter: str, dim: str, predictor_corrector: b
         MUSCL=True,
         MUSCL_limiter=limiter,
         SED=False,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim: N},
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
@@ -173,7 +174,7 @@ def test_advection_of_a_2d_square(
         MUSCL=True,
         MUSCL_limiter=limiter,
         SED=False,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim1: N, "n" + dim2: N},
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
@@ -199,7 +200,7 @@ def test_advection_of_a_3d_square(limiter: str, predictor_corrector: bool):
         nx=N,
         ny=N,
         nz=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 
@@ -226,7 +227,7 @@ def test_hydro_advection_of_a_1d_square(
         flux_recipe=2,
         riemann_solver="hllc",
         MUSCL_limiter=limiter,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim: N},
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
@@ -265,7 +266,7 @@ def test_hydro_advection_of_a_2d_square(
         flux_recipe=2,
         riemann_solver="hllc",
         MUSCL_limiter=limiter,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **{"n" + dim1: N, "n" + dim2: N},
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
@@ -292,7 +293,7 @@ def test_hydro_advection_of_a_3d_square(limiter: str, predictor_corrector: bool)
         nx=N,
         ny=N,
         nz=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     sim.run(n=n, muscl_hancock=predictor_corrector)
 

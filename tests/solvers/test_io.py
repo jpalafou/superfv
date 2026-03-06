@@ -7,6 +7,7 @@ import pytest
 
 from superfv import EulerSolver, OutputLoader
 from superfv.initial_conditions import sod_shock_tube_1d
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.snapshots import SnapshotPlaceholder
 
 TEST_PATH = Path("tests/data")
@@ -17,8 +18,12 @@ TEST_PATH = Path("tests/data")
 def test_discarding_snapshots(
     snapshot_mode: Literal["target", "every"], fixed_n_steps: bool
 ):
-    sim1 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=True)
-    sim2 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=True)
+    sim1 = EulerSolver(
+        ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=CUPY_AVAILABLE
+    )
+    sim2 = EulerSolver(
+        ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=CUPY_AVAILABLE
+    )
 
     if fixed_n_steps:
         sim1.run(n=20, snapshot_mode=snapshot_mode)
@@ -58,7 +63,7 @@ def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: 
         p=1,
         ZS=True,
         adaptive_dt=False,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
 
     if fixed_n_steps:

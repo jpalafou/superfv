@@ -4,6 +4,7 @@ import pytest
 
 from superfv import EulerSolver
 from superfv.initial_conditions import square
+from superfv.tools.device_management import CUPY_AVAILABLE
 
 
 @pytest.mark.parametrize(
@@ -24,10 +25,10 @@ def test_max_steps(config):
     PAD = {"rho": (0, None), "P": (0, None)}
 
     sim1 = EulerSolver(
-        ic=ic, nx=64, PAD=PAD, lazy_primitives="adaptive", cupy=True, **config
+        ic=ic, nx=64, PAD=PAD, lazy_primitives="adaptive", cupy=CUPY_AVAILABLE, **config
     )
     sim2 = EulerSolver(
-        ic=ic, nx=64, PAD=PAD, lazy_primitives="adaptive", cupy=True, **config
+        ic=ic, nx=64, PAD=PAD, lazy_primitives="adaptive", cupy=CUPY_AVAILABLE, **config
     )
 
     sim1.run(T, muscl_hancock=config.get("MUSCL", False))

@@ -4,6 +4,7 @@ import pytest
 
 from superfv import EulerSolver
 from superfv.initial_conditions import decaying_isotropic_turbulence
+from superfv.tools.device_management import CUPY_AVAILABLE
 
 rho_PAD = {"rho": (0.0, None)}
 
@@ -35,7 +36,7 @@ def test_1d_isotropic_decaying_turbulence(config: dict, seed: int):
         ),
         isothermal=True,
         nx=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **config,
     )
 
@@ -65,7 +66,7 @@ def test_2d_isotropic_decaying_turbulence(config: dict, seed: int):
         isothermal=True,
         nx=N,
         ny=N,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **config,
     )
 
