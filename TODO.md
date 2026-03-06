@@ -6,8 +6,20 @@
   - gauss_legendre_quadrature_kernel_helper
   - compute_theta kernel needs safety checks
 - [ ] NumPy MOOD supports multivar NAD tols, CuPy MOOD does not
-- [ ] clean up unused elementwise kernels
 - [ ] add: multistencilweights arg to interpolation kernel
 - [ ] rm: gtol, make rtol a scalar again
 - [ ] symmetry bug `p = 7, GL = True, dims1_dims2 = ('xy', 'yz')`
 - [ ] simplify Riemann solver init
+- [ ] remove compute_vis
+- [ ] add cupy test support for
+  - [ ] test_compute_dmp.py
+  - [ ] test_fv.py
+  - [ ] test_muscl_slopes.py
+- [ ] remove `xp` backend
+  - [ ] shock detection
+  - [ ] ZS limiter
+  - [ ] MUSCL slopes
+  - [ ] detect PAD violations
+  - [ ] fv interpolation functions
+  - [ ] perform_GaussLegendre_quadrature
+  - [ ] stencil.py

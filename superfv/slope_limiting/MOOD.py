@@ -357,9 +357,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         if NAD:
             fv_solver.stepper_timer.start("detect_troubles:NAD")
 
-            NAD_rtol_local: Optional[ArrayLike] = None
-            NAD_gtol_local: Optional[ArrayLike] = None
-            NAD_atol_local: Optional[ArrayLike] = None
+            NAD_rtol_local: Optional[np.ndarray] = None
+            NAD_gtol_local: Optional[np.ndarray] = None
+            NAD_atol_local: Optional[np.ndarray] = None
 
             if NAD_rtol is not None:
                 NAD_rtol_local = NAD_rtol.copy()
@@ -371,7 +371,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 NAD_atol_local = NAD_atol
 
             detect_NAD_violations(
-                xp,
                 (wnew if primNAD else unew),
                 (wold if primNAD else uold),
                 active_dims=active_dims,
@@ -392,7 +391,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 NAD_violations *= alpha[..., 0] < 1
 
             # update troubles
-            xp.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
+            np.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)
 
             fv_solver.stepper_timer.stop("detect_troubles:NAD")
 
@@ -401,7 +400,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             fv_solver.stepper_timer.start("detect_troubles:PAD")
 
             detect_PAD_violations(
-                xp,
+                np,
                 wnew,
                 cast(ArrayLike, PAD_bounds),
                 PAD_atol,
@@ -433,7 +432,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
 
 def detect_NAD_violations(
-    xp: ModuleType,
     u_new: ArrayLike,
     u_old: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
@@ -463,7 +461,6 @@ def detect_NAD_violations(
     m - rtol * |m| <= u_new <= M + rtol * |M|
 
     Args:
-        xp: `np` namespace or equivalent.
         u_new: New solution array. Has shape (nvars, nx, ny, nz).
         u_old: Old solution array. Has shape (nvars, nx, ny, nz).
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
@@ -489,7 +486,7 @@ def detect_NAD_violations(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    na = xp.newaxis
+    na = np.newaxis
 
     check_buffer_slots(buffer, required=6)
     dmp_range = buffer[..., 0]
@@ -502,7 +499,7 @@ def detect_NAD_violations(
     delta_arr[...] = 0.0
 
     # compute discrete maximum principle (dmp)
-    modified = compute_dmp(xp, u_old, active_dims, include_corners, M=M, m=m)
+    modified = compute_dmp(np, u_old, active_dims, include_corners, M=M, m=m)
 
     if delta:
         # relax bounds with local dmp range
@@ -512,8 +509,8 @@ def detect_NAD_violations(
 
         # relax bounds with global range
         if gtol is not None:
-            global_min = xp.min(u_old, axis=(1, 2, 3), keepdims=True)
-            global_max = xp.max(u_old, axis=(1, 2, 3), keepdims=True)
+            global_min = np.min(u_old, axis=(1, 2, 3), keepdims=True)
+            global_max = np.max(u_old, axis=(1, 2, 3), keepdims=True)
             global_range = global_max - global_min
             delta_arr += gtol[:, na, na, na] * global_range
 
@@ -527,14 +524,14 @@ def detect_NAD_violations(
     elif rtol is None:
         raise ValueError("rtol must be provided if delta is False.")
     else:
-        lower_bound[...] = m - rtol[:, na, na, na] * xp.abs(m)
-        upper_bound[...] = M + rtol[:, na, na, na] * xp.abs(M)
+        lower_bound[...] = m - rtol[:, na, na, na] * np.abs(m)
+        upper_bound[...] = M + rtol[:, na, na, na] * np.abs(M)
 
     lower_violations[...] = u_new - lower_bound
     upper_violations[...] = upper_bound - u_new
     out[modified] = 0.0
-    xp.minimum(lower_violations[modified], out[modified], out=out[modified])
-    xp.minimum(upper_violations[modified], out[modified], out=out[modified])
+    np.minimum(lower_violations[modified], out[modified], out=out[modified])
+    np.minimum(upper_violations[modified], out[modified], out=out[modified])
 
     return modified
 

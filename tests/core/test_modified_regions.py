@@ -281,7 +281,7 @@ def test_detect_NAD_violations(
     xp = configure_xp()
 
     uold, buffer, out1 = sample_data(dims, nout=1, xp=xp)
-    unew, _, dmp = sample_data(dims, nout=2, xp=xp)
+    unew, _, _ = sample_data(dims, nout=2, xp=xp)
 
     M = xp.empty(uold.shape)
     m = xp.empty(uold.shape)
@@ -292,7 +292,6 @@ def test_detect_NAD_violations(
             NAD_config[key] = xp.full((uold.shape[0],), NAD_config[key])
 
     modified = detect_NAD_violations(
-        xp,
         uold,
         unew,
         tuple(dims),
