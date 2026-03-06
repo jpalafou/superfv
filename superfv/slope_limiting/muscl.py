@@ -222,7 +222,7 @@ def compute_PP2D_slopes(
     """
     if hasattr(xp, "cuda"):
         # early escape for CuPy implementation
-        return compute_PP2D_slopes_kernel_helper(
+        return compute_PP2D_slopes_elementwise_kernel_helper(
             xp,
             u,
             active_dims,
@@ -349,7 +349,7 @@ if CUPY_AVAILABLE:
         no_return=True,
     )
 
-    PP2D_theta_kernel = cp.ElementwiseKernel(
+    PP2D_theta_elementwise_kernel = cp.ElementwiseKernel(
         in_params=(
             "float64 u, float64 u_E, float64 u_NE, float64 u_N, float64 u_NW, "
             "float64 uW, float64 u_SW, float64 u_S, float64 u_SE, "
@@ -391,7 +391,7 @@ if CUPY_AVAILABLE:
             theta = fmin(v, 1.0);
             """
         ),
-        name="PP2D_theta_kernel",
+        name="PP2D_theta_elementwise_kernel",
         no_return=True,
     )
 
@@ -856,7 +856,7 @@ def compute_MUSCL_slopes_elementwise_kernel_helper(
     return modified
 
 
-def compute_PP2D_slopes_kernel_helper(
+def compute_PP2D_slopes_elementwise_kernel_helper(
     xp: ModuleType,
     u: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
@@ -929,7 +929,7 @@ def compute_PP2D_slopes_kernel_helper(
     Sy[slc_c] = 0.5 * (u_N - u_S)
 
     # compute PP2D limiter
-    PP2D_theta_kernel(
+    PP2D_theta_elementwise_kernel(
         uc,
         u_E,
         u_NE,
