@@ -3,8 +3,15 @@ import pytest
 
 import teyssier
 from superfv.hydro import cons_to_prim, fluxes, prim_to_cons
+from superfv.tools.device_management import CUPY_AVAILABLE, xp
 from superfv.tools.norms import l1_norm, linf_norm
 from superfv.tools.slicing import VariableIndexMap
+
+if CUPY_AVAILABLE:
+    from superfv.hydro import (
+        make_cons_to_prim_elementwise_kernel,
+        make_prim_to_cons_elementwise_kernel,
+    )
 
 
 @pytest.fixture
@@ -36,22 +43,66 @@ def euler_slicer():
 
 @pytest.mark.parametrize("trial", range(10))
 @pytest.mark.parametrize("gamma", [1.4, 5 / 3])
-def test_primitive_to_conservative_invertability(trial, gamma, euler_slicer):
+@pytest.mark.parametrize("cupy", [False, True])
+def test_primitive_to_conservative_invertability(trial, gamma, cupy, euler_slicer):
     """
     Test that the primitive_to_conservative and conservative_to_primitive functions
     are inverses of each other.
     """
+    if cupy and not CUPY_AVAILABLE:
+        pytest.skip("CuPy is not available")
+
     idx = euler_slicer
     N = 64
 
-    W = np.empty((8, N, N, N))
-    W[...] = np.random.rand(*W.shape)
+    W = xp.empty((8, N, N, N)) if cupy else np.empty((8, N, N, N))
+    W[...] = xp.random.rand(*W.shape) if cupy else np.random.rand(*W.shape)
     W[idx("rho")] += 1.0
     W[idx("P")] += 1.0
 
     # convert to conservative and back to primitive
-    U = prim_to_cons(idx, W, gamma=gamma)
-    W2 = cons_to_prim(idx, U, gamma=gamma)
+    if cupy:
+        prim_to_cons_elementwise_kernel = make_prim_to_cons_elementwise_kernel(3)
+        cons_to_prim_elementwise_kernel = make_cons_to_prim_elementwise_kernel(3)
+
+        U = xp.empty_like(W)
+        prim_to_cons_elementwise_kernel(
+            W[idx("rho")],
+            W[idx("vx")],
+            W[idx("vy")],
+            W[idx("vz")],
+            W[idx("P")],
+            gamma,
+            *(W[idx(v)] for v in idx.group_var_map.get("passives", [])),
+            U[idx("rho")],
+            U[idx("mx")],
+            U[idx("my")],
+            U[idx("mz")],
+            U[idx("E")],
+            *(U[idx(v)] for v in idx.group_var_map.get("passives", [])),
+        )
+
+        W2 = xp.empty_like(W)
+        cons_to_prim_elementwise_kernel(
+            U[idx("rho")],
+            U[idx("mx")],
+            U[idx("my")],
+            U[idx("mz")],
+            U[idx("E")],
+            gamma,
+            False,
+            0.0,
+            *(U[idx(v)] for v in idx.group_var_map.get("passives", [])),
+            W2[idx("rho")],
+            W2[idx("vx")],
+            W2[idx("vy")],
+            W2[idx("vz")],
+            W2[idx("P")],
+            *(W2[idx(v)] for v in idx.group_var_map.get("passives", [])),
+        )
+    else:
+        U = prim_to_cons(idx, W, gamma=gamma)
+        W2 = cons_to_prim(idx, U, gamma=gamma, isothermal=False)
 
     # check that the primitive values are the same
     assert l1_norm(W - W2) < 1e-15
@@ -59,22 +110,66 @@ def test_primitive_to_conservative_invertability(trial, gamma, euler_slicer):
 
 @pytest.mark.parametrize("trial", range(10))
 @pytest.mark.parametrize("gamma", [1.4, 5 / 3])
-def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
+@pytest.mark.parametrize("cupy", [False, True])
+def test_conservative_to_primitive_invertability(trial, gamma, cupy, euler_slicer):
     """
     Test that the conservative_to_primitive and primitive_to_conservative functions
     are inverses of each other.
     """
+    if cupy and not CUPY_AVAILABLE:
+        pytest.skip("CuPy is not available")
+
     idx = euler_slicer
     N = 64
 
-    U = np.empty((8, N, N, N))
-    U[...] = np.random.rand(*U.shape)
+    U = xp.empty((8, N, N, N)) if cupy else np.empty((8, N, N, N))
+    U[...] = xp.random.rand(*U.shape) if cupy else np.random.rand(*U.shape)
     U[idx("rho")] += 1.0
     U[idx("E")] += 1.0
 
     # convert to conservative and back to primitive
-    W = cons_to_prim(idx, U, gamma=gamma)
-    U2 = prim_to_cons(idx, W, gamma=gamma)
+    if cupy:
+        cons_to_prim_elementwise_kernel = make_cons_to_prim_elementwise_kernel(3)
+        prim_to_cons_elementwise_kernel = make_prim_to_cons_elementwise_kernel(3)
+
+        W = xp.empty_like(U)
+        cons_to_prim_elementwise_kernel(
+            U[idx("rho")],
+            U[idx("mx")],
+            U[idx("my")],
+            U[idx("mz")],
+            U[idx("E")],
+            gamma,
+            False,
+            0.0,
+            *(U[idx(v)] for v in idx.group_var_map.get("passives", [])),
+            W[idx("rho")],
+            W[idx("vx")],
+            W[idx("vy")],
+            W[idx("vz")],
+            W[idx("P")],
+            *(W[idx(v)] for v in idx.group_var_map.get("passives", [])),
+        )
+
+        U2 = xp.empty_like(U)
+        prim_to_cons_elementwise_kernel(
+            W[idx("rho")],
+            W[idx("vx")],
+            W[idx("vy")],
+            W[idx("vz")],
+            W[idx("P")],
+            gamma,
+            *(W[idx(v)] for v in idx.group_var_map.get("passives", [])),
+            U2[idx("rho")],
+            U2[idx("mx")],
+            U2[idx("my")],
+            U2[idx("mz")],
+            U2[idx("E")],
+            *(U2[idx(v)] for v in idx.group_var_map.get("passives", [])),
+        )
+    else:
+        W = cons_to_prim(idx, U, gamma=gamma)
+        U2 = prim_to_cons(idx, W, gamma=gamma)
 
     # check that the primitive values are the same
     assert l1_norm(U - U2) < 1e-15
