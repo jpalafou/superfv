@@ -1772,7 +1772,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mj[...] = mjflat.reshape(nvars, nx, ny, nz)
         else:
             compute_theta(
-                xp,
                 w,
                 wcc,
                 wx,

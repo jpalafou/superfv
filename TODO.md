@@ -16,7 +16,7 @@
   - [ ] test_muscl_slopes.py
 - [ ] remove `xp` backend
   - [x] shock detection
-  - [ ] ZS limiter
+  - [x] ZS limiter
   - [ ] MUSCL slopes
   - [ ] detect PAD violations
   - [ ] fv interpolation functions

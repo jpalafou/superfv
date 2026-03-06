@@ -241,7 +241,6 @@ def test_compute_theta(
     )
 
     modified = compute_theta(
-        xp,
         u,
         nodes,
         nodes if "x" in dims else None,

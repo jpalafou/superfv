@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
+
+import numpy as np
 
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.slicing import insert_slice
 
 if TYPE_CHECKING:
@@ -75,19 +76,18 @@ class ZhangShuConfig(LimiterConfig):
 
 
 def compute_theta(
-    xp: ModuleType,
-    u: ArrayLike,
-    center_nodes: ArrayLike,
-    x_nodes: Optional[ArrayLike],
-    y_nodes: Optional[ArrayLike],
-    z_nodes: Optional[ArrayLike],
+    u: np.ndarray,
+    center_nodes: np.ndarray,
+    x_nodes: Optional[np.ndarray],
+    y_nodes: Optional[np.ndarray],
+    z_nodes: Optional[np.ndarray],
     *,
-    out: ArrayLike,
-    M: ArrayLike,
-    m: ArrayLike,
-    Mj: ArrayLike,
-    mj: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    M: np.ndarray,
+    m: np.ndarray,
+    Mj: np.ndarray,
+    mj: np.ndarray,
+    buffer: np.ndarray,
     config: ZhangShuConfig,
 ) -> Tuple[slice, ...]:
     """
@@ -95,7 +95,6 @@ def compute_theta(
     finite-volume nodes and averages.
 
     Args:
-        xp: `np` namespace.
         u: Array of finite-volume average. Has shape (nvars, nx, ny, nz).
         center_nodes: Array of central node values. Has shape (nvars, nx, ny, nz, 1).
         x_nodes, y_nodes, z_nodes: Optional array of x,y,z-face node values. Has shape
@@ -134,7 +133,7 @@ def compute_theta(
         for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
         if arr is not None
     )
-    dmp_valid = compute_dmp(xp, u, active_dims, include_corners, M=M, m=m)
+    dmp_valid = compute_dmp(np, u, active_dims, include_corners, M=M, m=m)
 
     # compute nodal maximum principle
     Mj[...] = center_nodes[..., 0]
@@ -142,14 +141,14 @@ def compute_theta(
     for nodes in [x_nodes, y_nodes, z_nodes]:
         if nodes is None:
             continue
-        xp.minimum(mj, xp.min(nodes, axis=4), out=mj)
-        xp.maximum(Mj, xp.max(nodes, axis=4), out=Mj)
+        np.minimum(mj, np.min(nodes, axis=4), out=mj)
+        np.maximum(Mj, np.max(nodes, axis=4), out=Mj)
 
     # compute theta
-    theta[..., 0] = xp.minimum(
-        xp.minimum(
-            xp.divide(xp.abs(M - u), xp.abs(Mj - u) + tol),
-            xp.divide(xp.abs(m - u), xp.abs(mj - u) + tol),
+    theta[..., 0] = np.minimum(
+        np.minimum(
+            np.divide(np.abs(M - u), np.abs(Mj - u) + tol),
+            np.divide(np.abs(m - u), np.abs(mj - u) + tol),
         ),
         1.0,
     )
@@ -160,7 +159,7 @@ def compute_theta(
     return valid
 
 
-def zhang_shu_operator(wj: ArrayLike, w: ArrayLike, theta: ArrayLike):
+def zhang_shu_operator(wj: np.ndarray, w: np.ndarray, theta: np.ndarray):
     """
     Zhang and Shu operator for limiting the high-order solution.
 
