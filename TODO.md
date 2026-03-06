@@ -1,6 +1,14 @@
 - [ ] log_limiter_scalars should default to false
 - [ ] all RawKernel helpers should that aren’t called in parent functions should be in test_modified_regions
-- [ ] troubles only saved as (1, nx, ny, nz). PAD_violations and NAD_violations now
+  - lr_conservative_interpolation_kernel_helper
+  - interpolate_central_quantity_kernel_helper
+  - interpolate_gauss_legendre_nodes_kernel_helper
+  - gauss_legendre_quadrature_kernel_helper
+  - MUSCL definitions in weird order
+  - compute_theta kernel needs safety checks
+- [x] troubles only saved as (1, nx, ny, nz). PAD_violations and NAD_violations now
         saved separately as (nvars, nx, ny, nz).
-- [ ] NAD/detect troubles RawKernel
+- [x] NAD/detect troubles RawKernel
 - [ ] NumPy MOOD supports multivar NAD tols, CuPy MOOD does not
+- [ ] clean up unused elementwise kernels
+- [ ] add: multistencilweights arg to interpolation kernel
