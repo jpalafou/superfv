@@ -112,30 +112,6 @@ def compute_dmp(
     return inner_slice
 
 
-def compute_vis(
-    xp: ModuleType, dmp: ArrayLike, rtol: float, atol: float, *, out: ArrayLike
-):
-    """
-    Compute a boolean array indicating where the local DMP spread is significant and
-    should be visualized. A cell is flagged True where:
-
-    |dmp_max - dmp_min| > atol + rtol * max(|dmp_max|, |dmp_min|)
-
-    Args:
-        xp: `np` namespace.
-        dmp: Array containing the discrete maximum principle values. Has shape
-            (nvars, nx, ny, nz, >=2), where the last axis contains the min and max
-            values.
-        rtol: Relative tolerance.
-        atol: Absolute tolerance.
-        out: Output boolean array to store the results. Should have shape
-            (nvars, nx, ny, nz).
-    """
-    m = dmp[..., 0]
-    M = dmp[..., 1]
-    out[...] = M - m > atol + rtol * xp.maximum(xp.abs(m), xp.abs(M))
-
-
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
