@@ -48,17 +48,19 @@ def test_mpp_1d(N: int, p: int, config: dict):
 @pytest.mark.parametrize(
     "config",
     [
-        dict(cascade="first-order", NAD_rtol={"rho": 1e-2}),
+        dict(cascade="first-order", NAD_rtol={"rho": 1e-2}, NAD_delta=True),
         dict(cascade="first-order", NAD=False, SED=False),
-        dict(cascade="muscl1", NAD_rtol=1e-1, scale_NAD_rtol_by_dt=True),
-        dict(cascade="muscl1", NAD_rtol=1e-7, NAD_delta=False, limiting_vars=("rho",)),
+        dict(
+            cascade="muscl1", NAD_rtol=1e-1, NAD_delta=True, scale_NAD_rtol_by_dt=True
+        ),
+        dict(cascade="muscl1", NAD_rtol=1e-7, limiting_vars=("rho",)),
         dict(cascade="muscl1", NAD=False, SED=False),
         dict(cascade="full"),
     ],
 )
 def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
-    max_MOOD_iters = N**2 if not config.get("NAD", True) else 40
+    max_MOOD_iters = N**2
     tol = 1e-14
 
     sim = AdvectionSolver(
