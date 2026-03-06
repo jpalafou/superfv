@@ -146,16 +146,13 @@ def compute_theta(
         xp.maximum(Mj, xp.max(nodes, axis=4), out=Mj)
 
     # compute theta
-    if hasattr(xp, "cuda"):
-        theta_kernel(u, M, m, Mj, mj, tol, theta[..., 0])
-    else:
-        theta[..., 0] = xp.minimum(
-            xp.minimum(
-                xp.divide(xp.abs(M - u), xp.abs(Mj - u) + tol),
-                xp.divide(xp.abs(m - u), xp.abs(mj - u) + tol),
-            ),
-            1.0,
-        )
+    theta[..., 0] = xp.minimum(
+        xp.minimum(
+            xp.divide(xp.abs(M - u), xp.abs(Mj - u) + tol),
+            xp.divide(xp.abs(m - u), xp.abs(mj - u) + tol),
+        ),
+        1.0,
+    )
 
     valid = cast(Tuple[slice, ...], insert_slice(dmp_valid, 4, slice(0, 1)))
     out[valid] = theta[valid]
@@ -294,20 +291,6 @@ def log_zhang_shu_scalar_statistics(
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
-
-    theta_kernel = cp.ElementwiseKernel(
-        in_params=(
-            "float64 u, float64 M, float64 m, float64 Mj, float64 mj, float64 tol"
-        ),
-        out_params="float64 theta",
-        operation="""
-        double theta_M = fabs(M - u) / (fabs(Mj - u) + tol);
-        double theta_m = fabs(m - u) / (fabs(mj - u) + tol);
-        theta = fmin(fmin(theta_M, theta_m), 1.0);
-        """,
-        name="theta_kernel",
-        no_return=True,
-    )
 
     compute_theta_kernel = cp.RawKernel(
         """
