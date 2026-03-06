@@ -8,3 +8,5 @@
 - [ ] NumPy MOOD supports multivar NAD tols, CuPy MOOD does not
 - [ ] clean up unused elementwise kernels
 - [ ] add: multistencilweights arg to interpolation kernel
+- [ ] rm: gtol, make rtol a scalar again
+- [ ] symmetry bug `p = 7, GL = True, dims1_dims2 = ('xy', 'yz')`

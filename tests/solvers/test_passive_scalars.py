@@ -1,8 +1,8 @@
-import numpy as np
 import pytest
 
 import superfv.initial_conditions as ic
 from superfv import AdvectionSolver, EulerSolver
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.norms import l1_norm
 
 
@@ -16,19 +16,19 @@ def test_AdvectionSolver_passive_scalar_invariance():
 
     # set up solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=np),
+        ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=xp),
         nx=N,
         p=p,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=np),
+        ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=xp),
         ic_passives={
             "passive1": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, 0)
         },
         nx=N,
         p=p,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
     )
 
     # run solvers
@@ -59,13 +59,17 @@ def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: st
         else {"MOOD": True, "NAD": 1e-5}
     )
     solver1 = EulerSolver(
-        ic=ic.sod_shock_tube_1d, **{f"n{dim}": N}, p=p, cupy=True, **limiting_config
+        ic=ic.sod_shock_tube_1d,
+        **{f"n{dim}": N},
+        p=p,
+        cupy=CUPY_AVAILABLE,
+        **limiting_config,
     )
     solver2 = EulerSolver(
         ic=ic.sod_shock_tube_1d,
         **{f"n{dim}": N},
         p=p,
-        cupy=True,
+        cupy=CUPY_AVAILABLE,
         **limiting_config,
         ic_passives={
             "passive_square": lambda x, y, z, t, xp: xp.where(
