@@ -1044,8 +1044,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mesh.z_slab_depth,
         )
 
+    @abstractmethod
     def _init_riemann_solver(self, riemann_solver: str):
-        self.init_riemann_solver(riemann_solver)
+        """
+        Define `self.riemann_solver_name` and `self.riemann_solver_function`.
+
+        Args:
+            riemann_solver: Name of the Riemann solver to use.
+        """
+        pass
 
     def _init_array_allocation(self):
         if self.cupy:
@@ -1307,16 +1314,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         Args:
             u: Array of conservative variables.
             w: Output array of primitive variables.
-        """
-        pass
-
-    @abstractmethod
-    def init_riemann_solver(self, riemann_solver: str):
-        """
-        Define `self.arraywise_riemann_solver` and `self.elemewise_riemann_solver`.
-
-        Args:
-            riemann_solver: Name of the Riemann solver to use.
         """
         pass
 
@@ -1839,7 +1836,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 (nvars, nx, ny, nz).
             scheme: Interpolation scheme to use for the detection.
         """
-        xp = self.xp
         active_dims = self.active_dims
         arrays = self.arrays
         check_uniformity = scheme.limiter_config.check_uniformity
@@ -1854,7 +1850,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         else:
             smooth_extrema_detector(
-                xp,
                 u,
                 active_dims,
                 check_uniformity,

@@ -1,8 +1,9 @@
-from types import ModuleType
 from typing import Literal, Protocol, runtime_checkable
 
+import numpy as np
+
 from .hydro import fluxes, prim_to_cons, sound_speed
-from .tools.device_management import CUPY_AVAILABLE, ArrayLike
+from .tools.device_management import CUPY_AVAILABLE
 from .tools.slicing import VariableIndexMap
 from .tools.stability import avoid0
 
@@ -11,41 +12,37 @@ from .tools.stability import avoid0
 class AdvectionRiemannSolver(Protocol):
     def __call__(
         self,
-        xp: ModuleType,
         idx: VariableIndexMap,
-        wl: ArrayLike,
-        wr: ArrayLike,
+        wl: np.ndarray,
+        wr: np.ndarray,
         dim: Literal["x", "y", "z"],
-    ) -> ArrayLike: ...
+    ) -> np.ndarray: ...
 
 
 @runtime_checkable
 class HydroRiemannSolver(Protocol):
     def __call__(
         self,
-        xp: ModuleType,
         idx: VariableIndexMap,
-        wl: ArrayLike,
-        wr: ArrayLike,
+        wl: np.ndarray,
+        wr: np.ndarray,
         dim: Literal["x", "y", "z"],
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> ArrayLike: ...
+    ) -> np.ndarray: ...
 
 
 def advection_upwind(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    wl: ArrayLike,
-    wr: ArrayLike,
+    wl: np.ndarray,
+    wr: np.ndarray,
     dim: Literal["x", "y", "z"],
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Compute the upwind advection flux for a given dimension.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         wl: Array of the left state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
@@ -58,16 +55,16 @@ def advection_upwind(
     """
     vl = wl[idx("v" + dim)]
     vr = wr[idx("v" + dim)]
-    v = xp.where(xp.abs(vl) > xp.abs(vr), vl, vr)
+    v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
-    F = xp.empty_like(wl)
+    F = np.empty_like(wl)
 
-    F[idx("rho")] = v * xp.where(v > 0, wl[idx("rho")], wr[idx("rho")])
+    F[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
     F[idx("vx")] = 0.0
     F[idx("vy")] = 0.0
     F[idx("vz")] = 0.0
     if "passives" in idx.group_var_map:
-        F[idx("passives")] = v * xp.where(
+        F[idx("passives")] = v * np.where(
             v > 0, wl[idx("passives")], wr[idx("passives")]
         )
 
@@ -75,20 +72,18 @@ def advection_upwind(
 
 
 def llf(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    wl: ArrayLike,
-    wr: ArrayLike,
+    wl: np.ndarray,
+    wr: np.ndarray,
     dim: Literal["x", "y", "z"],
     gamma: float,
     isothermal: bool = False,
     iso_cs: float = 1.0,
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Compute the LLF flux for the Euler equations in the specified dimension.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         wl: Array of the left state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
@@ -107,9 +102,9 @@ def llf(
 
     csl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
     csr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
-    sl = csl + xp.abs(wl[idx("v" + dim)])
-    sr = csr + xp.abs(wr[idx("v" + dim)])
-    smax = xp.maximum(sl, sr)
+    sl = csl + np.abs(wl[idx("v" + dim)])
+    sr = csr + np.abs(wr[idx("v" + dim)])
+    smax = np.maximum(sl, sr)
 
     Fl = fluxes(idx, wl, dim, gamma)
     Fr = fluxes(idx, wr, dim, gamma)
@@ -120,20 +115,18 @@ def llf(
 
 
 def hllc(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    wl: ArrayLike,
-    wr: ArrayLike,
+    wl: np.ndarray,
+    wr: np.ndarray,
     dim: Literal["x", "y", "z"],
     gamma: float,
     isothermal: bool = False,
     iso_cs: float = 1.0,
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Compute the HLLC flux for the Euler equations in the specified dimension.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         idx: VariableIndexMap object with indices for hydro variables.
         wl: Array of the left state as primitive variables. Has shape
             (nvars, nx, ny, nz, ...).
@@ -168,38 +161,38 @@ def hllc(
 
     cl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
     cr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
-    cmax = xp.maximum(cl, cr)
+    cmax = np.maximum(cl, cr)
 
-    sl = xp.minimum(v1l, v1r) - cmax
-    sr = xp.maximum(v1l, v1r) + cmax
+    sl = np.minimum(v1l, v1r) - cmax
+    sr = np.maximum(v1l, v1r) + cmax
 
     rcl = rhol * (v1l - sl)
     rcr = rhor * (sr - v1r)
 
-    vP_star_denom = avoid0(xp, rcl + rcr)
+    vP_star_denom = avoid0(rcl + rcr)
     vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / vP_star_denom
     Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / vP_star_denom
 
-    rhoE_starl_denoml = avoid0(xp, sl - vstar)
-    rhoE_starr_denomr = avoid0(xp, sr - vstar)
+    rhoE_starl_denoml = avoid0(sl - vstar)
+    rhoE_starr_denomr = avoid0(sr - vstar)
     rhostarl = rhol * (sl - v1l) / rhoE_starl_denoml
     rhostarr = rhor * (sr - v1r) / rhoE_starr_denomr
     Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / rhoE_starl_denoml
     Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / rhoE_starr_denomr
 
-    rhogdv = hllc_operator(xp, sl, sr, vstar, rhol, rhor, rhostarl, rhostarr)
-    v1gdv = hllc_operator(xp, sl, sr, vstar, v1l, v1r, vstar, vstar)
-    Pgdv = hllc_operator(xp, sl, sr, vstar, Pl, Pr, Pstar, Pstar)
-    Egdv = hllc_operator(xp, sl, sr, vstar, El, Er, Estarl, Estarr)
+    rhogdv = hllc_operator(sl, sr, vstar, rhol, rhor, rhostarl, rhostarr)
+    v1gdv = hllc_operator(sl, sr, vstar, v1l, v1r, vstar, vstar)
+    Pgdv = hllc_operator(sl, sr, vstar, Pl, Pr, Pstar, Pstar)
+    Egdv = hllc_operator(sl, sr, vstar, El, Er, Estarl, Estarr)
 
-    F = xp.empty_like(wl)
+    F = np.empty_like(wl)
     F[idx("rho")] = rhogdv * v1gdv
     F[idx("m" + d1)] = F[idx("rho")] * v1gdv + Pgdv
     F[idx("E")] = v1gdv * (Egdv + Pgdv)
-    F[idx("m" + d2)] = F[idx("rho")] * xp.where(vstar > 0, v2l, v2r)
-    F[idx("m" + d3)] = F[idx("rho")] * xp.where(vstar > 0, v3l, v3r)
+    F[idx("m" + d2)] = F[idx("rho")] * np.where(vstar > 0, v2l, v2r)
+    F[idx("m" + d3)] = F[idx("rho")] * np.where(vstar > 0, v3l, v3r)
     if "passives" in idx.group_var_map:
-        F[idx("passives")] = F[idx("rho")] * xp.where(
+        F[idx("passives")] = F[idx("rho")] * np.where(
             vstar > 0, wl[idx("passives")], wr[idx("passives")]
         )
 
@@ -207,20 +200,18 @@ def hllc(
 
 
 def hllc_operator(
-    xp: ModuleType,
-    sl: ArrayLike,
-    sr: ArrayLike,
-    vstar: ArrayLike,
-    ql: ArrayLike,
-    qr: ArrayLike,
-    qstarl: ArrayLike,
-    qstarr: ArrayLike,
-) -> ArrayLike:
+    sl: np.ndarray,
+    sr: np.ndarray,
+    vstar: np.ndarray,
+    ql: np.ndarray,
+    qr: np.ndarray,
+    qstarl: np.ndarray,
+    qstarr: np.ndarray,
+) -> np.ndarray:
     """
     Helper function for HLLC flux calculation.
 
     Args:
-        xp: ModuleType for the array operations (e.g., numpy or cupy).
         sl: Left wave speed.
         sr: Right wave speed.
         vstar: Star state velocity.
@@ -232,24 +223,22 @@ def hllc_operator(
     Returns:
         Array with the HLLC operator applied.
     """
-    return xp.where(
-        sl > 0, ql, xp.where(vstar > 0, qstarl, xp.where(sr > 0, qstarr, qr))
+    return np.where(
+        sl > 0, ql, np.where(vstar > 0, qstarl, np.where(sr > 0, qstarr, qr))
     )
 
 
 def hllct(
-    xp: ModuleType,
     idx: VariableIndexMap,
-    wl: ArrayLike,
-    wr: ArrayLike,
+    wl: np.ndarray,
+    wr: np.ndarray,
     dim: Literal["x", "y", "z"],
     gamma: float,
-) -> ArrayLike:
+) -> np.ndarray:
     """
     Compute Romain's HLLC flux for the Euler equations in the specified dimension.
 
     Args:
-        xp: numpy/cupy-like module for array ops.
         idx: VariableIndexMap providing indices for 'rho', 'v*', 'P', 'E', etc.
         wl: Left primitive state [rho, v*, ..., P, passives?].
         wr: Right primitive state.
@@ -275,11 +264,11 @@ def hllct(
     pr = wr[idx("P")]
     er = uright[idx("E")]
     # sound speed
-    cl = xp.sqrt(gamma * pl / dl)
-    cr = xp.sqrt(gamma * pr / dr)
+    cl = np.sqrt(gamma * pl / dl)
+    cr = np.sqrt(gamma * pr / dr)
     # waves speed
-    sl = xp.minimum(vl, vr) - xp.maximum(cl, cr)
-    sr = xp.maximum(vl, vr) + xp.maximum(cl, cr)
+    sl = np.minimum(vl, vr) - np.maximum(cl, cr)
+    sr = np.maximum(vl, vr) + np.maximum(cl, cr)
     dcl = dl * (vl - sl)
     dcr = dr * (sr - vr)
     # star state velocity and pressure
@@ -291,10 +280,10 @@ def hllct(
     estarl = ((sl - vl) * el - pl * vl + pstar * vstar) / (sl - vstar)
     estarr = ((sr - vr) * er - pr * vr + pstar * vstar) / (sr - vstar)
     # sample godunov state
-    dg = xp.where(sl > 0, dl, xp.where(vstar > 0, dstarl, xp.where(sr > 0, dstarr, dr)))
-    vg = xp.where(sl > 0, vl, xp.where(vstar > 0, vstar, xp.where(sr > 0, vstar, vr)))
-    pg = xp.where(sl > 0, pl, xp.where(vstar > 0, pstar, xp.where(sr > 0, pstar, pr)))
-    eg = xp.where(sl > 0, el, xp.where(vstar > 0, estarl, xp.where(sr > 0, estarr, er)))
+    dg = np.where(sl > 0, dl, np.where(vstar > 0, dstarl, np.where(sr > 0, dstarr, dr)))
+    vg = np.where(sl > 0, vl, np.where(vstar > 0, vstar, np.where(sr > 0, vstar, vr)))
+    pg = np.where(sl > 0, pl, np.where(vstar > 0, pstar, np.where(sr > 0, pstar, pr)))
+    eg = np.where(sl > 0, el, np.where(vstar > 0, estarl, np.where(sr > 0, estarr, er)))
     # compute godunov flux
     flux[idx("rho")] = dg * vg
     flux[idx("m" + d1)] = dg * vg * vg + pg

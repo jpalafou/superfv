@@ -1,4 +1,5 @@
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from functools import cached_property
+from typing import Dict, Literal, Optional, Tuple, Union
 
 from . import riemann_solvers
 from .axes import DIM_TO_AXIS
@@ -296,32 +297,24 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         w[...] = u
 
-    def init_riemann_solver(self, riemann_solver: str):
+    def _init_riemann_solver(self, riemann_solver: str):
         """
-        Define `self.arraywise_riemann_solver` and `self.elemewise_riemann_solver`.
+        Define `self.riemann_solver_name` and `self.riemann_solver_function`.
 
         Args:
             riemann_solver: Name of the Riemann solver to use.
         """
-        self.arraywise_riemann_solver: AdvectionRiemannSolver
-        self.elemewise_riemann_solver: Optional[Callable] = None
+        self.riemann_solver_name = riemann_solver
+        self.riemann_solver_function: AdvectionRiemannSolver
 
         if hasattr(riemann_solvers, riemann_solver):
-            tmp_arraywise = getattr(riemann_solvers, riemann_solver)
-            if not isinstance(tmp_arraywise, AdvectionRiemannSolver):
+            rsf = getattr(riemann_solvers, riemann_solver)
+            if not isinstance(rsf, AdvectionRiemannSolver):
                 raise TypeError(
-                    f"Riemann solver '{riemann_solver}' is not of type "
+                    f"Riemann solver '{self.riemann_solver_name}' is not of type "
                     "AdvectionRiemannSolver."
                 )
-            self.arraywise_riemann_solver = tmp_arraywise
-        else:
-            raise ValueError(f"Riemann solver '{riemann_solver}' is not implemented.")
-
-        make_kernel_name = f"make_{riemann_solver}_elementwise_kernel"
-        if self.cupy and hasattr(riemann_solvers, make_kernel_name):
-            self.elemewise_riemann_solver = getattr(riemann_solvers, make_kernel_name)(
-                self.n_passive_vars
-            )
+            self.riemann_solver_function = rsf
 
     @MethodTimer(cat="integrate_fluxes:riemann_solver")
     def riemann_solver(
@@ -347,8 +340,8 @@ class AdvectionSolver(FiniteVolumeSolver):
         """
         idx = self.variable_index_map
 
-        if self.cupy and self.elemewise_riemann_solver is not None:
-            result = self.elemewise_riemann_solver(
+        if self.cupy:
+            result = self.reimann_solver_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
                 wl[idx("vx")],
@@ -372,13 +365,19 @@ class AdvectionSolver(FiniteVolumeSolver):
             for i, v in enumerate(idx.group_var_map.get("passives", []), start=4):
                 out[idx(v)] = result[i]
         else:
-            out[...] = self.arraywise_riemann_solver(
-                self.xp,
+            out[...] = self.riemann_solver_function(
                 idx,
                 wl,
                 wr,
                 dim,
             )
+
+    @cached_property
+    def reimann_solver_kernel(self):
+        raise NotImplementedError(
+            "Elementwise Riemann solver kernels are not implemented for the advection "
+            "solver."
+        )
 
     def log_quantity(self) -> Dict[str, float]:
         """

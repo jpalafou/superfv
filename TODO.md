@@ -10,3 +10,4 @@
 - [ ] add: multistencilweights arg to interpolation kernel
 - [ ] rm: gtol, make rtol a scalar again
 - [ ] symmetry bug `p = 7, GL = True, dims1_dims2 = ('xy', 'yz')`
+- [ ] simplify Riemann solver init

@@ -1,6 +1,6 @@
 import warnings
 from functools import cached_property
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -24,6 +24,7 @@ if CUPY_AVAILABLE:
         make_prim_to_cons_elementwise_kernel,
         sound_speed_cp,
     )
+    from .riemann_solvers import make_hllc_elementwise_kernel
     from .slope_limiting.shock_detection import compute_shocks_kernel_helper
 
 
@@ -416,32 +417,24 @@ class EulerSolver(FiniteVolumeSolver):
     def cons_to_prim_cp(self):
         return make_cons_to_prim_elementwise_kernel(self.n_passive_vars)
 
-    def init_riemann_solver(self, riemann_solver: str):
+    def _init_riemann_solver(self, riemann_solver: str):
         """
-        Define `self.arraywise_riemann_solver` and `self.elemewise_riemann_solver`.
+        Define `self.riemann_solver_name` and `self.riemann_solver_function`.
 
         Args:
             riemann_solver: Name of the Riemann solver to use.
         """
-        self.arraywise_riemann_solver: HydroRiemannSolver
-        self.elemewise_riemann_solver: Optional[Callable] = None
+        self.riemann_solver_name = riemann_solver
+        self.riemann_solver_function: HydroRiemannSolver
 
-        if hasattr(riemann_solvers, riemann_solver):
-            tmp_arraywise = getattr(riemann_solvers, riemann_solver)
-            if not isinstance(tmp_arraywise, HydroRiemannSolver):
+        if hasattr(riemann_solvers, self.riemann_solver_name):
+            rsf = getattr(riemann_solvers, self.riemann_solver_name)
+            if not isinstance(rsf, HydroRiemannSolver):
                 raise TypeError(
-                    f"Riemann solver '{riemann_solver}' is not of type "
+                    f"Riemann solver '{self.riemann_solver_name}' is not of type "
                     "HydroRiemannSolver."
                 )
-            self.arraywise_riemann_solver = tmp_arraywise
-        else:
-            raise ValueError(f"Riemann solver '{riemann_solver}' is not implemented.")
-
-        make_kernel_name = f"make_{riemann_solver}_elementwise_kernel"
-        if self.cupy and hasattr(riemann_solvers, make_kernel_name):
-            self.elemewise_riemann_solver = getattr(riemann_solvers, make_kernel_name)(
-                self.n_passive_vars
-            )
+            self.riemann_solver_function = rsf
 
     @MethodTimer(cat="integrate_fluxes:riemann_solver")
     def riemann_solver(
@@ -468,10 +461,10 @@ class EulerSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
         gamma = self.gamma
 
-        if self.cupy and self.elemewise_riemann_solver is not None:
+        if self.cupy:
             cl = self.compute_sound_speed(wl)
             cr = self.compute_sound_speed(wr)
-            self.elemewise_riemann_solver(
+            self.riemann_solver_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
                 wl[idx("vx")],
@@ -499,8 +492,7 @@ class EulerSolver(FiniteVolumeSolver):
                 *[out[idx(v)] for v in idx.group_var_map.get("passives", [])],
             )
         else:
-            out[...] = self.arraywise_riemann_solver(
-                self.xp,
+            out[...] = self.riemann_solver_function(
                 idx,
                 wl,
                 wr,
@@ -509,6 +501,15 @@ class EulerSolver(FiniteVolumeSolver):
                 self.isothermal,
                 self.iso_cs,
             )
+
+    @cached_property
+    def riemann_solver_kernel(self):
+        if self.riemann_solver_name != "hllc":
+            raise NotImplementedError(
+                "Elementwise Riemann solver kernels are only implemented for the HLLC "
+                "solver."
+            )
+        return make_hllc_elementwise_kernel(self.n_passive_vars)
 
     @MethodTimer(cat="integrate_fluxes:fallback")
     def primitive_reconstruction_fallback(

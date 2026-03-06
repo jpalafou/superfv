@@ -406,7 +406,7 @@ def test_smooth_extrema_detection(dims: str, check_uniformity: bool):
 
     u, buffer, out = sample_data(dims, nout=1, xp=xp)
     modified = smooth_extrema_detector(
-        xp, u, tuple(dims), check_uniformity, out=out, buffer=buffer
+        u, tuple(dims), check_uniformity, out=out, buffer=buffer
     )
 
     assert not xp.any(xp.isnan(out[modified]))

@@ -1,14 +1,15 @@
-from types import ModuleType
 from typing import Literal, Tuple, cast
+
+import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.slicing import crop, merge_slices, replace_slice
 from superfv.tools.stability import avoid0
 
 
-def central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
+def central_difference(u: np.ndarray, axis: int, *, out: np.ndarray):
     """
     Compute 1D central difference, ignoring mesh size.
 
@@ -23,13 +24,12 @@ def central_difference(u: ArrayLike, axis: int, *, out: ArrayLike):
 
 
 def smooth_extrema_detector_1d(
-    xp: ModuleType,
-    u: ArrayLike,
+    u: np.ndarray,
     dim: Literal["x", "y", "z"],
     check_uniformity: bool,
     *,
-    out: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    buffer: np.ndarray,
     eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
 ) -> Tuple[slice, ...]:
@@ -37,7 +37,6 @@ def smooth_extrema_detector_1d(
     Compute the 1D smooth extrema detector alpha.
 
     Args:
-        xp: `np` namespace.
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
         dim: Dimension along which to compute the smooth extrema detector: "x", "y",
@@ -74,18 +73,18 @@ def smooth_extrema_detector_1d(
     # compute derivatives
     central_difference(u, axis, out=du)
     central_difference(du, axis, out=dv)
-    dv[...] = avoid0(xp, 0.5 * dv, eps)
+    dv[...] = avoid0(0.5 * dv, eps)
 
     # left detector
     vl[crop(axis, (1, -1))] = du[crop(axis, (None, -2))] - du[crop(axis, (1, -1))]
-    alpha_l[...] = -xp.where(dv < 0, xp.maximum(vl, 0), xp.minimum(vl, 0)) / dv
+    alpha_l[...] = -np.where(dv < 0, np.maximum(vl, 0), np.minimum(vl, 0)) / dv
 
     # right detector
     vr[crop(axis, (1, -1))] = du[crop(axis, (2, None))] - du[crop(axis, (1, -1))]
-    alpha_r[...] = xp.where(dv > 0, xp.maximum(vr, 0), xp.minimum(vr, 0)) / dv
+    alpha_r[...] = np.where(dv > 0, np.maximum(vr, 0), np.minimum(vr, 0)) / dv
 
     # combine left and right detectors
-    alpha[..., 0] = xp.minimum(xp.minimum(alpha_l, alpha_r), 1.0)
+    alpha[..., 0] = np.minimum(np.minimum(alpha_l, alpha_r), 1.0)
 
     # relax alpha in uniform regions
     if check_uniformity:
@@ -93,33 +92,32 @@ def smooth_extrema_detector_1d(
         ctr_slc = crop(axis, (1, -1))
         rgt_slc = crop(axis, (None, -2))
 
-        dmp_m[ctr_slc] = xp.minimum(xp.minimum(u[lft_slc], u[ctr_slc]), u[rgt_slc])
-        dmp_M[ctr_slc] = xp.maximum(xp.maximum(u[lft_slc], u[ctr_slc]), u[rgt_slc])
+        dmp_m[ctr_slc] = np.minimum(np.minimum(u[lft_slc], u[ctr_slc]), u[rgt_slc])
+        dmp_M[ctr_slc] = np.maximum(np.maximum(u[lft_slc], u[ctr_slc]), u[rgt_slc])
 
-        uniform[...] = xp.abs(dmp_M - dmp_m) <= uniformity_tol * xp.abs(u)
+        uniform[...] = np.abs(dmp_M - dmp_m) <= uniformity_tol * np.abs(u)
 
-        alpha[..., 0] = xp.where(uniform == 1, 1.0, alpha[..., 0])
+        alpha[..., 0] = np.where(uniform == 1, 1.0, alpha[..., 0])
 
     # take min of neighbors and return
     lft_slc = crop(axis, (2, -4), ndim=5)
     cen_slc = crop(axis, (3, -3), ndim=5)
     rgt_slc = crop(axis, (4, -2), ndim=5)
 
-    out[cen_slc] = xp.minimum(alpha[lft_slc], alpha[cen_slc])
-    out[cen_slc] = xp.minimum(alpha[rgt_slc], out[cen_slc])
+    out[cen_slc] = np.minimum(alpha[lft_slc], alpha[cen_slc])
+    out[cen_slc] = np.minimum(alpha[rgt_slc], out[cen_slc])
 
     modified = cast(Tuple[slice, ...], replace_slice(cen_slc, 4, slice(None, 1)))
     return modified
 
 
 def smooth_extrema_detector_2d(
-    xp: ModuleType,
-    u: ArrayLike,
+    u: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     check_uniformity: bool,
     *,
-    out: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    buffer: np.ndarray,
     eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
 ) -> Tuple[slice, ...]:
@@ -127,7 +125,6 @@ def smooth_extrema_detector_2d(
     Compute the 2D smooth extrema detector alpha.
 
     Args:
-        xp: `np` namespace.
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
         active_dims: Tuple of two dimensions along which to compute the smooth extrema
@@ -153,7 +150,6 @@ def smooth_extrema_detector_2d(
     abuff = buffer[..., 2:]
 
     modified1 = smooth_extrema_detector_1d(
-        xp,
         u,
         d1,
         check_uniformity,
@@ -163,7 +159,6 @@ def smooth_extrema_detector_2d(
         uniformity_tol=uniformity_tol,
     )
     modified2 = smooth_extrema_detector_1d(
-        xp,
         u,
         d2,
         check_uniformity,
@@ -174,18 +169,17 @@ def smooth_extrema_detector_2d(
     )
 
     modified = merge_slices(modified1, modified2)
-    out[modified] = xp.minimum(alph1[modified], alph2[modified])
+    out[modified] = np.minimum(alph1[modified], alph2[modified])
 
     return modified
 
 
 def smooth_extrema_detector_3d(
-    xp: ModuleType,
-    u: ArrayLike,
+    u: np.ndarray,
     check_uniformity: bool,
     *,
-    out: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    buffer: np.ndarray,
     eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
 ) -> Tuple[slice, ...]:
@@ -193,7 +187,6 @@ def smooth_extrema_detector_3d(
     Compute the 3D smooth extrema detector alpha.
 
     Args:
-        xp: `np` namespace.
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
         check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
@@ -219,7 +212,6 @@ def smooth_extrema_detector_3d(
     abuff = buffer[..., 3:]
 
     modified1 = smooth_extrema_detector_1d(
-        xp,
         u,
         d1,
         check_uniformity,
@@ -229,7 +221,6 @@ def smooth_extrema_detector_3d(
         uniformity_tol=uniformity_tol,
     )
     modified2 = smooth_extrema_detector_1d(
-        xp,
         u,
         d2,
         check_uniformity,
@@ -239,7 +230,6 @@ def smooth_extrema_detector_3d(
         uniformity_tol=uniformity_tol,
     )
     modified3 = smooth_extrema_detector_1d(
-        xp,
         u,
         d3,
         check_uniformity,
@@ -250,20 +240,19 @@ def smooth_extrema_detector_3d(
     )
 
     modified = merge_slices(modified1, modified2, modified3)
-    out[modified] = xp.minimum(alph1[modified], alph2[modified])
-    out[modified] = xp.minimum(alph3[modified], out[modified])
+    out[modified] = np.minimum(alph1[modified], alph2[modified])
+    out[modified] = np.minimum(alph3[modified], out[modified])
 
     return modified
 
 
 def smooth_extrema_detector(
-    xp: ModuleType,
-    u: ArrayLike,
+    u: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     check_uniformity: bool,
     *,
-    out: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    buffer: np.ndarray,
     eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
 ) -> Tuple[slice, ...]:
@@ -271,7 +260,6 @@ def smooth_extrema_detector(
     Compute the smooth extrema detector alpha along specified dimensions.
 
     Args:
-        xp: `np` namespace.
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
         active_dims: Tuple of dimensions along which to compute the smooth extrema
@@ -295,7 +283,6 @@ def smooth_extrema_detector(
     """
     if len(active_dims) == 1:
         return smooth_extrema_detector_1d(
-            xp,
             u,
             active_dims[0],
             check_uniformity,
@@ -306,7 +293,6 @@ def smooth_extrema_detector(
         )
     elif len(active_dims) == 2:
         return smooth_extrema_detector_2d(
-            xp,
             u,
             active_dims,
             check_uniformity,
@@ -317,7 +303,6 @@ def smooth_extrema_detector(
         )
     elif len(active_dims) == 3:
         return smooth_extrema_detector_3d(
-            xp,
             u,
             check_uniformity,
             out=out,
