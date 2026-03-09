@@ -17,8 +17,10 @@
 - [ ] remove `xp` backend
   - [x] shock detection
   - [x] ZS limiter
-  - [ ] MUSCL slopes
+  - [x] MUSCL slopes
+  - [ ] detect NAD violations
   - [ ] detect PAD violations
   - [ ] fv interpolation functions
   - [ ] perform_GaussLegendre_quadrature
   - [ ] stencil.py
+- [ ] use __restrict__ and const for all RawKernels where necessary

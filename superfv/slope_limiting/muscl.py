@@ -1,12 +1,13 @@
 from dataclasses import dataclass
-from types import ModuleType
 from typing import Literal, Optional, Tuple, cast
+
+import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
 
 
@@ -90,21 +91,19 @@ class musclInterpolationScheme(InterpolationScheme):
 
 
 def compute_limited_slopes(
-    xp: ModuleType,
-    u: ArrayLike,
+    u: np.ndarray,
     face_dim: Literal["x", "y", "z"],
     *,
-    out: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    buffer: np.ndarray,
     config: musclConfig,
-    alpha: Optional[ArrayLike] = None,
+    alpha: Optional[np.ndarray] = None,
 ) -> Tuple[slice, ...]:
     """
     Compute limited slopes for face-centered nodes from an array of finite
     volume averages.
 
     Args:
-        xp: `np` namespace.
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
@@ -142,26 +141,26 @@ def compute_limited_slopes(
             dlft[...] = u[slc_c] - u[slc_l]
             drgt[...] = u[slc_r] - u[slc_c]
             dcen[...] = 0.5 * (dlft + drgt)
-            dsgn[...] = xp.sign(dlft)
-            dslp[...] = dsgn * xp.minimum(xp.abs(dlft), xp.abs(drgt))
-            out[inner] = xp.where(dlft * drgt <= 0, 0, dslp)
+            dsgn[...] = np.sign(dlft)
+            dslp[...] = dsgn * np.minimum(np.abs(dlft), np.abs(drgt))
+            out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
             if SED:
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
-                out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
+                out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
         case "moncen":
             dlft[...] = u[slc_c] - u[slc_l]
             drgt[...] = u[slc_r] - u[slc_c]
             dcen[...] = 0.5 * (dlft + drgt)
-            dsgn[...] = xp.sign(dcen)
-            dslp[...] = dsgn * xp.minimum(
-                xp.minimum(xp.abs(2 * dlft), 2 * xp.abs(drgt)), xp.abs(dcen)
+            dsgn[...] = np.sign(dcen)
+            dslp[...] = dsgn * np.minimum(
+                np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen)
             )
-            out[inner] = xp.where(dlft * drgt <= 0, 0, dslp)
+            out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
             if SED:
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
-                out[inner] = xp.where(alpha[inner] < 1, out[inner], dcen)
+                out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
         case "PP2D":
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
         case None:
@@ -174,22 +173,20 @@ def compute_limited_slopes(
 
 
 def compute_PP2D_slopes(
-    xp: ModuleType,
-    u: ArrayLike,
+    u: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
-    Sx: ArrayLike,
-    Sy: ArrayLike,
-    buffer: ArrayLike,
+    Sx: np.ndarray,
+    Sy: np.ndarray,
+    buffer: np.ndarray,
     eps: float = 1e-20,
     config: musclConfig,
-    alpha: Optional[ArrayLike] = None,
+    alpha: Optional[np.ndarray] = None,
 ) -> Tuple[slice, ...]:
     """
     Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays.
 
     Args:
-        xp: `np` namespace.
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
         active_dims: Tuple indicating the active dimensions for interpolation. Can be
@@ -224,8 +221,8 @@ def compute_PP2D_slopes(
     V = buffer[..., 2]
     theta = buffer[..., 3:4]
 
-    V_min_neighbors = xp.empty((8,) + u.shape)
-    V_max_neighbors = xp.empty((8,) + u.shape)
+    V_min_neighbors = np.empty((8,) + u.shape)
+    V_max_neighbors = np.empty((8,) + u.shape)
 
     # assign slices
     slc1_c = crop(axis1, (1, -1), ndim=4)
@@ -246,28 +243,28 @@ def compute_PP2D_slopes(
     neighbor_slices = gather_neighbor_slices(active_dims, include_corners=True)
     c_slc = neighbor_slices[0]
 
-    V_min_neighbors[insert_slice(c_slc, 0, slice(None))] = xp.array(
+    V_min_neighbors[insert_slice(c_slc, 0, slice(None))] = np.array(
         [u[slc] - u[c_slc] for slc in neighbor_slices[1:]]
     )
-    V_min[...] = xp.minimum(xp.min(V_min_neighbors, axis=0), -eps)
+    V_min[...] = np.minimum(np.min(V_min_neighbors, axis=0), -eps)
 
-    V_max_neighbors[insert_slice(c_slc, 0, slice(None))] = xp.array(
+    V_max_neighbors[insert_slice(c_slc, 0, slice(None))] = np.array(
         [u[slc] - u[c_slc] for slc in neighbor_slices[1:]]
     )
-    V_max[...] = xp.maximum(xp.max(V_max_neighbors, axis=0), eps)
+    V_max[...] = np.maximum(np.max(V_max_neighbors, axis=0), eps)
 
     V[...] = (
         2
-        * xp.minimum(xp.abs(V_min), xp.abs(V_max))
-        / (xp.abs(Sx[..., 0]) + xp.abs(Sy[..., 0]))
+        * np.minimum(np.abs(V_min), np.abs(V_max))
+        / (np.abs(Sx[..., 0]) + np.abs(Sy[..., 0]))
     )
-    theta[..., 0] = xp.minimum(V, 1)
+    theta[..., 0] = np.minimum(V, 1)
 
     # apply SED if requested
     if SED:
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is True.")
-        theta[...] = xp.where(alpha < 1, theta, 1.0)
+        theta[...] = np.where(alpha < 1, theta, 1.0)
 
     modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
 
@@ -286,20 +283,20 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void MUSCL_slopes_kernel(
-            const double* u,
-            double* slopes,
+            const double* __restrict__ u,
+            const double* __restrict__ alpha,
+            double* __restrict__ slopes,
             const int dim,
             const int slope_type,
+            const bool SED,
             const int nvars,
             const int nx,
             const int ny,
-            const int nz,
-            const bool SED,
-            const double* alpha
+            const int nz
         ){
             // u        (nvars, nx, ny, nz)
-            // slopes   (nvars, nx, ny, nz)
             // alpha    (nvars, nx, ny, nz)
+            // slopes   (nvars, nx, ny, nz)
 
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
@@ -391,11 +388,11 @@ if CUPY_AVAILABLE:
 
     def MUSCL_slopes_kernel_helper(
         u: cp.ndarray,
+        alpha: cp.ndarray,
         slopes: cp.ndarray,
         dim: Literal["x", "y", "z"],
         slope_type: Literal[None, "minmod", "moncen", "PP2D"],
         SED: bool,
-        alpha: Optional[cp.ndarray],
     ) -> Tuple[slice, ...]:
         if slope_type == "PP2D":
             raise ValueError(
@@ -430,21 +427,20 @@ if CUPY_AVAILABLE:
         blocks_per_grid = (
             nvars * nx * ny * nz + threads_per_block - 1
         ) // threads_per_block
-        alpha_arg = alpha if SED else u
         MUSCL_slopes_kernel(
             (blocks_per_grid,),
             (threads_per_block,),
             (
                 u,
+                alpha,
                 slopes,
                 DIM_TO_AXIS[dim],
                 {"minmod": 1, "moncen": 2, None: 0}[slope_type],
+                SED,
                 nvars,
                 nx,
                 ny,
                 nz,
-                SED,
-                alpha_arg,
             ),
         )
 
@@ -459,22 +455,23 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void PP2D_slopes_kernel(
-            const double* u,
-            double* xslopes,
-            double* yslopes,
+            const double* __restrict__ u,
+            const double* __restrict__ alpha,
+            double* __restrict__ xslopes,
+            double* __restrict__ yslopes,
             const int xdim,
             const int ydim,
             const double eps,
+            const bool SED,
             const int nvars,
             const int nx,
             const int ny,
-            const int nz,
-            const bool SED,
-            const double* alpha
+            const int nz
         ){
             // u        (nvars, nx, ny, nz)
-            // slopes   (nvars, nx, ny, nz)
             // alpha    (nvars, nx, ny, nz)
+            // xslopes  (nvars, nx, ny, nz)
+            // yslopes  (nvars, nx, ny, nz)
 
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
@@ -511,7 +508,6 @@ if CUPY_AVAILABLE:
                 int j1v = iv, j1x = ix, j1y = iy, j1z = iz;
                 int j2v = iv, j2x = ix, j2y = iy, j2z = iz;
                 int j3v = iv, j3x = ix, j3y = iy, j3z = iz;
-                int j4v = iv, j4x = ix, j4y = iy, j4z = iz;
                 int j5v = iv, j5x = ix, j5y = iy, j5z = iz;
                 int j6v = iv, j6x = ix, j6y = iy, j6z = iz;
                 int j7v = iv, j7x = ix, j7y = iy, j7z = iz;
@@ -551,7 +547,6 @@ if CUPY_AVAILABLE:
                 long long j1 = (((long long)j1v * nx + j1x) * ny + j1y) * nz + j1z;
                 long long j2 = (((long long)j2v * nx + j2x) * ny + j2y) * nz + j2z;
                 long long j3 = (((long long)j3v * nx + j3x) * ny + j3y) * nz + j3z;
-                long long j4 = (((long long)j4v * nx + j4x) * ny + j4y) * nz + j4z;
                 long long j5 = (((long long)j5v * nx + j5x) * ny + j5y) * nz + j5z;
                 long long j6 = (((long long)j6v * nx + j6x) * ny + j6y) * nz + j6z;
                 long long j7 = (((long long)j7v * nx + j7x) * ny + j7y) * nz + j7z;
@@ -613,13 +608,13 @@ if CUPY_AVAILABLE:
 
     def PP2D_slopes_kernel_helper(
         u: cp.ndarray,
+        alpha: cp.ndarray,
         xslopes: cp.ndarray,
         yslopes: cp.ndarray,
         xdim: Literal["x", "y", "z"],
         ydim: Literal["x", "y", "z"],
         eps: float,
         SED: bool,
-        alpha: Optional[cp.ndarray],
     ) -> Tuple[slice, ...]:
         if u.ndim != 4 or xslopes.ndim != 4 or yslopes.ndim != 4:
             raise ValueError(
@@ -658,23 +653,23 @@ if CUPY_AVAILABLE:
         blocks_per_grid = (
             nvars * nx * ny * nz + threads_per_block - 1
         ) // threads_per_block
-        alpha_arg = alpha if SED else u
+
         PP2D_slopes_kernel(
             (blocks_per_grid,),
             (threads_per_block,),
             (
                 u,
+                alpha,
                 xslopes,
                 yslopes,
                 DIM_TO_AXIS[xdim],
                 DIM_TO_AXIS[ydim],
                 eps,
+                SED,
                 nvars,
                 nx,
                 ny,
                 nz,
-                SED,
-                alpha_arg,
             ),
         )
 

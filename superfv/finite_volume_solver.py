@@ -2677,7 +2677,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - with SED, 2D: (nvars, nx, ny, nz, >=13)
                 - with SED, 3D: (nvars, nx, ny, nz, >=14)
         """
-        xp = self.xp
         mesh = self.mesh
         active_dims = self.active_dims
         arrays = self.arrays
@@ -2708,17 +2707,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             if self.cupy:
                 PP2D_slopes_kernel_helper(
                     wcc,
+                    alpha[..., 0],
                     dw1[..., 0],
                     dw2[..., 0],
                     active_dims[0],
                     active_dims[1],
                     1e-20,
                     scheme.limiter_config.smooth_extrema_detection,
-                    alpha[..., 0],
                 )
             else:
                 compute_PP2D_slopes(
-                    xp,
                     wcc,
                     active_dims,
                     Sx=dw1,
@@ -2734,15 +2732,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 if self.cupy:
                     MUSCL_slopes_kernel_helper(
                         wcc,
+                        alpha[..., 0],
                         slope_arr[..., 0],
                         dim,
                         scheme.limiter_config.limiter,
                         scheme.limiter_config.smooth_extrema_detection,
-                        alpha[..., 0],
                     )
                 else:
                     compute_limited_slopes(
-                        xp,
                         wcc,
                         dim,
                         out=slope_arr,

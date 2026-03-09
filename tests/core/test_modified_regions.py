@@ -114,10 +114,8 @@ def test_compute_dmp(dims: str, include_corners: bool):
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("check_uniformity", [False, True])
 def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool):
-    xp = configure_xp()
-
     face_dim = dims[0]
-    u, buffer, temp = sample_data(dims, nout=2, xp=xp)
+    u, buffer, temp = sample_data(dims, nout=2, xp=np)
     out = temp[..., :1]
     alpha = temp[..., 1:2]
 
@@ -130,7 +128,6 @@ def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool)
     )
 
     modified = compute_limited_slopes(
-        xp,
         u,
         face_dim,
         out=out,
@@ -139,16 +136,14 @@ def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool)
         config=config,
     )
 
-    assert not xp.any(xp.isnan(out[modified]))
+    assert not np.any(np.isnan(out[modified]))
     # skipping all nan check since the stencils will leave some ghost cells non-nan
 
 
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
 @pytest.mark.parametrize("check_uniformity", [False, True])
 def test_compute_PP2D_slopes(dims: str, check_uniformity: bool):
-    xp = configure_xp()
-
-    u, buffer, temp = sample_data(dims, nout=3, xp=xp)
+    u, buffer, temp = sample_data(dims, nout=3, xp=np)
     Sx = temp[..., :1]
     Sy = temp[..., 1:2]
     alpha = temp[..., 2:3]
@@ -162,19 +157,17 @@ def test_compute_PP2D_slopes(dims: str, check_uniformity: bool):
     )
 
     modified = compute_PP2D_slopes(
-        xp, u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, alpha=alpha, config=config
+        u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, alpha=alpha, config=config
     )
 
-    assert not xp.any(xp.isnan(Sx[modified]))
-    assert not xp.any(xp.isnan(Sy[modified]))
+    assert not np.any(np.isnan(Sx[modified]))
+    assert not np.any(np.isnan(Sy[modified]))
     # skipping all nan check since the 2D stencils will leave some ghost cells non-nan
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 def test_compute_shock_detector(dims: str):
-    xp = configure_xp()
-
-    u, buffer, temp = sample_data(dims, nout=2, xp=xp)
+    u, buffer, temp = sample_data(dims, nout=2, xp=np)
     out = temp[:1, ..., 0]
     eta = temp[..., 1]
 
@@ -182,12 +175,12 @@ def test_compute_shock_detector(dims: str):
         u, u, tuple(dims), 0.025, out=out, eta=eta, buffer=buffer
     )
 
-    assert not xp.any(xp.isnan(out[modified]))
-    assert not xp.any(xp.isnan(eta[modified]))
-    out[modified] = xp.nan
-    eta[modified] = xp.nan
-    assert xp.all(xp.isnan(out))
-    assert xp.all(xp.isnan(eta))
+    assert not np.any(np.isnan(out[modified]))
+    assert not np.any(np.isnan(eta[modified]))
+    out[modified] = np.nan
+    eta[modified] = np.nan
+    assert np.all(np.isnan(out))
+    assert np.all(np.isnan(eta))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
@@ -219,16 +212,14 @@ def test_compute_shocks_kernel_helper(dims: str):
 def test_compute_theta(
     dims: str, check_uniformity: bool, PAD: bool, include_corners: bool
 ):
-    xp = configure_xp()
+    u, buffer, out = sample_data(dims, nout=1, xp=np)
+    nodes, _, _ = sample_data(dims, nout=1, xp=np)
+    nodes = nodes[..., np.newaxis]
 
-    u, buffer, out = sample_data(dims, nout=1, xp=xp)
-    nodes, _, _ = sample_data(dims, nout=1, xp=xp)
-    nodes = nodes[..., xp.newaxis]
-
-    M = xp.empty(u.shape)
-    m = xp.empty(u.shape)
-    Mj = xp.empty(u.shape)
-    mj = xp.empty(u.shape)
+    M = np.empty(u.shape)
+    m = np.empty(u.shape)
+    Mj = np.empty(u.shape)
+    mj = np.empty(u.shape)
 
     config = ZhangShuConfig(
         shock_detection=False,
@@ -237,7 +228,7 @@ def test_compute_theta(
         physical_admissibility_detection=PAD,
         include_corners=include_corners,
         PAD_atol=0,
-        PAD_bounds=xp.array([[0.0, 0.1] * 5]),
+        PAD_bounds=np.array([[0.0, 0.1] * 5]),
     )
 
     modified = compute_theta(
@@ -255,9 +246,9 @@ def test_compute_theta(
         config=config,
     )
 
-    assert not xp.any(xp.isnan(out[modified]))
-    out[modified] = xp.nan
-    assert xp.all(xp.isnan(out))
+    assert not np.any(np.isnan(out[modified]))
+    out[modified] = np.nan
+    assert np.all(np.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
@@ -349,11 +340,11 @@ def test_MUSCL_slopes_kernel_helper(dims: str, SED: bool):
 
     modified = MUSCL_slopes_kernel_helper(
         u,
+        alpha,
         slopes,
         face_dim,
         "minmod",
         SED,
-        alpha,
     )
 
     assert not xp.any(xp.isnan(slopes[modified]))
@@ -378,13 +369,13 @@ def test_PP2D_slopes_kernel_helper(dims: str, SED: bool):
 
     modified = PP2D_slopes_kernel_helper(
         u,
+        alpha,
         Sx,
         Sy,
         dims[0],
         dims[1],
         1e-20,
         SED,
-        alpha,
     )
 
     assert not xp.any(xp.isnan(Sx[modified]))
@@ -400,13 +391,11 @@ def test_PP2D_slopes_kernel_helper(dims: str, SED: bool):
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("check_uniformity", [False, True])
 def test_smooth_extrema_detection(dims: str, check_uniformity: bool):
-    xp = configure_xp()
-
-    u, buffer, out = sample_data(dims, nout=1, xp=xp)
+    u, buffer, out = sample_data(dims, nout=1, xp=np)
     modified = smooth_extrema_detector(
         u, tuple(dims), check_uniformity, out=out, buffer=buffer
     )
 
-    assert not xp.any(xp.isnan(out[modified]))
-    out[modified] = xp.nan
-    assert xp.all(xp.isnan(out))
+    assert not np.any(np.isnan(out[modified]))
+    out[modified] = np.nan
+    assert np.all(np.isnan(out))
