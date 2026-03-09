@@ -18,7 +18,7 @@
   - [x] shock detection
   - [x] ZS limiter
   - [x] MUSCL slopes
-  - [ ] detect NAD violations
+  - [x] detect NAD violations
   - [ ] detect PAD violations
   - [ ] fv interpolation functions
   - [ ] perform_GaussLegendre_quadrature

@@ -268,18 +268,16 @@ def test_detect_NAD_violations(
     NAD_config: dict,
     include_corners: bool,
 ):
-    xp = configure_xp()
+    uold, buffer, out1 = sample_data(dims, nout=1, xp=np)
+    unew, _, _ = sample_data(dims, nout=2, xp=np)
 
-    uold, buffer, out1 = sample_data(dims, nout=1, xp=xp)
-    unew, _, _ = sample_data(dims, nout=2, xp=xp)
-
-    M = xp.empty(uold.shape)
-    m = xp.empty(uold.shape)
+    M = np.empty(uold.shape)
+    m = np.empty(uold.shape)
     out = out1[..., 0]
 
     for key in ["rtol", "gtol", "atol"]:
         if key in NAD_config:
-            NAD_config[key] = xp.full((uold.shape[0],), NAD_config[key])
+            NAD_config[key] = np.full((uold.shape[0],), NAD_config[key])
 
     modified = detect_NAD_violations(
         uold,
@@ -293,9 +291,9 @@ def test_detect_NAD_violations(
         **NAD_config,
     )
 
-    assert not xp.any(xp.isnan(out[modified]))
-    out[modified] = xp.nan
-    assert xp.all(xp.isnan(out))
+    assert not np.any(np.isnan(out[modified]))
+    out[modified] = np.nan
+    assert np.all(np.isnan(out))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

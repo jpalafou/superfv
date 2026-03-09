@@ -432,19 +432,19 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
 
 
 def detect_NAD_violations(
-    u_new: ArrayLike,
-    u_old: ArrayLike,
+    u_new: np.ndarray,
+    u_old: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     delta: bool = True,
-    rtol: Optional[ArrayLike] = None,
-    gtol: Optional[ArrayLike] = None,
-    atol: Optional[ArrayLike] = None,
+    rtol: Optional[np.ndarray] = None,
+    gtol: Optional[np.ndarray] = None,
+    atol: Optional[np.ndarray] = None,
     include_corners: bool = False,
     *,
-    out: ArrayLike,
-    M: ArrayLike,
-    m: ArrayLike,
-    buffer: ArrayLike,
+    out: np.ndarray,
+    M: np.ndarray,
+    m: np.ndarray,
+    buffer: np.ndarray,
 ) -> Tuple[slice, ...]:
     """
     Compute the numerical admissibility detection (NAD) violations, which violate the
