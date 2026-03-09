@@ -13,13 +13,12 @@
 - [ ] add cupy test support for
   - [x] test_compute_dmp.py
   - [ ] test_fv.py
-  - [ ] test_muscl_slopes.py
+  - [x] test_muscl_slopes.py
 - [ ] remove `xp` backend
   - [x] shock detection
   - [x] ZS limiter
   - [x] MUSCL slopes
   - [x] detect NAD violations
-  - [ ] detect PAD violations
   - [ ] fv interpolation functions
   - [ ] perform_GaussLegendre_quadrature
   - [ ] stencil.py

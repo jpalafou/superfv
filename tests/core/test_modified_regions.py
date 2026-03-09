@@ -19,6 +19,13 @@ from superfv.slope_limiting.muscl import (
 from superfv.slope_limiting.shock_detection import compute_shock_detector
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
+from superfv.stencils import transverse_integration
+from superfv.stencils.conservative_interpolation import (
+    cell_center,
+    gauss_legendre_nodes,
+    left_right,
+)
+from superfv.stencils.sweep import stencil_sweep
 from superfv.tools.device_management import CUPY_AVAILABLE
 
 if CUPY_AVAILABLE:
@@ -397,3 +404,38 @@ def test_smooth_extrema_detection(dims: str, check_uniformity: bool):
     assert not np.any(np.isnan(out[modified]))
     out[modified] = np.nan
     assert np.all(np.isnan(out))
+
+
+@pytest.mark.parametrize("interp_dim", ["x", "y", "z"])
+@pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "yz", "xz", "xyz"])
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7])
+@pytest.mark.parametrize(
+    "stencil", ["ci:center", "ci:left_right", "ci:gauss_legendre", "transverse"]
+)
+def test_stencil_sweep(interp_dim, active_dims, p, stencil):
+    if interp_dim not in active_dims:
+        pytest.skip("Interpolation dimension must be among active dimensions")
+
+    xp = configure_xp()
+
+    match stencil:
+        case "ci:center":
+            weights = cell_center(p)
+        case "ci:left_right":
+            weights = left_right(p)
+        case "ci:gauss_legendre":
+            weights = gauss_legendre_nodes(p)
+        case "transverse":
+            weights = transverse_integration(p)
+        case _:
+            raise ValueError(f"Unknown stencil: {stencil}")
+    ninterps, _ = weights.shape
+    weights = xp.asarray(weights)
+
+    u, _, out = sample_data(active_dims, nout=ninterps, xp=xp)
+
+    modified = stencil_sweep(xp, u, weights, DIM_TO_AXIS[interp_dim], out=out)
+
+    assert not xp.any(xp.isnan(u))
+    out[modified] = xp.nan
+    assert xp.all(xp.isnan(out))
