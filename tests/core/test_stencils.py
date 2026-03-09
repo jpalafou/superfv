@@ -19,8 +19,9 @@ from superfv.tools.norms import linf_norm
 @pytest.mark.parametrize(
     "stencil", ["ci:center", "ci:left_right", "ci:gauss_legendre", "transverse"]
 )
+@pytest.mark.parametrize("ninterps", [1, 2])
 @pytest.mark.parametrize("cupy", [False, True])
-def test_trivial_interpolation(interp_dim, active_dims, p, stencil, cupy):
+def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps, cupy):
     if cupy and not CUPY_AVAILABLE:
         pytest.skip("CuPy is not available")
     if interp_dim not in active_dims:
@@ -45,12 +46,16 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, cupy):
             weights = transverse_integration(p)
         case _:
             raise ValueError(f"Unknown stencil: {stencil}")
-    ninterps, _ = weights.shape
+    nouterps, _ = weights.shape
     if cupy:
         weights = xp.asarray(weights)
 
-    u = xp.ones(shape) if cupy else np.ones(shape)
-    uj = xp.empty(shape + (ninterps,)) if cupy else np.empty(shape + (ninterps,))
+    u = xp.ones(shape + (ninterps,)) if cupy else np.ones(shape + (ninterps,))
+    uj = (
+        xp.empty(shape + (ninterps * nouterps,))
+        if cupy
+        else np.empty(shape + (ninterps * nouterps,))
+    )
 
     modified = stencil_sweep(
         xp if cupy else np, u, weights, DIM_TO_AXIS[interp_dim], out=uj

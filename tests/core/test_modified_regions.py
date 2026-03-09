@@ -412,7 +412,8 @@ def test_smooth_extrema_detection(dims: str, check_uniformity: bool):
 @pytest.mark.parametrize(
     "stencil", ["ci:center", "ci:left_right", "ci:gauss_legendre", "transverse"]
 )
-def test_stencil_sweep(interp_dim, active_dims, p, stencil):
+@pytest.mark.parametrize("ninterps", [1, 2])
+def test_stencil_sweep(interp_dim, active_dims, p, stencil, ninterps):
     if interp_dim not in active_dims:
         pytest.skip("Interpolation dimension must be among active dimensions")
 
@@ -429,13 +430,17 @@ def test_stencil_sweep(interp_dim, active_dims, p, stencil):
             weights = transverse_integration(p)
         case _:
             raise ValueError(f"Unknown stencil: {stencil}")
-    ninterps, _ = weights.shape
+    nouterps, _ = weights.shape
     weights = xp.asarray(weights)
 
-    u, _, out = sample_data(active_dims, nout=ninterps, xp=xp)
+    _, _, u = sample_data(active_dims, nout=ninterps, xp=xp)
+    u[...] = 1.0
+    _, _, out = sample_data(active_dims, nout=ninterps * nouterps, xp=xp)
 
     modified = stencil_sweep(xp, u, weights, DIM_TO_AXIS[interp_dim], out=out)
 
     assert not xp.any(xp.isnan(u))
+
+    assert not xp.any(xp.isnan(out[modified]))
     out[modified] = xp.nan
     assert xp.all(xp.isnan(out))
