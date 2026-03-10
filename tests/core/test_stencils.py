@@ -1,14 +1,13 @@
 import numpy as np
 import pytest
 
-from superfv.axes import DIM_TO_AXIS
 from superfv.stencils import transverse_integration
 from superfv.stencils.conservative_interpolation import (
     cell_center,
     gauss_legendre_nodes,
     left_right,
 )
-from superfv.stencils.sweep import stencil_sweep
+from superfv.sweep import stencil_sweep
 from superfv.tools.device_management import CUPY_AVAILABLE, xp
 from superfv.tools.norms import linf_norm
 
@@ -57,9 +56,7 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps, cu
         else np.empty(shape + (ninterps * nouterps,))
     )
 
-    modified = stencil_sweep(
-        xp if cupy else np, u, weights, DIM_TO_AXIS[interp_dim], out=uj
-    )
+    modified = stencil_sweep(xp if cupy else np, u, weights, interp_dim, out=uj)
 
     err = (xp.asnumpy(uj) if cupy else uj) - 1.0
     assert linf_norm(err[modified]) < 1e-15

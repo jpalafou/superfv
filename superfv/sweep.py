@@ -1,13 +1,19 @@
 from itertools import product
 from types import ModuleType
-from typing import Tuple
+from typing import Literal, Tuple
 
+from superfv.axes import DIM_TO_AXIS
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, replace_slice
 
 
 def stencil_sweep(
-    xp: ModuleType, u: ArrayLike, weights: ArrayLike, axis: int, *, out: ArrayLike
+    xp: ModuleType,
+    u: ArrayLike,
+    weights: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    *,
+    out: ArrayLike,
 ) -> Tuple[slice, ...]:
     """
     Perform a stencil sweep along the specified axis.
@@ -17,13 +23,16 @@ def stencil_sweep(
             located.
         u: Input array to be swept, has shape (nvars, nx, ny, nz, ninterps).
         weights: Stencil weights for the sweep, has shape (nouterps, stencil_size).
-        axis: Axis along which to perform the sweep (1 for x, 2 for y, 3 for z).
+        dim: Axis along which to perform the sweep, one of "x" for axis 1, "y" for axis
+            2, or "z" for axis 3.
         out: Output array to store the results of the sweep, has shape
             (nvars, nx, ny, nz, ninterps * nouterps).
 
     Returns:
         Slice objects indicating the modified regions of `out` after the sweep.
     """
+    axis = DIM_TO_AXIS[dim]
+
     if hasattr(xp, "cuda"):
         return sweep_kernel_helper(u, weights, out, axis)
 
@@ -63,7 +72,7 @@ if CUPY_AVAILABLE:
             const int nouterps,
             const int nkernel
         ){
-            // u    s   hape (nvars, nx, ny, nz, ninterps)
+            // u        shape (nvars, nx, ny, nz, ninterps)
             // weights  shape (nouterps, nkernel)
             // uj       shape (nvars, nx, ny, nz, ninterps * nouterps)
 

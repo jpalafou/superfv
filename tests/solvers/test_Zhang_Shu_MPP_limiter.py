@@ -19,7 +19,7 @@ p_CFL_map = {
 
 
 @pytest.mark.parametrize("adaptive_dt", [False, True])
-@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7, 15])
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7])
 @pytest.mark.parametrize("SED", [True])
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
 @pytest.mark.parametrize("limiting_vars", ["all", ("rho",)])
@@ -48,7 +48,7 @@ def test_1D_advection_mpp(adaptive_dt, p, SED, dim, limiting_vars):
     assert np.all(violations >= -1e-15)
 
 
-@pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 7])
 @pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])
 def test_2D_advection_mpp(p, SED, dim1_dim2):

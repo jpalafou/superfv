@@ -90,7 +90,7 @@ def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, s
     assert l1_error == 0
 
 
-@pytest.mark.parametrize("p", [0, 1, 2, 3, 7, 15])
+@pytest.mark.parametrize("p", [0, 1, 2, 3, 7])
 @pytest.mark.parametrize("GL", [True, False])
 def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
     """

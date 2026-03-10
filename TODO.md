@@ -23,3 +23,8 @@
   - [ ] perform_GaussLegendre_quadrature
   - [ ] stencil.py
 - [ ] use __restrict__ and const for all RawKernels where necessary
+- [ ] use full 5D arrays for ZS limiter, stop copying to flat
+- [ ] refactor buffer size
+- [ ] i suspect `compute_fallback_fluxes` could be improved
+- [ ] i suspect `reconstruct_muscl_faces` could be improved
+- [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths

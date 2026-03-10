@@ -562,7 +562,8 @@ class EulerSolver(FiniteVolumeSolver):
             n_fallbacks = xp.sum(xp.any(fallback_mask[interior], axis=4)).item()
             self.n_emergency_fallbacks += n_fallbacks
 
-            total_nodes = self.nodes_per_face(scheme) * 2 * mesh.ndim * mesh.size
+            nodes_per_face = self._ninterps_per_face(scheme, "nodes")
+            total_nodes = 2 * nodes_per_face * mesh.ndim * mesh.size
             freq = n_fallbacks / total_nodes
             if freq > 0.05:
                 warnings.warn(

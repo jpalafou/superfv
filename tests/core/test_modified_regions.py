@@ -25,7 +25,7 @@ from superfv.stencils.conservative_interpolation import (
     gauss_legendre_nodes,
     left_right,
 )
-from superfv.stencils.sweep import stencil_sweep
+from superfv.sweep import stencil_sweep
 from superfv.tools.device_management import CUPY_AVAILABLE
 
 if CUPY_AVAILABLE:
@@ -437,7 +437,7 @@ def test_stencil_sweep(interp_dim, active_dims, p, stencil, ninterps):
     u[...] = 1.0
     _, _, out = sample_data(active_dims, nout=ninterps * nouterps, xp=xp)
 
-    modified = stencil_sweep(xp, u, weights, DIM_TO_AXIS[interp_dim], out=out)
+    modified = stencil_sweep(xp, u, weights, interp_dim, out=out)
 
     assert not xp.any(xp.isnan(u))
 

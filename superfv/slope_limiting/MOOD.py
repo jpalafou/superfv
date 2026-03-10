@@ -190,33 +190,22 @@ def compute_fallback_fluxes(fv_solver: FiniteVolumeSolver, t: float):
         t: Current time value.
     """
     cascade = fv_solver.MOOD_config.cascade
-    active_dims = fv_solver.mesh.active_dims
+    active_dims = fv_solver.active_dims
+    flux_names = fv_solver.flux_names
     arrays = fv_solver.arrays
 
-    F = arrays["F"]
-    G = arrays["G"]
-    H = arrays["H"]
+    working_fluxes = {flux_names[dim]: arrays[flux_names[dim]] for dim in active_dims}
 
     for i, scheme in enumerate(cascade):
-        if i == 0:
-            pass  # already computed high-order fluxes
-        else:
-            fv_solver.compute_fluxes(t, scheme)  # overwrites F, G, H
+        if i > 0:
+            fv_solver.compute_fluxes(t, scheme)
 
-        if "x" in active_dims:
-            arrays["F_" + scheme.key()] = F.copy()
-        if "y" in active_dims:
-            arrays["G_" + scheme.key()] = G.copy()
-        if "z" in active_dims:
-            arrays["H_" + scheme.key()] = H.copy()
+        for name, arr in working_fluxes.items():
+            arrays[f"{name}_{scheme.key()}"] = arr
 
-    # copy high-order fluxes back to F, G, H
-    if "x" in active_dims:
-        F[...] = arrays["F_" + cascade[0].key()]
-    if "y" in active_dims:
-        G[...] = arrays["G_" + cascade[0].key()]
-    if "z" in active_dims:
-        H[...] = arrays["H_" + cascade[0].key()]
+    high_order_key = cascade[0].key()
+    for name in working_fluxes:
+        working_fluxes[name][...] = arrays[f"{name}_{high_order_key}"]
 
 
 def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int, int]:
@@ -583,6 +572,7 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     arrays = fv_solver.arrays
     active_dims = fv_solver.active_dims
     interior = fv_solver.interior
+    flux_names = fv_solver.flux_names
     cascade = config.cascade
     max_idx = len(cascade) - 1
 
@@ -592,12 +582,11 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
         return
 
     # allocate arrays
-    F = arrays["F"]
-    G = arrays["G"]
-    H = arrays["H"]
+    working_fluxes = {dim: arrays[flux_names[dim]] for dim in active_dims}
     _Fmask_ = arrays["_mask_"][:, :, :-1, :-1]
     _Gmask_ = arrays["_mask_"][:, :-1, :, :-1]
     _Hmask_ = arrays["_mask_"][:, :-1, :-1, :]
+    masks = {"F": _Fmask_, "G": _Gmask_, "H": _Hmask_}
     _troubles_ = arrays["_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
 
@@ -605,26 +594,17 @@ def revise_fluxes(fv_solver: FiniteVolumeSolver, t: float):
     xp.minimum(_cascade_idx_ + _troubles_, max_idx, out=_cascade_idx_)
 
     # broadcast cascade index to each face
-    if "x" in active_dims:
-        F[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_, 1, out=_Fmask_)
-        for i, scheme in enumerate(cascade):
-            mask = _Fmask_[interior] == i
-            xp.add(F, mask * arrays["F_" + scheme.key()], out=F)
+    for dim, flux in working_fluxes.items():
+        axis = DIM_TO_AXIS[dim]
+        flux_name = flux_names[dim]
+        mask = masks[flux_name]
 
-    if "y" in active_dims:
-        G[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_, 2, out=_Gmask_)
-        for i, scheme in enumerate(cascade):
-            mask = _Gmask_[interior] == i
-            xp.add(G, mask * arrays["G_" + scheme.key()], out=G)
+        map_cells_values_to_face_values(xp, _cascade_idx_, axis, out=mask)
 
-    if "z" in active_dims:
-        H[...] = 0
-        map_cells_values_to_face_values(xp, _cascade_idx_, 3, out=_Hmask_)
+        flux[...] = 0
         for i, scheme in enumerate(cascade):
-            mask = _Hmask_[interior] == i
-            xp.add(H, mask * arrays["H_" + scheme.key()], out=H)
+            in_mask = mask[interior] == i
+            flux += in_mask * arrays[f"{flux_name}_{scheme.key()}"]
 
 
 def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: float):
@@ -642,6 +622,7 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
     arrays = fv_solver.arrays
     active_dims = fv_solver.active_dims
     interior = fv_solver.interior
+    flux_names = fv_solver.flux_names
     blend = config.blend
     cascade = config.cascade
 
@@ -654,12 +635,11 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
     fallback_scheme = cascade[1]
 
     # allocate arrays
-    F = arrays["F"]
-    G = arrays["G"]
-    H = arrays["H"]
+    working_fluxes = {dim: arrays[flux_names[dim]] for dim in active_dims}
     _Fmask_ = arrays["_fmask_"][:, :, :-1, :-1]
     _Gmask_ = arrays["_fmask_"][:, :-1, :, :-1]
     _Hmask_ = arrays["_fmask_"][:, :-1, :-1, :]
+    masks = {"F": _Fmask_, "G": _Gmask_, "H": _Hmask_}
     _troubles_ = arrays["_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
     _blended_cascade_idx_ = arrays["_blended_cascade_idx_"]  # float64 dtype
@@ -679,26 +659,16 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
         )
 
     # broadcast cascade index to each face
-    if "x" in active_dims:
-        F[...] = 0
-        map_cells_values_to_face_values(xp, _blended_cascade_idx_, 1, out=_Fmask_)
-        mask = _Fmask_[interior]
-        xp.add(F, mask * arrays["F_" + fallback_scheme.key()], out=F)
-        xp.add(F, (1 - mask) * arrays["F_" + base_scheme.key()], out=F)
+    for dim, flux in working_fluxes.items():
+        axis = DIM_TO_AXIS[dim]
+        flux_name = flux_names[dim]
+        mask = masks[flux_name]
 
-    if "y" in active_dims:
-        G[...] = 0
-        map_cells_values_to_face_values(xp, _blended_cascade_idx_, 2, out=_Gmask_)
-        mask = _Gmask_[interior]
-        xp.add(G, mask * arrays["G_" + fallback_scheme.key()], out=G)
-        xp.add(G, (1 - mask) * arrays["G_" + base_scheme.key()], out=G)
-
-    if "z" in active_dims:
-        H[...] = 0
-        map_cells_values_to_face_values(xp, _blended_cascade_idx_, 3, out=_Hmask_)
-        mask = _Hmask_[interior]
-        xp.add(H, mask * arrays["H_" + fallback_scheme.key()], out=H)
-        xp.add(H, (1 - mask) * arrays["H_" + base_scheme.key()], out=H)
+        map_cells_values_to_face_values(xp, _blended_cascade_idx_, axis, out=mask)
+        in_mask = mask[interior]
+        flux[...] = 0
+        flux += in_mask * arrays[f"{flux_name}_{fallback_scheme.key()}"]
+        flux += (1 - in_mask) * arrays[f"{flux_name}_{base_scheme.key()}"]
 
 
 def map_cells_values_to_face_values(

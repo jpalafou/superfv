@@ -79,6 +79,20 @@ def left_right(p: int) -> np.ndarray:
     return np.array([wl, wr])
 
 
+def n_gauss_legendre_nodes(p: int) -> int:
+    """
+    Returns the number of nodes for a Gauss-Legendre quadrature that is exact for
+    polynomial degree `p` or lower.
+
+    Args:
+        p: Polynomial degree (0 to 7).
+
+    Returns:
+        Number of quadrature nodes.
+    """
+    return -(-(p + 1) // 2)
+
+
 def gauss_legendre_nodes(p: int) -> np.ndarray:
     """
     Returns stencil weights for interpolating the nodes of a Gauss-Legendre quadrature
@@ -91,34 +105,34 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
         Stencil weight array of shape (n_nodes, stencil_size).
     """
     if p in (0, 1):
-        return np.array([[1.0]])
-    if p == 2:
-        w1 = [np.sqrt(3) / 12, 1, -np.sqrt(3) / 12]
-        w2 = w1[::-1]
-        return np.array([w1, w2])
-    if p == 3:
-        w1 = [
+        weights = np.array([[1.0]])
+    elif p == 2:
+        w0 = [np.sqrt(3) / 12, 1, -np.sqrt(3) / 12]
+        w1 = w0[::-1]
+        weights = np.array([w0, w1])
+    elif p == 3:
+        w0 = [
             -7 * np.sqrt(3) / 432,
             25 * np.sqrt(3) / 216,
             1,
             -25 * np.sqrt(3) / 216,
             7 * np.sqrt(3) / 432,
         ]
-        w2 = w1[::-1]
-        return np.array([w1, w2])
-    if p == 4:
-        w1 = [
+        w1 = w0[::-1]
+        weights = np.array([w0, w1])
+    elif p == 4:
+        w0 = [
             -11 * np.sqrt(15) / 1200 - 3 / 800,
             29 / 600 + 41 * np.sqrt(15) / 600,
             1093 / 1200,
             29 / 600 - 41 * np.sqrt(15) / 600,
             -3 / 800 + 11 * np.sqrt(15) / 1200,
         ]
-        w2 = [3 / 640, -29 / 480, 1067 / 960, -29 / 480, 3 / 640]
-        w3 = w1[::-1]
-        return np.array([w1, w2, w3])
-    if p == 5:
-        w1 = [
+        w1 = [3 / 640, -29 / 480, 1067 / 960, -29 / 480, 3 / 640]
+        w2 = w0[::-1]
+        weights = np.array([w0, w1, w2])
+    elif p == 5:
+        w0 = [
             1363 * np.sqrt(15) / 720000,
             -3013 * np.sqrt(15) / 180000 - 3 / 800,
             29 / 600 + 11203 * np.sqrt(15) / 144000,
@@ -127,11 +141,11 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
             -3 / 800 + 3013 * np.sqrt(15) / 180000,
             -1363 * np.sqrt(15) / 720000,
         ]
-        w2 = [0, 3 / 640, -29 / 480, 1067 / 960, -29 / 480, 3 / 640, 0]
-        w3 = w1[::-1]
-        return np.array([w1, w2, w3])
-    if p == 6:
-        w1 = [
+        w1 = [0, 3 / 640, -29 / 480, 1067 / 960, -29 / 480, 3 / 640, 0]
+        w2 = w0[::-1]
+        weights = np.array([w0, w1, w2])
+    elif p == 6:
+        w0 = [
             -59 * np.sqrt(30) * np.sqrt(70 * np.sqrt(30) + 525) / 12348000
             + 307 / 1646400
             + 307 * np.sqrt(30) / 2744000
@@ -158,7 +172,7 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
             + 307 * np.sqrt(30) / 2744000
             + 59 * np.sqrt(30) * np.sqrt(70 * np.sqrt(30) + 525) / 12348000,
         ]
-        w2 = [
+        w1 = [
             -307 * np.sqrt(30) / 2744000
             + 307 / 1646400
             + 59 * np.sqrt(30) * np.sqrt(525 - 70 * np.sqrt(30)) / 12348000
@@ -185,11 +199,11 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
             - 59 * np.sqrt(30) * np.sqrt(525 - 70 * np.sqrt(30)) / 12348000
             + 307 / 1646400,
         ]
-        w3 = w2[::-1]
-        w4 = w1[::-1]
-        return np.array([w1, w2, w3, w4])
-    if p == 7:
-        w1 = [
+        w2 = w1[::-1]
+        w3 = w0[::-1]
+        weights = np.array([w0, w1, w2, w3])
+    elif p == 7:
+        w0 = [
             -37831 * np.sqrt(70 * np.sqrt(30) + 525) / 605052000
             + 3177 * np.sqrt(30) * np.sqrt(70 * np.sqrt(30) + 525) / 2689120000,
             -143599 * np.sqrt(30) * np.sqrt(70 * np.sqrt(30) + 525) / 12101040000
@@ -220,7 +234,7 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
             -3177 * np.sqrt(30) * np.sqrt(70 * np.sqrt(30) + 525) / 2689120000
             + 37831 * np.sqrt(70 * np.sqrt(30) + 525) / 605052000,
         ]
-        w2 = [
+        w1 = [
             -37831 * np.sqrt(525 - 70 * np.sqrt(30)) / 605052000
             - 3177 * np.sqrt(30) * np.sqrt(525 - 70 * np.sqrt(30)) / 2689120000,
             -307 * np.sqrt(30) / 2744000
@@ -251,9 +265,75 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
             3177 * np.sqrt(30) * np.sqrt(525 - 70 * np.sqrt(30)) / 2689120000
             + 37831 * np.sqrt(525 - 70 * np.sqrt(30)) / 605052000,
         ]
-        w3 = w2[::-1]
-        w4 = w1[::-1]
-        return np.array([w1, w2, w3, w4])
-    raise NotImplementedError(
-        f"Conservative interpolation of Gauss-Legendre nodes not implemented for {p=}"
-    )
+        w2 = w1[::-1]
+        w3 = w0[::-1]
+        weights = np.array([w0, w1, w2, w3])
+    else:
+        raise NotImplementedError(
+            "Conservative interpolation of Gauss-Legendre nodes not implemented for "
+            f"{p=}"
+        )
+
+    n_computed, _ = weights.shape
+    n_expected = n_gauss_legendre_nodes(p)
+    if n_computed != n_expected:
+        raise ValueError(
+            f"Assigned {n_computed} nodes for a degree-{p} Gauss-Legendre "
+            f"quadrature, but expected {n_expected} nodes."
+        )
+
+    return weights
+
+
+def gauss_legendre_weights(p: int):
+    """
+    Returns the weights of a Gauss-Legendre quadrature that is exact for polynomial
+    degree `p` or lower.
+
+    Args:
+        p: Polynomial degree (0 to 7).
+
+    Returns:
+        Quadrature weight array of shape (n,).
+    """
+    n = n_gauss_legendre_nodes(p)
+
+    if n < 1:
+        raise ValueError(
+            f"Cannot return Gauss-Legendre weights for {p=} with {n} nodes."
+        )
+
+    match n:
+        case 1:
+            weights = np.array([1.0])
+        case 2:
+            weights = np.array([0.5, 0.5])
+        case 3:
+            weights = np.array([5 / 18, 4 / 9, 5 / 18])
+        case 4:
+            w0 = (18 - np.sqrt(30)) / 72
+            w1 = (18 + np.sqrt(30)) / 72
+            w2 = w1
+            w3 = w0
+            weights = np.array([w0, w1, w2, w3])
+        case 5:
+            w0 = (322 - 13 * np.sqrt(70)) / 1800
+            w1 = (322 + 13 * np.sqrt(70)) / 1800
+            w2 = 64.0 / 225
+            w3 = w1
+            w4 = w0
+            weights = np.array([w0, w1, w2, w3, w4])
+        case _:
+            raise NotImplementedError(
+                f"Gauss-Legendre weights not implemented for {p=} with {n} nodes."
+            )
+
+    n_computed = weights.size
+    n_expected = n_gauss_legendre_nodes(p)
+    if n_computed != n_expected:
+        raise ValueError(
+            f"Assigned {n_computed} weights for a degree-{p} Gauss-Legendre "
+            f"quadrature, but expected {n_expected} weights."
+        )
+
+    return weights

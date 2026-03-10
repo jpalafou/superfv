@@ -2,14 +2,13 @@ import pickle
 import warnings
 from abc import ABC, abstractmethod
 from types import ModuleType
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from superfv.tools.buffer import check_buffer_slots
 
-from . import fv
 from .axes import DIM_TO_AXIS
 from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
@@ -20,6 +19,7 @@ from .interpolation_schemes import (
     polyInterpolationScheme,
 )
 from .mesh import UniformFVMesh, xyz_tup
+from .quadrature import perform_quadrature
 from .slope_limiting import MOOD, compute_dmp
 from .slope_limiting.MOOD import (
     MOODConfig,
@@ -47,6 +47,8 @@ from .slope_limiting.zhang_and_shu import (
     log_zhang_shu_scalar_statistics,
     zhang_shu_operator,
 )
+from .stencils import conservative_interpolation, transverse_integration
+from .sweep import stencil_sweep
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import VariableIndexMap, crop, merge_slices
 from .tools.timer import MethodTimer, StepperTimer
@@ -54,13 +56,6 @@ from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
 if CUPY_AVAILABLE:
-    from .fv_cuda import (
-        gauss_legendre_quadrature_kernel_helper,
-        interpolate_central_quantity,
-        interpolate_central_quantity_kernel_helper,
-        interpolate_gauss_legendre_nodes_kernel_helper,
-        lr_conservative_interpolation_kernel_helper,
-    )
     from .slope_limiting.muscl import (
         MUSCL_slopes_kernel_helper,
         PP2D_slopes_kernel_helper,
@@ -709,6 +704,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(
                 "Base scheme must be an instance of polyInterpolationScheme."
             )
+        if getattr(base_scheme, "gauss_legendre", False):
+            raise NotImplementedError(
+                "MOOD is not implemented for Gauss-Legendre schemes."
+            )
 
         # define list of fallback schemes
         fallback_schemes: List[InterpolationScheme]
@@ -723,7 +722,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         check_uniformity=False,
                         physical_admissibility_detection=False,
                     ),
-                    gauss_legendre=base_scheme.gauss_legendre,
+                    gauss_legendre=False,
                     lazy_primitives=base_scheme.lazy_primitives,
                 )
             ]
@@ -756,7 +755,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                             check_uniformity=False,
                             physical_admissibility_detection=False,
                         ),
-                        gauss_legendre=base_scheme.gauss_legendre,
+                        gauss_legendre=False,
                         lazy_primitives=base_scheme.lazy_primitives,
                     )
                 ]
@@ -771,7 +770,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         check_uniformity=False,
                         physical_admissibility_detection=False,
                     ),
-                    gauss_legendre=base_scheme.gauss_legendre,
+                    gauss_legendre=False,
                     lazy_primitives=base_scheme.lazy_primitives,
                 )
                 for p in range(base_scheme.p - 1, -1, -1)
@@ -890,7 +889,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiting_cost = 3 if bs.limiter_config.smooth_extrema_detection else 1
             flux_integral_cost = 0
         elif isinstance(bs, polyInterpolationScheme):
-            s = -(-p // 2)  # ghost cell cost of stencil with degree 0
+            stencil = conservative_interpolation.left_right(p)
+            _, stencil_size = stencil.shape
+            s = (stencil_size - 1) // 2  # ghost cell cost of stencil with degree 0
 
             if bs.lazy_primitives == "full":
                 node_cost = s
@@ -1055,48 +1056,77 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         pass
 
     def _init_array_allocation(self):
-        if self.cupy:
-            self.arrays.transfer_to("gpu")
-
-        scheme = self.base_scheme
-        mesh = self.mesh
+        active_dims = self.active_dims
         arrays = self.arrays
+        base_scheme = self.base_scheme
+        gauss_legendre = getattr(base_scheme, "gauss_legendre", False)
+        mesh = self.mesh
+        ndim = mesh.ndim
 
-        # initialize regular mesh arrays
         nvars, nx, ny, nz = self.nvars, mesh.nx, mesh.ny, mesh.nz
+        _nx_, _ny_, _nz_ = mesh._nx_, mesh._ny_, mesh._nz_
+
+        n_lines = self._ninterps_per_face(base_scheme, "lines")
+        n_nodes = self._ninterps_per_face(base_scheme, "nodes")
+
+        # transfer arrays to correct device
+        if self.cupy:
+            arrays.transfer_to("gpu")
+
+        # subject to change
+        buffer_size = self._compute_buffer_size(base_scheme)
+        arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
+
+        # define cell-centered/cell-averaged arrays
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
         arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
-
-        # initialize flux arrays
-        arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
-        arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
-        arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
-
-        # initialize workspace arrays
-        max_nodes = self.nodes_per_face(scheme)
-        max_ninterps = 2 * max_nodes
-        buffer_size = self._compute_buffer_size(scheme)
-
-        _nx_, _ny_, _nz_ = mesh._nx_, mesh._ny_, mesh._nz_
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wp_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
-        arrays.add("_buffer1_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_buffer2_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
-        arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, max_ninterps)))
-        arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, 1)))
-        arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, 1)))
-        arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, 1)))
-        arrays.add("_f_nodes_", np.empty((nvars, nx + 1, _ny_, _nz_, max_nodes)))
-        arrays.add("_g_nodes_", np.empty((nvars, _nx_, ny + 1, _nz_, max_nodes)))
-        arrays.add("_h_nodes_", np.empty((nvars, _nx_, _ny_, nz + 1, max_nodes)))
 
-        # General slope-limiting arrays
+        # define arrays associated faces along the x-direction
+        if "x" in active_dims:
+            arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
+            arrays.add("_f_nodes_", np.empty((nvars, nx + 1, _ny_, _nz_, n_nodes)))
+            arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, 1)))
+            arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
+            if ndim == 3:
+                arrays.add("_f_lines_", np.empty((nvars, nx + 1, _ny_, _nz_, n_lines)))
+
+        # define arrays associated with faces along the y-direction
+        if "y" in active_dims:
+            arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
+            arrays.add("_g_nodes_", np.empty((nvars, _nx_, ny + 1, _nz_, n_nodes)))
+            arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, 1)))
+            arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
+            if ndim == 3:
+                arrays.add("_g_lines_", np.empty((nvars, _nx_, ny + 1, _nz_, n_lines)))
+
+        # define arrays associated with faces along the z-direction
+        if "z" in active_dims:
+            arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
+            arrays.add("_h_nodes_", np.empty((nvars, _nx_, _ny_, nz + 1, n_nodes)))
+            arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, 1)))
+            arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
+            if ndim == 3:
+                arrays.add("_h_lines_", np.empty((nvars, _nx_, _ny_, nz + 1, n_lines)))
+
+        self.flux_names = {"x": "F", "y": "G", "z": "H"}  # helpful
+
+        # define interpolation arrays
+        if ndim >= 2:
+            if gauss_legendre:
+                arrays.add("_faces_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
+            arrays.add("_midline_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        if ndim == 3:
+            if gauss_legendre:
+                ngl = conservative_interpolation.n_gauss_legendre_nodes(base_scheme.p)
+                arrays.add("_lines_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * ngl)))
+            arrays.add("_midface_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+
+        # define slope-limiting arrays
         arrays.add("_M_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_m_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -1105,20 +1135,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
         arrays.add(
             "_face_fallback_mask_",
-            np.zeros((1, _nx_, _ny_, _nz_, max_ninterps), dtype=np.int32),
+            np.zeros((1, _nx_, _ny_, _nz_, 2 * n_nodes), dtype=np.int32),
         )
-        arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+        if "x" in active_dims:
+            arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+        if "y" in active_dims:
+            arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+        if "z" in active_dims:
+            arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
 
-        # Zhang-Shu limiter arrays
+        # define Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
         arrays.add("_Mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
         ntotal = _nx_ * _ny_ * _nz_
-        flat_ninterpolations = 1 + self.mesh.ndim * max_ninterps
+        flat_ninterpolations = 1 + self.mesh.ndim * 2 * n_nodes
         arrays.add("_flat_w_", np.empty((nvars, ntotal)))
         arrays.add("_flat_wj_", np.empty((nvars, ntotal, flat_ninterpolations)))
         arrays.add("_flat_M_", np.empty((nvars, ntotal)))
@@ -1127,11 +1160,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_flat_mj_", np.empty((nvars, ntotal)))
         arrays.add("_flat_theta_", np.ones((nvars, ntotal)))
 
-        # MOOD arrays
+        # define MOOD arrays
         for scheme in self.MOOD_config.cascade:
-            arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
-            arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
-            arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
+            if "x" in active_dims:
+                arrays.add("F_" + scheme.key(), np.empty((nvars, nx + 1, ny, nz)))
+            if "y" in active_dims:
+                arrays.add("G_" + scheme.key(), np.empty((nvars, nx, ny + 1, nz)))
+            if "z" in active_dims:
+                arrays.add("H_" + scheme.key(), np.empty((nvars, nx, ny, nz + 1)))
 
         arrays.add("_unew_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_wnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
@@ -1146,8 +1182,28 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
-        # helper attribute
-        self.flux_names = {"x": "F", "y": "G", "z": "H"}
+    def _ninterps_per_face(
+        self, scheme: InterpolationScheme, quantity: Literal["nodes", "lines"]
+    ) -> int:
+        p = scheme.p
+        ndim = self.mesh.ndim
+
+        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(p)
+
+        if quantity == "nodes":
+            if getattr(scheme, "gauss_legendre", False):
+                return n_gauss_legendre ** (ndim - 1)
+            else:
+                return 1
+        elif quantity == "lines":
+            if ndim == 1:
+                return 0
+            if getattr(scheme, "gauss_legendre", False):
+                return n_gauss_legendre ** (ndim - 2)
+            else:
+                return 0
+        else:
+            raise ValueError(f"Unknown quantity: {quantity}")
 
     def _init_ODE_solver(self, dt_min: float):
         idx = self.variable_index_map
@@ -1192,19 +1248,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             Required buffer size.
         """
         ndim = self.mesh.ndim
-        p = scheme.p
 
         # buffer cost of interpolation nodes
-        GL_nodes_per_dim = -(-(p + 1) // 2)
-        if ndim == 1:
-            interpolation_buffer_cost = 0
-        elif ndim == 2:
-            interpolation_buffer_cost = 2
-        else:  # ndim == 3
-            if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
-                interpolation_buffer_cost = 2 + 2 * GL_nodes_per_dim
-            else:
-                interpolation_buffer_cost = 3
+        interpolation_buffer_cost = 2 + 2 * self._ninterps_per_face(scheme, "lines")
 
         # buffer cost of `update_workspaces` function
         if getattr(scheme, "lazy_primitives", "none") == "adaptive":
@@ -1245,13 +1291,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 total_buffer_cost = max(total_buffer_cost, fallback_buffer_cost)
 
         return total_buffer_cost
-
-    def nodes_per_face(self, scheme: InterpolationScheme) -> int:
-        """ """
-        if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
-            p = scheme.p
-            return (-(-(p + 1) // 2)) ** (self.mesh.ndim - 1)
-        return 1
 
     def _init_timer(self, sync_timing: bool):
         self.sync_timing = sync_timing
@@ -1492,41 +1531,77 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
+    def _get_stencil_weights(
+        self, key: str, method: Callable[[int], ArrayLike], p: int
+    ) -> ArrayLike:
+        arrays = self.arrays
+        if key not in arrays:
+            arrays.add(key, method(p))
+        return arrays[key]
+
+    def _get_transverse_dims(
+        self, dim: Literal["x", "y", "z"]
+    ) -> Tuple[Literal["x", "y", "z"], ...]:
+        return tuple(d for d in self.active_dims if d != dim)
+
     @MethodTimer(cat="update_workspaces:ucc")
     def interpolate_cell_centers(self, u: ArrayLike, p: int):
         xp = self.xp
         ndim = self.mesh.ndim
-        active_dims = self.active_dims
+        dims = self.active_dims
         arrays = self.arrays
+        na = xp.newaxis
 
-        u_midline = arrays["_buffer1_"]
+        weights = self._get_stencil_weights(
+            f"conservative_interpolation_center_p{p}",
+            conservative_interpolation.cell_center,
+            p,
+        )
+
         ucc = arrays["_ucc_"]
-        _buff_ = arrays["_buffer_"]
 
-        if self.cupy and ndim == 2 and p <= 7:
-            interpolate_central_quantity(
-                u_midline[..., 0], ucc[..., 0], 0, p, active_dims, uu=u
-            )
+        if ndim == 1:
+            stencil_sweep(xp, u[..., na], weights, dims[0], out=ucc)
+        elif ndim == 2:
+            midline = arrays["_midline_"]
+            stencil_sweep(xp, u[..., na], weights, dims[0], out=midline)
+            stencil_sweep(xp, midline, weights, dims[1], out=ucc)
+        elif ndim == 3:
+            midface = arrays["_midface_"]
+            midline = arrays["_midline_"]
+            stencil_sweep(xp, u[..., na], weights, dims[0], out=midface)
+            stencil_sweep(xp, midface, weights, dims[1], out=midline)
+            stencil_sweep(xp, midline, weights, dims[2], out=ucc)
         else:
-            fv.interpolate_cell_centers(xp, u, active_dims, p, out=ucc, buffer=_buff_)
+            raise ValueError(f"Unknown number of dimensions: {ndim}")
 
     @MethodTimer(cat="update_workspaces:wp")
     def integrate_fv_averages(self, wcc: ArrayLike, p: int):
         xp = self.xp
         ndim = self.mesh.ndim
-        active_dims = self.active_dims
+        dims = self.active_dims
         arrays = self.arrays
 
-        w = arrays["_wp_"]
-        w_midline = arrays["_buffer1_"]
-        _buff_ = arrays["_buffer_"]
+        weights = self._get_stencil_weights(
+            f"transverse_integration_p{p}", transverse_integration, p
+        )
 
-        if self.cupy and ndim == 2 and p <= 7:
-            interpolate_central_quantity(
-                w_midline[..., 0], w[..., 0], 1, p, active_dims, uu=wcc[..., 0]
-            )
+        w = arrays["_wp_"]
+
+        if ndim == 1:
+            stencil_sweep(xp, wcc, weights, dims[0], out=w)
+        elif ndim == 2:
+            midline = arrays["_midline_"]
+            stencil_sweep(xp, wcc, weights, dims[0], out=midline)
+            stencil_sweep(xp, midline, weights, dims[1], out=w)
+        elif ndim == 3:
+            midline = arrays["_midline_"]
+            midface = arrays["_midface_"]
+            stencil_sweep(xp, wcc, weights, dims[0], out=midline)
+            stencil_sweep(xp, midline, weights, dims[1], out=midface)
+            stencil_sweep(xp, midface, weights, dims[2], out=w)
         else:
-            fv.integrate_fv_averages(xp, wcc, active_dims, p, out=w, buffer=_buff_)
+            raise ValueError(f"Unknown number of dimensions: {ndim}")
 
     @MethodTimer(cat="apply_bc")
     def apply_bc(
@@ -1635,7 +1710,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         p = scheme.p
         nodes = self.arrays[f"_{dim}_nodes_"]
 
-        if scheme.gauss_legendre:
+        if getattr(scheme, "gauss_legendre", False):
             self.interpolate_GaussLegendre_nodes(u, dim, p)  # updates nodes
         else:
             self.interpolate_face_centers(u, dim, p)  # updates nodes
@@ -1647,42 +1722,81 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_GaussLegendre_nodes(
         self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
     ):
-        arrays = self.arrays
-        active_dims = self.active_dims
+        xp = self.xp
         ndim = self.mesh.ndim
+        arrays = self.arrays
+        na = xp.newaxis
 
-        faces = arrays["_buffer2_"]
+        gl_weights = self._get_stencil_weights(
+            f"conservative_interpolation_gauss_legendre_p{p}",
+            conservative_interpolation.gauss_legendre_nodes,
+            p,
+        )
+        lr_weights = self._get_stencil_weights(
+            f"conservative_interpolation_left_right_p{p}",
+            conservative_interpolation.left_right,
+            p,
+        )
+
         nodes = arrays[f"_{dim}_nodes_"]
-        buffer = arrays["_buffer_"]
 
-        if self.cupy and ndim == 2 and p <= 7:
-            lr_conservative_interpolation_kernel_helper(u, faces, p, dim)
-            interpolate_gauss_legendre_nodes_kernel_helper(faces, nodes, p, dim)
-        else:
-            fv.interpolate_GaussLegendre_nodes(
-                self.xp, u, dim, active_dims, p, out=nodes, buffer=buffer
+        tdims = self._get_transverse_dims(dim)
+
+        if ndim == 1:
+            raise ValueError(
+                "1D interpolation to Gauss-Legendre nodes is not supported."
             )
+        elif ndim == 2:
+            faces = arrays["_faces_"]
+            stencil_sweep(xp, u[..., na], lr_weights, dim, out=faces)
+            stencil_sweep(xp, faces, gl_weights, tdims[0], out=nodes)
+        elif ndim == 3:
+            faces = arrays["_faces_"]
+            lines = arrays["_lines_"]
+            stencil_sweep(xp, u[..., na], lr_weights, dim, out=faces)
+            stencil_sweep(xp, faces, gl_weights, tdims[0], out=lines)
+            stencil_sweep(xp, lines, gl_weights, tdims[1], out=nodes)
+        else:
+            raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
     @MethodTimer(cat="interpolate_faces:transverse")
     def interpolate_face_centers(
         self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
     ):
+        xp = self.xp
         arrays = self.arrays
-        active_dims = self.active_dims
         ndim = self.mesh.ndim
+        na = xp.newaxis
 
-        midline = arrays["_buffer1_"][..., 0]
+        cc_weights = self._get_stencil_weights(
+            f"conservative_interpolation_center_p{p}",
+            conservative_interpolation.cell_center,
+            p,
+        )
+        lr_weights = self._get_stencil_weights(
+            f"conservative_interpolation_left_right_p{p}",
+            conservative_interpolation.left_right,
+            p,
+        )
+
         nodes = arrays[f"_{dim}_nodes_"]
-        buffer = arrays["_buffer_"]
 
-        if self.cupy and ndim == 2 and p <= 7:
-            transverse_dim = [d for d in active_dims if d != dim][0]
-            interpolate_central_quantity_kernel_helper(u, midline, 0, p, transverse_dim)
-            lr_conservative_interpolation_kernel_helper(midline, nodes, p, dim)
+        tdims = self._get_transverse_dims(dim)
+
+        if ndim == 1:
+            stencil_sweep(xp, u[..., na], lr_weights, dim, out=nodes)
+        elif ndim == 2:
+            midline = arrays["_midline_"]
+            stencil_sweep(xp, u[..., na], cc_weights, tdims[0], out=midline)
+            stencil_sweep(xp, midline, lr_weights, dim, out=nodes)
+        elif ndim == 3:
+            midface = arrays["_midface_"]
+            midline = arrays["_midline_"]
+            stencil_sweep(xp, u[..., na], cc_weights, tdims[1], out=midface)
+            stencil_sweep(xp, midface, cc_weights, tdims[0], out=midline)
+            stencil_sweep(xp, midline, lr_weights, dim, out=nodes)
         else:
-            fv.interpolate_face_centers(
-                self.xp, u, dim, active_dims, p, out=nodes, buffer=buffer
-            )
+            raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
     @MethodTimer(cat="zhang_shu_limiter")
     def zhang_shu_limiter(
@@ -1734,7 +1848,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             ny = w.shape[2]
             nz = w.shape[3]
             ntotal = nx * ny * nz
-            max_nodes = self.nodes_per_face(scheme)
+            max_nodes = self._ninterps_per_face(scheme, "nodes")
             max_ninterps = 2 * max_nodes
 
             wflat[...] = w.reshape(nvars, ntotal)
@@ -1875,7 +1989,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             convert_to_primitives: Whether to convert the face node arrays to
                 primitives before computing the fluxes.
         """
-        n = self.nodes_per_face(scheme)
+        n = self._ninterps_per_face(scheme, "nodes")
         pad = getattr(self.mesh, f"{dim}_slab_depth")
         axis = DIM_TO_AXIS[dim]
         flux_name = self.flux_names[dim]
@@ -1907,12 +2021,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if self.mesh.ndim == 1:
             _F_[...] = fnodes
         else:
-            if isinstance(scheme, polyInterpolationScheme) and scheme.gauss_legendre:
-                self.integrate_GaussLegendre_nodes(fnodes, _F_[..., 0], dim, scheme.p)
+            if getattr(scheme, "gauss_legendre", False):
+                self.integrate_GaussLegendre_nodes(dim, scheme.p)
             elif isinstance(
                 scheme, (polyInterpolationScheme, musclInterpolationScheme)
             ):
-                self.integrate_tranverse_nodes(fnodes, _F_, dim, scheme.p, right_state)
+                self.integrate_tranverse_nodes(dim, scheme.p)
             else:
                 raise ValueError(
                     f"Unknown interpolation scheme: {scheme}. "
@@ -1922,53 +2036,55 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         F[...] = _F_[self.flux_interior[dim]][..., 0]
 
     @MethodTimer(cat="integrate_fluxes:GL")
-    def integrate_GaussLegendre_nodes(
-        self, f: ArrayLike, F: ArrayLike, dim: Literal["x", "y", "z"], p: int
-    ):
-        ndim = self.mesh.ndim
+    def integrate_GaussLegendre_nodes(self, dim: Literal["x", "y", "z"], p: int):
+        arrays = self.arrays
 
-        if self.cupy and ndim == 2 and p <= 7:
-            gauss_legendre_quadrature_kernel_helper(f, F, p)
-        else:
-            fv.integrate_GaussLegendre_nodes(
-                self.xp,
-                f,
-                dim,
-                self.active_dims,
-                p,
-                out=F,
-            )
+        weights = self._get_GaussLegendre_weights(p)
+
+        flux_name = self.flux_names[dim]
+        fnodes = arrays[f"_{flux_name.lower()}_nodes_"]
+        F = arrays[f"_{flux_name}_"][..., 0]
+
+        perform_quadrature(xp, fnodes, weights, out=F)
+
+    def _get_GaussLegendre_weights(self, p: int) -> ArrayLike:
+        key = f"gauss_legendre_quadrature_weights_p{p}"
+        arrays = self.arrays
+        na = np.newaxis
+
+        if key not in arrays:
+            weights = conservative_interpolation.gauss_legendre_weights(p)
+            if self.mesh.ndim == 3:
+                weights = (weights[:, na] * weights[na, :]).flatten()
+            arrays.add(key, weights)
+        return arrays[key]
 
     @MethodTimer(cat="integrate_fluxes:transverse")
-    def integrate_tranverse_nodes(
-        self,
-        f: ArrayLike,
-        F: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        p: int,
-        buffer: Optional[ArrayLike] = None,
-    ):
+    def integrate_tranverse_nodes(self, dim: Literal["x", "y", "z"], p: int):
+        xp = self.xp
+        arrays = self.arrays
         ndim = self.mesh.ndim
 
-        if self.cupy and ndim == 2 and p <= 7:
-            transverse_dim = [d for d in self.active_dims if d != dim][0]
-            interpolate_central_quantity_kernel_helper(
-                f[..., 0], F[..., 0], 1, p, transverse_dim
-            )
+        weights = self._get_stencil_weights(
+            f"transverse_integration_p{p}", transverse_integration, p
+        )
+
+        tdims = self._get_transverse_dims(dim)
+
+        flux_name = self.flux_names[dim]
+        fnodes = arrays[f"_{flux_name.lower()}_nodes_"]
+        F = arrays[f"_{flux_name}_"]
+
+        if ndim == 1:
+            raise ValueError("1D integration of transverse nodes is not supported.")
+        elif ndim == 2:
+            stencil_sweep(xp, fnodes, weights, tdims[0], out=F)
+        elif ndim == 3:
+            flines = arrays[f"_{flux_name.lower()}_lines_"]
+            stencil_sweep(xp, fnodes, weights, tdims[0], out=flines)
+            stencil_sweep(xp, flines, weights, tdims[1], out=F)
         else:
-            if buffer is None:
-                raise ValueError(
-                    "Buffer array must be provided for transverse integration."
-                )
-            fv.transversely_integrate_nodes(
-                self.xp,
-                f[..., 0],
-                dim,
-                self.active_dims,
-                p,
-                out=F,
-                buffer=buffer,
-            )
+            raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
     @MethodTimer(cat="integrate_fluxes:fallback")
     def primitive_reconstruction_fallback(
@@ -2682,16 +2798,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays = self.arrays
 
         # allocate arrays
-        wx = arrays["_x_nodes_"]
-        wy = arrays["_y_nodes_"]
-        wz = arrays["_z_nodes_"]
+        node_arrs = {dim: arrays[f"_{dim}_nodes_"] for dim in active_dims}
+        slope_arrs = {dim: arrays[f"_{dim}slopes_"] for dim in active_dims}
+
         wcc = arrays["_w_"] if limit_primitives else arrays["_u_"]
         alpha = arrays["_alpha_"]
 
         check_buffer_slots(arrays["_buffer_"], required=4)
-        dwx = arrays["_xslopes_"]
-        dwy = arrays["_yslopes_"]
-        dwz = arrays["_zslopes_"]
         wcc_for_nodes = arrays["_buffer_"][..., 3]
         lim_buff = arrays["_buffer_"][..., 4:]
 
@@ -2701,8 +2814,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute limited slopes
         if scheme.limiter_config.limiter == "PP2D":
-            dw1 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[0]]
-            dw2 = {"x": dwx, "y": dwy, "z": dwz}[active_dims[1]]
+            dw1 = slope_arrs[active_dims[0]]
+            dw2 = slope_arrs[active_dims[1]]
 
             if self.cupy:
                 PP2D_slopes_kernel_helper(
@@ -2726,9 +2839,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     config=scheme.limiter_config,
                 )
         else:
-            for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-                if dim not in active_dims:
-                    continue
+            for dim, slope_arr in slope_arrs.items():
                 if self.cupy:
                     MUSCL_slopes_kernel_helper(
                         wcc,
@@ -2756,9 +2867,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
             wcc_for_nodes[...] = wcc
-            for slope_arr, dim in zip([dwx, dwy, dwz], xyz_tup):
-                if dim not in active_dims:
-                    continue
+            for dim, slope_arr in slope_arrs.items():
                 h = getattr(mesh, "h" + dim)
                 ds = self.flux_jvp(
                     wcc, slope_arr[..., 0], dim, primitives=limit_primitives
@@ -2768,9 +2877,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wcc_for_nodes[...] = wcc
 
         # update the face nodes using the limited slopes
-        for node_arr, slope_arr, dim in zip([wx, wy, wz], [dwx, dwy, dwz], xyz_tup):
-            if dim not in active_dims:
-                continue
+        for (dim, node_arr), (_, slope_arr) in zip(
+            node_arrs.items(), slope_arrs.items()
+        ):
             node_arr[..., 0] = wcc_for_nodes - slope_arr[..., 0] / 2
             node_arr[..., 1] = wcc_for_nodes + slope_arr[..., 0] / 2
 
