@@ -10,9 +10,9 @@
 - [ ] rm: gtol, make rtol a scalar again
 - [ ] symmetry bug `p = 7, GL = True, dims1_dims2 = ('xy', 'yz')`
 - [ ] simplify Riemann solver init
-- [ ] add cupy test support for
+- [x] add cupy test support for
   - [x] test_compute_dmp.py
-  - [ ] test_fv.py
+  - [x] test_fv.py
   - [x] test_muscl_slopes.py
 - [ ] remove `xp` backend
   - [x] shock detection
@@ -21,10 +21,11 @@
   - [x] detect NAD violations
   - [ ] fv interpolation functions
   - [ ] perform_GaussLegendre_quadrature
-  - [ ] stencil.py
+  - [x] stencil.py
 - [ ] use __restrict__ and const for all RawKernels where necessary
-- [ ] use full 5D arrays for ZS limiter, stop copying to flat
+- [ ] use full 5D arrays for ZS limiter, stop copying to flat. it's the only kernel that does this
 - [ ] refactor buffer size
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
+- [ ] add upwinding kernel so cupy tests stop shitting themselves
