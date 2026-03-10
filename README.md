@@ -8,7 +8,7 @@
 
 ## Overview
 
-SuperFV is a computational solver for hyperbolic conservation laws based on the finite-volume method with arbitrarily high-order accuracy in its spatial discretization. The solver operates on a uniform mesh, supporting up to three dimensions.
+SuperFV is a computational solver for hyperbolic conservation laws based on the finite-volume method with up to eighth-order accuracy in its spatial discretization. The solver operates on a uniform mesh, supporting up to three dimensions.
 
 ## Features
 
