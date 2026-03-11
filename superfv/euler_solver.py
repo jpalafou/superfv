@@ -72,9 +72,8 @@ class EulerSolver(FiniteVolumeSolver):
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "actives",
         NAD: bool = True,
         NAD_delta: bool = False,
-        NAD_rtol: Optional[Union[Dict[str, float], float]] = 1e-5,
-        NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
-        NAD_atol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_rtol: float = 1e-5,
+        NAD_atol: float = 0.0,
         scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
@@ -208,15 +207,8 @@ class EulerSolver(FiniteVolumeSolver):
                 if a cell is troubled in the MOOD loop.
             NAD_delta: Whether to use the local DMP range to relax the bounds for NAD. If
                 False, only NAD_rtol is used to relax the bounds.
-            NAD_rtol, NAD_gtol, NAD_atol: Tolerance values used to relax the bounds for
+            NAD_rtol, NAD_atol: Tolerance values used to relax the bounds for
                 numerical admissibility detection (see the `detect_NAD_violations`).
-                May be provided as one of the following:
-                - Dict[str, float]: A dictionary mapping variable names to their
-                    corresponding tolerance values. Limiting variables not provided in
-                    the dictionary are treated as having a tolerance of 0.
-                - float: A single float value that is applied to all limiting
-                    variables.
-                - None: All limiting variables are treated as having a tolerance of 0.
             scale_NAD_rtol_by_dt: Whether to scale the NAD rtol by dt.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
@@ -290,7 +282,6 @@ class EulerSolver(FiniteVolumeSolver):
             NAD=NAD,
             NAD_delta=NAD_delta,
             NAD_rtol=NAD_rtol,
-            NAD_gtol=NAD_gtol,
             NAD_atol=NAD_atol,
             scale_NAD_rtol_by_dt=scale_NAD_rtol_by_dt,
             include_corners=include_corners,

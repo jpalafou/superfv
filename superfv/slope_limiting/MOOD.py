@@ -58,13 +58,9 @@ class MOODConfig(LimiterConfig):
         include_corners: Whether to include corner cells when computing the local
             minima and maxima.
         NAD_rtol: Factor by which the local DMP range is multipliedf, forming a product
-            that is used to widen the bounds for numerical admissibility. Has shape
-            (nvars,) or is treated as 0s if None.
-        NAD_gtol: Factor by which the global range is multiplied, forming a product
-            that is used to widen the bounds for numerical admissibility. Has shape
-            (nvars,) or is treated as 0s if None.
+            that is used to widen the bounds for numerical admissibility.
         NAD_atol: Absolute tolerance used to widen the bounds for numerical
-            admissibility. Has shape (nvars,) or is treated as 0s if None.
+            admissibility. Ignored if `delta` is False.
         scale_NAD_rtol_by_dt: Whether to scale the NAD rtol by the time step size dt.
         skip_trouble_counts: Whether to skip counting the number of troubled cells. If
             True, `detect_troubled_cells` will return (-1, -1) always. This can be used
@@ -82,9 +78,8 @@ class MOODConfig(LimiterConfig):
     blend: bool = False
     max_iters: int = 0
     include_corners: bool = False
-    NAD_rtol: Optional[ArrayLike] = None
-    NAD_gtol: Optional[ArrayLike] = None
-    NAD_atol: Optional[ArrayLike] = None
+    NAD_rtol: float = 1e-5
+    NAD_atol: float = 0.0
     scale_NAD_rtol_by_dt: bool = False
     skip_trouble_counts: bool = False
     detect_closing_troubles: bool = True
@@ -110,9 +105,8 @@ class MOODConfig(LimiterConfig):
                 blend=self.blend,
                 max_iters=self.max_iters,
                 include_corners=self.include_corners,
-                NAD_rtol=None if self.NAD_rtol is None else self.NAD_rtol.tolist(),
-                NAD_gtol=None if self.NAD_gtol is None else self.NAD_gtol.tolist(),
-                NAD_atol=None if self.NAD_atol is None else self.NAD_atol.tolist(),
+                NAD_rtol=self.NAD_rtol,
+                NAD_atol=self.NAD_atol,
                 scale_NAD_rtol_by_dt=self.scale_NAD_rtol_by_dt,
                 skip_trouble_counts=self.skip_trouble_counts,
                 detect_closing_troubles=self.detect_closing_troubles,
@@ -244,7 +238,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     NAD = config.numerical_admissibility_detection
     delta = config.delta
     NAD_rtol = config.NAD_rtol
-    NAD_gtol = config.NAD_gtol
     NAD_atol = config.NAD_atol
     scale_NAD_rtol_by_dt = config.scale_NAD_rtol_by_dt
     include_corners = config.include_corners
@@ -284,9 +277,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     fv_solver.conservatives_to_primitives(unew, wnew)
 
     if fv_solver.cupy:
-        if NAD_gtol is not None:
-            raise NotImplementedError("NAD gtol is not yet implemented for GPU arrays.")
-
         # get lim_slc mask
         nvars = wnew.shape[0]
         if "NAD_mask" in arrays:
@@ -338,35 +328,21 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             SED,
             primNAD,
             delta,
-            NAD_rtol[0].item() if NAD_rtol is not None else 0.0,
-            NAD_atol[0].item() if NAD_atol is not None else 0.0,
+            NAD_rtol * dt if scale_NAD_rtol_by_dt else NAD_rtol,
+            NAD_atol,
             PAD_atol,
         )
     else:
         if NAD:
             fv_solver.stepper_timer.start("detect_troubles:NAD")
 
-            NAD_rtol_local: Optional[np.ndarray] = None
-            NAD_gtol_local: Optional[np.ndarray] = None
-            NAD_atol_local: Optional[np.ndarray] = None
-
-            if NAD_rtol is not None:
-                NAD_rtol_local = NAD_rtol.copy()
-                if scale_NAD_rtol_by_dt:
-                    NAD_rtol_local *= dt
-            if NAD_gtol is not None:
-                NAD_gtol_local = NAD_gtol
-            if NAD_atol is not None:
-                NAD_atol_local = NAD_atol
-
             detect_NAD_violations(
                 (wnew if primNAD else unew),
                 (wold if primNAD else uold),
                 active_dims=active_dims,
                 delta=delta,
-                rtol=NAD_rtol_local,
-                gtol=NAD_gtol_local,
-                atol=NAD_atol_local,
+                rtol=NAD_rtol * dt if scale_NAD_rtol_by_dt else NAD_rtol,
+                atol=NAD_atol,
                 include_corners=include_corners,
                 out=NAD_violations,
                 M=dmp_M,
@@ -425,9 +401,8 @@ def detect_NAD_violations(
     u_old: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     delta: bool = True,
-    rtol: Optional[np.ndarray] = None,
-    gtol: Optional[np.ndarray] = None,
-    atol: Optional[np.ndarray] = None,
+    rtol: float = 1e-5,
+    atol: float = 0.0,
     include_corners: bool = False,
     *,
     out: np.ndarray,
@@ -458,12 +433,9 @@ def detect_NAD_violations(
             the bounds.
         rtol: Factor by which the local DMP range or absolute values are multiplied,
             forming a product that is used to widen the bounds for numerical
-            admissibility. Has shape (nvars,) or is treated as 0s if None
-        gtol: Factor by which the global range is multiplied, forming a product that is
-            used to widen the bounds for numerical admissibility. Has shape (nvars,)
-            or is treated as 0s if None. Ignored if delta is False.
+            admissibility.
         atol: Absolute tolerance used to widen the bounds for numerical admissibility.
-            Has shape (nvars,) or is treated as 0s if None. Ignored if delta is False.
+            Ignored if `delta` is False.
         include_corners: Whether to include corner values in the DMP computation.
         out: Output array to store the violations. Has shape (nvars, nx, ny, nz).
             Negative values in `out` indicate violations of the NAD criterion.
@@ -475,8 +447,6 @@ def detect_NAD_violations(
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    na = np.newaxis
-
     check_buffer_slots(buffer, required=6)
     dmp_range = buffer[..., 0]
     delta_arr = buffer[..., 1]
@@ -491,30 +461,14 @@ def detect_NAD_violations(
     modified = compute_dmp(np, u_old, active_dims, include_corners, M=M, m=m)
 
     if delta:
-        # relax bounds with local dmp range
-        if rtol is not None:
-            dmp_range[...] = M - m
-            delta_arr += rtol[:, na, na, na] * dmp_range
+        dmp_range[...] = M - m
+        delta_arr += rtol * dmp_range + atol
 
-        # relax bounds with global range
-        if gtol is not None:
-            global_min = np.min(u_old, axis=(1, 2, 3), keepdims=True)
-            global_max = np.max(u_old, axis=(1, 2, 3), keepdims=True)
-            global_range = global_max - global_min
-            delta_arr += gtol[:, na, na, na] * global_range
-
-        # relax bounds with absolute tolerance
-        if atol is not None:
-            delta_arr += atol[:, na, na, na]
-
-        # compute violations
         lower_bound[...] = m - delta_arr
         upper_bound[...] = M + delta_arr
-    elif rtol is None:
-        raise ValueError("rtol must be provided if delta is False.")
     else:
-        lower_bound[...] = m - rtol[:, na, na, na] * np.abs(m)
-        upper_bound[...] = M + rtol[:, na, na, na] * np.abs(M)
+        lower_bound[...] = m - rtol * np.abs(m)
+        upper_bound[...] = M + rtol * np.abs(M)
 
     lower_violations[...] = u_new - lower_bound
     upper_violations[...] = upper_bound - u_new

@@ -117,9 +117,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]] = "all",
         NAD: bool = True,
         NAD_delta: bool = False,
-        NAD_rtol: Optional[Union[Dict[str, float], float]] = 1e-5,
-        NAD_gtol: Optional[Union[Dict[str, float], float]] = None,
-        NAD_atol: Optional[Union[Dict[str, float], float]] = None,
+        NAD_rtol: float = 1e-5,
+        NAD_atol: float = 0.0,
         scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
@@ -247,15 +246,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 if a cell is troubled in the MOOD loop.
             NAD_delta: Whether to use the local DMP range to relax the bounds for NAD. If
                 False, only NAD_rtol is used to relax the bounds.
-            NAD_rtol, NAD_gtol, NAD_atol: Tolerance values used to relax the bounds for
+            NAD_rtol, NAD_atol: Tolerance values used to relax the bounds for
                 numerical admissibility detection (see the `detect_NAD_violations`).
-                May be provided as one of the following:
-                - Dict[str, float]: A dictionary mapping variable names to their
-                    corresponding tolerance values. Limiting variables not provided in
-                    the dictionary are treated as having a tolerance of 0.
-                - float: A single float value that is applied to all limiting
-                    variables.
-                - None: All limiting variables are treated as having a tolerance of 0.
             scale_NAD_rtol_by_dt: Whether to scale the NAD rtol by dt.
             include_corners: Whether to include corner nodes in the slope limiting.
             PAD: Dict of `limiting_vars` and their corresponding PAD tolerances as a
@@ -297,7 +289,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             NAD,
             NAD_delta,
             NAD_rtol,
-            NAD_gtol,
             NAD_atol,
             scale_NAD_rtol_by_dt,
             include_corners,
@@ -459,9 +450,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         limiting_vars: Union[Literal["all", "actives"], Tuple[str, ...]],
         NAD: bool,
         NAD_delta: bool,
-        NAD_rtol: Optional[Union[Dict[str, float], float]],
-        NAD_gtol: Optional[Union[Dict[str, float], float]],
-        NAD_atol: Optional[Union[Dict[str, float], float]],
+        NAD_rtol: float,
+        NAD_atol: float,
         scale_NAD_rtol_by_dt: bool,
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
@@ -549,7 +539,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 NAD,
                 NAD_delta,
                 NAD_rtol,
-                NAD_gtol,
                 NAD_atol,
                 scale_NAD_rtol_by_dt,
                 SED,
@@ -689,9 +678,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_closing_troubles: bool,
         NAD: bool,
         NAD_delta: bool,
-        NAD_rtol: Optional[Union[Dict[str, float], float]],
-        NAD_gtol: Optional[Union[Dict[str, float], float]],
-        NAD_atol: Optional[Union[Dict[str, float], float]],
+        NAD_rtol: float,
+        NAD_atol: float,
         scale_NAD_rtol_by_dt: bool,
         SED: bool,
         check_uniformity: bool,
@@ -781,10 +769,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(f"Unknown cascade type: {cascade}.")
         cascade_list = [self.base_scheme] + fallback_schemes
 
-        # init NAD arrays if needed
-        if NAD:
-            self._init_NAD(NAD_rtol, NAD_gtol, NAD_atol)
-
         # assign MOOD config
         self.MOOD_config = MOODConfig(
             shock_detection=False,
@@ -800,57 +784,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             blend=blend,
             max_iters=max_MOOD_iters,
             include_corners=include_corners,
-            NAD_rtol=(
-                self.arrays["NAD_rtol"] if NAD and (NAD_rtol is not None) else None
-            ),
-            NAD_gtol=(
-                self.arrays["NAD_gtol"] if NAD and (NAD_gtol is not None) else None
-            ),
-            NAD_atol=(
-                self.arrays["NAD_atol"] if NAD and (NAD_atol is not None) else None
-            ),
+            NAD_rtol=NAD_rtol,
+            NAD_atol=NAD_atol,
             scale_NAD_rtol_by_dt=scale_NAD_rtol_by_dt,
             skip_trouble_counts=skip_trouble_counts,
             detect_closing_troubles=detect_closing_troubles,
         )
-
-    def _init_NAD(
-        self,
-        NAD_rtol: Optional[Union[Dict[str, float], float]],
-        NAD_gtol: Optional[Union[Dict[str, float], float]],
-        NAD_atol: Optional[Union[Dict[str, float], float]],
-    ):
-        xp = self.xp
-        idx = self.variable_index_map
-
-        rtol = xp.zeros(self.nvars)
-        gtol = xp.zeros(self.nvars)
-        atol = xp.zeros(self.nvars)
-
-        def validate_and_assign(
-            tols: Optional[Union[Dict[str, float], float]], arr: ArrayLike
-        ):
-            if tols is None:
-                return
-
-            if isinstance(tols, (int, float)):
-                arr.fill(tols)
-                return
-
-            for var, tol in tols.items():
-                if var not in idx.var_idx_map:
-                    raise ValueError(f"{var} not defined in variable index map.")
-                if var not in idx.group_var_map["limiting"]:
-                    raise ValueError(f"{var} not in limiting variable group.")
-                arr[idx(var)] = tol
-
-        validate_and_assign(NAD_rtol, rtol)
-        validate_and_assign(NAD_gtol, gtol)
-        validate_and_assign(NAD_atol, atol)
-
-        self.arrays.add("NAD_rtol", rtol)
-        self.arrays.add("NAD_gtol", gtol)
-        self.arrays.add("NAD_atol", atol)
 
     def _init_snapshots(self, log_limiter_scalars: bool):
         self.step_log: Dict[str, List[float]] = {}

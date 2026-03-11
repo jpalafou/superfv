@@ -261,13 +261,7 @@ def test_compute_theta(
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize(
     "NAD_config",
-    [
-        dict(),
-        dict(rtol=1e-1),
-        dict(gtol=1e-3),
-        dict(atol=1e-5),
-        dict(rtol=1e-1, delta=False),
-    ],
+    [dict(), dict(rtol=1e-2, atol=1e-14), dict(delta=False)],
 )
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_detect_NAD_violations(
@@ -281,10 +275,6 @@ def test_detect_NAD_violations(
     M = np.empty(uold.shape)
     m = np.empty(uold.shape)
     out = out1[..., 0]
-
-    for key in ["rtol", "gtol", "atol"]:
-        if key in NAD_config:
-            NAD_config[key] = np.full((uold.shape[0],), NAD_config[key])
 
     modified = detect_NAD_violations(
         uold,

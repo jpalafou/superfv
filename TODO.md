@@ -1,10 +1,8 @@
-- [ ] log_limiter_scalars should default to false
-- [ ] rm: gtol, make rtol and atol scalars again
-- [ ] simplify Riemann solver init
+- [x] rm: gtol, make rtol and atol scalars again
 - [ ] use __restrict__ and const for all RawKernels where necessary
 - [ ] use full 5D arrays for ZS limiter, stop copying to flat. it's the only kernel that does this
 - [ ] refactor buffer size
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
-- [x] test high-order convergence, rm: fv_cuda.py
+- [ ] clarify documentation on `lim_slc`
