@@ -5,7 +5,7 @@ from typing import Dict, Literal, Optional, Tuple, Union
 import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.slope_limiting.shock_detection import compute_shock_detector
+from superfv.slope_limiting.shock_detection import detect_shocks
 
 from . import riemann_solvers
 from .axes import DIM_TO_AXIS
@@ -26,7 +26,6 @@ if CUPY_AVAILABLE:
         sound_speed_cp,
     )
     from .riemann_solvers import make_hllc_elementwise_kernel
-    from .slope_limiting.shock_detection import compute_shocks_kernel_helper
 
 
 class EulerSolver(FiniteVolumeSolver):
@@ -762,46 +761,25 @@ class EulerSolver(FiniteVolumeSolver):
         arrays = self.arrays
         active_dims = self.active_dims
         idx = self.variable_index_map
+        threshold = scheme.limiter_config.eta_max
 
         if not scheme.limiter_config.shock_detection:
             raise ValueError("Shock detection is not enabled in the scheme.")
 
-        eta = arrays["_eta_"]
         eta3d = arrays["_eta3d_"]
         has_shock = arrays["_has_shock_"]
-        w1 = arrays["_w_"]
-        u1 = arrays["_u_"]
+        w1 = arrays["_w_"] if primitives else arrays["_u_"]
         wr = arrays["_wr_"]
         c = arrays["_c_"]
-        buffer = arrays["_buffer_"]
 
+        wr[...] = w1
         c[...] = self.compute_sound_speed(w1)
         if primitives:
-            wr[...] = w1
             wr[idx("v")] = c
         else:
-            wr[...] = u1
-            wr[idx("m")] = c * u1[idx("rho")]
+            wr[idx("m")] = c * w1[idx("rho")]
 
-        if self.cupy:
-            compute_shocks_kernel_helper(
-                w1 if primitives else u1,
-                wr,
-                eta3d,
-                has_shock,
-                scheme.limiter_config.eta_max,
-                1e-16,
-            )
-        else:
-            compute_shock_detector(
-                w1 if primitives else u1,
-                wr,
-                active_dims,
-                scheme.limiter_config.eta_max,
-                out=has_shock,
-                eta=eta,
-                buffer=buffer,
-            )
+        detect_shocks(w1, wr, eta3d, has_shock, active_dims, threshold)
 
     def build_update_message(self) -> str:
         """

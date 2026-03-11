@@ -5,30 +5,27 @@ import numpy as np
 from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.sweep import stencil_sweep
-from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
 
-def compute_eta(
+def compute_eta_1d(
     w1: np.ndarray,
     wr: np.ndarray,
+    eta: np.ndarray,
     dim: Literal["x", "y", "z"],
-    *,
-    out: np.ndarray,
-    buffer: np.ndarray,
     eps: float = 1e-16,
 ) -> Tuple[slice, ...]:
-    """
-    Compute the shock detector eta in 1D using the method of Berta et al. (2024).
+    """`
+    Compute the shock detector parameter in 1D using the method of Berta et al. (2024),
+    writing the result to `eta`.
 
     Args:
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
+        eta: Array to which the shock detector parameter is written. Has shape
+            (nvars, nx, ny, nz).
         dim: Dimension along which to compute eta. Must be "x", "y", or "z".
-        out: Array to which eta is written. Has shape (nvars, nx, ny, nz).
-        buffer: Array to which intermediate values are written. Has shape
-            (nvars, nx, ny, nz, >=6).
         eps: Small value to avoid division by zero.
 
     Returns:
@@ -37,13 +34,12 @@ def compute_eta(
     na = np.newaxis
 
     # allocate temporary arrays
-    check_buffer_slots(buffer, required=6)
-    delta1 = buffer[..., 0:1]
-    delta2 = buffer[..., 1:2]
-    delta3 = buffer[..., 2:3]
-    delta4 = buffer[..., 3:4]
-    eta_o = buffer[..., 4:5]
-    eta_e = buffer[..., 5:6]
+    delta1 = np.empty(w1.shape + (1,))
+    delta2 = np.empty(w1.shape + (1,))
+    delta3 = np.empty(w1.shape + (1,))
+    delta4 = np.empty(w1.shape + (1,))
+    eta_o = np.empty(w1.shape + (1,))
+    eta_e = np.empty(w1.shape + (1,))
 
     # compute stencils
     stencil1 = 0.5 * np.array([[-1.0, 0.0, 1.0]])
@@ -63,101 +59,64 @@ def compute_eta(
     eta_o /= np.abs(wr[..., na]) + np.abs(delta1) + np.abs(delta3) + eps
     eta_e[...] = np.abs(delta4)
     eta_e /= np.abs(wr[..., na]) + np.abs(delta2) + np.abs(delta4) + eps
-    out[inner] = np.maximum(eta_o[..., 0][inner], eta_e[..., 0][inner])
+    eta[inner] = np.maximum(eta_o[..., 0][inner], eta_e[..., 0][inner])
 
     return inner
 
 
-def compute_shock_detector(
-    w1: np.ndarray,
-    wr: np.ndarray,
+def detect_shocks(
+    w1: ArrayLike,
+    wr: ArrayLike,
+    eta: ArrayLike,
+    has_shock: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     eta_threshold: float,
-    *,
-    out: np.ndarray,
-    eta: np.ndarray,
-    buffer: ArrayLike,
     eps: float = 1e-16,
-):
+) -> Tuple[slice, ...]:
     """
-    Compute the shock detector using the method of Berta et al. (2024), where a value
-    of 0 indicates a smooth region and 1 indicates a shock.
+    Detect shocks in the primitive variable array `w1`, writing the results to
+    `eta` and `has_shock`.
 
     Args:
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
-        active_dims: Tuple of active dimensions along which to compute the shock
-            detector.
-        out: Array to which the shock detector is written. Has shape (1, nx, ny, nz).
-            The minimum value over all active dimensions and variables is taken.
-        eta: Array to which intermediate eta values are written. Has shape
-            (nvars, nx, ny, nz).
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on the number (length) of active dimensions:
-            - 1D: (nvars, nx, ny, nz, >=7)
-            - 2D: (nvars, nx, ny, nz, >=9)
-            - 3D: (nvars, nx, ny, nz, >=10)
+        eta: Array to which the shock detector parameter is written. Has shape
+            (nvars, nx, ny, nz, 3). The three slots along the last axis correspond
+            to the "x", "y", and "z" directions respectively. Slots corresponding to
+            inactive dims will not be modified.
+        has_shock: Array to which the shock detection mask is written. Has shape
+            (1, nx, ny, nz).
+        active_dims: Tuple of dimensions along which to compute the shock detector.
+            Each dimension must be "x", "y", or "z".
+        eta_threshold: Threshold value for eta above which a shock is detected.
         eps: Small value to avoid division by zero.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
     """
-    ndim = len(active_dims)
+    if CUPY_AVAILABLE and isinstance(w1, cp.ndarray):
+        return detect_shocks_kernel_helper(w1, wr, eta, has_shock, eta_threshold, eps)
 
-    # early escape for 1D case
-    if ndim == 1:
-        dim = active_dims[0]
+    eta_max = np.full((1,) + w1.shape[1:4], -np.inf)
 
-        eta_max = buffer[:1, ..., 0]
-        eta_buff = buffer[..., 1:]
+    valid_slices = []
+    for dim in active_dims:
+        inner = compute_eta_1d(w1, wr, eta[..., "xyz".index(dim)], dim, eps)
+        valid_slices.append(inner)
+        np.maximum(eta_max, np.max(eta[..., "xyz".index(dim)], axis=0), out=eta_max)
 
-        inner = compute_eta(w1, wr, dim, out=eta, buffer=eta_buff, eps=eps)
-
-    elif ndim == 2:
-        dim1 = active_dims[0]
-        dim2 = active_dims[1]
-
-        eta1 = buffer[..., 0]
-        eta2 = buffer[..., 1]
-        eta_max = buffer[:1, ..., 2]
-        eta_buff = buffer[..., 3:]
-
-        inner1 = compute_eta(w1, wr, dim1, out=eta1, buffer=eta_buff, eps=eps)
-        inner2 = compute_eta(w1, wr, dim2, out=eta2, buffer=eta_buff, eps=eps)
-        inner = merge_slices(inner1, inner2)
-        eta[inner] = np.maximum(eta1[inner], eta2[inner])
-
-    elif ndim == 3:
-        dim1 = active_dims[0]
-        dim2 = active_dims[1]
-        dim3 = active_dims[2]
-
-        eta1 = buffer[..., 0]
-        eta2 = buffer[..., 1]
-        eta3 = buffer[..., 2]
-        eta_max = buffer[:1, ..., 3]
-        eta_buff = buffer[..., 4:]
-
-        inner1 = compute_eta(w1, wr, dim1, out=eta1, buffer=eta_buff, eps=eps)
-        inner2 = compute_eta(w1, wr, dim2, out=eta2, buffer=eta_buff, eps=eps)
-        inner3 = compute_eta(w1, wr, dim3, out=eta3, buffer=eta_buff, eps=eps)
-        inner = merge_slices(inner1, inner2, inner3)
-        eta[inner] = np.maximum(eta1[inner], eta2[inner])
-        eta[inner] = np.maximum(eta3[inner], eta[inner])
-
-    else:
-        raise ValueError("active_dims must have length 1, 2, or 3.")
-
-    eta_max[...] = np.max(eta, axis=0, keepdims=True)  # maximum over all variables
-    out[inner] = np.where(eta_max[inner] < eta_threshold, 0, 1)
-
-    return inner
+    valid = merge_slices(*valid_slices)
+    has_shock[valid] = eta_max[valid] > eta_threshold
+    return valid
 
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
-    compute_shocks_kernel = cp.RawKernel(
+    detect_shocks_kernel = cp.RawKernel(
         """
         extern "C" __global__
-        void compute_shocks_kernel(
+        void detect_shocks_kernel(
             const double* __restrict__ w,
             const double* __restrict__ wref,
             double* __restrict__ eta,
@@ -259,10 +218,10 @@ if CUPY_AVAILABLE:
             }
         }
         """,
-        name="compute_shocks_kernel",
+        name="detect_shocks_kernel",
     )
 
-    def compute_shocks_kernel_helper(
+    def detect_shocks_kernel_helper(
         w1: cp.ndarray,
         wr: cp.ndarray,
         eta: cp.ndarray,
@@ -310,7 +269,7 @@ if CUPY_AVAILABLE:
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
 
-        compute_shocks_kernel(
+        detect_shocks_kernel(
             (blocks_per_grid,),
             (threads_per_block,),
             (w1, wr, eta, has_shock, eta_threshold, eps, nvars, nx, ny, nz),

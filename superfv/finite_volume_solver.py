@@ -36,7 +36,7 @@ from .slope_limiting.muscl import (
     musclInterpolationScheme,
 )
 from .slope_limiting.physical_admissibility_detection import detect_PAD_violations
-from .slope_limiting.shock_detection import compute_shock_detector
+from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
@@ -56,7 +56,6 @@ from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
 if CUPY_AVAILABLE:
-    from .slope_limiting.shock_detection import compute_shocks_kernel_helper
     from .slope_limiting.smooth_extrema_detection import compute_alpha_kernel_helper
     from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
 
@@ -1575,35 +1574,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         arrays = self.arrays
         active_dims = self.active_dims
+        threshold = scheme.limiter_config.eta_max
 
         if not scheme.limiter_config.shock_detection:
             raise ValueError("Shock detection is not enabled in the scheme.")
 
-        eta = arrays["_eta_"]
         eta3d = arrays["_eta3d_"]
         has_shock = arrays["_has_shock_"]
         w1 = arrays["_w_"] if primitives else arrays["_u_"]
-        buffer = arrays["_buffer_"]
 
-        if self.cupy:
-            compute_shocks_kernel_helper(
-                w1,
-                w1,
-                eta3d,
-                has_shock,
-                scheme.limiter_config.eta_max,
-                1e-16,
-            )
-        else:
-            compute_shock_detector(
-                w1,
-                w1,
-                active_dims,
-                scheme.limiter_config.eta_max,
-                out=has_shock,
-                eta=eta,
-                buffer=buffer,
-            )
+        detect_shocks(w1, w1, eta3d, has_shock, active_dims, threshold)
 
     @MethodTimer(cat="interpolate_faces")
     def interpolate_faces(

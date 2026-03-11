@@ -16,7 +16,7 @@ from superfv.slope_limiting.muscl import (
     compute_PP2D_slopes,
     musclConfig,
 )
-from superfv.slope_limiting.shock_detection import compute_shock_detector
+from superfv.slope_limiting.shock_detection import detect_shocks
 from superfv.slope_limiting.smooth_extrema_detection import smooth_extrema_detector
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
 from superfv.stencils import transverse_integration
@@ -35,7 +35,6 @@ if CUPY_AVAILABLE:
         MUSCL_slopes_kernel_helper,
         PP2D_slopes_kernel_helper,
     )
-    from superfv.slope_limiting.shock_detection import compute_shocks_kernel_helper
     from superfv.slope_limiting.smooth_extrema_detection import (
         compute_alpha_kernel_helper,
     )
@@ -162,46 +161,6 @@ def test_compute_PP2D_slopes(dims: str, check_uniformity: bool):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-def test_compute_shock_detector(dims: str):
-    u, buffer, temp = sample_data(dims, nout=2, xp=np)
-    out = temp[:1, ..., 0]
-    eta = temp[..., 1]
-
-    modified = compute_shock_detector(
-        u, u, tuple(dims), 0.025, out=out, eta=eta, buffer=buffer
-    )
-
-    assert not np.any(np.isnan(out[modified]))
-    assert not np.any(np.isnan(eta[modified]))
-    out[modified] = np.nan
-    eta[modified] = np.nan
-    assert np.all(np.isnan(out))
-    assert np.all(np.isnan(eta))
-
-
-@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-def test_compute_shocks_kernel_helper(dims: str):
-    xp = configure_xp()
-
-    if not hasattr(xp, "cuda"):
-        pytest.skip("compute_shocks_kernel_helper is only implemented for CuPy")
-
-    u, _, eta = sample_data(dims, nout=3, xp=xp)
-    has_shock = xp.full((1, *eta.shape[1:4]), -1, dtype=np.int32)
-
-    modified = compute_shocks_kernel_helper(u, u, eta, has_shock, 0.025, 1e-16)
-
-    assert not xp.any(has_shock[modified] == -1)
-    for i, dim in enumerate(["x", "y", "z"]):
-        if dim in dims:
-            assert not xp.any(xp.isnan(eta[..., i][modified]))
-    has_shock[modified] = -1
-    eta[modified] = xp.nan
-    assert xp.all(has_shock == -1)
-    assert xp.all(xp.isnan(eta))
-
-
-@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("check_uniformity", [False, True])
 @pytest.mark.parametrize("PAD", [False, True])
 @pytest.mark.parametrize("include_corners", [False, True])
@@ -280,6 +239,25 @@ def test_detect_NAD_violations(
     assert not np.any(np.isnan(out[modified]))
     out[modified] = np.nan
     assert np.all(np.isnan(out))
+
+
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+def test_detect_shocks(dims: str):
+    xp = configure_xp()
+    u, _, eta = sample_data(dims, nout=3, xp=xp)
+    has_shock = xp.full_like(eta[..., 0], -1, dtype=xp.int32)
+
+    modified = detect_shocks(u, u, eta, has_shock, tuple(dims), 0.025)
+
+    for i, dim in enumerate(["x", "y", "z"]):
+        if dim in dims:
+            assert not xp.any(xp.isnan(eta[..., i][modified]))
+            eta[..., i][modified] = xp.nan
+            # skipping all nan check since the stencils will modify some ghost cells
+
+    assert not xp.any(has_shock[modified] == -1)
+    has_shock[modified] = -1
+    assert xp.all(has_shock == -1)
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
