@@ -1777,10 +1777,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # compute DMP
             compute_dmp(
                 w,
+                M,
+                m,
                 self.active_dims,
                 scheme.limiter_config.include_corners,
-                M=M,
-                m=m,
             )
 
             compute_theta_kernel_helper(

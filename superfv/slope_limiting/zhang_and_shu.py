@@ -134,7 +134,7 @@ def compute_theta(
         for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
         if arr is not None
     )
-    dmp_valid = compute_dmp(u, active_dims, include_corners, M=M, m=m)
+    dmp_valid = compute_dmp(u, M, m, active_dims, include_corners)
 
     # compute nodal maximum principle
     Mj[...] = center_nodes[..., 0]

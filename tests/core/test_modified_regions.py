@@ -105,7 +105,7 @@ def test_compute_dmp(dims: str, include_corners: bool):
 
     u, _, M = sample_data(dims, nout=1, xp=xp)
     _, _, m = sample_data(dims, nout=1, xp=xp)
-    modified = compute_dmp(u, tuple(dims), include_corners, M=M[..., 0], m=m[..., 0])
+    modified = compute_dmp(u, M[..., 0], m[..., 0], tuple(dims), include_corners)
 
     assert not xp.any(xp.isnan(M[modified]))
     assert not xp.any(xp.isnan(m[modified]))

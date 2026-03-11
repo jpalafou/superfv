@@ -73,24 +73,22 @@ def _gather_neighbor_slices(
 
 
 def compute_dmp(
-    arr: ArrayLike,
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
-    include_corners: bool = True,
-    *,
+    u: ArrayLike,
     M: ArrayLike,
     m: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    include_corners: bool = True,
 ) -> Tuple[slice, ...]:
     """
-    Compute the minimum and maximum values of each point and its neighbors along
-    specified dimensions.
+    Compute the maximum and minimum values of each point and its neighbors along
+    specified dimensions, writing the results to `M` and `m`, respectively.
 
     Args:
-        arr: Array. First axis is assumed to be variable axis. Has shape
-            (nvars, nx, ny, nz).
-        active_dims: Dimensions to check. Must be a subset of ("x", "y", "z").
-        include_corners: Whether to include corners.
-        M: Output array for maximum values. Should have same shape as `arr`.
-        m: Output array for minimum values. Should have same shape as `arr`.
+        u: Input array with shape (nvars, nx, ny, nz).
+        M: Array to store the maximum values, must have the same shape as `u`.
+        m: Array to store the minimum values, must have the same shape as `u`.
+        active_dims: Tuple of active dimensions for interpolation, e.g., ("x", "y").
+        include_corners: Whether to include corner neighbors in the computation.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -98,11 +96,11 @@ def compute_dmp(
     all_slices = gather_neighbor_slices(active_dims, include_corners)
     inner_slice = all_slices[0]
 
-    if CUPY_AVAILABLE and isinstance(arr, cp.ndarray):
-        compute_dmp_kernel_helper(arr, M, m, include_corners)
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        compute_dmp_kernel_helper(u, M, m, include_corners)
     else:
         # stack views of neighbors
-        all_views = [arr[slc] for slc in all_slices]
+        all_views = [u[slc] for slc in all_slices]
         stacked = np.stack(all_views, axis=0)
 
         # compute min an max
@@ -119,7 +117,7 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void dmp_kernel(
-            const double* __restrict__ w,   // (nvars,nx,ny,nz) contiguous C-order
+            const double* __restrict__ u,   // (nvars,nx,ny,nz) contiguous C-order
             double* __restrict__ M,      // same shape
             double* __restrict__ m,      // same shape
             const int nvars,
@@ -150,8 +148,8 @@ if CUPY_AVAILABLE:
                 if (usingy && !(iy > 0 && iy < ny - 1)) continue;
                 if (usingz && !(iz > 0 && iz < nz - 1)) continue;
 
-                M[i] = w[i];
-                m[i] = w[i];
+                M[i] = u[i];
+                m[i] = u[i];
 
                 for (int offx = -1; offx <= 1; offx++) {
                     if (!usingx && offx != 0) continue;
@@ -178,8 +176,8 @@ if CUPY_AVAILABLE:
                             const long long j =
                                 (((long long)iv * nx + jx) * ny + jy) * nz + jz;
 
-                            M[i] = (w[j] > M[i]) ? w[j] : M[i];
-                            m[i] = (w[j] < m[i]) ? w[j] : m[i];
+                            M[i] = (u[j] > M[i]) ? u[j] : M[i];
+                            m[i] = (u[j] < m[i]) ? u[j] : m[i];
                         }
                     }
                 }
@@ -190,33 +188,33 @@ if CUPY_AVAILABLE:
     )
 
     def compute_dmp_kernel_helper(
-        w: cp.ndarray,
+        u: cp.ndarray,
         M: cp.ndarray,
         m: cp.ndarray,
         include_corners: bool,
     ):
-        nvars, nx, ny, nz = w.shape
+        nvars, nx, ny, nz = u.shape
 
-        if not w.flags.c_contiguous:
+        if not u.flags.c_contiguous:
             raise ValueError("Input array must be C-contiguous")
         if not M.flags.c_contiguous:
             raise ValueError("Output array M must be C-contiguous")
         if not m.flags.c_contiguous:
             raise ValueError("Output array m must be C-contiguous")
-        if w.dtype != cp.float64 or M.dtype != cp.float64 or m.dtype != cp.float64:
+        if u.dtype != cp.float64 or M.dtype != cp.float64 or m.dtype != cp.float64:
             raise ValueError("Input array must be of type float64")
-        if w.ndim != 4:
+        if u.ndim != 4:
             raise ValueError("Input array must have 4 dimensions (nvars, nx, ny, nz)")
-        if M.shape != w.shape or m.shape != w.shape:
+        if M.shape != u.shape or m.shape != u.shape:
             raise ValueError(
-                "Output arrays M and m must have the same shape as input array w"
+                "Output arrays M and m must have the same shape as input array u"
             )
 
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (w.size + threads_per_block - 1) // threads_per_block
+        blocks_per_grid = (u.size + threads_per_block - 1) // threads_per_block
 
         dmp_kernel(
             (blocks_per_grid,),
             (threads_per_block,),
-            (w, M, m, nvars, nx, ny, nz, int(include_corners)),
+            (u, M, m, nvars, nx, ny, nz, int(include_corners)),
         )

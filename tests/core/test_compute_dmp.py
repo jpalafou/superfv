@@ -27,7 +27,7 @@ def test_compute_dmp(dims, include_corners, cupy):
     M = xp.empty(shape) if cupy else np.empty(shape)
     m = xp.empty(shape) if cupy else np.empty(shape)
 
-    modified = compute_dmp(arr, tuple(dims), include_corners, M=M, m=m)
+    modified = compute_dmp(arr, M, m, tuple(dims), include_corners)
 
     if cupy:
         assert xp.all(xp.less_equal(m, arr)[modified])
