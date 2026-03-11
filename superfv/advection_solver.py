@@ -7,9 +7,12 @@ from .boundary_conditions import PatchBC
 from .field import MultivarField, UnivarField
 from .finite_volume_solver import FiniteVolumeSolver
 from .riemann_solvers import AdvectionRiemannSolver
-from .tools.device_management import ArrayLike
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import VariableIndexMap
 from .tools.timer import MethodTimer
+
+if CUPY_AVAILABLE:
+    from .riemann_solvers import make_advection_upwind_elementwise_kernel
 
 
 class AdvectionSolver(FiniteVolumeSolver):
@@ -341,7 +344,7 @@ class AdvectionSolver(FiniteVolumeSolver):
         idx = self.variable_index_map
 
         if self.cupy:
-            result = self.reimann_solver_kernel(
+            self.riemann_solver_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
                 wl[idx("vx")],
@@ -356,14 +359,12 @@ class AdvectionSolver(FiniteVolumeSolver):
                     for v in idx.group_var_map.get("passives", [])
                     for x in (wl[idx(v)], wr[idx(v)])
                 ],
+                out[idx("rho")],
+                out[idx("vx")],
+                out[idx("vy")],
+                out[idx("vz")],
+                *[out[idx(v)] for v in idx.group_var_map.get("passives", [])],
             )
-
-            out[idx("rho")] = result[0]
-            out[idx("vx")] = result[1]
-            out[idx("vy")] = result[2]
-            out[idx("vz")] = result[3]
-            for i, v in enumerate(idx.group_var_map.get("passives", []), start=4):
-                out[idx(v)] = result[i]
         else:
             out[...] = self.riemann_solver_function(
                 idx,
@@ -373,11 +374,13 @@ class AdvectionSolver(FiniteVolumeSolver):
             )
 
     @cached_property
-    def reimann_solver_kernel(self):
-        raise NotImplementedError(
-            "Elementwise Riemann solver kernels are not implemented for the advection "
-            "solver."
-        )
+    def riemann_solver_kernel(self):
+        if self.riemann_solver_name != "advection_upwind":
+            raise NotImplementedError(
+                "Elementwise Riemann solver kernels are only implemented for the "
+                "advection upwind solver."
+            )
+        return make_advection_upwind_elementwise_kernel(self.n_passive_vars)
 
     def log_quantity(self) -> Dict[str, float]:
         """

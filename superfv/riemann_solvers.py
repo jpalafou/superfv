@@ -64,7 +64,7 @@ def advection_upwind(
     F[idx("vy")] = 0.0
     F[idx("vz")] = 0.0
     if "passives" in idx.group_var_map:
-        F[idx("passives")] = v * np.where(
+        F[idx("passives")] = F[idx("rho")] * np.where(
             v > 0, wl[idx("passives")], wr[idx("passives")]
         )
 
@@ -293,6 +293,48 @@ def hllct(
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
+
+    def make_advection_upwind_elementwise_kernel(npassives: int):
+        in_params = (
+            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, "
+            "float64 v2l, float64 v2r, float64 v3l, float64 v3r, "
+            "int8 dim"
+        )
+        out_params = "float64 Frho, float64 Fv1, float64 Fv2, float64 Fv3"
+        body = """
+        double vl;
+        double vr;
+        if (dim == 1) {
+            vl = v1l;
+            vr = v1r;
+        } else if (dim == 2) {
+            vl = v2l;
+            vr = v2r;
+        } else {
+            vl = v3l;
+            vr = v3r;
+        }
+
+        double v = fabs(vl) > fabs(vr) ? vl : vr;
+
+        Frho = v * (v > 0 ? rhol : rhor);
+        Fv1 = 0.0;
+        Fv2 = 0.0;
+        Fv3 = 0.0;
+        """
+
+        for i in range(npassives):
+            in_params += f", float64 passl{i}, float64 passr{i}"
+            out_params += f", float64 Fpass{i}"
+            body += f"\nFpass{i} = Frho * (v > 0 ? passl{i} : passr{i});"
+
+        return cp.ElementwiseKernel(
+            in_params=in_params,
+            out_params=out_params,
+            operation=body,
+            name=f"advection_upwind_npass_{npassives}",
+            no_return=True,
+        )
 
     def make_hllc_elementwise_kernel(npassives: int):
         in_params = (
