@@ -1,5 +1,6 @@
 from types import ModuleType
 
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 
 
@@ -80,12 +81,10 @@ if CUPY_AVAILABLE:
         ):
             raise ValueError("All input arrays must have dtype float64.")
 
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         ntotal = nvars * nx * ny * nz
-        blocks_per_grid = min(
-            (ntotal + threads_per_block - 1) // threads_per_block,
-            65535,
-        )
+        blocks_per_grid = (ntotal + threads_per_block - 1) // threads_per_block
+
         quadrature_kernel(
             (blocks_per_grid,),
             (threads_per_block,),

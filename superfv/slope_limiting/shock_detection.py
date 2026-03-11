@@ -3,6 +3,7 @@ from typing import Literal, Tuple
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.sweep import stencil_sweep
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
@@ -157,10 +158,10 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void compute_shocks_kernel(
-            const double *w,
-            const double *wref,
-            double *eta,
-            int *has_shock,
+            const double* __restrict__ w,
+            const double* __restrict__ wref,
+            double* __restrict__ eta,
+            int* __restrict__ has_shock,
             const double eta_threshold,
             const double eps,
             const int nvars,
@@ -289,10 +290,6 @@ if CUPY_AVAILABLE:
         Returns:
             Slice objects indicating the modified regions in the output array.
         """
-        nvars, nx, ny, nz = w1.shape
-        threads_per_block = 256
-        blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
-
         # check arrays are contiguous
         if not w1.flags["C_CONTIGUOUS"]:
             raise ValueError("w1 must be C-contiguous.")
@@ -308,6 +305,10 @@ if CUPY_AVAILABLE:
             raise ValueError("eta must be of dtype float64.")
         if w1.dtype != cp.float64 or wr.dtype != cp.float64:
             raise ValueError("w1 and wr must be of dtype float64.")
+
+        nvars, nx, ny, nz = w1.shape
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
+        blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         compute_shocks_kernel(
             (blocks_per_grid,),

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
 
 import numpy as np
 
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.tools.buffer import check_buffer_slots
@@ -395,8 +396,9 @@ if CUPY_AVAILABLE:
         nvars, nx, ny, nz = w.shape
         _, _, _, _, ninterps = wj.shape
 
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (nvars * nx + threads_per_block - 1) // threads_per_block
+
         compute_theta_kernel(
             (blocks_per_grid,),
             (threads_per_block,),

@@ -4,6 +4,7 @@ from typing import Literal, Optional, Tuple, cast
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.tools.buffer import check_buffer_slots
@@ -423,10 +424,11 @@ if CUPY_AVAILABLE:
                 raise ValueError("alpha must be of dtype float64 when SED is True")
 
         nvars, nx, ny, nz = u.shape
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (
             nvars * nx * ny * nz + threads_per_block - 1
         ) // threads_per_block
+
         MUSCL_slopes_kernel(
             (blocks_per_grid,),
             (threads_per_block,),
@@ -649,7 +651,7 @@ if CUPY_AVAILABLE:
                 raise ValueError("alpha must be of dtype float64 when SED is True")
 
         nvars, nx, ny, nz = u.shape
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (
             nvars * nx * ny * nz + threads_per_block - 1
         ) // threads_per_block

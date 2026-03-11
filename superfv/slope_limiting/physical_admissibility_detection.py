@@ -1,5 +1,6 @@
 from types import ModuleType
 
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 
 
@@ -159,7 +160,7 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz = wj.shape
 
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         PAD_kernel(

@@ -3,6 +3,7 @@ from typing import Literal, Tuple, cast
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.slicing import crop, merge_slices, replace_slice
@@ -320,8 +321,8 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void compute_alpha_kernel(
-            const double *u,
-            double *alpha,
+            const double* __restrict__ u,
+            double* __restrict__ alpha,
             const double eps,
             const bool check_uniformity,
             const double uniformity_tol,
@@ -469,7 +470,7 @@ if CUPY_AVAILABLE:
             raise ValueError("u and alpha must have the same shape.")
 
         nvars, nx, ny, nz = u.shape
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (
             nvars * nx * ny * nz + threads_per_block - 1
         ) // threads_per_block

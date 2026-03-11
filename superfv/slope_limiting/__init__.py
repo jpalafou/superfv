@@ -4,6 +4,7 @@ from types import ModuleType
 from typing import List, Literal, Tuple
 
 from superfv.axes import DIM_TO_AXIS
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
@@ -212,10 +213,11 @@ if CUPY_AVAILABLE:
                 "Output arrays M and m must have the same shape as input array w"
             )
 
-        n = w.size
-        threads = 256
-        blocks = min(65535, (n + threads - 1) // threads)
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
+        blocks_per_grid = (w.size + threads_per_block - 1) // threads_per_block
 
         dmp_kernel(
-            (blocks,), (threads,), (w, M, m, nvars, nx, ny, nz, int(include_corners))
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (w, M, m, nvars, nx, ny, nz, int(include_corners)),
         )

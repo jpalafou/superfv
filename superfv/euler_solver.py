@@ -4,6 +4,7 @@ from typing import Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.slope_limiting.shock_detection import compute_shock_detector
 
 from . import riemann_solvers
@@ -943,7 +944,7 @@ if CUPY_AVAILABLE:
             )
 
         nvars, nx, ny, nz, ninterps = wj.shape
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         n_faces = nx * ny * nz * ninterps
         blocks_per_grid = (n_faces + threads_per_block - 1) // threads_per_block
 

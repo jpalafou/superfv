@@ -9,6 +9,7 @@ import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BCs, apply_bc
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.physical_admissibility_detection import (
@@ -901,157 +902,6 @@ def log_troubled_cell_scalar_statistics(
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
-    NAD_kernel = cp.RawKernel(
-        """
-        extern "C" __global__
-        void NAD_kernel(
-            const double* __restrict__ wnew,
-            const double* __restrict__ M,
-            const double* __restrict__ m,
-            double* __restrict__ violation_amounts,
-            int* __restrict__ cell_violated,
-            const double rtol,
-            const double atol,
-            const bool delta,
-            const int nvars,
-            const int nx,
-            const int ny,
-            const int nz,
-            const bool SED,
-            const double* __restrict__ alpha
-        ) {
-            // wnew                 (nvars, nx, ny, nz)
-            // M                    (nvars, nx, ny, nz)
-            // m                    (nvars, nx, ny, nz)
-            // violation_amounts    (nvars, nx, ny, nz)
-            // cell_violated        (1, nx, ny, nz)
-
-            const long long tid    = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-            const long long stride = (long long)blockDim.x * gridDim.x;
-
-            const long long nxyz = (long long)nx * (long long)ny * (long long)nz;
-
-            for (long long ixyz = tid; ixyz < nxyz; ixyz += stride) {
-                long long t = ixyz;
-                const int iz = t % nz; t /= nz;
-                const int iy = t % ny; t /= ny;
-                const int ix = t % nx; t /= nx;
-
-                bool violated = false;
-
-                for (int iv = 0; iv < nvars; iv++) {
-                    const long long i = (((long long)iv * nx + ix) * ny + iy) * nz + iz;
-
-                    // compute NAD violations
-                    double lower_bound, upper_bound;
-                    double violation_amount = 0.0;
-
-                    if (delta) {
-                        double delta_amount = rtol * (M[i] - m[i]) + atol;
-                        lower_bound = m[i] - delta_amount;
-                        upper_bound = M[i] + delta_amount;
-                    } else {
-                        lower_bound = m[i] - rtol * fabs(m[i]);
-                        upper_bound = M[i] + rtol * fabs(M[i]);
-                    }
-
-                    violation_amount = fmin(violation_amount, wnew[i] - lower_bound);
-                    violation_amount = fmin(violation_amount, upper_bound - wnew[i]);
-
-                    // apply SED relaxation
-                    if (SED && alpha[i] >= 1.0) {
-                        violation_amount = 0.0;
-                    }
-
-                    // update violated status and violation amounts
-                    if (violation_amount < 0.0) {
-                        violated = true;
-                    }
-
-                    violation_amounts[i] = violation_amount;
-                }
-                cell_violated[ixyz] = violated ? 1 : 0;
-            }
-        }
-        """,
-        name="NAD_kernel",
-    )
-
-    def NAD_kernel_helper(
-        wnew: cp.ndarray,
-        M: cp.ndarray,
-        m: cp.ndarray,
-        violation_amounts: cp.ndarray,
-        cell_violated: cp.ndarray,
-        rtol: float,
-        atol: float,
-        delta: bool,
-        SED: bool,
-        alpha: cp.ndarray,
-    ) -> Tuple[slice, ...]:
-        if not wnew.flags.c_contiguous or wnew.dtype != cp.float64:
-            raise ValueError("wnew must be a C-contiguous array of dtype float64.")
-        if not M.flags.c_contiguous or M.dtype != cp.float64:
-            raise ValueError("M must be a C-contiguous array of dtype float64.")
-        if not m.flags.c_contiguous or m.dtype != cp.float64:
-            raise ValueError("m must be a C-contiguous array of dtype float64.")
-        if (
-            not violation_amounts.flags.c_contiguous
-            or violation_amounts.dtype != cp.float64
-        ):
-            raise ValueError(
-                "violation_amounts must be a C-contiguous array of dtype float64."
-            )
-        if not cell_violated.flags.c_contiguous or cell_violated.dtype != cp.int32:
-            raise ValueError(
-                "cell_violated must be a C-contiguous array of dtype int32."
-            )
-        if (
-            M.shape != wnew.shape
-            or m.shape != wnew.shape
-            or violation_amounts.shape != wnew.shape
-        ):
-            raise ValueError(
-                "M, m, and violation_amounts must have the same shape as wnew."
-            )
-        if cell_violated.shape != (1, wnew.shape[1], wnew.shape[2], wnew.shape[3]):
-            raise ValueError(
-                "cell_violated must have shape (1, nx, ny, nz) where (nx, ny, nz) are "
-                "the spatial dimensions of wnew."
-            )
-        if not alpha.flags.c_contiguous or alpha.dtype != cp.float64:
-            raise ValueError("alpha must be a C-contiguous array of dtype float64.")
-        if alpha.shape != wnew.shape:
-            raise ValueError("alpha must have the same shape as wnew.")
-
-        # launch kernel
-        nvars, nx, ny, nz = wnew.shape
-
-        threads_per_block = 256
-        n_blocks = (nx * ny * nz + threads_per_block - 1) // threads_per_block
-        NAD_kernel(
-            (n_blocks,),
-            (threads_per_block,),
-            (
-                wnew,
-                M,
-                m,
-                violation_amounts,
-                cell_violated,
-                rtol,
-                atol,
-                delta,
-                nvars,
-                nx,
-                ny,
-                nz,
-                SED,
-                alpha,
-            ),
-        )
-
-        return (slice(None), slice(None), slice(None), slice(None))
-
     detect_troubles_kernel = cp.RawKernel(
         """
         extern "C" __global__
@@ -1222,7 +1072,7 @@ if CUPY_AVAILABLE:
 
         # launch kernel
         nvars, nx, ny, nz = wnew.shape
-        threads_per_block = 256
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
         n_blocks = (nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         detect_troubles_kernel(
