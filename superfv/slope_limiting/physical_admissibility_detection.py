@@ -7,24 +7,23 @@ from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 def detect_PAD_violations(
     wj: ArrayLike,
     physical_bounds: ArrayLike,
-    tol: float = 1e-15,
-    *,
     violation_amounts: ArrayLike,
     cell_violated: ArrayLike,
+    tol: float = 1e-15,
 ):
     """
-    Detects physical admissibility violations in the input array `wj`.
+    Detect physical admissibility violations in the input array `wj` and write the
+    results to `violation_amounts` and `cell_violated`.
 
     Args:
         wj: The input array of shape (nvars, nx, ny, nz).
-        physical_bounds: An array of shape (nvars, 2) containing the physical bounds
-            for each variable.
-        violation_amounts: Output array for the amount of violation for each variable.
-            Has shape (nvars, nx, ny, nz).
-        cell_violated: Output array for cell-wise violations. Has shape
-            (1, nx, ny, nz). 1 indicates a violation, 0 indicates no violation.
-        tol: A small tolerance value to determine if a violation has occurred. Default
-            is 1e-15.
+        physical_bounds: An array of shape (nvars, 2) containing the lower and upper
+            physical bounds for each variable.
+        violation_amounts: Array to which the violation amounts are written. Has shape
+            (nvars, nx, ny, nz).
+        cell_violated: Array to which the cell-wise violation mask is written. Has
+            shape (1, nx, ny, nz).
+        tol: A small tolerance value to determine if a violation has occurred.
     """
     if CUPY_AVAILABLE and isinstance(wj, cp.ndarray):
         PAD_kernel_helper(
@@ -32,7 +31,7 @@ def detect_PAD_violations(
             physical_bounds,
             violation_amounts,
             cell_violated,
-            tol=tol,
+            tol,
         )
         return
 

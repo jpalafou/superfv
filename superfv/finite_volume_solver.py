@@ -1449,9 +1449,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 detect_PAD_violations(
                     _w_,
                     self.arrays["PAD_bounds"],
+                    _PAD_violations_,
+                    _any_violations_,
                     scheme.limiter_config.PAD_atol,
-                    violation_amounts=_PAD_violations_,
-                    cell_violated=_any_violations_,
                 )
                 _has_shock_ |= _any_violations_
 
@@ -1828,9 +1828,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 detect_PAD_violations(
                     Mj,
                     PAD_bounds,
+                    PAD_violations,
+                    any_violations,
                     PAD_atol,
-                    violation_amounts=PAD_violations,
-                    cell_violated=any_violations,
                 )
                 alpha[..., 0] *= ~PAD_violations.astype(bool)
             xp.maximum(alpha >= 1, theta, out=theta)
@@ -2219,9 +2219,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         detect_PAD_violations(
             wnew,
             scheme.limiter_config.PAD_bounds,
+            PAD_violations,
+            any_violations,
             scheme.limiter_config.PAD_atol,
-            violation_amounts=PAD_violations,
-            cell_violated=any_violations,
         )
 
         return not xp.any(any_violations)

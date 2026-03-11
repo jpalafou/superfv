@@ -367,9 +367,9 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             detect_PAD_violations(
                 wnew,
                 cast(ArrayLike, PAD_bounds),
+                PAD_violations,
+                troubles_temp,
                 PAD_atol,
-                violation_amounts=PAD_violations,
-                cell_violated=troubles_temp,
             )
             troubles |= troubles_temp
 
