@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict
 
 import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import LimiterConfig
-from superfv.slope_limiting import compute_dmp
 from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import CUPY_AVAILABLE
-from superfv.tools.slicing import insert_slice
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 
 if TYPE_CHECKING:
     from superfv.finite_volume_solver import FiniteVolumeSolver
@@ -77,90 +75,51 @@ class ZhangShuConfig(LimiterConfig):
 
 
 def compute_theta(
-    u: np.ndarray,
-    center_nodes: np.ndarray,
-    x_nodes: Optional[np.ndarray],
-    y_nodes: Optional[np.ndarray],
-    z_nodes: Optional[np.ndarray],
-    *,
-    out: np.ndarray,
-    M: np.ndarray,
-    m: np.ndarray,
-    Mj: np.ndarray,
-    mj: np.ndarray,
-    buffer: np.ndarray,
+    w: ArrayLike,
+    wj: ArrayLike,
+    M: ArrayLike,
+    m: ArrayLike,
+    Mj: ArrayLike,
+    mj: ArrayLike,
+    theta: ArrayLike,
     config: ZhangShuConfig,
-) -> Tuple[slice, ...]:
+):
     """
-    Compute Zhang and Shu's a priori slope limiting parameter theta based on arrays of
-    finite-volume nodes and averages.
+    Compute Zhang and Shu's a priori slope limiting parameter and write it to `theta`.
 
     Args:
-        u: Array of finite-volume average. Has shape (nvars, nx, ny, nz).
-        center_nodes: Array of central node values. Has shape (nvars, nx, ny, nz, 1).
-        x_nodes, y_nodes, z_nodes: Optional array of x,y,z-face node values. Has shape
-            (nvars, nx, ny, nz, 2*n_nodes). If None, the x,y,z face is not considered.
-        out: Array to which theta is written. Has shape (nvars, nx, ny, nz, >=1).
-        M: Array to which the discrete maximum principle is written. Has shape
+        w: Array of cell-average values with shape (nvars, nx, ny, nz).
+        wj: Array of high-order interpolation values with shape
+            (nvars, nx, ny, nz, ninterps).
+        M: Array of local maxima with shape (nvars, nx, ny, nz).
+        m: Array of local minima with shape (nvars, nx, ny, nz).
+        Mj: Array to which nodal maxima are written. Has shape (nvars, nx, ny, nz).
+        mj: Array to which nodal minima are written. Has shape (nvars, nx, ny, nz).
+        theta: Array to which the Zhang-Shu limiter is written. Has shape
             (nvars, nx, ny, nz).
-        m: Array to which the discrete minimum principle is written. Has shape
-            (nvars, nx, ny, nz).
-        Mj: Array to which the nodal maximum principle is written. Has shape
-            (nvars, nx, ny, nz).
-        mj: Array to which the nodal minimum principle is written. Has shape
-            (nvars, nx, ny, nz).
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on whether SED is used and the number (length) of
-            active dimensions:
-            - without SED: (nvars, nx, ny, nz, >=3)
-            - with SED, 1D: (nvars, nx, ny, nz, >=10)
-            - with SED, 2D: (nvars, nx, ny, nz, >=12)
-            - with SED, 3D: (nvars, nx, ny, nz, >=13)
-        config: Configuration for the Zhang-Shu limiter.
-
-    Returns:
-        Slice objects indicating the valid regions in the output array.
+        config: Zhang-Shu limiter config.
     """
-    include_corners = config.include_corners
     tol = config.theta_denom_tol
 
-    # allocate arrays
-    check_buffer_slots(buffer, required=1)
-    theta = buffer[..., :1]
-
-    # compute discrete maximum principle
-    active_dims = tuple(
-        cast(Literal["x", "y", "z"], dim)
-        for dim, arr in zip(["x", "y", "z"], [x_nodes, y_nodes, z_nodes])
-        if arr is not None
-    )
-    dmp_valid = compute_dmp(u, M, m, active_dims, include_corners)
+    if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
+        compute_theta_kernel_helper(w, wj, M, m, Mj, mj, theta, tol)
+        return
 
     # compute nodal maximum principle
-    Mj[...] = center_nodes[..., 0]
-    mj[...] = center_nodes[..., 0]
-    for nodes in [x_nodes, y_nodes, z_nodes]:
-        if nodes is None:
-            continue
-        np.minimum(mj, np.min(nodes, axis=4), out=mj)
-        np.maximum(Mj, np.max(nodes, axis=4), out=Mj)
+    np.max(wj, axis=4, out=Mj)
+    np.min(wj, axis=4, out=mj)
 
     # compute theta
-    theta[..., 0] = np.minimum(
+    theta[...] = np.minimum(
         np.minimum(
-            np.divide(np.abs(M - u), np.abs(Mj - u) + tol),
-            np.divide(np.abs(m - u), np.abs(mj - u) + tol),
+            np.divide(np.abs(M - w), np.abs(Mj - w) + tol),
+            np.divide(np.abs(m - w), np.abs(mj - w) + tol),
         ),
         1.0,
     )
 
-    valid = cast(Tuple[slice, ...], insert_slice(dmp_valid, 4, slice(0, 1)))
-    out[valid] = theta[valid]
 
-    return valid
-
-
-def zhang_shu_operator(wj: np.ndarray, w: np.ndarray, theta: np.ndarray):
+def zhang_shu_operator(wj: ArrayLike, w: ArrayLike, theta: ArrayLike):
     """
     Zhang and Shu operator for limiting the high-order solution.
 

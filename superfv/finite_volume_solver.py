@@ -55,10 +55,6 @@ from .tools.timer import MethodTimer, StepperTimer
 from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
-if CUPY_AVAILABLE:
-    from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
-
-
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
@@ -1063,9 +1059,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # define slope-limiting arrays
         arrays.add("_M_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_m_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_eta3d_", np.zeros((nvars, _nx_, _ny_, _nz_, 3)))
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
         arrays.add(
             "_face_fallback_mask_",
@@ -1578,11 +1573,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if not scheme.limiter_config.shock_detection:
             raise ValueError("Shock detection is not enabled in the scheme.")
 
-        eta3d = arrays["_eta3d_"]
+        eta = arrays["_eta_"]
         has_shock = arrays["_has_shock_"]
         w1 = arrays["_w_"] if primitives else arrays["_u_"]
 
-        detect_shocks(w1, w1, eta3d, has_shock, active_dims, threshold)
+        detect_shocks(w1, w1, eta, has_shock, active_dims, threshold)
 
     @MethodTimer(cat="interpolate_faces")
     def interpolate_faces(
@@ -1721,12 +1716,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         xp = self.xp
         mesh = self.mesh
+        active_dims = self.active_dims
+        include_corners = scheme.limiter_config.include_corners
         lim_slc = self.variable_index_map("limiting", keepdims=True)
 
         # define array references
         w = self.arrays["_w_"] if primitives else self.arrays["_u_"]
         wcc = self.arrays["_wcc_"] if primitives else self.arrays["_ucc_"]
-
         wx = self.arrays["_x_nodes_"] if mesh.x_is_active else None
         wy = self.arrays["_y_nodes_"] if mesh.y_is_active else None
         wz = self.arrays["_z_nodes_"] if mesh.z_is_active else None
@@ -1738,56 +1734,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         alpha = self.arrays["_alpha_"]
         PAD_violations = self.arrays["_PAD_violations_"]
         any_violations = self.arrays["_troubles2_"]
-        buffer = self.arrays["_buffer_"]
         wjall = self.arrays["_wj_all_"]
 
-        # compute theta
-        if self.cupy and mesh.ndim == 2 and scheme.p <= 7:
-            max_nodes_per_face = self._ninterps_per_face(scheme, "nodes")
-            max_nodes_both = 2 * max_nodes_per_face
+        max_nodes_per_face = self._ninterps_per_face(scheme, "nodes")
+        max_nodes_both = 2 * max_nodes_per_face
 
-            wjall[..., :1] = wcc
-            for i, wj in enumerate([wt for wt in [wx, wy, wz] if wt is not None]):
-                idx1 = 1 + i * max_nodes_both
-                idx2 = 1 + (i + 1) * max_nodes_both
-                wjall[..., slice(idx1, idx2)] = wj
+        # copy all nodes to giant array
+        wjall[..., :1] = wcc
+        for i, wj in enumerate([wt for wt in [wx, wy, wz] if wt is not None]):
+            idx1 = 1 + i * max_nodes_both
+            idx2 = 1 + (i + 1) * max_nodes_both
+            wjall[..., slice(idx1, idx2)] = wj
 
-            # compute DMP
-            compute_dmp(
-                w,
-                M,
-                m,
-                self.active_dims,
-                scheme.limiter_config.include_corners,
-            )
+        compute_dmp(w, M, m, active_dims, include_corners)
+        compute_theta(w, wjall, M, m, Mj, mj, theta[..., 0], scheme.limiter_config)
 
-            compute_theta_kernel_helper(
-                w,
-                wjall,
-                M,
-                m,
-                Mj,
-                mj,
-                theta[..., 0],
-                scheme.limiter_config.theta_denom_tol,
-            )
-        else:
-            compute_theta(
-                w,
-                wcc,
-                wx,
-                wy,
-                wz,
-                out=theta,
-                M=M,
-                m=m,
-                Mj=Mj,
-                mj=mj,
-                buffer=buffer,
-                config=scheme.limiter_config,
-            )
-
-        # SED
         if scheme.limiter_config.smooth_extrema_detection:
             self.detect_smooth_extrema(w, scheme)
 
@@ -1810,8 +1771,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     any_violations,
                     PAD_atol,
                 )
-                alpha[..., 0] *= ~PAD_violations.astype(bool)
-            xp.maximum(alpha >= 1, theta, out=theta)
+                alpha[...] *= ~PAD_violations.astype(bool)
+            xp.maximum(theta, alpha >= 1, out=theta)
 
         # limit the face nodes
         w0 = w[..., xp.newaxis]
@@ -2688,7 +2649,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             compute_PP2D_slopes(
                 wcc,
-                alpha[..., 0],
+                alpha,
                 dw1,
                 dw2,
                 active_dims,
@@ -2698,7 +2659,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for dim, slope_arr in slope_arrs.items():
                 compute_MUSCL_slopes(
                     wcc,
-                    alpha[..., 0],
+                    alpha,
                     slope_arr,
                     dim,
                     scheme.limiter_config,

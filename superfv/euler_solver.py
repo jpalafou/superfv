@@ -766,7 +766,7 @@ class EulerSolver(FiniteVolumeSolver):
         if not scheme.limiter_config.shock_detection:
             raise ValueError("Shock detection is not enabled in the scheme.")
 
-        eta3d = arrays["_eta3d_"]
+        eta = arrays["_eta_"]
         has_shock = arrays["_has_shock_"]
         w1 = arrays["_w_"] if primitives else arrays["_u_"]
         wr = arrays["_wr_"]
@@ -779,7 +779,7 @@ class EulerSolver(FiniteVolumeSolver):
         else:
             wr[idx("m")] = c * w1[idx("rho")]
 
-        detect_shocks(w1, wr, eta3d, has_shock, active_dims, threshold)
+        detect_shocks(w1, wr, eta, has_shock, active_dims, threshold)
 
     def build_update_message(self) -> str:
         """
