@@ -416,7 +416,7 @@ def test_stencil_sweep(interp_dim, active_dims, p, stencil, ninterps):
     u[...] = 1.0
     _, _, out = sample_data(active_dims, nout=ninterps * nouterps, xp=xp)
 
-    modified = stencil_sweep(xp, u, weights, interp_dim, out=out)
+    modified = stencil_sweep(u, weights, out, interp_dim)
 
     assert not xp.any(xp.isnan(u))
 

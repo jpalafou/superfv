@@ -1489,23 +1489,22 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ucc = arrays["_ucc_"]
 
         if ndim == 1:
-            stencil_sweep(xp, u[..., na], weights, dims[0], out=ucc)
+            stencil_sweep(u[..., na], weights, ucc, dims[0])
         elif ndim == 2:
             midline = arrays["_midline_"]
-            stencil_sweep(xp, u[..., na], weights, dims[0], out=midline)
-            stencil_sweep(xp, midline, weights, dims[1], out=ucc)
+            stencil_sweep(u[..., na], weights, midline, dims[0])
+            stencil_sweep(midline, weights, ucc, dims[1])
         elif ndim == 3:
             midface = arrays["_midface_"]
             midline = arrays["_midline_"]
-            stencil_sweep(xp, u[..., na], weights, dims[0], out=midface)
-            stencil_sweep(xp, midface, weights, dims[1], out=midline)
-            stencil_sweep(xp, midline, weights, dims[2], out=ucc)
+            stencil_sweep(u[..., na], weights, midface, dims[0])
+            stencil_sweep(midface, weights, midline, dims[1])
+            stencil_sweep(midline, weights, ucc, dims[2])
         else:
             raise ValueError(f"Unknown number of dimensions: {ndim}")
 
     @MethodTimer(cat="update_workspaces:wp")
     def integrate_fv_averages(self, wcc: ArrayLike, p: int):
-        xp = self.xp
         ndim = self.mesh.ndim
         dims = self.active_dims
         arrays = self.arrays
@@ -1517,17 +1516,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         w = arrays["_wp_"]
 
         if ndim == 1:
-            stencil_sweep(xp, wcc, weights, dims[0], out=w)
+            stencil_sweep(wcc, weights, w, dims[0])
         elif ndim == 2:
             midline = arrays["_midline_"]
-            stencil_sweep(xp, wcc, weights, dims[0], out=midline)
-            stencil_sweep(xp, midline, weights, dims[1], out=w)
+            stencil_sweep(wcc, weights, midline, dims[0])
+            stencil_sweep(midline, weights, w, dims[1])
         elif ndim == 3:
             midline = arrays["_midline_"]
             midface = arrays["_midface_"]
-            stencil_sweep(xp, wcc, weights, dims[0], out=midline)
-            stencil_sweep(xp, midline, weights, dims[1], out=midface)
-            stencil_sweep(xp, midface, weights, dims[2], out=w)
+            stencil_sweep(wcc, weights, midline, dims[0])
+            stencil_sweep(midline, weights, midface, dims[1])
+            stencil_sweep(midface, weights, w, dims[2])
         else:
             raise ValueError(f"Unknown number of dimensions: {ndim}")
 
@@ -1676,14 +1675,14 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             )
         elif ndim == 2:
             faces = arrays["_faces_"]
-            stencil_sweep(xp, u[..., na], lr_weights, dim, out=faces)
-            stencil_sweep(xp, faces, gl_weights, tdims[0], out=nodes)
+            stencil_sweep(u[..., na], lr_weights, faces, dim)
+            stencil_sweep(faces, gl_weights, nodes, tdims[0])
         elif ndim == 3:
             faces = arrays["_faces_"]
             lines = arrays["_lines_"]
-            stencil_sweep(xp, u[..., na], lr_weights, dim, out=faces)
-            stencil_sweep(xp, faces, gl_weights, tdims[0], out=lines)
-            stencil_sweep(xp, lines, gl_weights, tdims[1], out=nodes)
+            stencil_sweep(u[..., na], lr_weights, faces, dim)
+            stencil_sweep(faces, gl_weights, lines, tdims[0])
+            stencil_sweep(lines, gl_weights, nodes, tdims[1])
         else:
             raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
@@ -1712,17 +1711,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         tdims = self._get_transverse_dims(dim)
 
         if ndim == 1:
-            stencil_sweep(xp, u[..., na], lr_weights, dim, out=nodes)
+            stencil_sweep(u[..., na], lr_weights, nodes, dim)
         elif ndim == 2:
             midline = arrays["_midline_"]
-            stencil_sweep(xp, u[..., na], cc_weights, tdims[0], out=midline)
-            stencil_sweep(xp, midline, lr_weights, dim, out=nodes)
+            stencil_sweep(u[..., na], cc_weights, midline, tdims[0])
+            stencil_sweep(midline, lr_weights, nodes, dim)
         elif ndim == 3:
             midface = arrays["_midface_"]
             midline = arrays["_midline_"]
-            stencil_sweep(xp, u[..., na], cc_weights, tdims[1], out=midface)
-            stencil_sweep(xp, midface, cc_weights, tdims[0], out=midline)
-            stencil_sweep(xp, midline, lr_weights, dim, out=nodes)
+            stencil_sweep(u[..., na], cc_weights, midface, tdims[1])
+            stencil_sweep(midface, cc_weights, midline, tdims[0])
+            stencil_sweep(midline, lr_weights, nodes, dim)
         else:
             raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
@@ -1969,7 +1968,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="integrate_fluxes:transverse")
     def integrate_tranverse_nodes(self, dim: Literal["x", "y", "z"], p: int):
-        xp = self.xp
         arrays = self.arrays
         ndim = self.mesh.ndim
 
@@ -1986,11 +1984,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if ndim == 1:
             raise ValueError("1D integration of transverse nodes is not supported.")
         elif ndim == 2:
-            stencil_sweep(xp, fnodes, weights, tdims[0], out=F)
+            stencil_sweep(fnodes, weights, F, tdims[0])
         elif ndim == 3:
             flines = arrays[f"_{flux_name.lower()}_lines_"]
-            stencil_sweep(xp, fnodes, weights, tdims[0], out=flines)
-            stencil_sweep(xp, flines, weights, tdims[1], out=F)
+            stencil_sweep(fnodes, weights, flines, tdims[0])
+            stencil_sweep(flines, weights, F, tdims[1])
         else:
             raise ValueError(f"Unknown number of dimensions: {ndim}.")
 

@@ -56,7 +56,7 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps, cu
         else np.empty(shape + (ninterps * nouterps,))
     )
 
-    modified = stencil_sweep(xp if cupy else np, u, weights, interp_dim, out=uj)
+    modified = stencil_sweep(u, weights, uj, interp_dim)
 
     err = (xp.asnumpy(uj) if cupy else uj) - 1.0
     assert linf_norm(err[modified]) < 1e-15

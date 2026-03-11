@@ -53,10 +53,10 @@ def compute_eta(
     inner = crop(DIM_TO_AXIS[dim], (2, -2), ndim=4)
 
     # compute deltas using stencil sweeps
-    stencil_sweep(np, w1[..., na], stencil1, dim, out=delta1)
-    stencil_sweep(np, w1[..., na], stencil2, dim, out=delta2)
-    stencil_sweep(np, w1[..., na], stencil3, dim, out=delta3)
-    stencil_sweep(np, w1[..., na], stencil4, dim, out=delta4)
+    stencil_sweep(w1[..., na], stencil1, delta1, dim)
+    stencil_sweep(w1[..., na], stencil2, delta2, dim)
+    stencil_sweep(w1[..., na], stencil3, delta3, dim)
+    stencil_sweep(w1[..., na], stencil4, delta4, dim)
 
     # compute eta values
     eta_o[...] = np.abs(delta3)
