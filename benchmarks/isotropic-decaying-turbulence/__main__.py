@@ -14,7 +14,7 @@ parser.add_argument("--N", type=int, required=True)
 args = parser.parse_args()
 
 N = args.N
-cupy = N >= 128
+cupy = N >= 64
 overwrite = False
 
 if not cupy and CUPY_AVAILABLE:
@@ -65,48 +65,20 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/3revs/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3
-    ),
-    "MM3/3revs/no_delta/rtol_1e-3": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-3": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori3
-    ),
-    "MM3/3revs/no_delta/rtol_1e-2": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-2": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3
-    ),
-    "MM3/3revs/no_delta/rtol_1e-1": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-1": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
-    ),
-    "MM3/2revs/no_delta/rtol_1e-3": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori2
-    ),
-    "MM7/2revs/no_delta/rtol_1e-3": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori2
-    ),
-    "MM3/2revs/no_delta/rtol_1e-2": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori2
-    ),
-    "MM7/2revs/no_delta/rtol_1e-2": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori2
-    ),
-    "MM3/1rev/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
+    "MM3/3revs/rtol_1e-5": dict(p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3),
+    "MM7/3revs/rtol_1e-5": dict(p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori3),
+    "MM3/3revs/rtol_1e-3": dict(p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori3),
+    "MM7/3revs/rtol_1e-3": dict(p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori3),
+    "MM3/3revs/rtol_1e-2": dict(p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3),
+    "MM7/3revs/rtol_1e-2": dict(p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3),
+    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3),
+    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3),
+    "MM3/2revs/rtol_1e-3": dict(p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori2),
+    "MM7/2revs/rtol_1e-3": dict(p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori2),
+    "MM3/2revs/rtol_1e-2": dict(p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori2),
+    "MM7/2revs/rtol_1e-2": dict(p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori2),
+    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1),
+    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1),
 }
 
 no_fail_set = set()  # {"p0", "MUSCL-Hancock", "ZS3", "ZS7"}
