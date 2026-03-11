@@ -1,19 +1,7 @@
 - [ ] log_limiter_scalars should default to false
-- [ ] all RawKernel helpers should that aren’t called in parent functions should be in test_modified_regions
-  - lr_conservative_interpolation_kernel_helper
-  - interpolate_central_quantity_kernel_helper
-  - interpolate_gauss_legendre_nodes_kernel_helper
-  - gauss_legendre_quadrature_kernel_helper
-  - compute_theta kernel needs safety checks
-- [ ] NumPy MOOD supports multivar NAD tols, CuPy MOOD does not
-- [ ] add: multistencilweights arg to interpolation kernel
-- [ ] rm: gtol, make rtol a scalar again
-- [ ] symmetry bug `p = 7, GL = True, dims1_dims2 = ('xy', 'yz')`
+- [x] add: multistencilweights arg to interpolation kernel
+- [ ] rm: gtol, make rtol and atol scalars again
 - [ ] simplify Riemann solver init
-- [x] add cupy test support for
-  - [x] test_compute_dmp.py
-  - [x] test_fv.py
-  - [x] test_muscl_slopes.py
 - [ ] remove `xp` backend
   - [x] shock detection
   - [x] ZS limiter
@@ -28,4 +16,3 @@
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
-- [ ] add upwinding kernel so cupy tests stop shitting themselves
