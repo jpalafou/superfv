@@ -1,24 +1,23 @@
-from types import ModuleType
+import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 
 
-def perform_quadrature(
-    xp: ModuleType, uj: ArrayLike, weights: ArrayLike, out: ArrayLike
-):
+def perform_quadrature(uj: ArrayLike, weights: ArrayLike, out: ArrayLike):
     """
-    Multiply the nodes of `u` by the corresponding quadrature weights and take the sum.
+    Multiply the nodes of `uj` by the corresponding quadrature `weights` and take the
+    sum, writing the result to `out`.
 
     Args:
-        xp: numpy or cupy module corresponding to the device on which the arrays are
-            located.
         uj: Input array with shape (nvars, nx, ny, nz, ninterps).
         weights: Quadrature weights with shape (ninterps,).
-        out: Output array to store the results of the quadrature, has shape
-            (nvars, nx, ny, nz).
+        out: Array to which the result is written, has shape (nvars, nx, ny, nz).
     """
-    xp.sum(uj * weights.reshape(1, 1, 1, 1, -1), axis=4, out=out)
+    if CUPY_AVAILABLE and isinstance(uj, cp.ndarray):
+        quadrature_kernel_helper(uj, weights, out)
+    else:
+        np.sum(uj * weights.reshape(1, 1, 1, 1, -1), axis=4, out=out)
 
 
 if CUPY_AVAILABLE:
@@ -48,7 +47,7 @@ if CUPY_AVAILABLE:
 
             for (long long i = tid; i < ntotal; i += stride) {
                 double result = 0.0;
-                for (int qj = 0; qj < ninterps; j++) {
+                for (int qj = 0; qj < ninterps; qj++) {
                     long long j = ntotal * ninterps + qj;
                     result += weights[qj] * uj[j];
                 }
@@ -59,7 +58,7 @@ if CUPY_AVAILABLE:
         name="quadrature_kernel",
     )
 
-    def quadarture_kernel_helper(uj: cp.ndarray, weights: cp.ndarray, out: cp.ndarray):
+    def quadrature_kernel_helper(uj: cp.ndarray, weights: cp.ndarray, out: cp.ndarray):
         if not uj.flags.c_contiguous or uj.ndim != 5:
             raise ValueError("Array `uj` must be a C-contiguous, 5-dimensional array.")
 

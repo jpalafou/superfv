@@ -1953,7 +1953,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         fnodes = arrays[f"_{flux_name.lower()}_nodes_"]
         F = arrays[f"_{flux_name}_"][..., 0]
 
-        perform_quadrature(xp, fnodes, weights, out=F)
+        perform_quadrature(fnodes, weights, F)
 
     def _get_GaussLegendre_weights(self, p: int) -> ArrayLike:
         key = f"gauss_legendre_quadrature_weights_p{p}"
