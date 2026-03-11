@@ -999,10 +999,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         n_lines = self._ninterps_per_face(base_scheme, "lines")
         n_nodes = self._ninterps_per_face(base_scheme, "nodes")
 
-        # transfer arrays to correct device
-        if self.cupy:
-            arrays.transfer_to("gpu")
-
         # subject to change
         buffer_size = self._compute_buffer_size(base_scheme)
         arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
