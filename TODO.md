@@ -1,18 +1,10 @@
 - [ ] log_limiter_scalars should default to false
-- [x] add: multistencilweights arg to interpolation kernel
 - [ ] rm: gtol, make rtol and atol scalars again
 - [ ] simplify Riemann solver init
-- [x] remove `xp` backend
-  - [x] shock detection
-  - [x] ZS limiter
-  - [x] MUSCL slopes
-  - [x] detect NAD violations
-  - [x] fv interpolation functions
-  - [x] perform_GaussLegendre_quadrature
-  - [x] stencil.py
 - [ ] use __restrict__ and const for all RawKernels where necessary
 - [ ] use full 5D arrays for ZS limiter, stop copying to flat. it's the only kernel that does this
 - [ ] refactor buffer size
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
+- [ ] test high-order convergence, rm: fv_cuda.py
