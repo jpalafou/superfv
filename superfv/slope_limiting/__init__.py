@@ -1,7 +1,8 @@
 from functools import lru_cache
 from itertools import product
-from types import ModuleType
 from typing import List, Literal, Tuple
+
+import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
@@ -72,7 +73,6 @@ def _gather_neighbor_slices(
 
 
 def compute_dmp(
-    xp: ModuleType,
     arr: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     include_corners: bool = True,
@@ -85,7 +85,6 @@ def compute_dmp(
     specified dimensions.
 
     Args:
-        xp: `np` namespace.
         arr: Array. First axis is assumed to be variable axis. Has shape
             (nvars, nx, ny, nz).
         active_dims: Dimensions to check. Must be a subset of ("x", "y", "z").
@@ -99,16 +98,16 @@ def compute_dmp(
     all_slices = gather_neighbor_slices(active_dims, include_corners)
     inner_slice = all_slices[0]
 
-    if hasattr(xp, "cuda"):
+    if CUPY_AVAILABLE and isinstance(arr, cp.ndarray):
         compute_dmp_kernel_helper(arr, M, m, include_corners)
     else:
         # stack views of neighbors
         all_views = [arr[slc] for slc in all_slices]
-        stacked = xp.stack(all_views, axis=0)
+        stacked = np.stack(all_views, axis=0)
 
         # compute min an max
-        M[inner_slice] = xp.max(stacked, axis=0)
-        m[inner_slice] = xp.min(stacked, axis=0)
+        M[inner_slice] = np.max(stacked, axis=0)
+        m[inner_slice] = np.min(stacked, axis=0)
 
     return inner_slice
 

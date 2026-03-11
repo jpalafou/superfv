@@ -1781,7 +1781,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             # compute DMP
             compute_dmp(
-                xp,
                 w,
                 self.active_dims,
                 scheme.limiter_config.include_corners,

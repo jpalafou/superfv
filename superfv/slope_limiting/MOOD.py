@@ -306,7 +306,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         if SED:
             fv_solver.detect_smooth_extrema(wnew if primNAD else unew, scheme)
         compute_dmp(
-            xp,
             wold if primNAD else uold,
             active_dims,
             include_corners,
@@ -459,7 +458,7 @@ def detect_NAD_violations(
     delta_arr[...] = 0.0
 
     # compute discrete maximum principle (dmp)
-    modified = compute_dmp(np, u_old, active_dims, include_corners, M=M, m=m)
+    modified = compute_dmp(u_old, active_dims, include_corners, M=M, m=m)
 
     if delta:
         dmp_range[...] = M - m
