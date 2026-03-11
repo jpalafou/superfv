@@ -12,7 +12,7 @@ from superfv.slope_limiting.MOOD import (
     map_cells_values_to_face_values,
 )
 from superfv.slope_limiting.muscl import (
-    compute_limited_slopes,
+    compute_MUSCL_slopes,
     compute_PP2D_slopes,
     musclConfig,
 )
@@ -118,7 +118,7 @@ def test_compute_dmp(dims: str, include_corners: bool):
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("check_uniformity", [False, True])
-def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool):
+def test_compute_MUSCL_slopes(dims: str, limiter: str, check_uniformity: bool):
     face_dim = dims[0]
     u, buffer, temp = sample_data(dims, nout=2, xp=np)
     out = temp[..., :1]
@@ -132,14 +132,7 @@ def test_compute_limited_slopes(dims: str, limiter: str, check_uniformity: bool)
         physical_admissibility_detection=False,
     )
 
-    modified = compute_limited_slopes(
-        u,
-        face_dim,
-        out=out,
-        buffer=buffer,
-        alpha=alpha,
-        config=config,
-    )
+    modified = compute_MUSCL_slopes(u, alpha, out, face_dim, config.limiter_config)
 
     assert not np.any(np.isnan(out[modified]))
     # skipping all nan check since the stencils will leave some ghost cells non-nan
@@ -161,9 +154,7 @@ def test_compute_PP2D_slopes(dims: str, check_uniformity: bool):
         physical_admissibility_detection=False,
     )
 
-    modified = compute_PP2D_slopes(
-        u, tuple(dims), Sx=Sx, Sy=Sy, buffer=buffer, alpha=alpha, config=config
-    )
+    modified = compute_PP2D_slopes(u, alpha, Sx, Sy, tuple(dims), config)
 
     assert not np.any(np.isnan(Sx[modified]))
     assert not np.any(np.isnan(Sy[modified]))

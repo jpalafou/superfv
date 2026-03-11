@@ -3,7 +3,7 @@ import pytest
 
 from superfv.mesh import UniformFVMesh
 from superfv.slope_limiting.muscl import (
-    compute_limited_slopes,
+    compute_MUSCL_slopes,
     compute_PP2D_slopes,
     musclConfig,
 )
@@ -64,7 +64,6 @@ def test_field(
 
     u = xp.empty((1, *mesh.shape)) if cupy else np.empty((1, *mesh.shape))
     alpha = xp.empty((1, *mesh.shape, 1)) if cupy else np.empty((1, *mesh.shape, 1))
-    buffer = xp.empty((1, *mesh.shape, 20)) if cupy else np.empty((1, *mesh.shape, 20))
     dux = xp.empty((1, *mesh.shape, 1)) if cupy else np.empty((1, *mesh.shape, 1))
     duy = xp.empty((1, *mesh.shape, 1)) if cupy else np.empty((1, *mesh.shape, 1))
 
@@ -94,16 +93,7 @@ def test_field(
                 SED,
             )
         else:
-            modified = compute_PP2D_slopes(
-                u,
-                active_dims,
-                Sx=dux,
-                Sy=duy,
-                buffer=buffer,
-                eps=1e-20,
-                config=config,
-                alpha=alpha,
-            )
+            modified = compute_PP2D_slopes(u, alpha, dux, duy, active_dims, config)
 
         dux[...] = dux / (1 / N)
         duy[...] = duy / (1 / N)
@@ -114,14 +104,7 @@ def test_field(
                 u, alpha[..., 0], dux[..., 0], face_dim, limiter, SED
             )
         else:
-            modified = compute_limited_slopes(
-                u,
-                face_dim,
-                out=duy,
-                alpha=alpha,
-                buffer=buffer,
-                config=config,
-            )
+            modified = compute_MUSCL_slopes(u, alpha, dux, face_dim, limiter)
         dux[...] = dux / (1 / N)
 
     # check that the slopes are correct

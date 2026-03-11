@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple, cast
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 
@@ -7,9 +7,8 @@ from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
-from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import CUPY_AVAILABLE
-from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.slicing import crop, insert_slice, merge_slices
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,70 +90,61 @@ class musclInterpolationScheme(InterpolationScheme):
         )
 
 
-def compute_limited_slopes(
-    u: np.ndarray,
+def compute_MUSCL_slopes(
+    u: ArrayLike,
+    alpha: ArrayLike,
+    out: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    *,
-    out: np.ndarray,
-    buffer: np.ndarray,
     config: musclConfig,
-    alpha: Optional[np.ndarray] = None,
 ) -> Tuple[slice, ...]:
     """
-    Compute limited slopes for face-centered nodes from an array of finite
-    volume averages.
+    Compute limited slopes and write them to the `out` array.
 
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
+        alpha: Array to store the smooth extrema detector values if SED is True in
+            `config`. Has shape (nvars, nx, ny, nz).
+        out: Output array to which the limited slopes are written. Has shape
+            (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
-        out: Output array to store the limited slopes. Has shape
-            (nvars, nx, ny, nz, nout). The result is stored in out[..., 0].
-        buffer: Array to which temporary values are assigned with shape
-            (nvars, nx, ny, nz, >=5).
         config: The MUSCL limiter configuration to use.
-        alpha: Array to store the smooth extrema detector values if SED is True. Has
-            shape (nvars, nx, ny, nz, 1).
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        return MUSCL_slopes_kernel_helper(
+            u, alpha, out, face_dim, config.limiter, config.smooth_extrema_detection
+        )
+
     limiter = config.limiter
     SED = config.smooth_extrema_detection
 
     # define slices for left, center, and right nodes
-    slc_l = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
-    slc_c = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
-    slc_r = crop(DIM_TO_AXIS[face_dim], (2, None), ndim=4)
-    inner = insert_slice(slc_c, 4, 0)
-
-    # allocate arrays
-    check_buffer_slots(buffer, required=5)
-    dlft = buffer[replace_slice(inner, 4, 0)]
-    drgt = buffer[replace_slice(inner, 4, 1)]
-    dcen = buffer[replace_slice(inner, 4, 2)]
-    dsgn = buffer[replace_slice(inner, 4, 3)]
-    dslp = buffer[replace_slice(inner, 4, 4)]
+    left = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
+    inner = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
+    right = crop(DIM_TO_AXIS[face_dim], (2, None), ndim=4)
 
     # write slopes to `out` array
     match limiter:
         case "minmod":
-            dlft[...] = u[slc_c] - u[slc_l]
-            drgt[...] = u[slc_r] - u[slc_c]
-            dcen[...] = 0.5 * (dlft + drgt)
-            dsgn[...] = np.sign(dlft)
-            dslp[...] = dsgn * np.minimum(np.abs(dlft), np.abs(drgt))
+            dlft = u[inner] - u[left]
+            drgt = u[right] - u[inner]
+            dcen = 0.5 * (dlft + drgt)
+            dsgn = np.sign(dlft)
+            dslp = dsgn * np.minimum(np.abs(dlft), np.abs(drgt))
             out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
             if SED:
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
         case "moncen":
-            dlft[...] = u[slc_c] - u[slc_l]
-            drgt[...] = u[slc_r] - u[slc_c]
-            dcen[...] = 0.5 * (dlft + drgt)
-            dsgn[...] = np.sign(dcen)
-            dslp[...] = dsgn * np.minimum(
+            dlft = u[inner] - u[left]
+            drgt = u[right] - u[inner]
+            dcen = 0.5 * (dlft + drgt)
+            dsgn = np.sign(dcen)
+            dslp = dsgn * np.minimum(
                 np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen)
             )
             out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
@@ -165,24 +155,21 @@ def compute_limited_slopes(
         case "PP2D":
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
         case None:
-            out[inner] = 0.5 * (u[slc_r] - u[slc_l])
+            out[inner] = 0.5 * (u[right] - u[left])
         case _:
             raise ValueError(f"Unknown limiter: {limiter}.")
 
-    modified = cast(Tuple[slice, ...], replace_slice(inner, 4, slice(None, 1)))
-    return modified
+    return inner
 
 
 def compute_PP2D_slopes(
-    u: np.ndarray,
+    u: ArrayLike,
+    alpha: ArrayLike,
+    Sx: ArrayLike,
+    Sy: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    *,
-    Sx: np.ndarray,
-    Sy: np.ndarray,
-    buffer: np.ndarray,
-    eps: float = 1e-20,
     config: musclConfig,
-    alpha: Optional[np.ndarray] = None,
+    eps: float = 1e-20,
 ) -> Tuple[slice, ...]:
     """
     Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays.
@@ -190,55 +177,59 @@ def compute_PP2D_slopes(
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
-        active_dims: Tuple indicating the active dimensions for interpolation. Can be
-            some combination of 'x', 'y', and 'z'. For example, ('x', 'y') for the
-            interpolation of nodes along the face of a cell on a two-dimensional grid.
-        Sx: Output array to store the limited slopes in the first active dimension. Has
-            shape (nvars, nx, ny, nz, 1).
-        Sy: Output array to store the limited slopes in the second active dimension.
-            Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned with shape
-            (nvars, nx, ny, nz, >=4).
-        eps: Small number to avoid division by zero.
+        alpha: Array to store the smooth extrema detector values if SED is True in
+            `config`. Has shape (nvars, nx, ny, nz).
+        Sx: Output array to which the slopes in the direction of the first active dims
+            are written. Has shape (nvars, nx, ny, nz).
+        Sy: Output array to which the slopes in the direction of the second active dims
+            are written. Has shape (nvars, nx, ny, nz).
+        active_dims: Tuple containing two active dims ("x", "y", or "z").
         config: The MUSCL limiter configuration to use.
-        alpha: Array to store the smooth extrema detector values if SED is True. Has
-            shape (nvars, nx, ny, nz, 1).
+        eps: Tolerance value.
+
+    Returns:
+        Slice objects indicating the modified regions in the output array.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    SED = config.smooth_extrema_detection
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        return PP2D_slopes_kernel_helper(
+            u,
+            alpha,
+            Sx,
+            Sy,
+            active_dims[0],
+            active_dims[1],
+            eps,
+            config.smooth_extrema_detection,
+        )
 
     if len(active_dims) != 2:
         raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
+    if config.limiter != "PP2D":
+        raise ValueError("MUSCL limiter must be set to 'PP2D' to compute PP2D slopes.")
 
     axis1 = DIM_TO_AXIS[active_dims[0]]
     axis2 = DIM_TO_AXIS[active_dims[1]]
 
     # allocate arrays
-    check_buffer_slots(buffer, required=4)
-    V_min = buffer[..., 0]
-    V_max = buffer[..., 1]
-    V = buffer[..., 2]
-    theta = buffer[..., 3:4]
-
     V_min_neighbors = np.empty((8,) + u.shape)
     V_max_neighbors = np.empty((8,) + u.shape)
 
     # assign slices
-    slc1_c = crop(axis1, (1, -1), ndim=4)
-    slc2_c = crop(axis2, (1, -1), ndim=4)
+    inner1 = crop(axis1, (1, -1), ndim=4)
+    inner2 = crop(axis2, (1, -1), ndim=4)
+    inner = merge_slices(inner1, inner2)
 
-    slc_c = insert_slice(merge_slices(slc1_c, slc2_c), 4, 0)
-
-    slc1_l = merge_slices(crop(axis1, (None, -2), ndim=4), slc2_c)
-    slc1_r = merge_slices(crop(axis1, (2, None), ndim=4), slc2_c)
-    slc2_l = merge_slices(slc1_c, crop(axis2, (None, -2), ndim=4))
-    slc2_r = merge_slices(slc1_c, crop(axis2, (2, None), ndim=4))
+    left1 = merge_slices(crop(axis1, (None, -2), ndim=4), inner2)
+    right1 = merge_slices(crop(axis1, (2, None), ndim=4), inner2)
+    left2 = merge_slices(inner1, crop(axis2, (None, -2), ndim=4))
+    right2 = merge_slices(inner1, crop(axis2, (2, None), ndim=4))
 
     # compute second-order slopes
-    Sx[slc_c] = 0.5 * (u[slc1_r] - u[slc1_l])
-    Sy[slc_c] = 0.5 * (u[slc2_r] - u[slc2_l])
+    Sx[inner] = 0.5 * (u[right1] - u[left1])
+    Sy[inner] = 0.5 * (u[right2] - u[left2])
 
     # compute PPD2 limiter
     neighbor_slices = gather_neighbor_slices(active_dims, include_corners=True)
@@ -247,32 +238,26 @@ def compute_PP2D_slopes(
     V_min_neighbors[insert_slice(c_slc, 0, slice(None))] = np.array(
         [u[slc] - u[c_slc] for slc in neighbor_slices[1:]]
     )
-    V_min[...] = np.minimum(np.min(V_min_neighbors, axis=0), -eps)
+    V_min = np.minimum(np.min(V_min_neighbors, axis=0), -eps)
 
     V_max_neighbors[insert_slice(c_slc, 0, slice(None))] = np.array(
         [u[slc] - u[c_slc] for slc in neighbor_slices[1:]]
     )
-    V_max[...] = np.maximum(np.max(V_max_neighbors, axis=0), eps)
+    V_max = np.maximum(np.max(V_max_neighbors, axis=0), eps)
 
-    V[...] = (
-        2
-        * np.minimum(np.abs(V_min), np.abs(V_max))
-        / (np.abs(Sx[..., 0]) + np.abs(Sy[..., 0]))
-    )
-    theta[..., 0] = np.minimum(V, 1)
+    V = 2 * np.minimum(np.abs(V_min), np.abs(V_max)) / (np.abs(Sx) + np.abs(Sy))
+    theta = np.minimum(V, 1)
 
     # apply SED if requested
-    if SED:
+    if config.smooth_extrema_detection:
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is True.")
         theta[...] = np.where(alpha < 1, theta, 1.0)
 
-    modified = cast(Tuple[slice, ...], replace_slice(slc_c, 4, slice(None, 1)))
+    Sx[inner] = theta[inner] * Sx[inner]
+    Sy[inner] = theta[inner] * Sy[inner]
 
-    Sx[modified] = theta[modified] * Sx[modified]
-    Sy[modified] = theta[modified] * Sy[modified]
-
-    return modified
+    return inner
 
 
 # - - - - - DEFINE CUPY KERNELS FOR GPU COMPUTATION - - - - -

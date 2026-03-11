@@ -30,7 +30,7 @@ from .slope_limiting.MOOD import (
     log_troubled_cell_scalar_statistics,
 )
 from .slope_limiting.muscl import (
-    compute_limited_slopes,
+    compute_MUSCL_slopes,
     compute_PP2D_slopes,
     musclConfig,
     musclInterpolationScheme,
@@ -56,10 +56,6 @@ from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
 if CUPY_AVAILABLE:
-    from .slope_limiting.muscl import (
-        MUSCL_slopes_kernel_helper,
-        PP2D_slopes_kernel_helper,
-    )
     from .slope_limiting.shock_detection import compute_shocks_kernel_helper
     from .slope_limiting.smooth_extrema_detection import compute_alpha_kernel_helper
     from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
@@ -1078,11 +1074,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             np.zeros((1, _nx_, _ny_, _nz_, 2 * n_nodes), dtype=np.int32),
         )
         if "x" in active_dims:
-            arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+            arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         if "y" in active_dims:
-            arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+            arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         if "z" in active_dims:
-            arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_, 1)))
+            arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
 
         # define Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
@@ -2717,7 +2713,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         check_buffer_slots(arrays["_buffer_"], required=4)
         wcc_for_nodes = arrays["_buffer_"][..., 3]
-        lim_buff = arrays["_buffer_"][..., 4:]
 
         # compute smooth extrema
         if scheme.limiter_config.smooth_extrema_detection:
@@ -2728,47 +2723,23 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             dw1 = slope_arrs[active_dims[0]]
             dw2 = slope_arrs[active_dims[1]]
 
-            if self.cupy:
-                PP2D_slopes_kernel_helper(
-                    wcc,
-                    alpha[..., 0],
-                    dw1[..., 0],
-                    dw2[..., 0],
-                    active_dims[0],
-                    active_dims[1],
-                    1e-20,
-                    scheme.limiter_config.smooth_extrema_detection,
-                )
-            else:
-                compute_PP2D_slopes(
-                    wcc,
-                    active_dims,
-                    Sx=dw1,
-                    Sy=dw2,
-                    buffer=lim_buff,
-                    alpha=alpha,
-                    config=scheme.limiter_config,
-                )
+            compute_PP2D_slopes(
+                wcc,
+                alpha[..., 0],
+                dw1,
+                dw2,
+                active_dims,
+                scheme.limiter_config,
+            )
         else:
             for dim, slope_arr in slope_arrs.items():
-                if self.cupy:
-                    MUSCL_slopes_kernel_helper(
-                        wcc,
-                        alpha[..., 0],
-                        slope_arr[..., 0],
-                        dim,
-                        scheme.limiter_config.limiter,
-                        scheme.limiter_config.smooth_extrema_detection,
-                    )
-                else:
-                    compute_limited_slopes(
-                        wcc,
-                        dim,
-                        out=slope_arr,
-                        buffer=lim_buff,
-                        alpha=alpha,
-                        config=scheme.limiter_config,
-                    )
+                compute_MUSCL_slopes(
+                    wcc,
+                    alpha[..., 0],
+                    slope_arr,
+                    dim,
+                    scheme.limiter_config,
+                )
 
         # evolve the cell-center by 1/2 dt
         if hancock:
@@ -2780,9 +2751,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wcc_for_nodes[...] = wcc
             for dim, slope_arr in slope_arrs.items():
                 h = getattr(mesh, "h" + dim)
-                ds = self.flux_jvp(
-                    wcc, slope_arr[..., 0], dim, primitives=limit_primitives
-                )
+                ds = self.flux_jvp(wcc, slope_arr, dim, primitives=limit_primitives)
                 wcc_for_nodes[...] -= ds * dt / 2 / h
         else:
             wcc_for_nodes[...] = wcc
@@ -2791,8 +2760,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for (dim, node_arr), (_, slope_arr) in zip(
             node_arrs.items(), slope_arrs.items()
         ):
-            node_arr[..., 0] = wcc_for_nodes - slope_arr[..., 0] / 2
-            node_arr[..., 1] = wcc_for_nodes + slope_arr[..., 0] / 2
+            node_arr[..., 0] = wcc_for_nodes - slope_arr / 2
+            node_arr[..., 1] = wcc_for_nodes + slope_arr / 2
 
     def reduce_CFL(self, q: int):
         """
