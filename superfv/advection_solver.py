@@ -126,10 +126,9 @@ class AdvectionSolver(FiniteVolumeSolver):
                     Transform to primitive variables. Apply slope limiting to the
                     primitive nodes.
                 - 3: Interpolate primitive cell averages from conservative cell
-                    averages, either by interpolating to cell-centered values
-                    intermittently or transforming directly with `lazy_primitives=True`.
-                    Interpolate primitive nodes from primitive cell averages.
-                    Apply slope limiting to the primitive nodes.
+                    averages (see `lazy_primitives` below). Interpolate primitive nodes
+                    from primitive cell averages. Apply slope limiting to the primitive
+                    nodes.
             lazy_primitives: Option for lazy evaluation of primitive variables.
                 Possible values include:
                 - "none": Do not use second-order evaluation for primitive cell
@@ -179,7 +178,8 @@ class AdvectionSolver(FiniteVolumeSolver):
                 the MOOD loop if revisable troubled cells were found during the last
                 iteration. If False, the troubles array will represent the troubled
                 cells that determined the closing cascade index.
-            limiting_vars: Specifies which variables are subject to slope limiting.
+            limiting_vars: Specifies which variables are subject to slope limiting via
+                the Zhang and Shu limiter or NAD in the MOOD loop. Possible values:
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
                 - Tuple[str, ...]: A tuple of variable names that are subject to slope
@@ -204,7 +204,7 @@ class AdvectionSolver(FiniteVolumeSolver):
             SED: Whether to use smooth extrema detection for slope limiting.
             check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
                 extrema detection is enabled. Uniform regions satisfy:
-                    max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
+                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
                     <= uniformity_tol * |u_i|
             uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
             cupy: Whether to use CuPy for array operations.

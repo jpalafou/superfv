@@ -234,7 +234,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 the MOOD loop if revisable troubled cells were found during the last
                 iteration. If False, the troubles array will represent the troubled
                 cells that determined the closing cascade index.
-            limiting_vars: Specifies which variables are subject to slope limiting.
+            limiting_vars: Specifies which variables are subject to slope limiting via
+                the Zhang and Shu limiter or NAD in the MOOD loop. Possible values:
                 - "all": All variables are subject to slope limiting.
                 - "actives": Only active variables are subject to slope limiting.
                 - Tuple[str, ...]: A tuple of variable names that are subject to slope
@@ -258,7 +259,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
-            extrema detection is enabled. Uniform regions satisfy:
+                extrema detection is enabled. Uniform regions satisfy:
                 max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
                     <= uniformity_tol * |u_i|
             uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
