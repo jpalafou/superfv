@@ -37,7 +37,7 @@ from .slope_limiting.muscl import (
 )
 from .slope_limiting.physical_admissibility_detection import detect_PAD_violations
 from .slope_limiting.shock_detection import detect_shocks
-from .slope_limiting.smooth_extrema_detection import smooth_extrema_detector
+from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .slope_limiting.zhang_and_shu import (
     ZhangShuConfig,
     append_zhang_shu_scalar_statistics,
@@ -56,7 +56,6 @@ from .tools.yaml_helper import yaml_dump
 from .visualization import plot_1d_slice, plot_2d_slice
 
 if CUPY_AVAILABLE:
-    from .slope_limiting.smooth_extrema_detection import compute_alpha_kernel_helper
     from .slope_limiting.zhang_and_shu import compute_theta_kernel_helper
 
 
@@ -1835,26 +1834,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             scheme: Interpolation scheme to use for the detection.
         """
         active_dims = self.active_dims
-        arrays = self.arrays
         check_uniformity = scheme.limiter_config.check_uniformity
         uniformity_tol = scheme.limiter_config.uniformity_tol
 
-        alpha = arrays["_alpha_"]
-        buffer = arrays["_buffer_"]
+        alpha = self.arrays["_alpha_"]
 
-        if self.cupy:
-            compute_alpha_kernel_helper(
-                u, alpha[..., 0], 1e-16, check_uniformity, uniformity_tol
-            )
-        else:
-            smooth_extrema_detector(
-                u,
-                active_dims,
-                check_uniformity,
-                out=alpha,
-                buffer=buffer,
-                uniformity_tol=uniformity_tol,
-            )
+        compute_alpha(u, alpha, active_dims, check_uniformity, uniformity_tol)
 
     @MethodTimer(cat="integrate_fluxes")
     def integrate_fluxes(

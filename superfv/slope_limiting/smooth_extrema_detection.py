@@ -1,56 +1,49 @@
-from typing import Literal, Tuple, cast
+from typing import List, Literal, Tuple
 
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.tools.buffer import check_buffer_slots
-from superfv.tools.device_management import CUPY_AVAILABLE
-from superfv.tools.slicing import crop, merge_slices, replace_slice
+from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
+from superfv.tools.slicing import crop, merge_slices
 from superfv.tools.stability import avoid0
 
 
-def central_difference(u: np.ndarray, axis: int, *, out: np.ndarray):
+def central_difference(u: np.ndarray, out: np.ndarray, axis: int):
     """
-    Compute 1D central difference, ignoring mesh size.
-
-    Args:
-        u: Array of data to differentiate.
-        axis: Axis along which to compute the central difference.
-        out: Array to which the output is assigned.
+    Compute the 1D central difference of `u` along `axis`, writing the result to `out`.
     """
     out[crop(axis, (1, -1))] = 0.5 * (
         u[crop(axis, (2, None))] - u[crop(axis, (None, -2))]
     )
 
 
-def smooth_extrema_detector_1d(
+def update_alpha_1d(
     u: np.ndarray,
+    alpha: np.ndarray,
     dim: Literal["x", "y", "z"],
     check_uniformity: bool,
-    *,
-    out: np.ndarray,
-    buffer: np.ndarray,
-    eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
+    eps: float = 1e-16,
 ) -> Tuple[slice, ...]:
     """
-    Compute the 1D smooth extrema detector alpha.
+    Compute the 1D smooth extrema detector for array `u` along dimension `dim`,
+    writing the result to `alpha`, taking the minimum with the existing values in
+    `alpha`.
 
     Args:
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
-        dim: Dimension along which to compute the smooth extrema detector: "x", "y",
-            "z".
+        alpha: Array to which the computed smooth extrema detector is written, taking
+            the minimum with existing values. Has shape (nvars, nx, ny, nz).
+        dim: Dimension along which to compute the smooth extrema detector. One of
+            "x", "y", or "z".
         check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
             regions satisfy:
                 max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
                     <= uniformity_tol * |u_i|
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=10).
-        eps: Small tolerance used to avoid dividing by zero.
         uniformity_tol: Tolerance used to detect uniform regions.
+        eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -58,22 +51,24 @@ def smooth_extrema_detector_1d(
     # retrieve axis
     axis = DIM_TO_AXIS[dim]
 
+    # valid inner region
+    inner = crop(axis, (3, -3))
+
     # allocate arrays
-    check_buffer_slots(buffer, required=10)
-    du = buffer[..., 0]
-    dv = buffer[..., 1]
-    vl = buffer[..., 2]
-    vr = buffer[..., 3]
-    alpha_l = buffer[..., 4]
-    alpha_r = buffer[..., 5]
-    alpha = buffer[..., 6:7]  # (..., 1)
-    dmp_m = buffer[..., 7]
-    dmp_M = buffer[..., 8]
-    uniform = buffer[..., 9]
+    du = np.empty_like(u)
+    dv = np.empty_like(u)
+    vl = np.empty_like(u)
+    vr = np.empty_like(u)
+    alpha_l = np.empty_like(u)
+    alpha_r = np.empty_like(u)
+    alpha_neighbors = np.empty_like(u)
+    dmp_m = np.empty_like(u)
+    dmp_M = np.empty_like(u)
+    uniform = np.empty_like(u)
 
     # compute derivatives
-    central_difference(u, axis, out=du)
-    central_difference(du, axis, out=dv)
+    central_difference(u, du, axis)
+    central_difference(du, dv, axis)
     dv[...] = avoid0(0.5 * dv, eps)
 
     # left detector
@@ -85,7 +80,8 @@ def smooth_extrema_detector_1d(
     alpha_r[...] = np.where(dv > 0, np.maximum(vr, 0), np.minimum(vr, 0)) / dv
 
     # combine left and right detectors
-    alpha[..., 0] = np.minimum(np.minimum(alpha_l, alpha_r), 1.0)
+    np.minimum(alpha_l, alpha_r, out=alpha_neighbors)
+    np.minimum(alpha_neighbors, 1.0, out=alpha_neighbors)
 
     # relax alpha in uniform regions
     if check_uniformity:
@@ -98,220 +94,60 @@ def smooth_extrema_detector_1d(
 
         uniform[...] = np.abs(dmp_M - dmp_m) <= uniformity_tol * np.abs(u)
 
-        alpha[..., 0] = np.where(uniform == 1, 1.0, alpha[..., 0])
+        np.maximum(alpha_neighbors, uniform, out=alpha_neighbors)
 
     # take min of neighbors and return
-    lft_slc = crop(axis, (2, -4), ndim=5)
-    cen_slc = crop(axis, (3, -3), ndim=5)
-    rgt_slc = crop(axis, (4, -2), ndim=5)
+    left = crop(axis, (2, -4), ndim=4)
+    inner = crop(axis, (3, -3), ndim=4)
+    right = crop(axis, (4, -2), ndim=4)
 
-    out[cen_slc] = np.minimum(alpha[lft_slc], alpha[cen_slc])
-    out[cen_slc] = np.minimum(alpha[rgt_slc], out[cen_slc])
+    np.minimum(alpha_neighbors[left], alpha[inner], out=alpha[inner])
+    np.minimum(alpha_neighbors[inner], alpha[inner], out=alpha[inner])
+    np.minimum(alpha_neighbors[right], alpha[inner], out=alpha[inner])
 
-    modified = cast(Tuple[slice, ...], replace_slice(cen_slc, 4, slice(None, 1)))
-    return modified
+    return inner
 
 
-def smooth_extrema_detector_2d(
-    u: np.ndarray,
+def compute_alpha(
+    u: ArrayLike,
+    alpha: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     check_uniformity: bool,
-    *,
-    out: np.ndarray,
-    buffer: np.ndarray,
-    eps: float = 1e-16,
     uniformity_tol: float = 1e-3,
+    eps: float = 1e-16,
 ) -> Tuple[slice, ...]:
     """
-    Compute the 2D smooth extrema detector alpha.
+    Compute the smooth extrema detector for array `u` along all `active_dims`,
+    writing the result to `alpha`.
 
     Args:
         u: Array of data used to compute the smooth extrema detector. Has shape
             (nvars, nx, ny, nz).
-        active_dims: Tuple of two dimensions along which to compute the smooth extrema
-            detector: ("x", "y"), ("x", "z"), or ("y", "z").\
-        check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
-            regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=12).
-        eps: Small tolerance used to avoid dividing by zero.
-        uniformity_tol: Tolerance used to detect uniform regions.
-
-    Returns:
-        Slice objects indicating the modified regions in the output array.
-    """
-    d1, d2 = active_dims
-
-    check_buffer_slots(buffer, required=12)
-    alph1 = buffer[..., :1]
-    alph2 = buffer[..., 1:2]
-    abuff = buffer[..., 2:]
-
-    modified1 = smooth_extrema_detector_1d(
-        u,
-        d1,
-        check_uniformity,
-        out=alph1,
-        buffer=abuff,
-        eps=eps,
-        uniformity_tol=uniformity_tol,
-    )
-    modified2 = smooth_extrema_detector_1d(
-        u,
-        d2,
-        check_uniformity,
-        out=alph2,
-        buffer=abuff,
-        eps=eps,
-        uniformity_tol=uniformity_tol,
-    )
-
-    modified = merge_slices(modified1, modified2)
-    out[modified] = np.minimum(alph1[modified], alph2[modified])
-
-    return modified
-
-
-def smooth_extrema_detector_3d(
-    u: np.ndarray,
-    check_uniformity: bool,
-    *,
-    out: np.ndarray,
-    buffer: np.ndarray,
-    eps: float = 1e-16,
-    uniformity_tol: float = 1e-3,
-) -> Tuple[slice, ...]:
-    """
-    Compute the 3D smooth extrema detector alpha.
-
-    Args:
-        u: Array of data used to compute the smooth extrema detector. Has shape
-            (nvars, nx, ny, nz).
-        check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
-            regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has shape
-            (nvars, nx, ny, nz, >=13).
-        eps: Small tolerance used to avoid dividing by zero.
-        uniformity_tol: Tolerance used to detect uniform regions.
-    Returns:
-        Slice objects indicating the modified regions in the output array.
-    """
-    d1: Literal["x"] = "x"
-    d2: Literal["y"] = "y"
-    d3: Literal["z"] = "z"
-
-    check_buffer_slots(buffer, required=13)
-    alph1 = buffer[..., :1]
-    alph2 = buffer[..., 1:2]
-    alph3 = buffer[..., 2:3]
-    abuff = buffer[..., 3:]
-
-    modified1 = smooth_extrema_detector_1d(
-        u,
-        d1,
-        check_uniformity,
-        out=alph1,
-        buffer=abuff,
-        eps=eps,
-        uniformity_tol=uniformity_tol,
-    )
-    modified2 = smooth_extrema_detector_1d(
-        u,
-        d2,
-        check_uniformity,
-        out=alph2,
-        buffer=abuff,
-        eps=eps,
-        uniformity_tol=uniformity_tol,
-    )
-    modified3 = smooth_extrema_detector_1d(
-        u,
-        d3,
-        check_uniformity,
-        out=alph3,
-        buffer=abuff,
-        eps=eps,
-        uniformity_tol=uniformity_tol,
-    )
-
-    modified = merge_slices(modified1, modified2, modified3)
-    out[modified] = np.minimum(alph1[modified], alph2[modified])
-    out[modified] = np.minimum(alph3[modified], out[modified])
-
-    return modified
-
-
-def smooth_extrema_detector(
-    u: np.ndarray,
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
-    check_uniformity: bool,
-    *,
-    out: np.ndarray,
-    buffer: np.ndarray,
-    eps: float = 1e-16,
-    uniformity_tol: float = 1e-3,
-) -> Tuple[slice, ...]:
-    """
-    Compute the smooth extrema detector alpha along specified dimensions.
-
-    Args:
-        u: Array of data used to compute the smooth extrema detector. Has shape
-            (nvars, nx, ny, nz).
+        alpha: Array to which the minimum smooth extrema detector across all
+            `active_dims` is written. Has shape (nvars, nx, ny, nz).
         active_dims: Tuple of dimensions along which to compute the smooth extrema
-            detector. Has length 1, 2, or 3 with possible values "x", "y", "z".
+            detector. Each dimension is one of "x", "y", or "z".
         check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
             regions satisfy:
                 max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
                     <= uniformity_tol * |u_i|
-        out: Array to which alpha is assigned. Has shape (nvars, nx, ny, nz, 1).
-        buffer: Array to which temporary values are assigned. Has different shape
-            requirements depending on the number (length) of active dimensions:
-            - 1D: (nvars, nx, ny, nz, >=7)
-            - 2D: (nvars, nx, ny, nz, >=9)
-            - 3D: (nvars, nx, ny, nz, >=10)
-        eps: Small tolerance used to avoid dividing by zero.
         uniformity_tol: Tolerance used to detect uniform regions.
+        eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
-
     """
-    if len(active_dims) == 1:
-        return smooth_extrema_detector_1d(
-            u,
-            active_dims[0],
-            check_uniformity,
-            out=out,
-            buffer=buffer,
-            eps=eps,
-            uniformity_tol=uniformity_tol,
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        return compute_alpha_kernel_helper(
+            u, alpha, check_uniformity, uniformity_tol, eps
         )
-    elif len(active_dims) == 2:
-        return smooth_extrema_detector_2d(
-            u,
-            active_dims,
-            check_uniformity,
-            out=out,
-            buffer=buffer,
-            eps=eps,
-            uniformity_tol=uniformity_tol,
-        )
-    elif len(active_dims) == 3:
-        return smooth_extrema_detector_3d(
-            u,
-            check_uniformity,
-            out=out,
-            buffer=buffer,
-            eps=eps,
-            uniformity_tol=uniformity_tol,
-        )
-    raise ValueError("active_dims must have length 1, 2, or 3.")
+
+    alpha[...] = 1.0
+    valid_slices: List[Tuple[slice, ...]] = []
+    for dim in active_dims:
+        valid = update_alpha_1d(u, alpha, dim, check_uniformity, uniformity_tol, eps)
+        valid_slices.append(valid)
+    return merge_slices(*valid_slices)
 
 
 if CUPY_AVAILABLE:
@@ -323,9 +159,9 @@ if CUPY_AVAILABLE:
         void compute_alpha_kernel(
             const double* __restrict__ u,
             double* __restrict__ alpha,
-            const double eps,
             const bool check_uniformity,
             const double uniformity_tol,
+            const double eps,
             const int nvars,
             const int nx,
             const int ny,
@@ -454,9 +290,9 @@ if CUPY_AVAILABLE:
     def compute_alpha_kernel_helper(
         u: cp.ndarray,
         alpha: cp.ndarray,
-        eps: float,
         check_uniformity: bool,
         uniformity_tol: float,
+        eps: float,
     ) -> Tuple[slice, ...]:
         if not u.flags.c_contiguous or not alpha.flags.c_contiguous:
             raise ValueError("u and alpha must be C-contiguous for the kernel.")
@@ -481,9 +317,9 @@ if CUPY_AVAILABLE:
             (
                 u,
                 alpha,
-                eps,
                 check_uniformity,
                 uniformity_tol,
+                eps,
                 nvars,
                 nx,
                 ny,
@@ -496,5 +332,4 @@ if CUPY_AVAILABLE:
             slice(3, -3) if nx > 1 else slice(None),
             slice(3, -3) if ny > 1 else slice(None),
             slice(3, -3) if nz > 1 else slice(None),
-            slice(None, 1),
         )

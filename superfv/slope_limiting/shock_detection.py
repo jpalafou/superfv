@@ -1,4 +1,4 @@
-from typing import Literal, Tuple
+from typing import List, Literal, Tuple
 
 import numpy as np
 
@@ -9,7 +9,7 @@ from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
 
-def compute_eta_1d(
+def update_eta_1d(
     w1: np.ndarray,
     wr: np.ndarray,
     eta: np.ndarray,
@@ -18,13 +18,13 @@ def compute_eta_1d(
 ) -> Tuple[slice, ...]:
     """`
     Compute the shock detector parameter in 1D using the method of Berta et al. (2024),
-    writing the result to `eta`.
+    writing the result to `eta`, taking the maximum with existing values.
 
     Args:
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
-        eta: Array to which the shock detector parameter is written. Has shape
-            (nvars, nx, ny, nz).
+        eta: Array to which the shock detector parameter is written, taking the maximum
+            with existing values. Has shape (nvars, nx, ny, nz).
         dim: Dimension along which to compute eta. Must be "x", "y", or "z".
         eps: Small value to avoid division by zero.
 
@@ -59,7 +59,8 @@ def compute_eta_1d(
     eta_o /= np.abs(wr[..., na]) + np.abs(delta1) + np.abs(delta3) + eps
     eta_e[...] = np.abs(delta4)
     eta_e /= np.abs(wr[..., na]) + np.abs(delta2) + np.abs(delta4) + eps
-    eta[inner] = np.maximum(eta_o[..., 0][inner], eta_e[..., 0][inner])
+    np.maximum(eta_o[..., 0][inner], eta[inner], out=eta[inner])
+    np.maximum(eta_e[..., 0][inner], eta[inner], out=eta[inner])
 
     return inner
 
@@ -80,10 +81,8 @@ def detect_shocks(
     Args:
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
         wr: Reference array of primitive variables. Has shape (nvars, nx, ny, nz).
-        eta: Array to which the shock detector parameter is written. Has shape
-            (nvars, nx, ny, nz, 3). The three slots along the last axis correspond
-            to the "x", "y", and "z" directions respectively. Slots corresponding to
-            inactive dims will not be modified.
+        eta: Array to which the maximum shock detector parameter across all
+            `active_dims` and variables is written. Has shape (nvars, nx, ny, nz).
         has_shock: Array to which the shock detection mask is written. Has shape
             (1, nx, ny, nz).
         active_dims: Tuple of dimensions along which to compute the shock detector.
@@ -97,16 +96,14 @@ def detect_shocks(
     if CUPY_AVAILABLE and isinstance(w1, cp.ndarray):
         return detect_shocks_kernel_helper(w1, wr, eta, has_shock, eta_threshold, eps)
 
-    eta_max = np.full((1,) + w1.shape[1:4], -np.inf)
-
-    valid_slices = []
+    eta[...] = 0.0
+    valid_slices: List[Tuple[slice, ...]] = []
     for dim in active_dims:
-        inner = compute_eta_1d(w1, wr, eta[..., "xyz".index(dim)], dim, eps)
-        valid_slices.append(inner)
-        np.maximum(eta_max, np.max(eta[..., "xyz".index(dim)], axis=0), out=eta_max)
+        valid = update_eta_1d(w1, wr, eta, dim, eps)
+        valid_slices.append(valid)
 
     valid = merge_slices(*valid_slices)
-    has_shock[valid] = eta_max[valid] > eta_threshold
+    has_shock[valid] = np.any(eta[valid] > eta_threshold, axis=0)
     return valid
 
 
@@ -130,7 +127,7 @@ if CUPY_AVAILABLE:
         ){
             // w shape          (nvars, nx, ny, nz)
             // wref shape       (nvars, nx, ny, nz)
-            // eta shape        (nvars, nx, ny, nz, 3)
+            // eta shape        (nvars, nx, ny, nz)
             // has_shock shape  (nx, ny, nz)
 
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -164,29 +161,32 @@ if CUPY_AVAILABLE:
                     }
 
                     for (int iv = 0; iv < nvars; iv++) {
-                        long long ivxyz = iv * nxyz + ixyz;
-                        long long i = ivxyz * 3 + id; // eta idx
+                        long long i = iv * nxyz + ixyz;
 
+                        // initialize eta
+                        eta[i] = 0.0;
+
+                        // compute neighbor indices
                         long long j0, j1, j2, j3, j4;
                         switch (id) {
                             case 0:
                                 j0 = (((long long)iv * nx + (ix - 2)) * ny + iy) * nz + iz;
                                 j1 = (((long long)iv * nx + (ix - 1)) * ny + iy) * nz + iz;
-                                j2 = ivxyz;
+                                j2 = i;
                                 j3 = (((long long)iv * nx + (ix + 1)) * ny + iy) * nz + iz;
                                 j4 = (((long long)iv * nx + (ix + 2)) * ny + iy) * nz + iz;
                                 break;
                             case 1:
                                 j0 = (((long long)iv * nx + ix) * ny + (iy - 2)) * nz + iz;
                                 j1 = (((long long)iv * nx + ix) * ny + (iy - 1)) * nz + iz;
-                                j2 = ivxyz;
+                                j2 = i;
                                 j3 = (((long long)iv * nx + ix) * ny + (iy + 1)) * nz + iz;
                                 j4 = (((long long)iv * nx + ix) * ny + (iy + 2)) * nz + iz;
                                 break;
                             case 2:
                                 j0 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 2);
                                 j1 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 1);
-                                j2 = ivxyz;
+                                j2 = i;
                                 j3 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 1);
                                 j4 = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 2);
                                 break;
@@ -209,11 +209,15 @@ if CUPY_AVAILABLE:
                             / (fabs(wrefval) + fabs(delta1) + fabs(delta3) + eps);
                         double eta_e = fabs(delta4)
                             / (fabs(wrefval) + fabs(delta2) + fabs(delta4) + eps);
-                        eta[i] = fmax(eta_o, eta_e);
+
+                        double eta_val = fmax(eta_o, eta_e);
+                        if (eta_val > eta[i]) {
+                            eta[i] = eta_val;
+                        }
 
                         // set to 1 if eta exceeds threshold
-                        if (!has_shock[ixyz] && eta[i] > eta_threshold) {
-                            has_shock[ixyz] = 1;
+                        if (!has_shock[i] && eta[i] > eta_threshold) {
+                            has_shock[i] = 1;
                         }
                     }
                 }
@@ -277,9 +281,9 @@ if CUPY_AVAILABLE:
             (w1, wr, eta, has_shock, eta_threshold, eps, nvars, nx, ny, nz),
         )
 
-        inner_slice = merge_slices(
-            crop(1, (2, -2) if nx > 1 else (None, None), ndim=4),
-            crop(2, (2, -2) if ny > 1 else (None, None), ndim=4),
-            crop(3, (2, -2) if nz > 1 else (None, None), ndim=4),
+        return (
+            slice(None),
+            slice(2, -2) if nx > 1 else slice(None),
+            slice(2, -2) if ny > 1 else slice(None),
+            slice(2, -2) if nz > 1 else slice(None),
         )
-        return inner_slice
