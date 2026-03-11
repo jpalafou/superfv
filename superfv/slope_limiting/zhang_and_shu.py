@@ -295,37 +295,49 @@ if CUPY_AVAILABLE:
         """
         extern "C" __global__
         void compute_theta_kernel(
-            const double* w,
-            const double* wj,
-            const double* M,
-            const double* m,
-            double* Mj,
-            double* mj,
-            double* out,
+            const double* __restrict__ w,
+            const double* __restrict__ wj,
+            const double* __restrict__ M,
+            const double* __restrict__ m,
+            double* __restrict__ Mj,
+            double* __restrict__ mj,
+            double* __restrict__ theta,
+            const double eps,
             const int nvars,
             const int nx,
-            const int ninterps,
-            const double eps
+            const int ny,
+            const int nz,
+            const int ninterps
         ) {
+            // w        has shape (nvars, nx, ny, nz)
+            // wj       has shape (nvars, nx, ny, nz, ninterps)
+            // M, m     have shape (nvars, nx, ny, nz)
+            // Mj, mj   have shape (nvars, nx, ny, nz)
+            // theta    has shape (nvars, nx, ny, nz)
+
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
 
-            int n = nvars * nx;
+            long long n = (long long)nvars * nx * ny * nz;
 
-            for (int i = tid; i < n; i += stride) {
-                const double* row = wj + ((size_t)i) * (size_t)ninterps;
+            for (long long i = tid; i < n; i += stride) {
 
-                mj[i] = row[0];
-                Mj[i] = row[0];
-                for (int j = 1; j < ninterps; ++j) {
-                    double vj = row[j];
-                    mj[i] = (vj < mj[i]) ? vj : mj[i];
-                    Mj[i] = (vj > Mj[i]) ? vj : Mj[i];
+                const double* row = wj + i * (long long)ninterps;
+
+                double mj_val = row[0];
+                double Mj_val = row[0];
+
+                for (int ii = 1; ii < ninterps; ++ii) {
+                    const double vj = row[ii];
+                    mj_val = (vj < mj_val) ? vj : mj_val;
+                    Mj_val = (vj > Mj_val) ? vj : Mj_val;
                 }
 
-                out[i] = 1.0;
-                out[i] = fmin(fabs(M[i] - w[i]) / (fabs(Mj[i] - w[i]) + eps), out[i]);
-                out[i] = fmin(fabs(m[i] - w[i]) / (fabs(mj[i] - w[i]) + eps), out[i]);
+                mj[i] = mj_val;
+                Mj[i] = Mj_val;
+                double theta_M = fabs(M[i] - w[i]) / (fabs(Mj_val - w[i]) + eps);
+                double theta_m = fabs(m[i] - w[i]) / (fabs(mj_val - w[i]) + eps);
+                theta[i] = fmin(1.0, fmin(theta_M, theta_m));
             }
         }
         """,
@@ -339,15 +351,54 @@ if CUPY_AVAILABLE:
         m: cp.ndarray,
         Mj: cp.ndarray,
         mj: cp.ndarray,
-        out: cp.ndarray,
+        theta: cp.ndarray,
         eps: float,
     ):
-        nvars, nx = w.shape
-        ninterps = wj.shape[2]
+        if not w.flags.c_contiguous or w.ndim != 4:
+            raise ValueError("Array `w` must be a C-contiguous, 4-dimensional array.")
+        if not wj.flags.c_contiguous or wj.ndim != 5 or wj.shape[:4] != w.shape:
+            raise ValueError(
+                "Array `wj` must be a C-contiguous, 5-dimensional array of shape "
+                "(nvars, nx, ny, nz)."
+            )
+        if not M.flags.c_contiguous or M.shape != w.shape:
+            raise ValueError(
+                "Array `M` must be a C-contiguous array of the same shape as `w`."
+            )
+        if not m.flags.c_contiguous or m.shape != w.shape:
+            raise ValueError(
+                "Array `m` must be a C-contiguous array of the same shape as `w`."
+            )
+        if not Mj.flags.c_contiguous or Mj.shape != w.shape:
+            raise ValueError(
+                "Array `Mj` must be a C-contiguous array of the same shape as `w`."
+            )
+        if not mj.flags.c_contiguous or mj.shape != w.shape:
+            raise ValueError(
+                "Array `mj` must be a C-contiguous array of the same shape as `w`."
+            )
+        if not theta.flags.c_contiguous or theta.shape != w.shape:
+            raise ValueError(
+                "Array `theta` must be a C-contiguous array of the same shape as `w`."
+            )
+        if (
+            w.dtype != cp.float64
+            or wj.dtype != cp.float64
+            or M.dtype != cp.float64
+            or m.dtype != cp.float64
+            or Mj.dtype != cp.float64
+            or mj.dtype != cp.float64
+            or theta.dtype != cp.float64
+        ):
+            raise ValueError("All input arrays must have dtype float64.")
+
+        nvars, nx, ny, nz = w.shape
+        _, _, _, _, ninterps = wj.shape
+
         threads_per_block = 256
         blocks_per_grid = (nvars * nx + threads_per_block - 1) // threads_per_block
         compute_theta_kernel(
             (blocks_per_grid,),
             (threads_per_block,),
-            (w, wj, M, m, Mj, mj, out, nvars, nx, ninterps, eps),
+            (w, wj, M, m, Mj, mj, theta, eps, nvars, nx, ny, nz, ninterps),
         )

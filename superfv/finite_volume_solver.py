@@ -1089,15 +1089,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_Mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
-        ntotal = _nx_ * _ny_ * _nz_
-        flat_ninterpolations = 1 + self.mesh.ndim * 2 * n_nodes
-        arrays.add("_flat_w_", np.empty((nvars, ntotal)))
-        arrays.add("_flat_wj_", np.empty((nvars, ntotal, flat_ninterpolations)))
-        arrays.add("_flat_M_", np.empty((nvars, ntotal)))
-        arrays.add("_flat_m_", np.empty((nvars, ntotal)))
-        arrays.add("_flat_Mj_", np.empty((nvars, ntotal)))
-        arrays.add("_flat_mj_", np.empty((nvars, ntotal)))
-        arrays.add("_flat_theta_", np.ones((nvars, ntotal)))
+        total_nodes = 1 + self.mesh.ndim * 2 * n_nodes
+        arrays.add("_wj_all_", np.empty((nvars, _nx_, _ny_, _nz_, total_nodes)))
 
         # define MOOD arrays
         for scheme in self.MOOD_config.cascade:
@@ -1772,31 +1765,18 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         PAD_violations = self.arrays["_PAD_violations_"]
         any_violations = self.arrays["_troubles2_"]
         buffer = self.arrays["_buffer_"]
-        wflat = self.arrays["_flat_w_"]
-        wjflat = self.arrays["_flat_wj_"]
-        Mflat = self.arrays["_flat_M_"]
-        mflat = self.arrays["_flat_m_"]
-        Mjflat = self.arrays["_flat_Mj_"]
-        mjflat = self.arrays["_flat_mj_"]
-        thetaflat = self.arrays["_flat_theta_"]
+        wjall = self.arrays["_wj_all_"]
 
         # compute theta
         if self.cupy and mesh.ndim == 2 and scheme.p <= 7:
-            nvars = w.shape[0]
-            nx = w.shape[1]
-            ny = w.shape[2]
-            nz = w.shape[3]
-            ntotal = nx * ny * nz
-            max_nodes = self._ninterps_per_face(scheme, "nodes")
-            max_ninterps = 2 * max_nodes
+            max_nodes_per_face = self._ninterps_per_face(scheme, "nodes")
+            max_nodes_both = 2 * max_nodes_per_face
 
-            wflat[...] = w.reshape(nvars, ntotal)
-            wjflat[..., 0] = wcc.reshape(nvars, ntotal)
-
+            wjall[..., :1] = wcc
             for i, wj in enumerate([wt for wt in [wx, wy, wz] if wt is not None]):
-                idx1 = 1 + i * max_ninterps
-                idx2 = 1 + (i + 1) * max_ninterps
-                wjflat[..., slice(idx1, idx2)] = wj.reshape(nvars, ntotal, max_ninterps)
+                idx1 = 1 + i * max_nodes_both
+                idx2 = 1 + (i + 1) * max_nodes_both
+                wjall[..., slice(idx1, idx2)] = wj
 
             # compute DMP
             compute_dmp(
@@ -1807,22 +1787,17 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 M=M,
                 m=m,
             )
-            Mflat[...] = M.reshape(nvars, ntotal)
-            mflat[...] = m.reshape(nvars, ntotal)
 
             compute_theta_kernel_helper(
-                wflat,
-                wjflat,
-                Mflat,
-                mflat,
-                Mjflat,
-                mjflat,
-                thetaflat,
+                w,
+                wjall,
+                M,
+                m,
+                Mj,
+                mj,
+                theta[..., 0],
                 scheme.limiter_config.theta_denom_tol,
             )
-            theta[...] = thetaflat.reshape(nvars, nx, ny, nz, 1)
-            Mj[...] = Mjflat.reshape(nvars, nx, ny, nz)
-            mj[...] = mjflat.reshape(nvars, nx, ny, nz)
         else:
             compute_theta(
                 w,

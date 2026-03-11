@@ -1,8 +1,8 @@
-- [x] rm: gtol, make rtol and atol scalars again
 - [ ] use __restrict__ and const for all RawKernels where necessary
-- [ ] use full 5D arrays for ZS limiter, stop copying to flat. it's the only kernel that does this
+- [x] use full 5D arrays for ZS limiter, stop copying to flat. it's the only kernel that does this
 - [ ] refactor buffer size
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
 - [ ] clarify documentation on `lim_slc`
+- [ ] determine if all `blocks_per_grid` should come with a min
