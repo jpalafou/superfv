@@ -1,20 +1,15 @@
-import numpy as np
 import pytest
 
 from superfv.slope_limiting import compute_dmp
-from superfv.tools.device_management import CUPY_AVAILABLE, xp
+from superfv.tools.device_management import xp
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("include_corners", [False, True])
-@pytest.mark.parametrize("cupy", [False, True])
-def test_compute_dmp(dims, include_corners, cupy):
+def test_compute_dmp(dims, include_corners):
     """
     Test that compute_dmp returns the discrete maximum principle in all dimensions.
     """
-    if cupy and not CUPY_AVAILABLE:
-        pytest.skip("CuPy is not available")
-
     N = 64
 
     shape = (
@@ -23,15 +18,11 @@ def test_compute_dmp(dims, include_corners, cupy):
         N if "y" in dims else 1,
         N if "z" in dims else 1,
     )
-    arr = xp.random.rand(*shape) if cupy else np.random.rand(*shape)
-    M = xp.empty(shape) if cupy else np.empty(shape)
-    m = xp.empty(shape) if cupy else np.empty(shape)
+    arr = xp.random.rand(*shape)
+    M = xp.empty(shape)
+    m = xp.empty(shape)
 
     modified = compute_dmp(arr, M, m, tuple(dims), include_corners)
 
-    if cupy:
-        assert xp.all(xp.less_equal(m, arr)[modified])
-        assert xp.all(xp.greater_equal(M, arr)[modified])
-    else:
-        assert np.all(np.less_equal(m, arr)[modified])
-        assert np.all(np.greater_equal(M, arr)[modified])
+    assert xp.all(xp.less_equal(m, arr)[modified])
+    assert xp.all(xp.greater_equal(M, arr)[modified])

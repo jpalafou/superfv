@@ -9,12 +9,6 @@ from superfv.slope_limiting.muscl import (
 )
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayManager, xp
 
-if CUPY_AVAILABLE:
-    from superfv.slope_limiting.muscl import (
-        MUSCL_slopes_kernel_helper,
-        PP2D_slopes_kernel_helper,
-    )
-
 
 @pytest.mark.parametrize("face_dim", ["x", "y", "z"])
 @pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
@@ -22,7 +16,6 @@ if CUPY_AVAILABLE:
 @pytest.mark.parametrize("SED", [False, True])
 @pytest.mark.parametrize("check_uniformity", [False, True])
 @pytest.mark.parametrize("mode", ["uniform", "ramp"])
-@pytest.mark.parametrize("cupy", [False, True])
 def test_field(
     face_dim: str,
     active_dims: str,
@@ -30,13 +23,10 @@ def test_field(
     SED: bool,
     check_uniformity: bool,
     mode: str,
-    cupy: bool,
 ):
     """
     Test limited slope computation on a uniform field.
     """
-    if cupy and not CUPY_AVAILABLE:
-        pytest.skip("CuPy is not available")
     if face_dim not in active_dims:
         pytest.skip("face_dim must be in active_dims")
     if limiter == "PP2D" and (len(active_dims) != 2 or face_dim != active_dims[0]):
@@ -52,7 +42,7 @@ def test_field(
 
     N = 16
     array_manager = ArrayManager()
-    if cupy:
+    if CUPY_AVAILABLE:
         array_manager.transfer_to("gpu")
     mesh = UniformFVMesh(
         nx=N if "x" in active_dims else 1,
@@ -62,10 +52,10 @@ def test_field(
         array_manager=array_manager,
     )
 
-    u = xp.empty((1, *mesh.shape)) if cupy else np.empty((1, *mesh.shape))
-    alpha = xp.empty((1, *mesh.shape, 1)) if cupy else np.empty((1, *mesh.shape, 1))
-    dux = xp.empty((1, *mesh.shape, 1)) if cupy else np.empty((1, *mesh.shape, 1))
-    duy = xp.empty((1, *mesh.shape, 1)) if cupy else np.empty((1, *mesh.shape, 1))
+    u = xp.empty((1, *mesh.shape))
+    alpha = xp.empty((1, *mesh.shape))
+    dux = xp.empty((1, *mesh.shape))
+    duy = xp.empty((1, *mesh.shape))
 
     # fill u with data
     if mode == "uniform":
@@ -81,30 +71,13 @@ def test_field(
 
     # compute limited slopes
     if limiter == "PP2D":
-        if cupy:
-            modified = PP2D_slopes_kernel_helper(
-                u,
-                alpha[..., 0],
-                dux[..., 0],
-                duy[..., 0],
-                active_dims[0],
-                active_dims[1],
-                1e-20,
-                SED,
-            )
-        else:
-            modified = compute_PP2D_slopes(u, alpha, dux, duy, active_dims, config)
+        modified = compute_PP2D_slopes(u, alpha, dux, duy, active_dims, config)
 
         dux[...] = dux / (1 / N)
         duy[...] = duy / (1 / N)
 
     else:
-        if cupy:
-            modified = MUSCL_slopes_kernel_helper(
-                u, alpha[..., 0], dux[..., 0], face_dim, limiter, SED
-            )
-        else:
-            modified = compute_MUSCL_slopes(u, alpha, dux, face_dim, limiter)
+        modified = compute_MUSCL_slopes(u, alpha, dux, face_dim, config)
         dux[...] = dux / (1 / N)
 
     # check that the slopes are correct

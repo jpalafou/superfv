@@ -1,4 +1,3 @@
-import numpy as np
 import pytest
 
 from superfv.stencils import transverse_integration
@@ -8,7 +7,7 @@ from superfv.stencils.conservative_interpolation import (
     left_right,
 )
 from superfv.sweep import stencil_sweep
-from superfv.tools.device_management import CUPY_AVAILABLE, xp
+from superfv.tools.device_management import xp
 from superfv.tools.norms import linf_norm
 
 
@@ -19,10 +18,7 @@ from superfv.tools.norms import linf_norm
     "stencil", ["ci:center", "ci:left_right", "ci:gauss_legendre", "transverse"]
 )
 @pytest.mark.parametrize("ninterps", [1, 2])
-@pytest.mark.parametrize("cupy", [False, True])
-def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps, cupy):
-    if cupy and not CUPY_AVAILABLE:
-        pytest.skip("CuPy is not available")
+def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps):
     if interp_dim not in active_dims:
         pytest.skip("Interpolation dimension must be among active dimensions")
 
@@ -46,17 +42,11 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps, cu
         case _:
             raise ValueError(f"Unknown stencil: {stencil}")
     nouterps, _ = weights.shape
-    if cupy:
-        weights = xp.asarray(weights)
+    weights = xp.asarray(weights)
 
-    u = xp.ones(shape + (ninterps,)) if cupy else np.ones(shape + (ninterps,))
-    uj = (
-        xp.empty(shape + (ninterps * nouterps,))
-        if cupy
-        else np.empty(shape + (ninterps * nouterps,))
-    )
+    u = xp.ones(shape + (ninterps,))
+    uj = xp.empty(shape + (ninterps * nouterps,))
 
     modified = stencil_sweep(u, weights, uj, interp_dim)
 
-    err = (xp.asnumpy(uj) if cupy else uj) - 1.0
-    assert linf_norm(err[modified]) < 1e-15
+    assert linf_norm(uj[modified] - 1.0) < 1e-15

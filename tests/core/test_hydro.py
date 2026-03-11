@@ -43,25 +43,21 @@ def euler_slicer():
 
 @pytest.mark.parametrize("trial", range(10))
 @pytest.mark.parametrize("gamma", [1.4, 5 / 3])
-@pytest.mark.parametrize("cupy", [False, True])
-def test_primitive_to_conservative_invertability(trial, gamma, cupy, euler_slicer):
+def test_primitive_to_conservative_invertability(trial, gamma, euler_slicer):
     """
     Test that the primitive_to_conservative and conservative_to_primitive functions
     are inverses of each other.
     """
-    if cupy and not CUPY_AVAILABLE:
-        pytest.skip("CuPy is not available")
-
     idx = euler_slicer
     N = 64
 
-    W = xp.empty((8, N, N, N)) if cupy else np.empty((8, N, N, N))
-    W[...] = xp.random.rand(*W.shape) if cupy else np.random.rand(*W.shape)
+    W = xp.empty((8, N, N, N))
+    W[...] = xp.random.rand(*W.shape)
     W[idx("rho")] += 1.0
     W[idx("P")] += 1.0
 
     # convert to conservative and back to primitive
-    if cupy:
+    if CUPY_AVAILABLE:
         prim_to_cons_elementwise_kernel = make_prim_to_cons_elementwise_kernel(3)
         cons_to_prim_elementwise_kernel = make_cons_to_prim_elementwise_kernel(3)
 
@@ -110,25 +106,21 @@ def test_primitive_to_conservative_invertability(trial, gamma, cupy, euler_slice
 
 @pytest.mark.parametrize("trial", range(10))
 @pytest.mark.parametrize("gamma", [1.4, 5 / 3])
-@pytest.mark.parametrize("cupy", [False, True])
-def test_conservative_to_primitive_invertability(trial, gamma, cupy, euler_slicer):
+def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
     """
     Test that the conservative_to_primitive and primitive_to_conservative functions
     are inverses of each other.
     """
-    if cupy and not CUPY_AVAILABLE:
-        pytest.skip("CuPy is not available")
-
     idx = euler_slicer
     N = 64
 
-    U = xp.empty((8, N, N, N)) if cupy else np.empty((8, N, N, N))
-    U[...] = xp.random.rand(*U.shape) if cupy else np.random.rand(*U.shape)
+    U = xp.empty((8, N, N, N))
+    U[...] = xp.random.rand(*U.shape)
     U[idx("rho")] += 1.0
     U[idx("E")] += 1.0
 
     # convert to conservative and back to primitive
-    if cupy:
+    if CUPY_AVAILABLE:
         cons_to_prim_elementwise_kernel = make_cons_to_prim_elementwise_kernel(3)
         prim_to_cons_elementwise_kernel = make_prim_to_cons_elementwise_kernel(3)
 

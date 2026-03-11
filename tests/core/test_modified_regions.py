@@ -31,10 +31,6 @@ from superfv.tools.device_management import CUPY_AVAILABLE
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
-    from superfv.slope_limiting.muscl import (
-        MUSCL_slopes_kernel_helper,
-        PP2D_slopes_kernel_helper,
-    )
     from superfv.slope_limiting.smooth_extrema_detection import (
         compute_alpha_kernel_helper,
     )
@@ -115,49 +111,71 @@ def test_compute_dmp(dims: str, include_corners: bool):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("limiter", ["minmod", "moncen"])
-@pytest.mark.parametrize("check_uniformity", [False, True])
-def test_compute_MUSCL_slopes(dims: str, limiter: str, check_uniformity: bool):
+@pytest.mark.parametrize("SED", [False, True])
+def test_compute_MUSCL_slopes(dims: str, SED: bool):
+    xp = configure_xp()
+
     face_dim = dims[0]
-    u, buffer, temp = sample_data(dims, nout=2, xp=np)
-    out = temp[..., :1]
-    alpha = temp[..., 1:2]
+    u, _, _ = sample_data(dims, nout=2, xp=xp)
+    slopes = xp.empty_like(u) * xp.nan
+    alpha = xp.empty_like(u) * xp.nan if SED else None
 
     config = musclConfig(
         shock_detection=False,
-        smooth_extrema_detection=False,
-        check_uniformity=check_uniformity,
-        limiter=limiter,
+        smooth_extrema_detection=SED,
+        check_uniformity=False,
+        limiter="minmod",
         physical_admissibility_detection=False,
     )
 
-    modified = compute_MUSCL_slopes(u, alpha, out, face_dim, config.limiter_config)
+    modified = compute_MUSCL_slopes(
+        u,
+        alpha,
+        slopes,
+        face_dim,
+        config,
+    )
 
-    assert not np.any(np.isnan(out[modified]))
-    # skipping all nan check since the stencils will leave some ghost cells non-nan
+    assert not xp.any(xp.isnan(slopes[modified]))
+    # skipping all nan check since the stencils will modify some ghost cells
+
+    if SED:
+        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
-@pytest.mark.parametrize("check_uniformity", [False, True])
-def test_compute_PP2D_slopes(dims: str, check_uniformity: bool):
-    u, buffer, temp = sample_data(dims, nout=3, xp=np)
-    Sx = temp[..., :1]
-    Sy = temp[..., 1:2]
-    alpha = temp[..., 2:3]
+@pytest.mark.parametrize("SED", [False, True])
+def test_compute_PP2D_slopes(dims: str, SED: bool):
+    xp = configure_xp()
+
+    u, _, _ = sample_data(dims, nout=3, xp=xp)
+    Sx = xp.empty_like(u) * xp.nan
+    Sy = xp.empty_like(u) * xp.nan
+    alpha = xp.empty_like(u) * xp.nan if SED else None
 
     config = musclConfig(
         shock_detection=False,
-        smooth_extrema_detection=False,
-        check_uniformity=check_uniformity,
+        smooth_extrema_detection=SED,
+        check_uniformity=False,
         limiter="PP2D",
         physical_admissibility_detection=False,
     )
 
-    modified = compute_PP2D_slopes(u, alpha, Sx, Sy, tuple(dims), config)
+    modified = compute_PP2D_slopes(
+        u,
+        alpha,
+        Sx,
+        Sy,
+        tuple(dims),
+        config,
+    )
 
-    assert not np.any(np.isnan(Sx[modified]))
-    assert not np.any(np.isnan(Sy[modified]))
-    # skipping all nan check since the 2D stencils will leave some ghost cells non-nan
+    assert not xp.any(xp.isnan(Sx[modified]))
+    assert not xp.any(xp.isnan(Sy[modified]))
+    # skipping all nan check since the stencils will modify some ghost cells
+
+    if SED:
+        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
@@ -245,14 +263,13 @@ def test_detect_NAD_violations(
 def test_detect_shocks(dims: str):
     xp = configure_xp()
     u, _, eta = sample_data(dims, nout=3, xp=xp)
-    has_shock = xp.full_like(eta[..., 0], -1, dtype=xp.int32)
+    has_shock = xp.full_like(eta[:1, ..., 0], -1, dtype=xp.int32)
 
     modified = detect_shocks(u, u, eta, has_shock, tuple(dims), 0.025)
 
     for i, dim in enumerate(["x", "y", "z"]):
         if dim in dims:
             assert not xp.any(xp.isnan(eta[..., i][modified]))
-            eta[..., i][modified] = xp.nan
             # skipping all nan check since the stencils will modify some ghost cells
 
     assert not xp.any(has_shock[modified] == -1)
@@ -285,69 +302,6 @@ def test_map_cells_values_to_face_values(dims: str):
     assert not xp.any(xp.isnan(out[modified]))
     out[modified] = xp.nan
     assert xp.all(xp.isnan(out))
-
-
-@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("SED", [False, True])
-def test_MUSCL_slopes_kernel_helper(dims: str, SED: bool):
-    xp = configure_xp()
-
-    if not hasattr(xp, "cuda"):
-        pytest.skip("MUSCL_slopes_kernel_helper is only implemented for CuPy")
-
-    face_dim = dims[0]
-    u, _, _ = sample_data(dims, nout=2, xp=xp)
-    slopes = xp.empty_like(u) * xp.nan
-    alpha = xp.empty_like(u) * xp.nan if SED else None
-
-    modified = MUSCL_slopes_kernel_helper(
-        u,
-        alpha,
-        slopes,
-        face_dim,
-        "minmod",
-        SED,
-    )
-
-    assert not xp.any(xp.isnan(slopes[modified]))
-    slopes[modified] = xp.nan
-    assert xp.all(xp.isnan(slopes))
-    if SED:
-        assert xp.all(xp.isnan(alpha))
-
-
-@pytest.mark.parametrize("dims", ["xy", "xz", "yz"])
-@pytest.mark.parametrize("SED", [False, True])
-def test_PP2D_slopes_kernel_helper(dims: str, SED: bool):
-    xp = configure_xp()
-
-    if not hasattr(xp, "cuda"):
-        pytest.skip("PP2D_slopes_kernel_helper is only implemented for CuPy")
-
-    u, _, _ = sample_data(dims, nout=3, xp=xp)
-    Sx = xp.empty_like(u) * xp.nan
-    Sy = xp.empty_like(u) * xp.nan
-    alpha = xp.empty_like(u) * xp.nan if SED else None
-
-    modified = PP2D_slopes_kernel_helper(
-        u,
-        alpha,
-        Sx,
-        Sy,
-        dims[0],
-        dims[1],
-        1e-20,
-        SED,
-    )
-
-    assert not xp.any(xp.isnan(Sx[modified]))
-    assert not xp.any(xp.isnan(Sy[modified]))
-    Sx[modified] = xp.nan
-    Sy[modified] = xp.nan
-    assert xp.all(xp.isnan(Sx))
-    assert xp.all(xp.isnan(Sy))
-    if SED:
-        assert xp.all(xp.isnan(alpha))
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])

@@ -212,7 +212,9 @@ if CUPY_AVAILABLE:
                         eta[i] = fmax(eta_o, eta_e);
 
                         // set to 1 if eta exceeds threshold
-                        if (!has_shock[ixyz] && eta[i] > eta_threshold) has_shock[ixyz] = 1;
+                        if (!has_shock[ixyz] && eta[i] > eta_threshold) {
+                            has_shock[ixyz] = 1;
+                        }
                     }
                 }
             }
@@ -276,9 +278,8 @@ if CUPY_AVAILABLE:
         )
 
         inner_slice = merge_slices(
-            crop(0, (None, None), ndim=4),
-            crop(1, (2, -2), ndim=4) if nx > 1 else crop(1, (None, None), ndim=4),
-            crop(2, (2, -2), ndim=4) if ny > 1 else crop(2, (None, None), ndim=4),
-            crop(3, (2, -2), ndim=4) if nz > 1 else crop(3, (None, None), ndim=4),
+            crop(1, (2, -2) if nx > 1 else (None, None), ndim=4),
+            crop(2, (2, -2) if ny > 1 else (None, None), ndim=4),
+            crop(3, (2, -2) if nz > 1 else (None, None), ndim=4),
         )
         return inner_slice
