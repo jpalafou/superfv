@@ -365,7 +365,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             fv_solver.stepper_timer.start("detect_troubles:PAD")
 
             detect_PAD_violations(
-                np,
                 wnew,
                 cast(ArrayLike, PAD_bounds),
                 PAD_atol,

@@ -1451,7 +1451,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
             if scheme.limiter_config.physical_admissibility_detection:
                 detect_PAD_violations(
-                    xp,
                     _w_,
                     self.arrays["PAD_bounds"],
                     scheme.limiter_config.PAD_atol,
@@ -1831,7 +1830,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
                 # check Mj and mj for PAD violations
                 detect_PAD_violations(
-                    xp,
                     Mj,
                     PAD_bounds,
                     PAD_atol,
@@ -2223,7 +2221,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         any_violations = xp.zeros_like(unew[:1, ...], dtype=np.int32)
 
         detect_PAD_violations(
-            xp,
             wnew,
             scheme.limiter_config.PAD_bounds,
             scheme.limiter_config.PAD_atol,

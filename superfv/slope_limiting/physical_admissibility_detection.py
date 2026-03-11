@@ -1,11 +1,10 @@
-from types import ModuleType
+import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 
 
 def detect_PAD_violations(
-    xp: ModuleType,
     wj: ArrayLike,
     physical_bounds: ArrayLike,
     tol: float = 1e-15,
@@ -17,7 +16,6 @@ def detect_PAD_violations(
     Detects physical admissibility violations in the input array `wj`.
 
     Args:
-        xp: The array module to use (e.g., numpy or cupy).
         wj: The input array of shape (nvars, nx, ny, nz).
         physical_bounds: An array of shape (nvars, 2) containing the physical bounds
             for each variable.
@@ -28,7 +26,7 @@ def detect_PAD_violations(
         tol: A small tolerance value to determine if a violation has occurred. Default
             is 1e-15.
     """
-    if hasattr(xp, "cuda"):
+    if CUPY_AVAILABLE and isinstance(wj, cp.ndarray):
         PAD_kernel_helper(
             wj,
             physical_bounds,
@@ -45,9 +43,9 @@ def detect_PAD_violations(
     upper = physical_bounds[:, 1].reshape(-1, 1, 1, 1) + tol
 
     violation_amounts[...] = 0.0
-    xp.minimum(wj - lower, violation_amounts, out=violation_amounts)
-    xp.minimum(upper - wj, violation_amounts, out=violation_amounts)
-    xp.any(violation_amounts, axis=0, keepdims=True, out=cell_violated)
+    np.minimum(wj - lower, violation_amounts, out=violation_amounts)
+    np.minimum(upper - wj, violation_amounts, out=violation_amounts)
+    np.any(violation_amounts, axis=0, keepdims=True, out=cell_violated)
 
 
 if CUPY_AVAILABLE:
