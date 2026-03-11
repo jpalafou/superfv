@@ -1,21 +1,105 @@
 from dataclasses import dataclass, field
 from itertools import product
+from types import ModuleType
 from typing import Callable, Literal, Tuple
 
 import numpy as np
 
-from .fv import gauss_legendre_mesh
+from .stencils.conservative_interpolation import n_gauss_legendre_nodes
 from .tools.device_management import ArrayLike, ArrayManager, xp
 
 xyz_tup: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
 
 
-def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[np.ndarray, np.ndarray]:
-    unscaled_points, unscaled_weights = np.polynomial.legendre.leggauss(
-        -(-(p + 1) // 2)
+def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayLike]:
+    """
+    Compute Gauss-Legendre quadrature points and weights scaled to the interval
+    [-0.5, 0.5].
+
+    Args:
+        p: Polynomial degree of quadrature rule.
+
+    Returns:
+        x: Quadrature points, has shape (n,).
+        w: Quadrature weights, has shape (n,).
+    """
+    x, w = np.polynomial.legendre.leggauss(n_gauss_legendre_nodes(p))
+    return 0.5 * x, 0.5 * w
+
+
+def _gauss_legendre_quadrature(
+    xp: ModuleType, px: int, py: int, pz: int
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    """
+    Compute Gauss-Legendre quadrature points and weights for a finite volume with up to
+    three dimensions, where the quadrature points are scaled to the 3D unit cube
+    [-0.5, 0.5] x [-0.5, 0.5] x [-0.5, 0.5].
+
+    Args:
+        xp: `np` namespace.
+        px: Polynomial degree of quadrature rule in x dimension.
+        py: Polynomial degree of quadrature rule in y dimension.
+        pz: Polynomial degree of quadrature rule in z dimension.
+
+    Returns:
+        xp, yp, zp: Quadrature points in x, y, and z dimensions. Each has shape
+            (n_quadrature), where `n_quadrature` is the total number of quadrature
+            points flattened across the three dimensions.
+        w: Weights for the quadrature points, has shape (n_quadrature,).
+    """
+    x_pts, x_wts = _scaled_gauss_legendre_points_and_weights(px)
+    y_pts, y_wts = _scaled_gauss_legendre_points_and_weights(py)
+    z_pts, z_wts = _scaled_gauss_legendre_points_and_weights(pz)
+    Xp, Yp, Zp = np.meshgrid(x_pts, y_pts, z_pts, indexing="ij")
+    Xw, Yw, Zw = np.meshgrid(x_wts, y_wts, z_wts, indexing="ij")
+    Xp_flattened = Xp.flatten()
+    Yp_flattened = Yp.flatten()
+    Zp_flattened = Zp.flatten()
+    W_flattened = (Xw * Yw * Zw).flatten()
+    return (
+        xp.asarray(Xp_flattened),
+        xp.asarray(Yp_flattened),
+        xp.asarray(Zp_flattened),
+        xp.asarray(W_flattened),
     )
-    scaling = np.sum(unscaled_weights)
-    return unscaled_points / scaling, unscaled_weights / scaling
+
+
+def _gauss_legendre_mesh(
+    xp: ModuleType,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    h: Tuple[float, float, float],
+    p: Tuple[int, int, int] = (0, 0, 0),
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    """
+    Compute Gauss-Legendre quadrature points and weights for a finite volume mesh.
+
+    Args:
+        xp: `np` namespace.
+        x: x-coordinates, has shape (nx, ny, nz).
+        y: y-coordinates, has shape (nx, ny, nz).
+        z: z-coordinates, has shape (nx, ny, nz).
+        h: Mesh spacings (hx, hy, hz).
+        p: Polynomial degree of quadrature rule in each dimension (px, py, pz).
+
+    Returns:
+        xp, yp, zp: Quadrature points in x, y, and z dimensions. Each has shape
+            (nx, ny, nz, n_quadrature), where `n_quadrature` is the total number of
+            quadrature points flattened across the three dimensions.
+        w: Weights for the quadrature points, has shape (1, 1, 1, n_quadrature).
+    """
+    hx, hy, hz = h
+    px, py, pz = p
+    xgl, ygl, zgl, wgl = _gauss_legendre_quadrature(xp, px, py, pz)
+
+    # Compute the evaluation points for the quadrature rule
+    na = np.newaxis
+    xgl_mesh = x[..., na] + xgl[na, na, na, :] * hx
+    ygl_mesh = y[..., na] + ygl[na, na, na, :] * hy
+    zgl_mesh = z[..., na] + zgl[na, na, na, :] * hz
+
+    return xgl_mesh, ygl_mesh, zgl_mesh, wgl
 
 
 def uniform_3D_mesh(
@@ -311,18 +395,18 @@ class UniformFVMesh:
         X, Y, Z = self.get_cell_centers(mesh_region)
 
         if cell_region == "interior":
-            Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, pz))
+            Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, pz))
         else:
             dim, pos = cell_region[0], cell_region[1]
             match dim:
                 case "x":
-                    Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (0, py, pz))
+                    Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (0, py, pz))
                     Xp = Xp + (-0.5 * self.hx if pos == "l" else 0.5 * self.hx)
                 case "y":
-                    Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (px, 0, pz))
+                    Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (px, 0, pz))
                     Yp = Yp + (-0.5 * self.hy if pos == "l" else 0.5 * self.hy)
                 case "z":
-                    Xp, Yp, Zp, w = gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, 0))
+                    Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, 0))
                     Zp = Zp + (-0.5 * self.hz if pos == "l" else 0.5 * self.hz)
 
         self.array_manager.add(keys[0], Xp)

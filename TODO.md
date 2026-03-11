@@ -2,13 +2,13 @@
 - [x] add: multistencilweights arg to interpolation kernel
 - [ ] rm: gtol, make rtol and atol scalars again
 - [ ] simplify Riemann solver init
-- [ ] remove `xp` backend
+- [x] remove `xp` backend
   - [x] shock detection
   - [x] ZS limiter
   - [x] MUSCL slopes
   - [x] detect NAD violations
-  - [ ] fv interpolation functions
-  - [ ] perform_GaussLegendre_quadrature
+  - [x] fv interpolation functions
+  - [x] perform_GaussLegendre_quadrature
   - [x] stencil.py
 - [ ] use __restrict__ and const for all RawKernels where necessary
 - [ ] use full 5D arrays for ZS limiter, stop copying to flat. it's the only kernel that does this
