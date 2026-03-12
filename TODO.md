@@ -1,5 +1,4 @@
-- [ ] refactor buffer size
+- [x] refactor buffer size
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
-- [x] what exactly is the point of PAD_atol

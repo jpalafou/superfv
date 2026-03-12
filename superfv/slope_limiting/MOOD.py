@@ -15,7 +15,6 @@ from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.physical_admissibility_detection import (
     detect_PAD_violations,
 )
-from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
@@ -213,11 +212,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
         A tuple containing:
         - The number of revisable troubled cells detected.
         - The total number of troubled cells detected, including non-revisable ones.
-
-    Notes:
-        - The required buffer shape depends on whether smooth extrema detection (SED)
-            is enabled and on the number of active dimensions:
-            - SED is not enabled: (nvars, nx, ny, nz, 2)
     """
     # gather solver parameters
     idx = fv_solver.variable_index_map
@@ -257,7 +251,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     dmp_M = arrays["_M_"]
     dmp_m = arrays["_m_"]
     alpha = arrays["_alpha_"]
-    buffer = arrays["_buffer_"]
     troubles = arrays["_troubles_"]
     troubles_temp = arrays["_troubles2_"]
     cascade_idx = arrays["_cascade_idx_"]
@@ -343,7 +336,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 out=NAD_violations,
                 M=dmp_M,
                 m=dmp_m,
-                buffer=buffer,
             )
 
             # compute smooth extrema
@@ -402,7 +394,6 @@ def detect_NAD_violations(
     out: np.ndarray,
     M: np.ndarray,
     m: np.ndarray,
-    buffer: np.ndarray,
 ) -> Tuple[slice, ...]:
     """
     Compute the numerical admissibility detection (NAD) violations, which violate the
@@ -435,21 +426,17 @@ def detect_NAD_violations(
             Negative values in `out` indicate violations of the NAD criterion.
         M: Array to store the local maxima. Has shape (nvars, nx, ny, nz).
         m: Array to store the local minima. Has shape (nvars, nx, ny, nz).
-        buffer: Buffer array with shape (nvars, nx, ny, nz, >=6) to store intermediate
-            values.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
-    check_buffer_slots(buffer, required=6)
-    dmp_range = buffer[..., 0]
-    delta_arr = buffer[..., 1]
-    lower_bound = buffer[..., 2]
-    upper_bound = buffer[..., 3]
-    lower_violations = buffer[..., 4]
-    upper_violations = buffer[..., 5]
-
-    delta_arr[...] = 0.0
+    # allocate arrays
+    dmp_range = np.empty_like(u_old)
+    lower_bound = np.empty_like(u_old)
+    upper_bound = np.empty_like(u_old)
+    lower_violations = np.empty_like(u_old)
+    upper_violations = np.empty_like(u_old)
+    delta_arr = np.zeros_like(u_old)
 
     # compute discrete maximum principle (dmp)
     modified = compute_dmp(u_old, M, m, active_dims, include_corners)
@@ -591,7 +578,7 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
     _troubles_ = arrays["_troubles_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
     _blended_cascade_idx_ = arrays["_blended_cascade_idx_"]  # float64 dtype
-    _troubles_buffer_ = arrays["_buffer_"][:1, ..., 1:]
+    _theta_ = arrays["_buffer1_"][..., 0]
 
     # assuming `troubles` has just been updated, update the cascade index arrays
     xp.minimum(_cascade_idx_ + _troubles_, 1, out=_cascade_idx_)
@@ -603,7 +590,7 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
             xp,
             _blended_cascade_idx_,
             active_dims,
-            buffer=_troubles_buffer_,
+            buffer=_theta_,
         )
 
     # broadcast cascade index to each face
@@ -655,7 +642,7 @@ def blend_troubled_cells(
     troubles: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     *,
-    buffer: ArrayLike,
+    theta: ArrayLike,
     out: Optional[ArrayLike] = None,
 ) -> Tuple[slice, ...]:
     """
@@ -666,8 +653,7 @@ def blend_troubled_cells(
         troubles: Array of troubled cell indicators. Has shape (1, nx, ny, nz). Must
             have float dtype.
         active_dims: Active dimensions of the problem as a tuple of "x", "y", "z".
-        buffer: Buffer array with shape (1, nx, ny, nz, >= 1) to store intermediate
-            values.
+        theta: Buffer array with shape (1, nx, ny, nz) to store intermediate values.
         out: Output array to store the blended troubled cell indicators. If None,
             the `troubles` array will be modified in place. Has shape
             (1, nx, ny, nz).
@@ -676,10 +662,6 @@ def blend_troubled_cells(
         Slice objects indicating the modified regions in the troubles array.
     """
     ndim = len(active_dims)
-
-    # allocate arrays
-    check_buffer_slots(buffer, required=1)
-    theta = buffer[..., 0]
 
     # initialize theta
     theta[...] = troubles

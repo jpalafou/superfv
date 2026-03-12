@@ -7,8 +7,6 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Uni
 import numpy as np
 import pandas as pd
 
-from superfv.tools.buffer import check_buffer_slots
-
 from .axes import DIM_TO_AXIS
 from .boundary_conditions import BCs, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
@@ -992,10 +990,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         n_lines = self._ninterps_per_face(base_scheme, "lines")
         n_nodes = self._ninterps_per_face(base_scheme, "nodes")
 
-        # subject to change
-        buffer_size = self._compute_buffer_size(base_scheme)
-        arrays.add("_buffer_", np.empty((nvars, _nx_, _ny_, _nz_, buffer_size)))
-
         # define cell-centered/cell-averaged arrays
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
         arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
@@ -1034,7 +1028,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         self.flux_names = {"x": "F", "y": "G", "z": "H"}  # helpful
 
-        # define interpolation arrays
+        # define buffer and interpolation arrays
+        arrays.add("_buffer1_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         if ndim >= 2:
             if gauss_legendre:
                 arrays.add("_faces_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
@@ -1143,65 +1138,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if getattr(self.base_scheme.limiter_config, "adaptive_dt", False):
             self._dt_criterion = self.adaptive_dt_criterion
             self._compute_revised_dt = self.adaptive_dt_revision
-
-    def _compute_buffer_size(
-        self, scheme: InterpolationScheme, check_MOOD: bool = True
-    ) -> int:
-        """
-        Compute the required buffer size, which is the length along the fifth axis of
-        the "_buffer_", for the given interpolation scheme.
-
-        Args:
-            scheme: Interpolation scheme.
-            check_MOOD: Whether to check fallback schemes in MOOD configuration.
-
-        Returns:
-            Required buffer size.
-        """
-        ndim = self.mesh.ndim
-
-        # buffer cost of interpolation nodes
-        interpolation_buffer_cost = 2 + 2 * self._ninterps_per_face(scheme, "lines")
-
-        # buffer cost of `update_workspaces` function
-        if getattr(scheme, "lazy_primitives", "none") == "adaptive":
-            adaptive_primitive_cost = {1: 7, 2: 9, 3: 10}[ndim]
-            update_workspaces_buffer_cost = max(
-                interpolation_buffer_cost, adaptive_primitive_cost
-            )
-        else:
-            update_workspaces_buffer_cost = interpolation_buffer_cost
-
-        # buffer cost of slope-limiting functions
-        if isinstance(scheme.limiter_config, ZhangShuConfig):
-            limiting_buffer_cost = 3
-        elif isinstance(scheme, musclInterpolationScheme):
-            limiting_buffer_cost = 4
-            if scheme.limiter_config.limiter == "PP2D":
-                limiting_buffer_cost += 4
-            else:
-                limiting_buffer_cost += 5
-        elif check_MOOD and self.MOOD:
-            limiting_buffer_cost = 8
-        else:
-            limiting_buffer_cost = 0
-
-        # add SED buffer cost if applicable
-        if getattr(scheme.limiter_config, "smooth_extrema_detection", False):
-            limiting_buffer_cost += {1: 10, 2: 12, 3: 13}[ndim]
-
-        # buffer size requirement before checking fallback schemes
-        total_buffer_cost = max(update_workspaces_buffer_cost, limiting_buffer_cost)
-
-        # check fallback schemes in MOOD configuration
-        if check_MOOD:
-            for fallback_scheme in self.MOOD_config.cascade[1:]:
-                fallback_buffer_cost = self._compute_buffer_size(
-                    fallback_scheme, check_MOOD=False
-                )
-                total_buffer_cost = max(total_buffer_cost, fallback_buffer_cost)
-
-        return total_buffer_cost
 
     def _init_timer(self, sync_timing: bool):
         self.sync_timing = sync_timing
@@ -2597,14 +2533,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limit_primitives: Whether to limit the primitive variables.
             hancock: Whether to use the MUSCL-Hancock method.
             dt: The time step size (required if hancock is True).
-
-        Notes:
-            - "_buffer_" array has different shape requirements depending on whether
-            SED is used and the number (length) of active dimensions:
-                - without SED: (nvars, nx, ny, nz, >=4)
-                - with SED, 1D: (nvars, nx, ny, nz, >=11)
-                - with SED, 2D: (nvars, nx, ny, nz, >=13)
-                - with SED, 3D: (nvars, nx, ny, nz, >=14)
         """
         mesh = self.mesh
         active_dims = self.active_dims
@@ -2616,9 +2544,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         wcc = arrays["_w_"] if limit_primitives else arrays["_u_"]
         alpha = arrays["_alpha_"]
-
-        check_buffer_slots(arrays["_buffer_"], required=4)
-        wcc_for_nodes = arrays["_buffer_"][..., 3]
+        wcc_for_nodes = arrays["_buffer1_"][..., 0]
 
         # compute smooth extrema
         if scheme.limiter_config.smooth_extrema_detection:

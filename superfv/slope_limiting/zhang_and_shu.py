@@ -7,7 +7,6 @@ import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import LimiterConfig
-from superfv.tools.buffer import check_buffer_slots
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 
 if TYPE_CHECKING:
@@ -186,18 +185,16 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     step_log = fv_solver.step_log  # gets mutated
 
     # allocate arrays
-    check_buffer_slots(arrays["_buffer_"], required=3)
     theta = arrays["_theta_"][interior][..., 0]
-    buffer = arrays["_buffer_"]
 
     if nvars < 4:
         raise ValueError(
             "Zhang-Shu limiter logging requires at least 4 variable slots."
         )
 
-    one_minus_theta = buffer[interior][..., 0]
-    mean_one_minus_theta = buffer[interior][0, ..., 2]
-    max_one_minus_theta = buffer[interior][1, ..., 2]
+    one_minus_theta = xp.empty_like(theta)
+    mean_one_minus_theta = xp.empty_like(theta[0, ...])
+    max_one_minus_theta = xp.empty_like(theta[0, ...])
 
     # track scalar quantities
     one_minus_theta[...] = 1 - theta
