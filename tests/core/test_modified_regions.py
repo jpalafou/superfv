@@ -11,11 +11,7 @@ from superfv.slope_limiting.MOOD import (
     detect_NAD_violations,
     map_cells_values_to_face_values,
 )
-from superfv.slope_limiting.muscl import (
-    compute_MUSCL_slopes,
-    compute_PP2D_slopes,
-    musclConfig,
-)
+from superfv.slope_limiting.muscl import compute_MUSCL_slopes, compute_PP2D_slopes
 from superfv.slope_limiting.shock_detection import detect_shocks
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
 from superfv.slope_limiting.zhang_and_shu import ZhangShuConfig, compute_theta
@@ -101,8 +97,9 @@ def test_compute_dmp(dims: str, include_corners: bool):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
+@pytest.mark.parametrize("limiter", [0, 1, 2])
 @pytest.mark.parametrize("SED", [False, True])
-def test_compute_MUSCL_slopes(dims: str, SED: bool):
+def test_compute_MUSCL_slopes(dims: str, limiter: int, SED: bool):
     xp = configure_xp()
 
     face_dim = dims[0]
@@ -110,20 +107,13 @@ def test_compute_MUSCL_slopes(dims: str, SED: bool):
     alpha = xp.zeros_like(u)
     slopes = xp.full_like(u, xp.nan)
 
-    config = musclConfig(
-        shock_detection=False,
-        smooth_extrema_detection=SED,
-        check_uniformity=False,
-        limiter="minmod",
-        physical_admissibility_detection=False,
-    )
-
     modified = compute_MUSCL_slopes(
         u,
         alpha,
         slopes,
         face_dim,
-        config,
+        {0: None, 1: "minmod", 2: "minmod"}[limiter],
+        SED=SED,
     )
 
     assert not xp.any(xp.isnan(slopes[modified]))
@@ -141,21 +131,13 @@ def test_compute_PP2D_slopes(dims: str, SED: bool):
     Sx = xp.full_like(u, xp.nan)
     Sy = xp.full_like(u, xp.nan)
 
-    config = musclConfig(
-        shock_detection=False,
-        smooth_extrema_detection=SED,
-        check_uniformity=False,
-        limiter="PP2D",
-        physical_admissibility_detection=False,
-    )
-
     modified = compute_PP2D_slopes(
         u,
         alpha,
         Sx,
         Sy,
         tuple(dims),
-        config,
+        SED=SED,
     )
 
     assert not xp.any(xp.isnan(Sx[modified]))

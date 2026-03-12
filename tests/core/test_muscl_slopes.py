@@ -2,11 +2,7 @@ import numpy as np
 import pytest
 
 from superfv.mesh import UniformFVMesh
-from superfv.slope_limiting.muscl import (
-    compute_MUSCL_slopes,
-    compute_PP2D_slopes,
-    musclConfig,
-)
+from superfv.slope_limiting.muscl import compute_MUSCL_slopes, compute_PP2D_slopes
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayManager, xp
 
 
@@ -31,14 +27,6 @@ def test_field(
         pytest.skip("face_dim must be in active_dims")
     if limiter == "PP2D" and (len(active_dims) != 2 or face_dim != active_dims[0]):
         pytest.skip("PP2D limiter is only applicable in 2D")
-
-    config = musclConfig(
-        shock_detection=False,
-        smooth_extrema_detection=SED,
-        check_uniformity=check_uniformity,
-        physical_admissibility_detection=False,
-        limiter=limiter,
-    )
 
     N = 16
     array_manager = ArrayManager()
@@ -71,13 +59,13 @@ def test_field(
 
     # compute limited slopes
     if limiter == "PP2D":
-        modified = compute_PP2D_slopes(u, alpha, dux, duy, active_dims, config)
+        modified = compute_PP2D_slopes(u, alpha, dux, duy, active_dims, SED=SED)
 
         dux[...] = dux / (1 / N)
         duy[...] = duy / (1 / N)
 
     else:
-        modified = compute_MUSCL_slopes(u, alpha, dux, face_dim, config)
+        modified = compute_MUSCL_slopes(u, alpha, dux, face_dim, limiter, SED=SED)
         dux[...] = dux / (1 / N)
 
     # check that the slopes are correct

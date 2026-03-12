@@ -95,7 +95,8 @@ def compute_MUSCL_slopes(
     alpha: ArrayLike,
     out: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    config: musclConfig,
+    limiter: Optional[Literal["minmod", "moncen"]] = None,
+    SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
     Compute limited slopes and write them to the `out` array.
@@ -108,18 +109,17 @@ def compute_MUSCL_slopes(
         out: Output array to which the limited slopes are written. Has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
-        config: The MUSCL limiter configuration to use.
+        limiter: The slope limiter to use. Can be "minmod", "moncen", or None for no
+            limiting.
+        SED: Whether to apply smooth extrema detection (SED). If True, the limited
+            slopes are relaxed to the unlimited centered difference slopes in smooth
+            extrema regions where alpha >= 1.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
-        return MUSCL_slopes_kernel_helper(
-            u, alpha, out, face_dim, config.limiter, config.smooth_extrema_detection
-        )
-
-    limiter = config.limiter
-    SED = config.smooth_extrema_detection
+        return MUSCL_slopes_kernel_helper(u, alpha, out, face_dim, limiter, SED)
 
     # define slices for left, center, and right nodes
     left = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
@@ -168,8 +168,8 @@ def compute_PP2D_slopes(
     Sx: ArrayLike,
     Sy: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    config: musclConfig,
     eps: float = 1e-20,
+    SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
     Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays.
@@ -184,8 +184,10 @@ def compute_PP2D_slopes(
         Sy: Output array to which the slopes in the direction of the second active dims
             are written. Has shape (nvars, nx, ny, nz).
         active_dims: Tuple containing two active dims ("x", "y", or "z").
-        config: The MUSCL limiter configuration to use.
         eps: Tolerance value.
+        SED: Whether to apply smooth extrema detection (SED). If True, the limited
+            slopes are relaxed to the unlimited centered difference slopes in smooth
+            extrema regions where alpha >= 1.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
@@ -202,13 +204,11 @@ def compute_PP2D_slopes(
             active_dims[0],
             active_dims[1],
             eps,
-            config.smooth_extrema_detection,
+            SED,
         )
 
     if len(active_dims) != 2:
         raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
-    if config.limiter != "PP2D":
-        raise ValueError("MUSCL limiter must be set to 'PP2D' to compute PP2D slopes.")
 
     axis1 = DIM_TO_AXIS[active_dims[0]]
     axis2 = DIM_TO_AXIS[active_dims[1]]
@@ -249,7 +249,7 @@ def compute_PP2D_slopes(
     theta = np.minimum(V, 1)
 
     # apply SED if requested
-    if config.smooth_extrema_detection:
+    if SED:
         if alpha is None:
             raise ValueError("alpha array must be provided when SED is True.")
         theta[...] = np.where(alpha < 1, theta, 1.0)

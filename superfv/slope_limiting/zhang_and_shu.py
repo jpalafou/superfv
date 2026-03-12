@@ -82,7 +82,7 @@ def compute_theta(
     Mj: ArrayLike,
     mj: ArrayLike,
     theta: ArrayLike,
-    config: ZhangShuConfig,
+    tol: float = 1e-16,
 ):
     """
     Compute Zhang and Shu's a priori slope limiting parameter and write it to `theta`.
@@ -97,10 +97,8 @@ def compute_theta(
         mj: Array to which nodal minima are written. Has shape (nvars, nx, ny, nz).
         theta: Array to which the Zhang-Shu limiter is written. Has shape
             (nvars, nx, ny, nz).
-        config: Zhang-Shu limiter config.
+        tol: Tolerance to avoidi 0 in the denominator of the theta calculation.
     """
-    tol = config.theta_denom_tol
-
     if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
         compute_theta_kernel_helper(w, wj, M, m, Mj, mj, theta, tol)
         return

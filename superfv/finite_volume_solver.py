@@ -1714,6 +1714,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         mesh = self.mesh
         active_dims = self.active_dims
         include_corners = scheme.limiter_config.include_corners
+        tol = scheme.limiter_config.tol
         lim_slc = self.variable_index_map("limiting", keepdims=True)
 
         # define array references
@@ -1743,7 +1744,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wjall[..., slice(idx1, idx2)] = wj
 
         compute_dmp(w, M, m, active_dims, include_corners)
-        compute_theta(w, wjall, M, m, Mj, mj, theta[..., 0], scheme.limiter_config)
+        compute_theta(w, wjall, M, m, Mj, mj, theta[..., 0], tol)
 
         if scheme.limiter_config.smooth_extrema_detection:
             self.detect_smooth_extrema(w, scheme)
@@ -2649,7 +2650,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 dw1,
                 dw2,
                 active_dims,
-                scheme.limiter_config,
+                SED=scheme.limiter_config.smooth_extrema_detection,
             )
         else:
             for dim, slope_arr in slope_arrs.items():
@@ -2658,7 +2659,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     alpha,
                     slope_arr,
                     dim,
-                    scheme.limiter_config,
+                    scheme.limiter_config.limiter,
+                    SED=scheme.limiter_config.smooth_extrema_detection,
                 )
 
         # evolve the cell-center by 1/2 dt
