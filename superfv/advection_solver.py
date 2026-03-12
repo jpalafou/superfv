@@ -426,34 +426,29 @@ class AdvectionSolver(FiniteVolumeSolver):
         dim: Literal["x", "y", "z"],
         *,
         primitives: bool = True,
-    ) -> ArrayLike:
+    ):
         """
-        Jacobian-vector product for the primitive-variable quasilinear,
-        dimensionally-split system
-            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, (passives)]
+        Jacobian-vector product for the quasilinear, dimensionally-split system:
+            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, P, (passives)]
+        and write the result A @ vec to `self.arrays["_flux_jvp_"]`
 
         Args:
-            w: State array with shape (nvars, nx, ny, nz).
+            w: State array with shape (nvars, _nx_, _ny_, _nz_).
             vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
             dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
                 or "z".
-            primitives: Unused in advection, since the variables are always primitive.
-
-        Returns:
-            ArrayLike: The flux Jacobian-vector product A @ vec.
+            primitives: Ignored since the transformation between conservative and
+                primitive variables is trivial for the advection equation.
         """
-        xp = self.xp
         idx = self.variable_index_map
+        jvp = self.arrays["_flux_jvp_"]
 
         _rho_ = idx("rho")
         _v1_ = idx("v" + dim)
         _v_ = idx("v")
         _passives_ = idx("passives") if "passives" in idx else None
 
-        out = xp.empty_like(w)
-        out[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
+        jvp[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
         if _passives_ is not None:
-            out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
-        out[_v_] = 0
-
-        return out
+            jvp[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
+        jvp[_v_] = 0

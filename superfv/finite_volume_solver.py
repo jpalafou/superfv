@@ -1041,6 +1041,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             arrays.add("_midface_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
 
         # define slope-limiting arrays
+        arrays.add("_flux_jvp_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_M_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_m_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
@@ -1263,22 +1264,19 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         primitives: bool = True,
     ) -> ArrayLike:
         """
-        Jacobian-vector product for the primitive-variable quasilinear,
-        dimensionally-split system
-            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[primitive_var1, ...]
-        if `primitives=True`, or the conservative-variable quasilinear system
-            dU/dt + A(U; [dim]) dU/d[dim] = 0,  U=[conservative_var1, ...]
-        if `primitives=False`.
+        Jacobian-vector product for the quasilinear, dimensionally-split system
+        if `primitives=True`:
+            dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, P, (passives)]
+        if `primitives=False`:
+            dU/dt + A(U; [dim]) dU/d[dim] = 0,  U=[rho, mx, my, mz, E, (rho * passives)]
+        and write the result A @ vec to `self.arrays["_flux_jvp_"]`
 
         Args:
-            w: State array with shape (nvars, nx, ny, nz).
+            w: State array with shape (nvars, _nx_, _ny_, _nz_).
             vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
             dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
                 or "z".
             primitives: Whether the state array `w` contains primitive variables.
-
-        Returns:
-            ArrayLike: The flux Jacobian-vector product A @ vec.
         """
         raise NotImplementedError(
             f"No `flux_jvp` method has been implemented in class {self.__class__.__name__}."
@@ -2543,6 +2541,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         slope_arrs = {dim: arrays[f"_{dim}slopes_"] for dim in active_dims}
 
         wcc = arrays["_w_"] if limit_primitives else arrays["_u_"]
+        jvp = arrays["_flux_jvp_"]
         alpha = arrays["_alpha_"]
         wcc_for_nodes = arrays["_buffer1_"][..., 0]
 
@@ -2584,8 +2583,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wcc_for_nodes[...] = wcc
             for dim, slope_arr in slope_arrs.items():
                 h = getattr(mesh, "h" + dim)
-                ds = self.flux_jvp(wcc, slope_arr, dim, primitives=limit_primitives)
-                wcc_for_nodes[...] -= ds * dt / 2 / h
+                self.flux_jvp(wcc, slope_arr, dim, primitives=limit_primitives)
+                wcc_for_nodes[...] -= jvp * dt / 2 / h
         else:
             wcc_for_nodes[...] = wcc
 

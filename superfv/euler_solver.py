@@ -693,33 +693,30 @@ class EulerSolver(FiniteVolumeSolver):
         dim: Literal["x", "y", "z"],
         *,
         primitives: bool = True,
-    ) -> ArrayLike:
+    ):
         """
-        Jacobian-vector product for the primitive-variable quasilinear,
-        dimensionally-split system
+        Jacobian-vector product for the quasilinear, dimensionally-split system
+        if `primitives=True`:
             dW/dt + A(W; [dim]) dW/d[dim] = 0,  W=[rho, vx, vy, vz, P, (passives)]
-        if `primitives=True`, or the conservative-variable quasilinear system
+        if `primitives=False`:
             dU/dt + A(U; [dim]) dU/d[dim] = 0,  U=[rho, mx, my, mz, E, (rho * passives)]
-        if `primitives=False`.
+        and write the result A @ vec to `self.arrays["_flux_jvp_"]`
 
         Args:
-            w: State array with shape (nvars, nx, ny, nz).
+            w: State array with shape (nvars, _nx_, _ny_, _nz_).
             vec: Vector to multiply with the flux Jacobian. Has shape (nvars,).
             dim: Dimension along which the flux Jacobian is computed. Can be "x", "y",
                 or "z".
             primitives: Whether the state array `w` contains primitive variables.
-
-        Returns:
-            ArrayLike: The flux Jacobian-vector product A @ vec.
         """
         if not primitives:
             raise NotImplementedError(
                 "This function doesn't support conservative variables at this moment."
             )
 
-        xp = self.xp
         idx = self.variable_index_map
         gamma = self.gamma
+        jvp = self.arrays["_flux_jvp_"]
 
         _rho_ = idx("rho")
         _v1_ = idx("v" + dim)
@@ -729,21 +726,18 @@ class EulerSolver(FiniteVolumeSolver):
         _P_ = idx("P")
         _passives_ = idx("passives") if "passives" in idx else None
 
-        out = xp.empty_like(w)
-        out[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
-        out[_vx_] = w[_v1_] * vec[_vx_]
-        out[_vy_] = w[_v1_] * vec[_vy_]
-        out[_vz_] = w[_v1_] * vec[_vz_]
-        out[_v1_] += (1 / w[_rho_]) * vec[_P_]
-        out[_P_] = (
-            self.iso_cs**2 * out[_rho_]
+        jvp[_rho_] = w[_v1_] * vec[_rho_] + w[_rho_] * vec[_v1_]
+        jvp[_vx_] = w[_v1_] * vec[_vx_]
+        jvp[_vy_] = w[_v1_] * vec[_vy_]
+        jvp[_vz_] = w[_v1_] * vec[_vz_]
+        jvp[_v1_] += (1 / w[_rho_]) * vec[_P_]
+        jvp[_P_] = (
+            self.iso_cs**2 * jvp[_rho_]
             if self.isothermal
             else gamma * w[_P_] * vec[_v1_] + w[_v1_] * vec[_P_]
         )
         if _passives_ is not None:
-            out[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
-
-        return out
+            jvp[_passives_] = w[_v1_] * vec[_passives_] + w[_passives_] * vec[_v1_]
 
     @MethodTimer(cat="update_workspaces:shock_detector")
     def shock_detector(self, scheme: InterpolationScheme, primitives: bool):

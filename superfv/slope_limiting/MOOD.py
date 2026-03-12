@@ -590,7 +590,7 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
             xp,
             _blended_cascade_idx_,
             active_dims,
-            buffer=_theta_,
+            theta=_theta_,
         )
 
     # broadcast cascade index to each face
