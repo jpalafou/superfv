@@ -34,7 +34,7 @@ if CUPY_AVAILABLE:
             const int nx,
             const int ny,
             const int nz,
-            const int ninterps,
+            const int ninterps
         ){
             // uj       shape (nvars, nx, ny, nz, ninterps)
             // weights  shape (ninterps)
@@ -48,7 +48,7 @@ if CUPY_AVAILABLE:
             for (long long i = tid; i < ntotal; i += stride) {
                 double result = 0.0;
                 for (int qj = 0; qj < ninterps; qj++) {
-                    long long j = ntotal * ninterps + qj;
+                    long long j = i * ntotal + qj;
                     result += weights[qj] * uj[j];
                 }
                 out[i] = result;
@@ -64,11 +64,11 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz, ninterps = uj.shape
 
-        if not weights.flags.c_contiguous or weights.shape == (ninterps,):
+        if not weights.flags.c_contiguous or weights.shape != (ninterps,):
             raise ValueError(
                 "Array `weights` must be a C-contiguous array of shape (ninterps,)."
             )
-        if not out.flags.c_contiguous or out.shape == uj.shape[:4]:
+        if not out.flags.c_contiguous or out.shape != uj.shape[:4]:
             raise ValueError(
                 "Array `out` must be a C-contiguous array of shape "
                 "(nvars, nx, ny, nz)."

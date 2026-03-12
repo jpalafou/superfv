@@ -544,6 +544,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # init face fallback
         self.face_fallback = face_fallback
+        if self.face_fallback and self.MOOD:
+            warnings.warn("Turning off `face_fallback` since MOOD is used.")
+            self.face_fallback = False
 
     def _init_PAD(
         self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
@@ -1389,6 +1392,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="update_workspaces:ucc")
     def interpolate_cell_centers(self, u: ArrayLike, p: int):
+        """
+        Interpolate cell centers of `u` using a degree `p` polynomial, writing the
+        result to `self.arrays["_ucc_"]`.
+        """
         xp = self.xp
         ndim = self.mesh.ndim
         dims = self.active_dims
@@ -1420,6 +1427,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="update_workspaces:wp")
     def integrate_fv_averages(self, wcc: ArrayLike, p: int):
+        """
+        Interpolate cell averages of `wcc` using a degree `p` polynomial, writing the
+        result to `self.arrays["_wp_"]`.
+        """
         ndim = self.mesh.ndim
         dims = self.active_dims
         arrays = self.arrays
@@ -1545,6 +1556,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_GaussLegendre_nodes(
         self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
     ):
+        """
+        Interpolate Gauss-Legendre nodes along the opposing faces of `u` using a
+        degree `p` polynomial, writing the result to `self.arrays["_{dim}_nodes_"]`.
+        """
         xp = self.xp
         ndim = self.mesh.ndim
         arrays = self.arrays
@@ -1586,6 +1601,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     def interpolate_face_centers(
         self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
     ):
+        """
+        Interpolate face-centered nodes on the opposing faces of `u` using a
+        degree `p` polynomial, writing the result to `self.arrays["_{dim}_nodes_"]`.
+        """
         xp = self.xp
         arrays = self.arrays
         ndim = self.mesh.ndim
@@ -1786,6 +1805,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="integrate_fluxes:GL")
     def integrate_GaussLegendre_nodes(self, dim: Literal["x", "y", "z"], p: int):
+        """
+        Compute a flux integral using a Gauss-Legendre quadrature with the nodes
+        given by
+            - `self.arrays["_f_nodes_"]` if `dim` is "x" and write the result to
+                `self.arrays["_F_"]`
+            - `self.arrays["_g_nodes_"]` if `dim` is "y" and write the result to
+                `self.arrays["_G_"]`
+            - `self.arrays["_h_nodes_"]` if `dim` is "z" and write the result to
+                `self.arrays["_H_"]`
+        """
         arrays = self.arrays
 
         weights = self._get_GaussLegendre_weights(p)
@@ -1810,6 +1839,15 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="integrate_fluxes:transverse")
     def integrate_tranverse_nodes(self, dim: Literal["x", "y", "z"], p: int):
+        """
+        Interpolate a flux integral from the face-centered nodes of
+            - `self.arrays["_f_nodes_"]` if `dim` is "x", writing the result to
+                `self.arrays["_F_"]`
+            - `self.arrays["_g_nodes_"]` if `dim` is "y", writing the result to
+                `self.arrays["_G_"]`
+            - `self.arrays["_h_nodes_"]` if `dim` is "z", writing the result to
+                `self.arrays["_H_"]`
+        """
         arrays = self.arrays
         ndim = self.mesh.ndim
 

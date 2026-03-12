@@ -1,41 +1,29 @@
 import argparse
-import os
 from functools import partial
 from itertools import product
 
-from superfv import EulerSolver, OutputLoader
 from superfv.initial_conditions import sinus
+from superfv.tools.run_helper import run_multiple_simulations
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--cupy", action="store_true", help="Use CuPy for GPU acceleration")
-args = parser.parse_args()
-
-base_path = "/scratch/gpfs/jp7427/out/timing-of-2d-sine-wave/"
-if args.cupy:
-    base_path += "cupy/"
-overwrite = True
+cupy = parser.parse_args().cupy
 
 # loop parameters
 N_values = [32, 64, 128, 256, 512, 1024, 2048]
 
 common = dict(
+    ic=partial(sinus, bounds=(1, 2), vx=2, vy=1, P=1),
+    gamma=1.4,
     PAD={"rho": (0, None), "P": (0, None)},
     log_limiter_scalars=False,
     skip_trouble_counts=True,
+    cupy=cupy,
 )
-musclhancock = dict(p=1, MUSCL=True, **common)
-apriori = dict(ZS=True, lazy_primitives="adaptive", adaptive_dt=False, **common)
-aposteriori = dict(
-    MOOD=True,
-    face_fallback=False,
-    NAD_delta=False,
-    lazy_primitives="full",
-    MUSCL_limiter="PP2D",
-    **common,
-)
-aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
-aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
+
+musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
+apriori = dict(ZS=True, lazy_primitives="adaptive", adaptive_dt=False)
+aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
 
 configs = {
     "p0": dict(p=0),
@@ -44,65 +32,26 @@ configs = {
     "p7": dict(p=7),
     "p3/GL": dict(p=3, GL=True),
     "p7/GL": dict(p=7, GL=True),
-    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
+    "MUSCL-Hancock": musclhancock,
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, **apriori),
     "ZS7t": dict(p=7, **apriori),
-    "MM3/1rev/no_delta/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori1),
-    "MM7/1rev/no_delta/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori1),
-    "MM3/2revs/no_delta/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori2),
-    "MM7/2revs/no_delta/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori2),
-    "MM3/3revs/no_delta/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori3),
-    "MM7/3revs/no_delta/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori3),
+    "MM3/1rev/rtol_0": dict(p=3, max_MOOD_iters=1, NAD_rtol=0, **aposteriori),
+    "MM7/1rev/rtol_0": dict(p=7, max_MOOD_iters=1, NAD_rtol=0, **aposteriori),
+    "MM3/2revs/rtol_0": dict(p=3, max_MOOD_iters=2, NAD_rtol=0, **aposteriori),
+    "MM7/2revs/rtol_0": dict(p=7, max_MOOD_iters=2, NAD_rtol=0, **aposteriori),
+    "MM3/3revs/rtol_0": dict(p=3, max_MOOD_iters=3, NAD_rtol=0, **aposteriori),
+    "MM7/3revs/rtol_0": dict(p=7, max_MOOD_iters=3, NAD_rtol=0, **aposteriori),
 }
 
-# simulation parameters
-n_steps = 10
-gamma = 1.4
-
-for (name, config), N in product(configs.items(), N_values):
-    sim_path = f"{base_path}/{name}/N_{N}/"
-
-    try:
-        if overwrite:
-            raise FileNotFoundError
-
-        if os.path.exists(f"{sim_path}error.txt"):
-            print(f"Error exists for config={name}, skipping...")
-            continue
-
-        sim = OutputLoader(sim_path)
-    except FileNotFoundError:
-        print(f"Running {name} with N={N}...")
-
-        sim = EulerSolver(
-            ic=partial(sinus, bounds=(1, 2), vx=2, vy=1, P=1),
-            gamma=gamma,
-            nx=N,
-            ny=N,
-            cupy=args.cupy,
-            **config,
-        )
-
-        try:
-            sim.run(
-                n=n_steps,
-                q_max=2,
-                muscl_hancock=config.get("MUSCL", False),
-                path=sim_path,
-                snapshot_mode="none",
-                overwrite=True,
-            )
-            sim.write_timings()
-
-            # clean up error file if it exists
-            if os.path.exists(f"{sim_path}error.txt"):
-                os.remove(f"{sim_path}error.txt")
-
-        except RuntimeError as e:
-            print(f"  Failed: {e}")
-            with open(f"{sim_path}error.txt", "w") as f:
-                f.write(str(e))
-
-            continue
+run_multiple_simulations(
+    "euler",
+    {
+        f"{name}/N_{N}": {**config, **dict(nx=N, ny=N), **common}
+        for (name, config), N in product(configs.items(), N_values)
+    },
+    "/scratch/gpfs/jp7427/out/timing-of-2d-sine-wave/" + ("cupy/" if cupy else ""),
+    snapshot_mode="none",
+    overwrite=True,
+)

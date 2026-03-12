@@ -1,17 +1,19 @@
 from dataclasses import dataclass, field
 from itertools import product
-from types import ModuleType
 from typing import Callable, Literal, Tuple
 
 import numpy as np
 
 from .stencils.conservative_interpolation import n_gauss_legendre_nodes
-from .tools.device_management import ArrayLike, ArrayManager, xp
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
 
 xyz_tup: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
 
 
-def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayLike]:
+def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute Gauss-Legendre quadrature points and weights scaled to the interval
     [-0.5, 0.5].
@@ -28,15 +30,14 @@ def _scaled_gauss_legendre_points_and_weights(p: int) -> Tuple[ArrayLike, ArrayL
 
 
 def _gauss_legendre_quadrature(
-    xp: ModuleType, px: int, py: int, pz: int
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    px: int, py: int, pz: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute Gauss-Legendre quadrature points and weights for a finite volume with up to
     three dimensions, where the quadrature points are scaled to the 3D unit cube
     [-0.5, 0.5] x [-0.5, 0.5] x [-0.5, 0.5].
 
     Args:
-        xp: `np` namespace.
         px: Polynomial degree of quadrature rule in x dimension.
         py: Polynomial degree of quadrature rule in y dimension.
         pz: Polynomial degree of quadrature rule in z dimension.
@@ -56,27 +57,20 @@ def _gauss_legendre_quadrature(
     Yp_flattened = Yp.flatten()
     Zp_flattened = Zp.flatten()
     W_flattened = (Xw * Yw * Zw).flatten()
-    return (
-        xp.asarray(Xp_flattened),
-        xp.asarray(Yp_flattened),
-        xp.asarray(Zp_flattened),
-        xp.asarray(W_flattened),
-    )
+    return (Xp_flattened, Yp_flattened, Zp_flattened, W_flattened)
 
 
 def _gauss_legendre_mesh(
-    xp: ModuleType,
-    x: ArrayLike,
-    y: ArrayLike,
-    z: ArrayLike,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
     h: Tuple[float, float, float],
     p: Tuple[int, int, int] = (0, 0, 0),
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute Gauss-Legendre quadrature points and weights for a finite volume mesh.
 
     Args:
-        xp: `np` namespace.
         x: x-coordinates, has shape (nx, ny, nz).
         y: y-coordinates, has shape (nx, ny, nz).
         z: z-coordinates, has shape (nx, ny, nz).
@@ -91,7 +85,7 @@ def _gauss_legendre_mesh(
     """
     hx, hy, hz = h
     px, py, pz = p
-    xgl, ygl, zgl, wgl = _gauss_legendre_quadrature(xp, px, py, pz)
+    xgl, ygl, zgl, wgl = _gauss_legendre_quadrature(px, py, pz)
 
     # Compute the evaluation points for the quadrature rule
     na = np.newaxis
@@ -305,7 +299,9 @@ class UniformFVMesh:
             self.array_manager.add(f"{dim}{pos}_slab_Z", Z)
 
     def get_cell_centers(
-        self, region: Literal["core", "xl", "xr", "yl", "yr", "zl", "zr"] = "core"
+        self,
+        region: Literal["core", "xl", "xr", "yl", "yr", "zl", "zr"] = "core",
+        numpy_copy: bool = False,
     ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         """
         Get the cell centers of the core mesh or a specific slab.
@@ -314,21 +310,32 @@ class UniformFVMesh:
             region: A string indicating which region to return. Must be one of:
                 - "core": The main interior mesh (default)
                 - "xl", "xr", "yl", "yr", "zl", "zr": The left/right slab in x/y/z
+            numpy_copy: If True, return a NumPy array copy of the cell centers.
 
         Returns:
             Tuple of 3D arrays (X, Y, Z) representing cell centers.
         """
-        if region == "core":
+        array_manager = self.array_manager
+
+        if region == "core" and numpy_copy:
             return (
-                self.array_manager["core_X"],
-                self.array_manager["core_Y"],
-                self.array_manager["core_Z"],
+                array_manager.get_numpy_copy("core_X"),
+                array_manager.get_numpy_copy("core_Y"),
+                array_manager.get_numpy_copy("core_Z"),
             )
-        return self.get_slab_cell_centers(region)
+        elif region == "core":
+            return (
+                array_manager["core_X"],
+                array_manager["core_Y"],
+                array_manager["core_Z"],
+            )
+        else:
+            return self.get_slab_cell_centers(region, numpy_copy=numpy_copy)
 
     def get_slab_cell_centers(
         self,
         region: Literal["xl", "xr", "yl", "yr", "zl", "zr"],
+        numpy_copy: bool = False,
     ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
         """
         Get the cell centers of a specific slab.
@@ -336,16 +343,28 @@ class UniformFVMesh:
         Args:
             region: A string indicating which region to return. Must be one of:
                 - "xl", "xr", "yl", "yr", "zl", "zr": The left/right slab in x/y/z
+            numpy_copy: If True, return a NumPy array copy of the slab cell centers.
 
         Returns:
             Tuple of 3D arrays (X, Y, Z) representing cell centers.
         """
+        array_manager = self.array_manager
+
         if any(f"{region}_slab_{dim}" not in self.array_manager for dim in "XYZ"):
             raise ValueError(f"{region}_slab not found in arrays.")
-        X = self.array_manager[f"{region}_slab_X"]
-        Y = self.array_manager[f"{region}_slab_Y"]
-        Z = self.array_manager[f"{region}_slab_Z"]
-        return X, Y, Z
+
+        if numpy_copy:
+            return (
+                array_manager.get_numpy_copy(f"{region}_slab_X"),
+                array_manager.get_numpy_copy(f"{region}_slab_Y"),
+                array_manager.get_numpy_copy(f"{region}_slab_Z"),
+            )
+        else:
+            return (
+                array_manager[f"{region}_slab_X"],
+                array_manager[f"{region}_slab_Y"],
+                array_manager[f"{region}_slab_Z"],
+            )
 
     def get_GaussLegendre_quadrature(
         self,
@@ -376,45 +395,46 @@ class UniformFVMesh:
             w: Array of quadrature weights flattened along axis 3 with shape
                 (1, 1, 1, n_quadrature_points).
         """
+        array_manager = self.array_manager
+
         key = f"{mesh_region}_{cell_region}_p{p}"
         keys = [f"{key}_{ax}" for ax in "XYZ"] + [f"{key}_w"]
 
-        if all(key in self.array_manager for key in keys):
-            X = self.array_manager[keys[0]]
-            Y = self.array_manager[keys[1]]
-            Z = self.array_manager[keys[2]]
-            w = self.array_manager[keys[3]]
+        if all(key in array_manager for key in keys):
+            X = array_manager[keys[0]]
+            Y = array_manager[keys[1]]
+            Z = array_manager[keys[2]]
+            w = array_manager[keys[3]]
             return X, Y, Z, w
 
-        _xp = xp if self.array_manager.device == "gpu" else np
         px = p if self.x_is_active else 0
         py = p if self.y_is_active else 0
         pz = p if self.z_is_active else 0
         h = (self.hx, self.hy, self.hz)
 
-        X, Y, Z = self.get_cell_centers(mesh_region)
+        X, Y, Z = self.get_cell_centers(mesh_region, numpy_copy=True)
 
         if cell_region == "interior":
-            Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, pz))
+            Xp, Yp, Zp, w = _gauss_legendre_mesh(X, Y, Z, h, (px, py, pz))
         else:
             dim, pos = cell_region[0], cell_region[1]
             match dim:
                 case "x":
-                    Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (0, py, pz))
+                    Xp, Yp, Zp, w = _gauss_legendre_mesh(X, Y, Z, h, (0, py, pz))
                     Xp = Xp + (-0.5 * self.hx if pos == "l" else 0.5 * self.hx)
                 case "y":
-                    Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (px, 0, pz))
+                    Xp, Yp, Zp, w = _gauss_legendre_mesh(X, Y, Z, h, (px, 0, pz))
                     Yp = Yp + (-0.5 * self.hy if pos == "l" else 0.5 * self.hy)
                 case "z":
-                    Xp, Yp, Zp, w = _gauss_legendre_mesh(_xp, X, Y, Z, h, (px, py, 0))
+                    Xp, Yp, Zp, w = _gauss_legendre_mesh(X, Y, Z, h, (px, py, 0))
                     Zp = Zp + (-0.5 * self.hz if pos == "l" else 0.5 * self.hz)
 
-        self.array_manager.add(keys[0], Xp)
-        self.array_manager.add(keys[1], Yp)
-        self.array_manager.add(keys[2], Zp)
-        self.array_manager.add(keys[3], w)
+        array_manager.add(keys[0], Xp)
+        array_manager.add(keys[1], Yp)
+        array_manager.add(keys[2], Zp)
+        array_manager.add(keys[3], w)
 
-        return Xp, Yp, Zp, w
+        return tuple(array_manager[keys[i]] for i in range(4))
 
     def perform_GaussLegendre_quadrature(
         self,
@@ -435,52 +455,19 @@ class UniformFVMesh:
                 typically the axis corresponding to the nodes of the mesh.
             mesh_region: The region of the mesh to use for the quadrature. Must be one
                 of "core", "xl", "xr", "yl", "yr", "zl", "zr".
-            cell_region: The region of the cell to use for the quadrature. Must be
+            cell_region: The region of the cell to use for the quad
                 "interior" to compute the quadrature points in the interior of each
                 cell or one of "xl", "xr", "yl", "yr", "zl", "zr" to compute the
                 quadrature points on one of each cell's faces.
             p: Polynomial degree of the quadrature rule. This determines the number of
                 quadrature points in each active dimension.
         """
-        _xp = xp if self.array_manager.device == "gpu" else np
-
         X, Y, Z, w = self.get_GaussLegendre_quadrature(mesh_region, cell_region, p)
         f_eval = f(X, Y, Z)
-        return _xp.sum(f_eval * w, axis=node_axis)
-
-    def get_wavenumber_grid(self) -> ArrayLike:
-        """
-        Compute the wavenumber grid for the core mesh.
-
-        Returns:
-            Kmag: 3D array of the magnitude of the wavenumber vector at each
-                grid point in the core mesh. Has shape (nx, ny, nz).
-        """
-        _xp = xp if self.array_manager.device == "gpu" else np
-
-        hx, hy, hz = self.hx, self.hy, self.hz
-        nx, ny, nz = self.nx, self.ny, self.nz
-
-        kx = (
-            2 * np.pi * _xp.fft.fftfreq(nx, d=hx)
-            if self.x_is_active
-            else _xp.array([0.0])
-        )
-        ky = (
-            2 * np.pi * _xp.fft.fftfreq(ny, d=hy)
-            if self.y_is_active
-            else _xp.array([0.0])
-        )
-        kz = (
-            2 * np.pi * _xp.fft.fftfreq(nz, d=hz)
-            if self.z_is_active
-            else _xp.array([0.0])
-        )
-
-        Kx, Ky, Kz = _xp.meshgrid(kx, ky, kz, indexing="ij")
-        Kmag = _xp.sqrt(Kx**2 + Ky**2 + Kz**2)
-
-        return Kmag
+        if CUPY_AVAILABLE and self.array_manager.device == "gpu":
+            return cp.sum(f_eval * w, axis=node_axis)
+        else:
+            return np.sum(f_eval * w, axis=node_axis)
 
     def to_dict(self) -> dict:
         return dict(
