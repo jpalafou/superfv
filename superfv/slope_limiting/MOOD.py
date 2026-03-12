@@ -318,7 +318,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             dmp_M,
             dmp_m,
             NAD_mask,
-            alpha[..., 0],
+            alpha,
             PAD_bounds if PAD_bounds is not None else xp.empty((nvars, 2)),
             NAD_violations,
             PAD_violations,
@@ -353,7 +353,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             # compute smooth extrema
             if SED:
                 fv_solver.detect_smooth_extrema((wnew if primNAD else unew), scheme)
-                NAD_violations *= alpha[..., 0] < 1
+                NAD_violations *= alpha < 1
 
             # update troubles
             np.any(NAD_violations[lim_slc], axis=0, keepdims=True, out=troubles)

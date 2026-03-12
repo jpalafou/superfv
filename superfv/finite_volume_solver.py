@@ -1714,7 +1714,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         mesh = self.mesh
         active_dims = self.active_dims
         include_corners = scheme.limiter_config.include_corners
-        tol = scheme.limiter_config.tol
+        tol = scheme.limiter_config.theta_denom_tol
         lim_slc = self.variable_index_map("limiting", keepdims=True)
 
         # define array references
@@ -1769,7 +1769,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     PAD_atol,
                 )
                 alpha[...] *= ~PAD_violations.astype(bool)
-            xp.maximum(theta, alpha >= 1, out=theta)
+            theta[..., 0] = xp.maximum(theta[..., 0], alpha >= 1)
 
         # limit the face nodes
         w0 = w[..., xp.newaxis]

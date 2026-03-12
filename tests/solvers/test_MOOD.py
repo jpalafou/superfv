@@ -19,7 +19,7 @@ from superfv.tools.device_management import CUPY_AVAILABLE
 def test_mpp_1d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = N
-    PAD_atol = 1e-15
+    PAD_atol = 0
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -36,8 +36,8 @@ def test_mpp_1d(N: int, p: int, config: dict):
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) >= -1e-15
+    assert np.max(sim.minisnapshots["rho_max"]) <= 1 + 1e-15
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
 
 
@@ -54,7 +54,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
 def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = N**2
-    PAD_atol = 1e-15
+    PAD_atol = 0
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -72,8 +72,8 @@ def test_mpp_2d(N: int, p: int, config: dict):
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) >= -1e-15
+    assert np.max(sim.minisnapshots["rho_max"]) <= 1 + 1e-15
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
 
 
@@ -84,7 +84,7 @@ def test_mpp_3d(cascade: str):
 
     n_steps = 5
     max_MOOD_iters = N**3
-    PAD_atol = 1e-15
+    PAD_atol = 0
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -103,6 +103,6 @@ def test_mpp_3d(cascade: str):
     )
     sim.run(n=n_steps, q_max=2)
 
-    assert np.min(sim.minisnapshots["rho_min"]) > -PAD_atol
-    assert np.max(sim.minisnapshots["rho_max"]) < 1 + PAD_atol
+    assert np.min(sim.minisnapshots["rho_min"]) >= -1e-15
+    assert np.max(sim.minisnapshots["rho_max"]) <= 1 + 1e-15
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
