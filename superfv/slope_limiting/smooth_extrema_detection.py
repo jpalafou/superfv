@@ -24,7 +24,7 @@ def update_alpha_1d(
     dim: Literal["x", "y", "z"],
     check_uniformity: bool,
     uniformity_tol: float = 1e-3,
-    eps: float = 1e-16,
+    eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """
     Compute the 1D smooth extrema detector for array `u` along dimension `dim`,
@@ -114,7 +114,7 @@ def compute_alpha(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     check_uniformity: bool,
     uniformity_tol: float = 1e-3,
-    eps: float = 1e-16,
+    eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """
     Compute the smooth extrema detector for array `u` along all `active_dims`,

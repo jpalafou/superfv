@@ -653,7 +653,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 uniformity_tol=uniformity_tol,
                 include_corners=include_corners,
                 adaptive_dt=adaptive_dt,
-                theta_denom_tol=1e-16,
+                theta_denom_tol=1e-15,
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,

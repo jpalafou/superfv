@@ -198,7 +198,7 @@ def test_compute_theta(
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize(
     "NAD_config",
-    [dict(), dict(rtol=1e-2, atol=1e-14), dict(delta=False)],
+    [dict(), dict(rtol=1e-2, atol=1e-15), dict(delta=False)],
 )
 @pytest.mark.parametrize("include_corners", [False, True])
 def test_detect_NAD_violations(

@@ -2,4 +2,5 @@
 - [ ] i suspect `compute_fallback_fluxes` could be improved
 - [ ] i suspect `reconstruct_muscl_faces` could be improved
 - [ ] use a consistent pattern for kernel_helper vs NumPy function calls. this may require refactoring some NumPy paths
-- [ ] sometimes i use 1e-14, 1e-15, and 1e-16 for very small tolerances. which one should i use
+- [x] sometimes i use 1e-14, 1e-15, and 1e-16 for very small tolerances. which one should i use
+- [ ] what exactly is the point of PAD_atol

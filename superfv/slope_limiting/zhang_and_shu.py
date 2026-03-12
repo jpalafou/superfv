@@ -49,7 +49,7 @@ class ZhangShuConfig(LimiterConfig):
 
     include_corners: bool = False
     adaptive_dt: bool = False
-    theta_denom_tol: float = 1e-16
+    theta_denom_tol: float = 1e-15
 
     def __post_init__(self):
         LimiterConfig.__post_init__(self)
@@ -82,7 +82,7 @@ def compute_theta(
     Mj: ArrayLike,
     mj: ArrayLike,
     theta: ArrayLike,
-    tol: float = 1e-16,
+    tol: float = 1e-15,
 ):
     """
     Compute Zhang and Shu's a priori slope limiting parameter and write it to `theta`.

@@ -19,7 +19,7 @@ from superfv.tools.device_management import CUPY_AVAILABLE
 def test_mpp_1d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = N
-    PAD_atol = 1e-14
+    PAD_atol = 1e-15
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -54,7 +54,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
 def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = N**2
-    PAD_atol = 1e-14
+    PAD_atol = 1e-15
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -84,7 +84,7 @@ def test_mpp_3d(cascade: str):
 
     n_steps = 5
     max_MOOD_iters = N**3
-    PAD_atol = 1e-14
+    PAD_atol = 1e-15
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(

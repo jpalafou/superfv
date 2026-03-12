@@ -14,7 +14,7 @@ def update_eta_1d(
     wr: np.ndarray,
     eta: np.ndarray,
     dim: Literal["x", "y", "z"],
-    eps: float = 1e-16,
+    eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """`
     Compute the shock detector parameter in 1D using the method of Berta et al. (2024),
@@ -72,7 +72,7 @@ def detect_shocks(
     has_shock: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     eta_threshold: float,
-    eps: float = 1e-16,
+    eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """
     Detect shocks in the primitive variable array `w1`, writing the results to
