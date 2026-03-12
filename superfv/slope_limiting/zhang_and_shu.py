@@ -37,18 +37,19 @@ class ZhangShuConfig(LimiterConfig):
         PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
             respectively, for each variable when physical_admissibility_detection is
             True. Must be provided if physical_admissibility_detection is True.
-        PAD_atol: Absolute tolerance for physical admissibility detection if
-            physical_admissibility_detection is True.
         uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
         include_corners: Whether to include corner cells when computing the discrete
             maximum principle.
         adaptive_dt: Whether to use adaptive time stepping. If True,
             physical_admissibility_detection must also be True.
+        adaptive_dt_tol: Tolerance for physical admissibility detection when deciding
+            whether to refine the timestep size if adaptive_dt is True.
         theta_denom_tol: Tolerance for the denominator of the theta calculation.
     """
 
     include_corners: bool = False
     adaptive_dt: bool = False
+    adaptive_dt_tol: float = 1e-15
     theta_denom_tol: float = 1e-15
 
     def __post_init__(self):

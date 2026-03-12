@@ -44,8 +44,6 @@ class MOODConfig(LimiterConfig):
         PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
             respectively, for each variable when physical_admissibility_detection is
             True. Must be provided if physical_admissibility_detection is True.
-        PAD_atol: Absolute tolerance for physical admissibility detection if
-            physical_admissibility_detection is True.
         uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
         numerical_admissibility_detection: Whether to enable numerical admissibility
             detection (NAD).
@@ -244,7 +242,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
     include_corners = config.include_corners
     PAD = config.physical_admissibility_detection
     PAD_bounds = config.PAD_bounds
-    PAD_atol = config.PAD_atol
     SED = config.smooth_extrema_detection
     skip_trouble_counts = config.skip_trouble_counts
 
@@ -330,7 +327,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             delta,
             NAD_rtol * dt if scale_NAD_rtol_by_dt else NAD_rtol,
             NAD_atol,
-            PAD_atol,
         )
     else:
         if NAD:
@@ -369,7 +365,6 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
                 cast(ArrayLike, PAD_bounds),
                 PAD_violations,
                 troubles_temp,
-                PAD_atol,
             )
             troubles |= troubles_temp
 
@@ -921,7 +916,6 @@ if CUPY_AVAILABLE:
             const bool delta,
             const double NAD_rtol,
             const double NAD_atol,
-            const double PAD_atol,
             const int nvars,
             const int nx,
             const int ny,
@@ -985,8 +979,8 @@ if CUPY_AVAILABLE:
                     double PAD_violation = 0.0;
 
                     if (PAD) {
-                        double lower_PAD_bound = physical_bounds[iv * 2] - PAD_atol;
-                        double upper_PAD_bound = physical_bounds[iv * 2 + 1] + PAD_atol;
+                        double lower_PAD_bound = physical_bounds[iv * 2];
+                        double upper_PAD_bound = physical_bounds[iv * 2 + 1];
 
                         PAD_violation = fmin(PAD_violation, wnew[i] - lower_PAD_bound);
                         PAD_violation = fmin(PAD_violation, upper_PAD_bound - wnew[i]);
@@ -1024,7 +1018,6 @@ if CUPY_AVAILABLE:
         delta: bool,
         NAD_rtol: float,
         NAD_atol: float,
-        PAD_atol: float,
     ) -> Tuple[slice, ...]:
         if not wnew.flags.c_contiguous or wnew.dtype != cp.float64:
             raise ValueError("wnew must be a C-contiguous array of dtype float64.")
@@ -1094,7 +1087,6 @@ if CUPY_AVAILABLE:
                 delta,
                 NAD_rtol,
                 NAD_atol,
-                PAD_atol,
                 nvars,
                 nx,
                 ny,

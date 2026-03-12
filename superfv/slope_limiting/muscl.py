@@ -29,8 +29,6 @@ class musclConfig(LimiterConfig):
         PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
             respectively, for each variable when physical_admissibility_detection is
             True. Must be provided if physical_admissibility_detection is True.
-        PAD_atol: Absolute tolerance for physical admissibility detection if
-            physical_admissibility_detection is True.
         uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
         limiter: Optional slope limiter specification of "minmod", "moncen", "PP2D".
     """

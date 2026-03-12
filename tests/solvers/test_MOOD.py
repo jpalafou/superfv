@@ -19,7 +19,6 @@ from superfv.tools.device_management import CUPY_AVAILABLE
 def test_mpp_1d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = N
-    PAD_atol = 0
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -30,7 +29,6 @@ def test_mpp_1d(N: int, p: int, config: dict):
         MOOD=True,
         max_MOOD_iters=max_MOOD_iters,
         PAD={"rho": (0, 1)},
-        PAD_atol=PAD_atol,
         cupy=CUPY_AVAILABLE,
         **config,
     )
@@ -54,7 +52,6 @@ def test_mpp_1d(N: int, p: int, config: dict):
 def test_mpp_2d(N: int, p: int, config: dict):
     n_steps = 10
     max_MOOD_iters = N**2
-    PAD_atol = 0
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -66,7 +63,6 @@ def test_mpp_2d(N: int, p: int, config: dict):
         MOOD=True,
         max_MOOD_iters=max_MOOD_iters,
         PAD={"rho": (0, 1)},
-        PAD_atol=PAD_atol,
         cupy=CUPY_AVAILABLE,
         **config,
     )
@@ -84,7 +80,6 @@ def test_mpp_3d(cascade: str):
 
     n_steps = 5
     max_MOOD_iters = N**3
-    PAD_atol = 0
 
     sim = AdvectionSolver(
         ic=lambda array_slicer, x, y, z, t, xp: ic.square(
@@ -98,7 +93,6 @@ def test_mpp_3d(cascade: str):
         cascade=cascade,
         max_MOOD_iters=max_MOOD_iters,
         PAD={"rho": (0, 1)},
-        PAD_atol=PAD_atol,
         cupy=CUPY_AVAILABLE,
     )
     sim.run(n=n_steps, q_max=2)

@@ -23,8 +23,6 @@ class LimiterConfig:
         PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
             respectively, for each variable when physical_admissibility_detection is
             True. Must be provided if physical_admissibility_detection is True.
-        PAD_atol: Absolute tolerance for physical admissibility detection if
-            physical_admissibility_detection is True.
         uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
     """
 
@@ -34,7 +32,6 @@ class LimiterConfig:
     physical_admissibility_detection: bool
     eta_max: float = 0.0
     PAD_bounds: Optional[ArrayLike] = None
-    PAD_atol: float = 0.0
     uniformity_tol: float = 1e-3
 
     def __post_init__(self):
@@ -42,11 +39,6 @@ class LimiterConfig:
             if self.PAD_bounds is None:
                 raise ValueError(
                     "PAD_bounds must be provided when physical_admissibility_detection"
-                    " is True."
-                )
-            if self.PAD_atol is None:
-                raise ValueError(
-                    "PAD_atol must be provided when physical_admissibility_detection"
                     " is True."
                 )
 
@@ -63,7 +55,6 @@ class LimiterConfig:
             physical_admissibility_detection=self.physical_admissibility_detection,
             eta_max=self.eta_max,
             PAD_bounds=None if self.PAD_bounds is None else self.PAD_bounds.tolist(),
-            PAD_atol=self.PAD_atol,
             uniformity_tol=self.uniformity_tol,
         )
 

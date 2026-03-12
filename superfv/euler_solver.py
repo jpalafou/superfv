@@ -77,7 +77,6 @@ class EulerSolver(FiniteVolumeSolver):
         scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
-        PAD_atol: float = 1e-15,
         SED: bool = True,
         check_uniformity: bool = True,
         uniformity_tol: float = 1e-15,
@@ -173,8 +172,10 @@ class EulerSolver(FiniteVolumeSolver):
                 - "PP2D": Only valid for 2D problems.
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
-            adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
-                halve the timestep size if the proposed solution fails PAD.
+            adaptive_dt: Whether to iteratively halve the timestep size if the proposed
+                solution fails PAD. Ignored if `ZS=False`.
+            adaptive_dt_tol: Tolerance for PAD violations when deciding whether to
+                refine the timestep size if `ZS` and `adaptive_dt` are both`True`.
             log_limiter_scalars: Whether to log scalar statistics for the Zhang-Shu
                 limiter and MOOD.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
@@ -215,8 +216,6 @@ class EulerSolver(FiniteVolumeSolver):
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
-            PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
-                and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
                 extrema detection is enabled. Uniform regions satisfy:
@@ -285,7 +284,6 @@ class EulerSolver(FiniteVolumeSolver):
             scale_NAD_rtol_by_dt=scale_NAD_rtol_by_dt,
             include_corners=include_corners,
             PAD=PAD,
-            PAD_atol=PAD_atol,
             SED=SED,
             check_uniformity=check_uniformity,
             uniformity_tol=uniformity_tol,

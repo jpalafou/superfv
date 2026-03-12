@@ -97,6 +97,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"] = "minmod",
         ZS: bool = False,
         adaptive_dt: bool = True,
+        adaptive_dt_tol: float = 1e-15,
         log_limiter_scalars: bool = True,
         MOOD: bool = False,
         cascade: Literal["first-order", "muscl", "full", "none"] = "muscl",
@@ -112,7 +113,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         scale_NAD_rtol_by_dt: bool = False,
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
-        PAD_atol: float = 1e-15,
         SED: bool = True,
         check_uniformity: bool = True,
         uniformity_tol: float = 1e-15,
@@ -203,8 +203,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 - "PP2D": Only valid for 2D problems.
             ZS: Whether to use Zhang and Shu's maximum-principle-satisfying a priori
                 slope limiter.
-            adaptive_dt: Option for the Zhang and Shu limiter; Whether to iteratively
-                halve the timestep size if the proposed solution fails PAD.
+            adaptive_dt: Whether to iteratively halve the timestep size if the proposed
+                solution fails PAD. Ignored if `ZS=False`.
+            adaptive_dt_tol: Tolerance for PAD violations when deciding whether to
+                refine the timestep size if `ZS` and `adaptive_dt` are both`True`.
             log_limiter_scalars: Whether to log scalar statistics for the Zhang-Shu
                 limiter and MOOD.
             MOOD: Whether to use MOOD for a posteriori flux revision. Ignored if
@@ -245,8 +247,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 tuple: (lower_bound, upper_bound). Any variable or bound not provided
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
-            PAD_atol: Tolerance for the PAD check as an absolute value from the minimum
-                and maximum values of the variable.
             SED: Whether to use smooth extrema detection for slope limiting.
             check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
                 extrema detection is enabled. Uniform regions satisfy:
@@ -270,6 +270,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             MUSCL_limiter,
             ZS,
             adaptive_dt,
+            adaptive_dt_tol,
             MOOD,
             cascade,
             blend,
@@ -284,7 +285,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             scale_NAD_rtol_by_dt,
             include_corners,
             PAD,
-            PAD_atol,
             SED,
             check_uniformity,
             uniformity_tol,
@@ -432,6 +432,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         MUSCL_limiter: Literal["minmod", "moncen", "PP2D"],
         ZS: bool,
         adaptive_dt: bool,
+        adaptive_dt_tol: float,
         MOOD: bool,
         cascade: Literal["first-order", "muscl", "full", "none"],
         blend: bool,
@@ -446,7 +447,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         scale_NAD_rtol_by_dt: bool,
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
-        PAD_atol: float,
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
@@ -480,7 +480,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 SED,
                 check_uniformity,
                 uniformity_tol,
-                PAD_atol,
             )
         elif MUSCL:
             if ZS:
@@ -500,7 +499,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 check_uniformity,
                 uniformity_tol,
                 adaptive_dt,
-                PAD_atol,
+                adaptive_dt_tol,
             )
         else:
             self._init_unlimited_scheme(
@@ -512,7 +511,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 SED,
                 check_uniformity,
                 uniformity_tol,
-                PAD_atol,
             )
 
         # init a posteriori scheme
@@ -535,7 +533,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 SED,
                 check_uniformity,
                 uniformity_tol,
-                PAD_atol,
                 include_corners,
             )
         else:
@@ -576,7 +573,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
-        PAD_atol: float,
     ):
         self.p = p
         self.base_scheme = polyInterpolationScheme(
@@ -589,7 +585,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 physical_admissibility_detection=self.using_PAD,
                 eta_max=eta_max,
                 PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
-                PAD_atol=PAD_atol,
                 uniformity_tol=uniformity_tol,
             ),
             gauss_legendre=GL,
@@ -636,7 +631,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         check_uniformity: bool,
         uniformity_tol: float,
         adaptive_dt: bool,
-        PAD_atol: float,
+        adaptive_dt_tol: float,
     ):
         self.p = p
         self.base_scheme = polyInterpolationScheme(
@@ -649,10 +644,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 physical_admissibility_detection=self.using_PAD,
                 eta_max=eta_max,
                 PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
-                PAD_atol=PAD_atol,
                 uniformity_tol=uniformity_tol,
                 include_corners=include_corners,
                 adaptive_dt=adaptive_dt,
+                adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=1e-15,
             ),
             gauss_legendre=GL,
@@ -675,7 +670,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         SED: bool,
         check_uniformity: bool,
         uniformity_tol: float,
-        PAD_atol: float,
         include_corners: bool,
     ):
         base_scheme = self.base_scheme
@@ -767,7 +761,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             check_uniformity=check_uniformity,
             physical_admissibility_detection=self.using_PAD,
             PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
-            PAD_atol=PAD_atol,
             uniformity_tol=uniformity_tol,
             numerical_admissibility_detection=NAD,
             delta=NAD_delta,
@@ -1440,7 +1433,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     self.arrays["PAD_bounds"],
                     _PAD_violations_,
                     _any_violations_,
-                    scheme.limiter_config.PAD_atol,
                 )
                 _has_shock_ |= _any_violations_
 
@@ -1752,7 +1744,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             # unrelax with PAD
             if scheme.limiter_config.physical_admissibility_detection:
                 PAD_bounds = scheme.limiter_config.PAD_bounds
-                PAD_atol = scheme.limiter_config.PAD_atol
 
                 if PAD_bounds is None:
                     raise ValueError(
@@ -1761,13 +1752,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     )
 
                 # check Mj and mj for PAD violations
-                detect_PAD_violations(
-                    Mj,
-                    PAD_bounds,
-                    PAD_violations,
-                    any_violations,
-                    PAD_atol,
-                )
+                detect_PAD_violations(Mj, PAD_bounds, PAD_violations, any_violations)
                 alpha[...] *= ~PAD_violations.astype(bool)
             theta[..., 0] = xp.maximum(theta[..., 0], alpha >= 1)
 
@@ -2142,7 +2127,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             scheme.limiter_config.PAD_bounds,
             PAD_violations,
             any_violations,
-            scheme.limiter_config.PAD_atol,
+            scheme.limiter_config.adaptive_dt_tol,
         )
 
         return not xp.any(any_violations)
@@ -2173,7 +2158,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         if revised_dt < dt_min:
             raise RuntimeError(
                 f"Adaptive dt revision resulted in dt={revised_dt} < {dt_min=} after"
-                f"{n_dt_revisions} revisions."
+                f" {n_dt_revisions} revisions."
             )
 
         return revised_dt

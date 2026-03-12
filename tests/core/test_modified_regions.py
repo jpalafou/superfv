@@ -171,7 +171,6 @@ def test_compute_theta(
         check_uniformity=check_uniformity,
         physical_admissibility_detection=PAD,
         include_corners=include_corners,
-        PAD_atol=0,
         PAD_bounds=np.array([[0.0, 0.1] * 5]),
     )
 

@@ -9,7 +9,7 @@ def detect_PAD_violations(
     physical_bounds: ArrayLike,
     violation_amounts: ArrayLike,
     cell_violated: ArrayLike,
-    tol: float = 1e-15,
+    tol: float = 0.0,
 ):
     """
     Detect physical admissibility violations in the input array `wj` and write the
