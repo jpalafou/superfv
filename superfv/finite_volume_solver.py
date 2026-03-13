@@ -1126,7 +1126,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize the ODE solver with the initial condition array
         u0 = self._make_conservative_field(self.callable_ic)
-        ic_arr = xp.empty_like(arrays["u"])
+        ic_arr = xp.empty((nvars, nx, ny, nz))
         mesh.perform_GaussLegendre_quadrature(
             lambda x, y, z: u0(idx, x, y, z, 0.0, xp=xp),
             ic_arr,
