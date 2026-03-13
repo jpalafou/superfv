@@ -216,8 +216,8 @@ if CUPY_AVAILABLE:
                         }
 
                         // set to 1 if eta exceeds threshold
-                        if (!has_shock[i] && eta[i] > eta_threshold) {
-                            has_shock[i] = 1;
+                        if (!has_shock[ixyz] && eta[i] > eta_threshold) {
+                            has_shock[ixyz] = 1;
                         }
                     }
                 }

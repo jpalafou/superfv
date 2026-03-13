@@ -48,7 +48,7 @@ if CUPY_AVAILABLE:
             for (long long i = tid; i < ntotal; i += stride) {
                 double result = 0.0;
                 for (int qj = 0; qj < ninterps; qj++) {
-                    long long j = i * ntotal + qj;
+                    long long j = i * ninterps + qj;
                     result += weights[qj] * uj[j];
                 }
                 out[i] = result;
