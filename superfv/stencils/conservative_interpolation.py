@@ -285,16 +285,17 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
     return weights
 
 
-def gauss_legendre_weights(p: int):
+def gauss_legendre_weights(p: int, ndim: int = 1) -> np.ndarray:
     """
     Returns the weights of a Gauss-Legendre quadrature that is exact for polynomial
-    degree `p` or lower.
+    degree `p` or lower for `ndim` dimensions.
 
     Args:
         p: Polynomial degree (0 to 7).
+        ndim: Number of dimensions in the quadrature.
 
     Returns:
-        Quadrature weight array of shape (n,).
+        Quadrature weight array of shape (`n_gauss_legendre_nodes(p)` ** ndim,)
     """
     n = n_gauss_legendre_nodes(p)
 
@@ -302,6 +303,8 @@ def gauss_legendre_weights(p: int):
         raise ValueError(
             f"Cannot return Gauss-Legendre weights for {p=} with {n} nodes."
         )
+    if ndim < 1:
+        raise ValueError(f"Number of dimensions must be at least 1, but got {ndim}.")
 
     match n:
         case 1:
@@ -336,4 +339,11 @@ def gauss_legendre_weights(p: int):
             f"quadrature, but expected {n_expected} weights."
         )
 
-    return weights
+    if ndim == 1:
+        return weights
+
+    weights_ndim = weights.copy()
+    for _ in range(1, ndim):
+        weights_ndim = weights_ndim[..., np.newaxis] * weights
+
+    return weights_ndim.flatten()

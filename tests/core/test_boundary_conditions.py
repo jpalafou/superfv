@@ -172,18 +172,20 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
     assert mesh._shape_ == megamesh.shape
 
     # baseline case: apply dirichlet boundary function to megamesh
-    megamesh_u = megamesh.perform_GaussLegendre_quadrature(
+    megamesh_u = np.empty((5, *megamesh.shape))
+    megamesh.perform_GaussLegendre_quadrature(
         lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np),
-        4,
+        megamesh_u,
         mesh_region="core",
         cell_region="interior",
         p=p,
     )
 
     # test case: apply dirichlet boundary condition with custom function
-    u = mesh.perform_GaussLegendre_quadrature(
+    u = np.empty((5, *mesh.shape))
+    mesh.perform_GaussLegendre_quadrature(
         lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np),
-        4,
+        u,
         mesh_region="core",
         cell_region="interior",
         p=p,

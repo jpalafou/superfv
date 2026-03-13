@@ -1126,9 +1126,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # initialize the ODE solver with the initial condition array
         u0 = self._make_conservative_field(self.callable_ic)
-        ic_arr = mesh.perform_GaussLegendre_quadrature(
+        ic_arr = xp.empty_like(arrays["u"])
+        mesh.perform_GaussLegendre_quadrature(
             lambda x, y, z: u0(idx, x, y, z, 0.0, xp=xp),
-            node_axis=4,
+            ic_arr,
             mesh_region="core",
             cell_region="interior",
             p=self.p,
@@ -1403,7 +1404,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         na = xp.newaxis
 
         weights = self._get_stencil_weights(
-            f"conservative_interpolation_center_p{p}",
+            f"CONSERVATIVE_INTERPOLATION_OF_CELL_CENTER_p{p}",
             conservative_interpolation.cell_center,
             p,
         )
@@ -1436,7 +1437,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays = self.arrays
 
         weights = self._get_stencil_weights(
-            f"transverse_integration_p{p}", transverse_integration, p
+            f"TRANSVERSE_INTEGRATION_p{p}", transverse_integration, p
         )
 
         w = arrays["_wp_"]
@@ -1566,12 +1567,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         na = xp.newaxis
 
         gl_weights = self._get_stencil_weights(
-            f"conservative_interpolation_gauss_legendre_p{p}",
+            f"CONSERVATIVE_INTERPOLATION_OF_GL_NODES_p{p}",
             conservative_interpolation.gauss_legendre_nodes,
             p,
         )
         lr_weights = self._get_stencil_weights(
-            f"conservative_interpolation_left_right_p{p}",
+            f"CONSERVATIVE_INTERPOLATION_OF_LEFT_RIGHT_NODES_p{p}",
             conservative_interpolation.left_right,
             p,
         )
@@ -1611,12 +1612,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         na = xp.newaxis
 
         cc_weights = self._get_stencil_weights(
-            f"conservative_interpolation_center_p{p}",
+            f"CONSERVATIVE_INTERPOLATION_OF_CELL_CENTER_p{p}",
             conservative_interpolation.cell_center,
             p,
         )
         lr_weights = self._get_stencil_weights(
-            f"conservative_interpolation_left_right_p{p}",
+            f"CONSERVATIVE_INTERPOLATION_OF_LEFT_RIGHT_NODES_p{p}",
             conservative_interpolation.left_right,
             p,
         )
@@ -1816,26 +1817,21 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 `self.arrays["_H_"]`
         """
         arrays = self.arrays
+        ndim = self.mesh.ndim
 
-        weights = self._get_GaussLegendre_weights(p)
+        # get Gauss-Legendre face quadrature weights
+        key = f"GL_WEIGHTS_p{p}"
+        if key not in arrays:
+            arr = conservative_interpolation.gauss_legendre_weights(p, ndim - 1)
+            arrays.add(key, arr)
+        weights = arrays[key]
 
+        # get arrays from/on which to perform quadrature
         flux_name = self.flux_names[dim]
         fnodes = arrays[f"_{flux_name.lower()}_nodes_"]
         F = arrays[f"_{flux_name}_"][..., 0]
 
         perform_quadrature(fnodes, weights, F)
-
-    def _get_GaussLegendre_weights(self, p: int) -> ArrayLike:
-        key = f"gauss_legendre_quadrature_weights_p{p}"
-        arrays = self.arrays
-        na = np.newaxis
-
-        if key not in arrays:
-            weights = conservative_interpolation.gauss_legendre_weights(p)
-            if self.mesh.ndim == 3:
-                weights = (weights[:, na] * weights[na, :]).flatten()
-            arrays.add(key, weights)
-        return arrays[key]
 
     @MethodTimer(cat="integrate_fluxes:transverse")
     def integrate_tranverse_nodes(self, dim: Literal["x", "y", "z"], p: int):
@@ -1852,7 +1848,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         ndim = self.mesh.ndim
 
         weights = self._get_stencil_weights(
-            f"transverse_integration_p{p}", transverse_integration, p
+            f"TRANSVERSE_INTEGRATION_p{p}", transverse_integration, p
         )
 
         tdims = self._get_transverse_dims(dim)

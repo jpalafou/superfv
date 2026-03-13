@@ -179,9 +179,10 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
 
     slab_region = AXIS_TO_DIM[axis] + ("l" if left else "r")
 
-    f_eval = mesh.perform_GaussLegendre_quadrature(
+    f_eval = xp.empty_like(_u_[outer_slice])
+    mesh.perform_GaussLegendre_quadrature(
         lambda X, Y, Z: f(idx, X, Y, Z, t, xp=xp),
-        node_axis=4,
+        f_eval,
         mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
         cell_region="interior",
         p=p,
