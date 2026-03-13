@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Literal, Union
 
 from superfv import AdvectionSolver, EulerSolver, OutputLoader
 
@@ -13,7 +13,7 @@ def run_multiple_simulations(
     n: int = 10,
     T: float = 1.0,
     q_max: int = 2,
-    allow_mh: bool = True,
+    allowMH: bool = True,
     snapshot_mode: Literal["target", "none", "every"] = "target",
     overwrite: bool = False,
 ):
@@ -32,7 +32,7 @@ def run_multiple_simulations(
         n: Number of steps to run for each simulation if `mode="n"
         T: Physical time to run for each simulation if `mode="T"`.
         q_max: `FiniteVolumeSolver.run` argument.
-        allow_mh: Whether to allow MUSCL-Hancock. If True, `muscl_hancock` in
+        allowMH: Whether to allow MUSCL-Hancock. If True, `muscl_hancock` in
             `FiniteVolumeSolver.run` is set to true only for configs who contain
             `MUSCL=True`.
         snapshot_mode: `FiniteVolumeSolver.run` argument.
@@ -53,13 +53,15 @@ def run_multiple_simulations(
                 print("\nSkipping...\n")
                 continue
 
-            sim = OutputLoader(sim_path)
+            _ = OutputLoader(sim_path)
 
             print(f"Output exists for {name}, skipping...")
 
             continue
 
         except FileNotFoundError:
+            sim: Union[AdvectionSolver, EulerSolver]
+
             print(f"Running simulation with configuration `{name}`:")
             for argument, value in config.items():
                 print(f"\t{argument}: {value}")
@@ -73,14 +75,26 @@ def run_multiple_simulations(
                 raise ValueError(f"Unknown system: {system}")
 
             try:
-                sim.run(
-                    **({"n": dict(n=n), "T": dict(T=T)}[mode]),
-                    q_max=q_max,
-                    muscl_hancock=config.get("MUSCL", False) if allow_mh else False,
-                    path=sim_path,
-                    snapshot_mode=snapshot_mode,
-                    overwrite=True,
-                )
+                if mode == "n":
+                    sim.run(
+                        n=n,
+                        q_max=q_max,
+                        muscl_hancock=config.get("MUSCL", False) if allowMH else False,
+                        path=sim_path,
+                        snapshot_mode=snapshot_mode,
+                        overwrite=True,
+                    )
+                elif mode == "T":
+                    sim.run(
+                        T=T,
+                        q_max=q_max,
+                        muscl_hancock=config.get("MUSCL", False) if allowMH else False,
+                        path=sim_path,
+                        snapshot_mode=snapshot_mode,
+                        overwrite=True,
+                    )
+                else:
+                    raise ValueError(f"Unknown mode: {mode}")
                 sim.write_timings()
 
                 print(f"Successfully completed {name}!")

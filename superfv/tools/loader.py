@@ -8,7 +8,7 @@ from .yaml_helper import yaml_load
 
 class OutputLoader:
 
-    def __init__(self, base: Path):
+    def __init__(self, base: str):
         """
         Load simulation output from the specified base directory.
 

@@ -429,12 +429,19 @@ class UniformFVMesh:
                     Xp, Yp, Zp, w = _gauss_legendre_mesh(X, Y, Z, h, (px, py, 0))
                     Zp = Zp + (-0.5 * self.hz if pos == "l" else 0.5 * self.hz)
 
+        # add arrays to array manager
         array_manager.add(keys[0], Xp)
         array_manager.add(keys[1], Yp)
         array_manager.add(keys[2], Zp)
         array_manager.add(keys[3], w)
 
-        return tuple(array_manager[keys[i]] for i in range(4))
+        # call them back now that they're on the correct device
+        Xp_out = array_manager[keys[0]]
+        Yp_out = array_manager[keys[1]]
+        Zp_out = array_manager[keys[2]]
+        w_out = array_manager[keys[3]]
+
+        return Xp_out, Yp_out, Zp_out, w_out
 
     def perform_GaussLegendre_quadrature(
         self,
@@ -455,7 +462,7 @@ class UniformFVMesh:
                 typically the axis corresponding to the nodes of the mesh.
             mesh_region: The region of the mesh to use for the quadrature. Must be one
                 of "core", "xl", "xr", "yl", "yr", "zl", "zr".
-            cell_region: The region of the cell to use for the quad
+            cell_region: The region of the cell to use for the quadrature.
                 "interior" to compute the quadrature points in the interior of each
                 cell or one of "xl", "xr", "yl", "yr", "zl", "zr" to compute the
                 quadrature points on one of each cell's faces.
