@@ -12,7 +12,7 @@ from superfv.tools.device_management import CUPY_AVAILABLE
     "config",
     [
         dict(cascade="first-order", NAD=False, SED=False),
-        dict(cascade="muscl1"),
+        dict(cascade="muscl0"),
         dict(cascade="full", limiting_vars=("rho",)),
     ],
 )
@@ -45,7 +45,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
     "config",
     [
         dict(cascade="first-order", NAD=False, SED=False),
-        dict(cascade="muscl1"),
+        dict(cascade="muscl0"),
         dict(cascade="full", limiting_vars=("rho",)),
     ],
 )
@@ -73,7 +73,7 @@ def test_mpp_2d(N: int, p: int, config: dict):
     assert sim.minisnapshots["nfine_MOOD_iters"][-1][-1] <= max_MOOD_iters
 
 
-@pytest.mark.parametrize("cascade", ["first-order", "muscl1", "full"])
+@pytest.mark.parametrize("cascade", ["first-order", "muscl0", "full"])
 def test_mpp_3d(cascade: str):
     N = 20
     p = 3

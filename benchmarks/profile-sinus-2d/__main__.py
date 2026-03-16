@@ -26,8 +26,8 @@ musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
 apriori = dict(ZS=True, lazy_primitives="adaptive", adaptive_dt=False)
 aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
 aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori_2revs = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
-aposteriori_3revs = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
+aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
+aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 configs = {
     "p0": dict(p=0),

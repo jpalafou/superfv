@@ -40,8 +40,8 @@ apriori = dict(ZS=True, lazy_primitives="adaptive")
 aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
 aposteriori.update(dict(limiting_vars=("rho", "vx", "vy")))
 aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori_2revs = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
-aposteriori_3revs = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
+aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
+aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 
 configs = {

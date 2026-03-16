@@ -33,10 +33,10 @@ configs = {
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
     "MM3": dict(p=3, **aposteriori),
     "MM7": dict(p=7, **aposteriori),
-    "MM3-2": dict(p=3, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
-    "MM7-2": dict(p=7, cascade="muscl1", max_MOOD_iters=2, **aposteriori),
-    "MM3-3": dict(p=3, cascade="muscl1", max_MOOD_iters=3, **aposteriori),
-    "MM7-3": dict(p=7, cascade="muscl1", max_MOOD_iters=3, **aposteriori),
+    "MM3-2": dict(p=3, cascade="muscl0", max_MOOD_iters=2, **aposteriori),
+    "MM7-2": dict(p=7, cascade="muscl0", max_MOOD_iters=2, **aposteriori),
+    "MM3-3": dict(p=3, cascade="muscl0", max_MOOD_iters=3, **aposteriori),
+    "MM7-3": dict(p=7, cascade="muscl0", max_MOOD_iters=3, **aposteriori),
 }
 
 n_steps = 10

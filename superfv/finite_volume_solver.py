@@ -700,7 +700,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     lazy_primitives=base_scheme.lazy_primitives,
                 )
             ]
-        elif cascade in ("muscl", "muscl1"):
+        elif cascade in ("muscl", "muscl0"):
             if base_scheme.flux_recipe == 3:
                 warnings.warn("MUSCL overrides flux_recipe 3 to be 2.")
             muscl_flux_recipe: Literal[1, 2] = (
@@ -718,7 +718,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     ),
                 )
             ]
-            if cascade == "muscl1":
+            if cascade == "muscl0":
                 fallback_schemes += [
                     polyInterpolationScheme(
                         p=0,

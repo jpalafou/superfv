@@ -31,8 +31,8 @@ aposteriori = dict(
     **common,
 )
 aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori2 = dict(cascade="muscl1", max_MOOD_iters=2, **aposteriori)
-aposteriori3 = dict(cascade="muscl1", max_MOOD_iters=3, **aposteriori)
+aposteriori2 = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
+aposteriori3 = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 no_v = dict(limiting_vars=("rho", "P"))
 
