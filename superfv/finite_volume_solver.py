@@ -1000,6 +1000,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wp_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_w1_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
         # define arrays associated faces along the x-direction
@@ -1334,6 +1335,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _ucc_ = arrays["_ucc_"]  # shape (..., 1)
         _wcc_ = arrays["_wcc_"]  # shape (..., 1)
         _wp_ = arrays["_wp_"]  # shape (..., 1)
+        _w1_ = arrays["_w1_"]
         _w_ = arrays["_w_"]
         _has_shock_ = arrays["_has_shock_"]
         _PAD_violations_ = arrays["_PAD_violations_"]
@@ -1348,11 +1350,13 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.conservatives_to_primitives(_ucc_, _wcc_)
 
         # 2) primitive FV averages
+        self.conservatives_to_primitives(_u_, _w1_)  # second-order primitive averages
+
         if lazy_primitives == "none":
             self.integrate_fv_averages(_wcc_, p)  # writes to _wp_
             _w_[...] = _wp_[..., 0]
         elif lazy_primitives == "full":
-            self.conservatives_to_primitives(_u_, _w_)
+            _w_[...] = _w1_
         elif lazy_primitives == "adaptive":
             if not isinstance(scheme, polyInterpolationScheme):
                 raise ValueError(
@@ -1360,8 +1364,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
 
             self.integrate_fv_averages(_wcc_, p)  # writes to _wp_
-            self.conservatives_to_primitives(_u_, _w_)
+            _w_[...] = _wp_[..., 0]  # let _w_ be fully high-order
 
+            # detect shocks and PAD violations in _w_ and fall back to _w1_
             primitives = scheme.flux_recipe in (2, 3)
             self.shock_detector(scheme, primitives)  # writes to _eta_, _has_shock_
 
@@ -1374,7 +1379,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 )
                 _has_shock_ |= _any_violations_
 
-            _w_[...] = xp.where(_has_shock_, _w_, _wp_[..., 0])
+            _w_[...] = xp.where(_has_shock_, _w1_, _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
 
@@ -1769,7 +1774,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         _F_ = arrays[f"_{flux_name}_"]
         nodes = arrays[f"_{dim}_nodes_"]
         fnodes = arrays[f"_{flux_name.lower()}_nodes_"]
-        w0 = arrays["_w_"]
+        w1 = arrays["_w1_"]
 
         # convert to primitives if requested
         if convert_to_primitives:
@@ -1777,7 +1782,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # sanitize face reconstruction
         if self.face_fallback:
-            self.primitive_reconstruction_fallback(nodes, w0, scheme)
+            self.primitive_reconstruction_fallback(nodes, w1, scheme)
 
         wl = nodes[crop(4, (None, n))]
         wr = nodes[crop(4, (n, 2 * n))]
@@ -1870,16 +1875,16 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
     @MethodTimer(cat="integrate_fluxes:fallback")
     def primitive_reconstruction_fallback(
-        self, wj: ArrayLike, w0: ArrayLike, scheme: InterpolationScheme
+        self, wj: ArrayLike, w1: ArrayLike, scheme: InterpolationScheme
     ):
         """
-        Overwrite the reconstructed face states `wp` with fallback values `w0` in place
+        Overwrite the reconstructed face states `wp` with fallback values `w1` in place
         based on physical constraints which must be enforced in a subclass.
 
         Args:
             wj: Array of primitive reconstructed face states. Has shape
                 (nvars, nx, ny, nz, ninterpolations).
-            w0: Array of primitive fallback values. Has shape (nvars, nx, ny, nz).
+            w1: Array of primitive fallback values. Has shape (nvars, nx, ny, nz).
             scheme: Interpolation scheme to use for the reconstruction.
 
         Notes:
