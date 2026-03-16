@@ -2324,9 +2324,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         path: Optional[str] = None,
         overwrite: bool = False,
         discard: bool = True,
-        q_max: int = 3,
+        q_max: int = 2,
         time_degree: Optional[int] = None,
-        muscl_hancock: bool = False,
+        muscl_hancock: bool = True,
         reduce_CFL: bool = False,
     ):
         """
@@ -2369,12 +2369,12 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 the time integrator.
             muscl_hancock: If True, use a MUSCL-Hancock scheme instead of a
                 Runge-Kutta method. This option overrides `q_max` and `time_degree`.
-                The base scheme must be a `musclInterpolationScheme`.
+                Ignored if the base scheme is not a `musclInterpolationScheme`.
             reduce_CFL: If True, reduce the CFL to emulate a higher-order time
                 integrator matching the order of the spatial discretization.
         """
         q = min(self.p if time_degree is None else time_degree, q_max)
-        if muscl_hancock:
+        if isinstance(self.base_scheme, musclInterpolationScheme) and muscl_hancock:
             self.musclhancock(
                 T=T,
                 n=n,

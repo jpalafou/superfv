@@ -551,11 +551,21 @@ class ExplicitODESolver(ABC):
         if isinstance(T, int) or isinstance(T, float):
             target_times = [T]
         elif isinstance(T, list):
-            target_times = sorted([float(t) for t in T])
+            target_times = sorted({float(t) for t in T})
         else:
             raise ValueError(f"Invalid type for T: {type(T)}")
-        if min(target_times) <= 0:
-            raise ValueError("Target times must be greater than 0.")
+
+        # check that list of target times is valid
+        if min(target_times) < 0:
+            raise ValueError("All target times must be non-negative.")
+        if target_times[0] == 0:
+            target_times = target_times[1:]
+            if not target_times:
+                raise ValueError(
+                    "If providing a list of target times, "
+                    "at least one must be greater than 0."
+                )
+
         return target_times
 
     def prepare_minisnapshot_data(self) -> Dict[str, Any]:
@@ -596,7 +606,7 @@ class ExplicitODESolver(ABC):
         if out_path.exists() and overwrite:
             print(f'Overwriting existing output directory "{out_path}".')
             shutil.rmtree(out_path)
-        elif out_path.exists() and not overwrite:
+        elif out_path.exists():
             raise FileExistsError(f"Output directory '{out_path}' already exists.")
 
         os.makedirs(out_path)

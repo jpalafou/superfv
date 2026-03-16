@@ -1,44 +1,48 @@
 import os
-from typing import Any, Dict, Literal, Union
+from typing import Any, Dict, Literal, Tuple, Union
 
 from superfv import AdvectionSolver, EulerSolver, OutputLoader
 
 
 def run_multiple_simulations(
-    system: Literal["advection", "euler"],
-    configs: Dict[str, Dict[str, Any]],
+    configs: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]],
     base_path: str,
-    mode: Literal["n", "T"] = "n",
-    *,
-    n: int = 10,
-    T: float = 1.0,
-    q_max: int = 2,
-    allowMH: bool = True,
-    snapshot_mode: Literal["target", "none", "every"] = "target",
+    system: Literal["advection", "euler"] = "euler",
     overwrite: bool = False,
+    skip_errors: bool = True,
 ):
     """
     Helper function for running many simulations and saving their outputs to the same
     `base_path`.
 
     Args:
-        system: Determines FiniteVolumeSolver subclass to init:
-            "advection" for AdvectionSolver or "euler" for EulerSolver.
-        configs: Dictionary of configurations for the FiniteVolumeSolver init:
-            `sim = FiniteVolumeSolver(**config) for name, config in configs`
-        base_path: Root directory for storing snapshots. The snapshot is stored in
-            'base_path/name/', where name is the key of the config in `configs`.
-        mode: "n_steps" for fixed number of steps, "T" for fixed physical time.
-        n: Number of steps to run for each simulation if `mode="n"
-        T: Physical time to run for each simulation if `mode="T"`.
-        q_max: `FiniteVolumeSolver.run` argument.
-        allowMH: Whether to allow MUSCL-Hancock. If True, `muscl_hancock` in
-            `FiniteVolumeSolver.run` is set to true only for configs who contain
-            `MUSCL=True`.
-        snapshot_mode: `FiniteVolumeSolver.run` argument.
-        overwrite: Whether to overwrite existing directories under 'base_path/name/'.
+        configs: A dictionary mapping simulation names to tuples of the form
+            `(init_params, run_params)`, where `init_params` is a dictionary of
+            parameters to pass to the solver initialization and `run_params` is
+            a dictionary of parameters to pass to the `run` method.
+        base_path: The directory to save all simulation outputs to. Each simulation
+            will be saved to a subdirectory of `base_path` with the name of the
+            simulation provieed in `configs`.
+        system: The system to simulate, either "advection" or "euler".
+        overwrite: If True, overwrite existing outputs. If False, skip simulations
+            that already have outputs. If an error file exists for a simulation, the
+            behavior depends on `skip_errors`.
+        skip_errors: If True, skip simulations that have an error file. If False,
+            re-run simulations that have an error file.
     """
-    for name, config in configs.items():
+    for name, (init_params, run_params) in configs.items():
+        if "overwrite" in run_params:
+            raise ValueError(
+                "Cannot specify `overwrite` in run_params. Use the `overwrite` "
+                "argument of `run_multiple_simulations` instead."
+            )
+        if "path" in run_params:
+            raise ValueError(
+                "Cannot specify `path` in run_params. The path for each simulation "
+                "is determined by the `base_path` and the simulation name in "
+                "`configs`."
+            )
+
         sim_path = os.path.join(base_path, name)
         error_path = os.path.join(sim_path, "error.txt")
 
@@ -50,8 +54,12 @@ def run_multiple_simulations(
                 print(f"Error exists for {name} with the following contents:")
                 with open(error_path, "r") as f:
                     print(f.read())
-                print("\nSkipping...\n")
-                continue
+                if skip_errors:
+                    print("\nSkipping...\n")
+                    continue
+                else:
+                    print("\nRe-running...\n")
+                    raise FileNotFoundError
 
             _ = OutputLoader(sim_path)
 
@@ -62,49 +70,34 @@ def run_multiple_simulations(
         except FileNotFoundError:
             sim: Union[AdvectionSolver, EulerSolver]
 
-            print(f"Running simulation with configuration `{name}`:")
-            for argument, value in config.items():
-                print(f"\t{argument}: {value}")
+            print(f"Running simulation with config `{name}`:")
+            print("\t__init__ parameters:")
+            for argument, value in init_params.items():
+                print(f"\t\t{argument}: {value}")
+            print("\trun parameters:")
+            for argument, value in run_params.items():
+                print(f"\t\t{argument}: {value}")
             print("...")
 
             if system == "advection":
-                sim = AdvectionSolver(**config)
+                sim = AdvectionSolver(**init_params)
             elif system == "euler":
-                sim = EulerSolver(**config)
+                sim = EulerSolver(**init_params)
             else:
                 raise ValueError(f"Unknown system: {system}")
 
             try:
-                if mode == "n":
-                    sim.run(
-                        n=n,
-                        q_max=q_max,
-                        muscl_hancock=config.get("MUSCL", False) if allowMH else False,
-                        path=sim_path,
-                        snapshot_mode=snapshot_mode,
-                        overwrite=True,
-                    )
-                elif mode == "T":
-                    sim.run(
-                        T=T,
-                        q_max=q_max,
-                        muscl_hancock=config.get("MUSCL", False) if allowMH else False,
-                        path=sim_path,
-                        snapshot_mode=snapshot_mode,
-                        overwrite=True,
-                    )
-                else:
-                    raise ValueError(f"Unknown mode: {mode}")
+                sim.run(**run_params, path=sim_path, overwrite=True)
                 sim.write_timings()
 
-                print(f"Successfully completed {name}!")
+                print(f"Successfully completed {name}!\n\n")
 
                 # clean up error file if it exists
                 if os.path.exists(error_path):
                     os.remove(error_path)
 
             except RuntimeError as e:
-                print(f"  Failed: {e}")
+                print(f"Failed: {e}\n\n")
                 with open(error_path, "w") as f:
                     f.write(str(e))
 
