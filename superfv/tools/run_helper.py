@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Literal, Tuple, Union
+from typing import Any, Callable, Dict, Literal, Optional, Tuple, Union
 
 from superfv import AdvectionSolver, EulerSolver, OutputLoader
 
@@ -10,6 +10,9 @@ def run_multiple_simulations(
     system: Literal["advection", "euler"] = "euler",
     overwrite: bool = False,
     skip_errors: bool = True,
+    postprocess: Optional[
+        Callable[[str, Union[OutputLoader, AdvectionSolver, EulerSolver]], None]
+    ] = None,
 ):
     """
     Helper function for running many simulations and saving their outputs to the same
@@ -29,6 +32,9 @@ def run_multiple_simulations(
             behavior depends on `skip_errors`.
         skip_errors: If True, skip simulations that have an error file. If False,
             re-run simulations that have an error file.
+        postprocess: An optional function that takes the name of a simulation and
+            either the loaded output (if it exists) or the simulation object (if it
+            was just run) and performs some postprocessing.
     """
     for name, (init_params, run_params) in configs.items():
         if "overwrite" in run_params:
@@ -61,7 +67,10 @@ def run_multiple_simulations(
                     print("\nRe-running...\n")
                     raise FileNotFoundError
 
-            _ = OutputLoader(sim_path)
+            output = OutputLoader(sim_path)
+
+            if postprocess is not None:
+                postprocess(name, output)
 
             print(f"Output exists for {name}, skipping...")
 
@@ -89,6 +98,9 @@ def run_multiple_simulations(
             try:
                 sim.run(**run_params, path=sim_path, overwrite=True)
                 sim.write_timings()
+
+                if postprocess is not None:
+                    postprocess(name, sim)
 
                 print(f"Successfully completed {name}!\n\n")
 
