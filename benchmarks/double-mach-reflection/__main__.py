@@ -1,117 +1,18 @@
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 
-from superfv import EulerSolver, OutputLoader
+from superfv import plot_2d_slice
 from superfv.boundary_conditions import apply_free_bc, apply_reflective_bc
 from superfv.initial_conditions import double_mach_reflection
+from superfv.tools.run_helper import run_multiple_simulations
 from superfv.tools.slicing import crop
 
-# loop parameters
-base_path = "/scratch/gpfs/jp7427/out/double-mach-reflection/"
-overwrite = False
-
-common = dict(PAD={"rho": (0, None), "P": (0, None)})
-musclhancock = dict(p=1, MUSCL=True, **common)
-apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
-aposteriori = dict(
-    MOOD=True,
-    face_fallback=False,
-    lazy_primitives="full",
-    MUSCL_limiter="PP2D",
-    **common,
-)
-aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori2 = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
-aposteriori3 = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
-
-no_v = dict(limiting_vars=("rho", "P"))
-
-configs = {
-    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
-    "ZS3": dict(p=3, GL=True, **apriori),
-    "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori1),
-    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori1),
-    "MM3/1rev/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1),
-    "MM7/1rev/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1),
-    "MM3/1rev/rtol_2e-2": dict(p=3, NAD_rtol=2e-2, **aposteriori1),
-    "MM7/1rev/rtol_2e-2": dict(p=7, NAD_rtol=2e-2, **aposteriori1),
-    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori1),
-    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori1),
-    "MM3/1rev/rtol_2e-1": dict(p=3, NAD_rtol=2e-1, **aposteriori1),
-    "MM7/1rev/rtol_2e-1": dict(p=7, NAD_rtol=2e-1, **aposteriori1),
-    "MM3/3revs/no_delta/rtol_1e-2": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-2": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori3
-    ),
-    "MM3/3revs/no_delta/rtol_1e-1": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
-    ),
-    "MM7/3revs/no_delta/rtol_1e-1": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori3
-    ),
-    "MM3/2revs/no_delta/rtol_1e-1": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori2
-    ),
-    "MM7/2revs/no_delta/rtol_1e-1": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori2
-    ),
-    "MM3/1rev/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM3/1rev/no_delta/rtol_1e-4": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-4, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-4": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-4, **aposteriori1
-    ),
-    "MM3/1rev/no_delta/rtol_1e-3": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-3, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-3": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-3, **aposteriori1
-    ),
-    "MM3/1rev/no_delta/rtol_5e-3": dict(
-        p=3, NAD_delta=False, NAD_rtol=5e-3, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_5e-3": dict(
-        p=7, NAD_delta=False, NAD_rtol=5e-3, **aposteriori1
-    ),
-    "MM3/1rev/no_delta/rtol_1e-2": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-2, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-2": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-2, **aposteriori1
-    ),
-    "MM3/1rev/no_delta/rtol_5e-2": dict(
-        p=3, NAD_delta=False, NAD_rtol=5e-2, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_5e-2": dict(
-        p=7, NAD_delta=False, NAD_rtol=5e-2, **aposteriori1
-    ),
-    "MM3/1rev/no_delta/rtol_1e-1": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-1, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-1": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-1, **aposteriori1
-    ),
-}
-
-# simulation parameters
-Nx = 3200
-T = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2]
+# define boundary conditions
 gamma = 1.4
 
 
-# define boundary condition callables
 def dirichlet_x0(idx, x, y, z, t, xp):
     out = xp.zeros((len(idx.idxs), *x.shape))
     out[idx("rho")] = 8.0
@@ -157,55 +58,70 @@ def patch_bc(_u_, context):
     apply_reflective_bc(_u_[section2], context)
 
 
-for name, config in configs.items():
-    sim_path = f"{base_path}{name}/"
+# simulation parameters
+Nx = 3200
+init_params = dict(
+    ic=double_mach_reflection,
+    gamma=gamma,
+    xlim=(0, 4),
+    nx=Nx,
+    ny=Nx // 4,
+    bcx=("dirichlet", "free"),
+    bcy=("patch", "dirichlet"),
+    bcx_callable=(dirichlet_x0, None),
+    bcy_callable=(patch_bc, dirichlet_y1),
+    PAD={"rho": (0, None), "P": (0, None)},
+    cupy=True,
+)
+run_params = dict(T=np.linspace(0, 0.2, 11).tolist(), allow_overshoot=True)
 
-    try:
-        if overwrite:
-            raise FileNotFoundError
+# loop parameters
+musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
+apriori = dict(ZS=True, lazy_primitives="adaptive")
+aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
+aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
+aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
+aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
-        if os.path.exists(f"{sim_path}error.txt"):
-            print(f"Error exists for config={name}, skipping...")
-            continue
+configs = {
+    "MUSCL-Hancock": musclhancock,
+    "ZS3": dict(p=3, GL=True, **apriori),
+    "ZS7": dict(p=7, GL=True, **apriori),
+    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
+}
 
-        sim = OutputLoader(sim_path)
-    except FileNotFoundError:
-        print(f"Running simulation config={name}...")
 
-        sim = EulerSolver(
-            gamma=gamma,
-            ic=double_mach_reflection,
-            bcx=("dirichlet", "free"),
-            bcy=("patch", "dirichlet"),
-            bcx_callable=(dirichlet_x0, None),
-            bcy_callable=(patch_bc, dirichlet_y1),
-            xlim=(0, 4),
-            nx=Nx,
-            ny=Nx // 4,
-            cupy=True,
-            **config,
-        )
+def makeplot(name, sim):
+    plot_path = f"out/double-mach-reflection-plots/{name}.png"
+    dir_name = os.path.dirname(plot_path)
+    if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
 
-        try:
-            sim.run(
-                T,
-                allow_overshoot=True,
-                q_max=2,
-                muscl_hancock=name == "MUSCL-Hancock",
-                time_degree=2 if name == "MUSCL3" else None,
-                log_freq=1000,
-                path=sim_path,
-                overwrite=True,
-            )
-            sim.write_timings()
+    fig, ax = plt.subplots(figsize=(9, 3))
+    ax.set_xlim(0, 3)
 
-            # clean up error file if it exists
-            if os.path.exists(f"{sim_path}error.txt"):
-                os.remove(f"{sim_path}error.txt")
+    plot_2d_slice(
+        sim,
+        ax,
+        "rho",
+        cmap="grey",
+        colorbar=False,
+        levels=15,
+        linewidths=0.25,
+    )
+    fig.savefig(plot_path, dpi=300)
 
-        except RuntimeError as e:
-            print(f"  Failed: {e}")
-            with open(f"{sim_path}error.txt", "w") as f:
-                f.write(str(e))
 
-            continue
+run_multiple_simulations(
+    {name: (init_params | config, run_params) for name, config in configs.items()},
+    "/scratch/gpfs/jp7427/out/double-mach-reflection/",
+    overwrite=False,
+    postprocess=makeplot,
+)

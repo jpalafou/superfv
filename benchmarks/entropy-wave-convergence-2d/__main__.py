@@ -14,7 +14,7 @@ plot_path = "benchmarks/entropy-wave-convergence-2d/plot.png"
 overwrite = False
 
 gamma = 5 / 3
-run_params = dict(T=1.0, reduce_CFL=True)
+run_params = dict(T=1.0, reduce_CFL=True, q_max=3)
 init_params = dict(
     ic=partial(entropy_wave, gamma=gamma),
     gamma=gamma,
