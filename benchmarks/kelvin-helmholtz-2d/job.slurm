@@ -14,4 +14,4 @@ module purge
 module load anaconda3/2025.6
 conda activate superfv
 
-python benchmarks/kelvin_helmholtz_2d
+python benchmarks/kelvin-helmholtz-2d
