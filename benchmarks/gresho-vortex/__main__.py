@@ -37,15 +37,9 @@ aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 configs = {
     "MUSCL-Hancock": musclhancock,
-    "ZS3": dict(p=3, GL=True, **apriori),
-    # "ZS7": dict(p=7, GL=True, **apriori),
-    # "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    # "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    # "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    # "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
-    # "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
-    # "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
-    # "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
+    "ZS3/no_v": dict(p=3, GL=True, limiting_vars=("rho",), **apriori),
+    "ZS7/no_v": dict(p=7, GL=True, limiting_vars=("rho",), **apriori),
+    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
 }
 
