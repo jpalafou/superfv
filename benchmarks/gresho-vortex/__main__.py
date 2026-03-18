@@ -2,102 +2,125 @@ import os
 from functools import partial
 from itertools import product
 
-from superfv import EulerSolver, OutputLoader
+import matplotlib.pyplot as plt
+import numpy as np
+
+from superfv import OutputLoader, plot_2d_slice
 from superfv.initial_conditions import gresho_vortex
+from superfv.tools.run_helper import run_multiple_simulations
+
+base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/"
 
 N = 96
-T = [0.2, 0.4, 0.6, 0.8, 1.0]
 gamma = 5 / 3
-base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/"
-overwrite = False
-
-# N = 96
-# T = [0.02, 0.04, 0.06, 0.08, 0.1]  # [0.2, 0.4, 0.6, 0.8, 1.0]
-# gamma = 5 / 3
-# base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/short-debug/"
-# overwrite = False
-
-v0_values = [5.0]
-M_max_values = [1e-1, 1e-2, 1e-3]
-
-common = dict(PAD={"rho": (0, None), "P": (0, None)})
-musclhancock = dict(p=1, MUSCL=True, **common)
-apriori = dict(ZS=True, lazy_primitives="adaptive", **common)
-aposteriori = dict(
-    MOOD=True,
-    face_fallback=False,
-    lazy_primitives="full",
-    MUSCL_limiter="PP2D",
-    **common,
+init_params = dict(
+    gamma=gamma,
+    PAD={"rho": (0, None), "P": (0, None)},
+    nx=N,
+    ny=N,
+    cupy=True,
 )
-aposteriori1 = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori2 = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
-aposteriori3 = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
-no_v = dict(limiting_vars=("rho", "P"))
+run_params = dict(T=[0.2, 0.4, 0.6, 0.8, 1.0])
+
+# loop parameters
+v0_values = [5.0]
+
+M_max_values = [0.1, 0.01, 0.001]
+
+musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
+apriori = dict(ZS=True, lazy_primitives="adaptive")
+aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
+aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
+aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
+aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 configs = {
-    "p3": dict(p=3),
-    "p7": dict(p=7),
-    "MUSCL-Hancock": dict(MUSCL_limiter="PP2D", **musclhancock),
+    "MUSCL-Hancock": musclhancock,
     "ZS3": dict(p=3, GL=True, **apriori),
     "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3/no_v": dict(p=3, GL=True, **apriori, **no_v),
-    "ZS7/no_v": dict(p=7, GL=True, **apriori, **no_v),
-    "MM3/1rev/no_v/rtol_1e-2": dict(p=3, NAD_rtol=1e-2, **aposteriori1, **no_v),
-    "MM7/1rev/no_v/rtol_1e-2": dict(p=7, NAD_rtol=1e-2, **aposteriori1, **no_v),
-    "MM3/1rev/no_delta/rtol_1e-5": dict(
-        p=3, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
-    "MM7/1rev/no_delta/rtol_1e-5": dict(
-        p=7, NAD_delta=False, NAD_rtol=1e-5, **aposteriori1
-    ),
+    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
 }
 
 
-for v0, (name, config), M_max in product(v0_values, configs.items(), M_max_values):
-    sim_path = f"{base_path}v0_{v0}/{name}/M_max_{M_max}/"
+def compute_M(idx, mesh, w, v0):
+    x, y, _ = mesh.get_cell_centers()
+    rho = w[idx("rho")]
+    vx = w[idx("vx")] - v0
+    vy = w[idx("vy")]
+    P = w[idx("P")]
 
-    try:
-        if overwrite:
-            raise FileNotFoundError
+    xc = x - 0.5
+    yc = y - 0.5
+    r = np.sqrt(xc**2 + yc**2)
 
-        if os.path.exists(f"{sim_path}error.txt"):
-            print(f"Error exists for config={name}, skipping...")
-            continue
+    v_phi = vx * (-yc / r) + vy * (xc / r)
 
-        sim = OutputLoader(sim_path)
-    except FileNotFoundError:
-        print(f"Running {name} with M_max = {M_max} and v0 = {v0}")
+    cs2 = gamma * P / rho
+    cs = np.sqrt(np.maximum(cs2, 0.0))
 
-        sim = EulerSolver(
-            ic=partial(gresho_vortex, gamma=gamma, M_max=M_max, v0=v0),
-            gamma=gamma,
-            nx=N,
-            ny=N,
-            cupy=True,
-            **config,
+    M = np.abs(v_phi) / cs
+
+    return M
+
+
+def compute_M_func(M_max, v0):
+    def f(idx, mesh, w):
+        M = compute_M(idx, mesh, w, v0)
+        return M / M_max
+
+    return f
+
+
+def makeplot(name, _):
+    plot_path = f"out/gresho-vortex-plots/{name}.png"
+    dir_name = os.path.dirname(plot_path)
+    if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    # parse v0 and M_max from name
+    v0 = float(name.split("v0_")[1].split("/")[0])
+    M_max = float(name.split("M_max_")[1].rstrip("/"))
+
+    # load saved data
+    sim = OutputLoader(os.path.join(base_path, name))
+
+    plot_2d_slice(
+        sim,
+        ax,
+        "w",
+        multivar_func=compute_M_func(M_max, v0),
+        cmap="jet",
+        vmin=0,
+        vmax=1,
+        colorbar=True,
+    )
+    fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+
+
+run_multiple_simulations(
+    {
+        f"v0_{v0}/{name}/M_max_{M_max}": (
+            dict(
+                ic=partial(gresho_vortex, gamma=gamma, M_max=M_max, v0=v0),
+                **init_params,
+                **config,
+            ),
+            run_params,
         )
-
-        try:
-            sim.run(
-                T,
-                allow_overshoot=True,
-                q_max=2,
-                muscl_hancock=config.get("MUSCL", False),
-                log_freq=100,
-                path=sim_path,
-                overwrite=True,
-            )
-            sim.write_timings()
-
-            # clean up error file if it exists
-            if os.path.exists(f"{sim_path}error.txt"):
-                os.remove(f"{sim_path}error.txt")
-
-        except RuntimeError as e:
-            print(f"  Failed: {e}")
-            with open(f"{sim_path}error.txt", "w") as f:
-                f.write(str(e))
-
-            continue
+        for (name, config), v0, M_max in product(
+            configs.items(), v0_values, M_max_values
+        )
+    },
+    base_path=base_path,
+    postprocess=makeplot,
+)
