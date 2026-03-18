@@ -101,7 +101,7 @@ configs = {
 
 
 def makeplot(name, sim):
-    plot_path = f"out/double-mach-reflection-plots/{name}.png"
+    plot_path = f"out/double-mach-reflection-plots/{name}.pdf"
     dir_name = os.path.dirname(plot_path)
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
@@ -109,16 +109,25 @@ def makeplot(name, sim):
     fig, ax = plt.subplots(figsize=(9, 3))
     ax.set_xlim(0, 3)
 
+    nlevels = 15
+    idx = sim.variable_index_map
+    rho_min = sim.snapshots[-1]["u"][idx("rho")].min().item()
+    rho_max = sim.snapshots[-1]["u"][idx("rho")].max().item()
+    levels = np.linspace(rho_min, rho_max, nlevels)
+    ax.set_title(
+        rf"$\rho \in [{rho_min:.2f}, {rho_max:.2f}]$ contoured with {nlevels} levels"
+    )
+
     plot_2d_slice(
         sim,
         ax,
         "rho",
         cmap="grey",
         colorbar=False,
-        levels=15,
+        levels=levels,
         linewidths=0.25,
     )
-    fig.savefig(plot_path, dpi=300)
+    fig.savefig(plot_path, bbox_inches="tight")
 
 
 run_multiple_simulations(

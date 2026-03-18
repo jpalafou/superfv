@@ -10,7 +10,7 @@ from superfv.tools.norms import linf_norm
 from superfv.tools.run_helper import run_multiple_simulations
 
 base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence-2d/"
-plot_path = "benchmarks/entropy-wave-convergence-2d/plot.png"
+plot_path = "benchmarks/entropy-wave-convergence-2d/plot.pdf"
 overwrite = False
 
 gamma = 5 / 3
@@ -102,7 +102,7 @@ def plot_error(name, sim):
             **styles.get(name, dict()),
         )
     ax.legend()
-    fig.savefig(plot_path, dpi=300)
+    fig.savefig(plot_path, bbox_inches="tight")
 
 
 # remove old output

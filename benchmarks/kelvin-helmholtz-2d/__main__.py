@@ -44,15 +44,21 @@ configs = {
 
 
 def makeplot(name, sim):
-    plot_path = f"out/kelvin-helmholtz-plots/{name}.png"
+    plot_path = f"out/kelvin-helmholtz-plots/{name}.pdf"
     dir_name = os.path.dirname(plot_path)
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
     fig, ax = plt.subplots(figsize=(6, 6))
 
-    plot_2d_slice(sim, ax, "rho", colorbar=False)
-    fig.savefig(plot_path, dpi=300)
+    idx = sim.variable_index_map
+    rho_min = sim.snapshots[-1]["u"][idx("rho")].min().item()
+    rho_max = sim.snapshots[-1]["u"][idx("rho")].max().item()
+    ax.set_title(rf"Colormap for $\rho \in [{rho_min:.2f}, {rho_max:.2f}]$")
+
+    plot_2d_slice(sim, ax, "rho")
+
+    fig.savefig(plot_path, bbox_inches="tight")
 
 
 run_multiple_simulations(

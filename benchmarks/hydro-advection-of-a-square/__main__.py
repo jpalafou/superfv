@@ -8,7 +8,7 @@ from superfv import EulerSolver, OutputLoader
 from superfv.tools.norms import linf_norm
 
 base_path = "/scratch/gpfs/jp7427/out/hydro-advection-of-a-square/"
-plot_path = "benchmarks/hydro-advection-of-a-square/plot.png"
+plot_path = "benchmarks/hydro-advection-of-a-square/plot.pdf"
 overwrite = True
 
 common = dict(PAD={"rho": (0, None), "P": (0, None)})
@@ -132,7 +132,7 @@ def plot_convergence(df):
             **style,
         )
     ax.legend()
-    fig.savefig(plot_path, dpi=300)
+    fig.savefig(plot_path)
 
 
 # remove old output

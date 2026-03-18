@@ -38,14 +38,14 @@ aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 configs = {
     "MUSCL-Hancock": musclhancock,
     "ZS3": dict(p=3, GL=True, **apriori),
-    "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
-    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
+    # "ZS7": dict(p=7, GL=True, **apriori),
+    # "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
+    # "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    # "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
+    # "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
+    # "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
+    # "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
+    # "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
 }
 
@@ -80,7 +80,7 @@ def compute_M_func(M_max, v0):
 
 
 def makeplot(name, _):
-    plot_path = f"out/gresho-vortex-plots/{name}.png"
+    plot_path = f"out/gresho-vortex-plots/{name}.pdf"
     dir_name = os.path.dirname(plot_path)
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
@@ -104,7 +104,7 @@ def makeplot(name, _):
         vmax=1,
         colorbar=True,
     )
-    fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+    fig.savefig(plot_path, bbox_inches="tight")
 
 
 run_multiple_simulations(
