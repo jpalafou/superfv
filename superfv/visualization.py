@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Callable, Dict, Literal, Optional, Tuple, Union, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -130,14 +130,11 @@ def _parse_txyz_slices(
     return nearest_t, tuple_of_slices
 
 
-def _extract_variable_data(
+def get_field(
     fv_solver: Union[FiniteVolumeSolver, OutputLoader],
     t: float,
     variable: str,
     cell_averaged: bool = True,
-    theta: bool = False,
-    troubles: bool = False,
-    visualization: bool = False,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
 ) -> np.ndarray:
@@ -147,120 +144,118 @@ def _extract_variable_data(
     Args:
         fv_solver: FiniteVolumeSolver or OutputLoader object.
         t: Nearest time to extract data from.
-        variable: Name of the variable to extract. Possible values include:
-            - Physical variables: names of primitive, conservative, or passive
-            variables, such as "rho", "u", "p", "E", "Y1", etc.
-            - Group variables: "mean", "min", "max", or "mag" to extract the mean,
-            min, max, or magnitude over all variables in the group, respectively.
-            - "cascade" for the cascade levels of MOOD simulations.
-        cell_averaged: Whether to extract the cell average of the variable. If False,
-            the variable is extracted using its cell-centered values. Ignored if
-            `theta` or `troubles` is True.
-        theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
-            Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
-            or max over all variables, respectively.
-        troubles: Whether to extract the troubled cells of a specific variable. Set
-            `variable` equal to "mean", "min", or "max" to extract the mean, min, or
-            max over all variables, respectively.
-        visualization: Whether to use the post-processed values of `theta` or
-            `troubles` for visualization (True) or the raw values (False).
-        func: Optional function to apply to the extracted data.
-        multivar_func: Optional function to apply to multiple variables at once. If
-            provided, `variable` must provide the name of the snapshot array to pass,
-            such as "u", "ucc", "w", "wcc", "theta", or "troubles".
+        variable: Name of variable to extract and also any indexing or reduction
+            operations to perform on it, separated by a hyphen. Example formats:
+            - "<var>": Extract the variable named <var>.
+            - "<group>-<op>": Extract the group of variables in <group> and
+                perform the reduction <op> across the variable axis.
+            - "<group>": Only for single-variable groups or if `multivar_func` is
+                provided.
+            - "<array>-<op>": Extract the snapshot array named <array> and perform
+                the reduction <op> across the variable axis.
+            - "<array>-<var>": Extract the variable named <var> from the snapshot
+                array named <array>.
+            - "<array>": Only for single-variable snapshot arrays like "cascade", or
+                if `multivar_func` is provided.
+        cell_averaged: Whether to extract the cell average of the variable. Otherwise,
+            the cell-centered values are extracted. For some arrays like "theta" and
+            "troubles", this argument is ignored and the raw values are extracted.
+        func: Optional function to apply elementwise to the extracted data.
+        multivar_func: Optional function to apply to a variable group or a snapshot
+            array, which takes the variable index map, mesh, and array as arguments
+            and returns a single field array.
 
     Returns:
-        Array of data for the variable at the nearest time.
-
-    Raises:
-        ValueError: Both theta and troubles are True.
-        ValueError: Variable not found in groups 'primitives', 'conservatives',
-            or 'passives'.
-        ValueError: Failed to reduce variable data to three dimensions.
+        Field array of data for the variable at the nearest time.
     """
-    if visualization:
-        raise NotImplementedError("Visualization mode is not currently implemented.")
-
-    if theta and troubles:
-        raise ValueError("Only one of theta or troubles can be True.")
-
     idx = fv_solver.variable_index_map
-    active_dims = fv_solver.active_dims
 
-    # choose the snapshot with the nearest time
-    snapshot = fv_solver.snapshots(t)
-
-    if multivar_func is not None:
-        data = snapshot[variable]
-        y = multivar_func(idx, fv_solver.mesh, data)
-        if y.ndim != 3:
-            raise ValueError(
-                f"Multivariable function did not reduce data to three dimensions; "
-                f"got {y.ndim} dimensions instead."
-            )
-        return y
-
-    def _gather_group(group: np.ndarray, op: str) -> np.ndarray:
-        if op == "mean":
-            return np.mean(group, axis=0)
-        elif op == "min":
-            return np.min(group, axis=0)
-        elif op == "max":
-            return np.max(group, axis=0)
-        elif op == "mag":
-            return np.sqrt(np.sum(np.square(group), axis=0))
-        else:
-            raise ValueError(f"Invalid operation {op} for group variable.")
-
-    if theta:
-        # determine the key for theta
-        data = snapshot["theta"]
-    elif troubles:
-        # determine the key for troubles
-        data = snapshot["troubles"]
-    else:
-        # determine the key for the physical variable
-        if variable == "cascade":
-            if "cascade" not in snapshot:
-                raise ValueError("Cascade data not found in snapshot. Is MOOD enabled?")
-            data = snapshot["cascade"][0]
-        elif variable in idx.group_var_map["conservatives"]:
-            data = snapshot["u" if cell_averaged else "ucc"]
+    # first determine the snapshot array to extract from based on `variable`
+    arraykey: str
+    if variable in idx.var_idx_map or variable in idx.group_var_map:
+        if variable in idx.group_var_map["conservatives"]:
+            arraykey = "u" if cell_averaged else "ucc"
         elif (
             variable in idx.group_var_map["primitives"]
             or variable in idx.group_var_map["passives"]
         ):
-            data = snapshot["w" if cell_averaged else "wcc"]
+            arraykey = "w" if cell_averaged else "wcc"
         else:
-            raise ValueError(
-                f"Variable {variable} not found in groups 'primitives', 'conservatives', "
-                "or 'passives'."
-            )
+            raise ValueError(f"Failed to find variable '{variable}' in group maps.")
+    elif "theta" in variable:
+        arraykey = "theta"
+    elif "troubles" in variable:
+        arraykey = "troubles"
+    elif variable == "cascade":
+        arraykey = "cascade"
+    else:
+        raise ValueError(
+            f"Variable {variable} not found in groups 'primitives', 'conservatives', "
+            "or 'passives', and does not match expected formats for theta or troubles."
+        )
 
-    # gather group variable if needed
-    if data.ndim == 3:
-        y = data
-    elif data.ndim == 4:
-        if variable in ("mean", "min", "max"):
-            y = _gather_group(data, variable)
-        elif variable in ("v", "m"):
-            group = np.array([data[idx(variable + d), ...] for d in active_dims])
-            y = _gather_group(group, "mag")
-        elif variable in idx.var_idx_map:
-            y = data[idx(variable), ...]
+    hyphen_arg: Optional[str] = None
+    if "-" in variable:
+        _, hyphen_arg = variable.split("-")
+
+    # gather multi-var field data from snapshot
+    if variable in idx.group_var_map:
+        array = fv_solver.snapshots(t)[arraykey][idx(variable)]
+    else:
+        array = fv_solver.snapshots(t)[arraykey]
+
+    def _reduce_group(data: np.ndarray, op: str) -> np.ndarray:
+        if op == "mean":
+            return np.mean(data, axis=0)
+        elif op == "min":
+            return np.min(data, axis=0)
+        elif op == "max":
+            return np.max(data, axis=0)
+        elif op == "mag":
+            return np.sqrt(np.sum(np.square(data), axis=0))
+        else:
+            raise ValueError(f"Invalid operation {op} for group variable.")
+
+    # index or reduce to single-var field array
+    if array.ndim == 3:
+        y = array
+    elif array.ndim == 4 and array.shape[0] == 1:
+        y = array[0]
+    elif array.ndim == 4:
+        if variable in idx.var_idx_map:
+            y = array[idx(variable)]
+        elif hyphen_arg in idx.var_idx_map:
+            y = array[idx(hyphen_arg)]
+        elif hyphen_arg in ("mean", "min", "max", "mag"):
+            y = _reduce_group(array, hyphen_arg)
+        elif multivar_func is not None:
+            y = multivar_func(idx, fv_solver.mesh, array)
+        elif hyphen_arg is None:
+            raise ValueError(
+                f"Variable {variable} has 4D data but no subkey provided after hyphen "
+                "for indexing or reduction, and no multivar_func provided."
+            )
         else:
             raise ValueError(
-                f"Multiple variables found in array for variable {variable}. "
-                "Please specify 'mean', 'min', 'max', or 'mag' to reduce."
+                f"Variable {variable} has 4D data but subkey '{hyphen_arg}' is not a "
+                "valid variable or reduction operation, and no multivar_func provided."
             )
     else:
-        raise ValueError(f"Unexpected number of dimensions {data.ndim} in data array.")
+        raise ValueError(
+            f"Unexpected number of dimensions {array.ndim} for variable {variable}."
+        )
 
-    if variable == "v" and theta:
-        assert not np.all(y == 1)
+    # apply elementwise function if provided
+    if func is not None:
+        y = func(y)
 
-    # apply optional function
-    return func(y) if func is not None else y
+    if y.ndim != 3:
+        raise ValueError(
+            f"Extracted field for variable {variable} has unexpected "
+            f"number of dimensions {y.ndim} after processing."
+        )
+
+    return y
 
 
 def _is_None_or_tuple(
@@ -284,9 +279,6 @@ def plot_1d_slice(
     variable: str,
     *,
     cell_averaged: bool = True,
-    theta: bool = False,
-    troubles: bool = False,
-    visualization: bool = False,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
     t: Optional[float] = None,
@@ -309,14 +301,6 @@ def plot_1d_slice(
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
             `theta` or `troubles` is True.
-        theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
-            Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
-            or max over all variables, respectively.
-        troubles: Whether to extract the troubled cells of a specific variable. Set
-            `variable` equal to "mean", "min", or "max" to extract the mean, min, or
-            max over all variables, respectively.
-        visualization: Whether to use the post-processed values of `theta` or
-            `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
         multivar_func: Optional function to apply to multiple variables at once. If
             provided, `variable` must provide the name of the snapshot array to pass,
@@ -359,14 +343,11 @@ def plot_1d_slice(
 
     # gather data
     x_arr = getattr(fv_solver.mesh, dim.upper())[slices[0], slices[1], slices[2]]
-    f_arr = _extract_variable_data(
+    f_arr = get_field(
         fv_solver,
         nearest_t,
         variable,
         cell_averaged,
-        theta,
-        troubles,
-        visualization,
         func,
         multivar_func,
     )[slices[0], slices[1], slices[2]]
@@ -376,13 +357,14 @@ def plot_1d_slice(
 
     # optionally plot troubles
     if trouble_marker is not None:
+        raise NotImplementedError(
+            "Troubled cell plotting is not yet implemented for 1D slices."
+        )
         ms = line.get_markersize()
         min_trouble_size = (1 - trouble_size_rate) * ms
         trouble_size_rate = trouble_size_rate * ms
 
-        troubles_arr = _extract_variable_data(
-            fv_solver, nearest_t, variable, troubles=True, visualization=visualization
-        )[slices[0], slices[1], slices[2]]
+        troubles_arr = get_field(fv_solver, nearest_t)[slices[0], slices[1], slices[2]]
         trouble_levels = np.unique(troubles_arr)
 
         for trouble_level in trouble_levels:
@@ -410,9 +392,6 @@ def plot_2d_slice(
     variable: str,
     *,
     cell_averaged: bool = True,
-    theta: bool = False,
-    troubles: bool = False,
-    visualization: bool = False,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
     t: Optional[float] = None,
@@ -423,6 +402,7 @@ def plot_2d_slice(
     colorbar: bool = False,
     levels: Optional[Union[int, np.ndarray]] = None,
     overlay_troubles: bool = False,
+    overlay_mode: Literal["var", "any"] = "var",
     troubles_cmap: str = "Reds",
     troubles_alpha: float = 0.5,
     xlabel: bool = False,
@@ -439,14 +419,6 @@ def plot_2d_slice(
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
             `theta` or `troubles` is True.
-        theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
-            Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
-            or max over all variables, respectively.
-        troubles: Whether to extract the troubled cells of a specific variable. Set
-            `variable` equal to "mean", "min", or "max" to extract the  mean, min, or
-            max over all variables, respectively.
-        visualization: Whether to use the post-processed values of `theta` or
-            `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
         multivar_func: Optional function to apply to multiple variables at once. If
             provided, `variable` must provide the name of the snapshot array to pass,
@@ -464,6 +436,9 @@ def plot_2d_slice(
             imshow.
         overlay_troubles: Whether to overlay troubled cells on top of the variable
             plot. Only valid for solvers that use MOOD.
+        overlay_mode: If overlay_troubles is True, whether to color troubled cells
+            based on the troubles of the specific variable being plotted ("var") or
+            based on whether they are troubled in any variable ("any").
         troubles_cmap: Colormap to use for the troubled cells overlay.
         troubles_alpha: Alpha value for the troubled cells overlay.
         xlabel: Whether to show the x-axis label.
@@ -506,14 +481,11 @@ def plot_2d_slice(
     else:
         x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
         y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
-    f_arr = _extract_variable_data(
+    f_arr = get_field(
         fv_solver,
         nearest_t,
         variable,
         cell_averaged,
-        theta,
-        troubles,
-        visualization,
         func,
         multivar_func,
     )[slices[0], slices[1], slices[2]]
@@ -536,12 +508,10 @@ def plot_2d_slice(
         artist = ax.imshow(f_arr, extent=extent, cmap=cmap, **kwargs)
 
         if overlay_troubles:
-            troubles_arr = _extract_variable_data(
+            troubles_arr = get_field(
                 fv_solver,
                 nearest_t,
-                variable,
-                troubles=True,
-                visualization=visualization,
+                {"var": f"troubles-{variable}", "any": "troubles-max"}[overlay_mode],
             )[slices[0], slices[1], slices[2]]
             troubles_arr = np.rot90(troubles_arr, 1)
             ax.imshow(
@@ -578,9 +548,6 @@ def plot_spacetime(
     variable: str,
     *,
     cell_averaged: bool = True,
-    theta: bool = False,
-    troubles: bool = False,
-    visualization: bool = False,
     func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     multivar_func: Optional[MultivarFunc] = None,
     t: Optional[float] = None,
@@ -588,6 +555,7 @@ def plot_spacetime(
     cmap: Optional[str] = None,
     colorbar: bool = False,
     overlay_troubles: bool = False,
+    overlay_mode: Literal["var", "any"] = "var",
     troubles_cmap: str = "Reds",
     troubles_alpha: float = 0.5,
     tlabel: bool = False,
@@ -604,14 +572,6 @@ def plot_spacetime(
         cell_averaged: Whether to extract the cell average of the variable. If False,
             the variable is extracted using its cell-centered values. Ignored if
             `theta` or `troubles` is True.
-        theta: Whether to extract the Zhang-Shu slope limiter of a specific variable.
-            Set `variable` equal to "mean", "min", or "max" to extract the mean, min,
-            or max over all variables, respectively.
-        troubles: Whether to extract the troubled cells of a specific variable. Set
-            `variable` equal to "mean", "min", or "max" to extract the  mean, min, or
-            max over all variables, respectively.
-        visualization: Whether to use the post-processed values of `theta` or
-            `troubles` for visualization (True) or the raw values (False).
         func: Optional function to apply to the extracted data.
         multivar_func: Optional function to apply to multiple variables at once. If
             provided, `variable` must provide the name of the snapshot array to pass,
@@ -624,6 +584,9 @@ def plot_spacetime(
         overlay_troubles: Whether to overlay troubled cells on top of the variable
             plot. Only valid for solvers that use MOOD.
         troubles_cmap: Colormap to use for the troubled cells overlay.
+        overlay_mode: If overlay_troubles is True, whether to color troubled cells
+            based on the troubles of the specific variable being plotted ("var") or
+            based on whether they are troubled in any variable ("any").
         troubles_alpha: Alpha value for the troubled cells overlay.
         tlabel: Whether to show the time (horizontal) axis label.
         xlabel: Whether to show the space (vertical) axis label.
@@ -653,14 +616,11 @@ def plot_spacetime(
 
     f_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
     for i, t in enumerate(t_arr):
-        f_arr[:, i] = _extract_variable_data(
+        f_arr[:, i] = get_field(
             fv_solver,
             cast(float, t),
             variable,
             cell_averaged,
-            theta,
-            troubles,
-            visualization,
             func,
             multivar_func,
         )[*slices]
@@ -678,12 +638,10 @@ def plot_spacetime(
     if overlay_troubles:
         troubles_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
         for i, t in enumerate(t_arr):
-            current_troubles = _extract_variable_data(
+            current_troubles = get_field(
                 fv_solver,
                 cast(float, t),
-                variable,
-                troubles=True,
-                visualization=visualization,
+                {"var": f"troubles-{variable}", "any": "troubles-max"}[overlay_mode],
             )[*slices]
             troubles_arr[:, i] = np.where(
                 current_troubles > 0, current_troubles, np.nan
