@@ -172,12 +172,20 @@ def get_field(
 
     # first determine the snapshot array to extract from based on `variable`
     arraykey: str
-    if variable in idx.var_idx_map or variable in idx.group_var_map:
-        if variable in idx.group_var_map["conservatives"]:
+    if (
+        variable in idx.var_idx_map
+        or variable in idx.group_var_map
+        or variable in ("w", "u")
+    ):
+        if variable in idx.group_var_map["conservatives"] or variable == "u":
             arraykey = "u" if cell_averaged else "ucc"
         elif (
             variable in idx.group_var_map["primitives"]
-            or variable in idx.group_var_map["passives"]
+            or (
+                "passives" in idx.group_var_map
+                and variable in idx.group_var_map["passives"]
+            )
+            or variable == "w"
         ):
             arraykey = "w" if cell_averaged else "wcc"
         else:
