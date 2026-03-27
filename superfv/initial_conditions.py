@@ -844,7 +844,9 @@ def decaying_isotropic_turbulence(
     slope: float = -4.0,  # amplitude |v̂| ∝ k^{slope/2}; energy ~ k^{slope}
     seed: Optional[int] = None,
     solenoidal: bool = True,  # project to ∇·v = 0 in Fourier space
-) -> "ArrayLike":
+    fine_factor: int = 1,  # e.g. 8 for 128->1024
+    seed_fine: Optional[int] = None,  # seed for high-k modes
+) -> ArrayLike:
     """
     Physically isotropic decaying-turbulence IC.
 
@@ -862,8 +864,10 @@ def decaying_isotropic_turbulence(
         seed: Random number seed for reproducibility. If None, use random seed.
         solenoidal: If True, project the velocity field to be divergence-free in
             Fourier space.
+        fine_factor: Factor by which to decrease resolution for low-wavenumber modes.
+        seed_fine: Random number seed for high-wavenumber modes. If None, use random
+            seed. Ignored if fine_factor <= 1.
     """
-    # --- variable check (mirror your style) ---
     if not {"rho", "vx", "vy", "vz"} <= idx.var_names:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
@@ -877,97 +881,141 @@ def decaying_isotropic_turbulence(
     ndim = len(dims)
     axes = tuple({"x": 0, "y": 1, "z": 2}[d] for d in dims)
 
-    # spacings
     hx = x[1, 0, 0, 0] - x[0, 0, 0, 0] if "x" in dims else 1.0
     hy = y[0, 1, 0, 0] - y[0, 0, 0, 0] if "y" in dims else 1.0
     hz = z[0, 0, 1, 0] - z[0, 0, 0, 0] if "z" in dims else 1.0
+    hx_c = hx * fine_factor
+    hy_c = hy * fine_factor
+    hz_c = hz * fine_factor
 
-    if seed is not None:
-        xp.random.seed(int(seed))
-
-    # shapes & FFT axes
     full_shape = x.shape
-
-    # ----- build wave-number grids (cycles per unit) -----
-    kxs = (
-        xp.fft.fftfreq(full_shape[0], d=hx)
-        if "x" in dims
-        else xp.array([0.0], dtype=float)
-    )
-    kys = (
-        xp.fft.fftfreq(full_shape[1], d=hy)
-        if "y" in dims
-        else xp.array([0.0], dtype=float)
-    )
-    kzs = (
-        xp.fft.fftfreq(full_shape[2], d=hz)
-        if "z" in dims
-        else xp.array([0.0], dtype=float)
+    coarse_shape = (
+        full_shape[0] // fine_factor if "x" in dims else full_shape[0],
+        full_shape[1] // fine_factor if "y" in dims else full_shape[1],
+        full_shape[2] // fine_factor if "z" in dims else full_shape[2],
+        full_shape[3],
     )
 
-    # meshgrid with spatial dims first, then broadcast over trailing dims
-    KX = (
-        kxs.reshape((full_shape[0], 1, 1, 1))
-        if "x" in dims
-        else xp.zeros((full_shape[0], 1, 1, 1), dtype=float)
-    )
-    KY = (
-        kys.reshape((1, full_shape[1], 1, 1))
-        if "y" in dims
-        else xp.zeros((1, full_shape[1], 1, 1), dtype=float)
-    )
-    KZ = (
-        kzs.reshape((1, 1, full_shape[2], 1))
-        if "z" in dims
-        else xp.zeros((1, 1, full_shape[2], 1), dtype=float)
-    )
+    def _generate_spectral_mesh(shape, spacings):
+        kxs = (
+            xp.fft.fftfreq(shape[0], d=spacings[0])
+            if "x" in dims
+            else xp.array([0.0], dtype=float)
+        )
+        kys = (
+            xp.fft.fftfreq(shape[1], d=spacings[1])
+            if "y" in dims
+            else xp.array([0.0], dtype=float)
+        )
+        kzs = (
+            xp.fft.fftfreq(shape[2], d=spacings[2])
+            if "z" in dims
+            else xp.array([0.0], dtype=float)
+        )
 
-    K2 = KX * KX + KY * KY + KZ * KZ
-    K = xp.sqrt(K2)
+        KX = (
+            kxs.reshape((shape[0], 1, 1, 1))
+            if "x" in dims
+            else xp.zeros((shape[0], 1, 1, 1), dtype=float)
+        )
+        KY = (
+            kys.reshape((1, shape[1], 1, 1))
+            if "y" in dims
+            else xp.zeros((1, shape[1], 1, 1), dtype=float)
+        )
+        KZ = (
+            kzs.reshape((1, 1, shape[2], 1))
+            if "z" in dims
+            else xp.zeros((1, 1, shape[2], 1), dtype=float)
+        )
 
-    # ----- start from real-space white noise to preserve Hermitian symmetry -----
-    def _rand_like():
-        return xp.random.standard_normal(full_shape[:3] + (1,))
+        return KX, KY, KZ
 
-    vx0 = _rand_like()
-    vy0 = _rand_like()
-    vz0 = _rand_like()
+    def _generate_spectral_velocities(shape, KX, KY, KZ, this_seed):
+        if this_seed is not None:
+            xp.random.seed(int(this_seed))
 
-    # FFT to spectral space along spatial axes
-    Vx = xp.fft.fftn(vx0, axes=axes)
-    Vy = xp.fft.fftn(vy0, axes=axes)
-    Vz = xp.fft.fftn(vz0, axes=axes)
+        K2 = KX**2 + KY**2 + KZ**2
+        K = xp.sqrt(K2)
 
-    # isotropic power-law envelope (relative to first nonzero k)
-    # amplitude ∝ (k / kref)^(slope/2)
-    k_nonzero = K[K > 0]
-    kref = float(k_nonzero.min()) if k_nonzero.size else 1.0
-    ENV = xp.where(K > 0, (K / kref) ** ((slope - (ndim - 1)) / 2), 0.0)
+        k_nonzero = K[K > 0]
+        kref = float(k_nonzero.min()) if k_nonzero.size else 1.0
+        ENV = xp.where(K > 0, (K / kref) ** ((slope - (ndim - 1)) / 2), 0.0)
 
-    Vx *= ENV
-    Vy *= ENV
-    Vz *= ENV
+        def _rand():
+            return xp.random.standard_normal(shape[:3] + (1,))
 
-    # optional solenoidal projection: V <- (I - k k^T / |k|^2) V
-    if solenoidal:
-        # avoid division by zero by masking k=0
-        invK2 = xp.where(K2 > 0.0, 1.0 / K2, 0.0)
-        kdotV = KX * Vx + KY * Vy + KZ * Vz
-        Vx = Vx - KX * (kdotV * invK2)
-        Vy = Vy - KY * (kdotV * invK2)
-        Vz = Vz - KZ * (kdotV * invK2)
+        Vx = xp.fft.fftn(_rand(), axes=axes) * ENV
+        Vy = xp.fft.fftn(_rand(), axes=axes) * ENV
+        Vz = xp.fft.fftn(_rand(), axes=axes) * ENV
 
-    # zero the DC mode
-    Vx[0, 0, 0, slice(None)] = 0.0
-    Vy[0, 0, 0, slice(None)] = 0.0
-    Vz[0, 0, 0, slice(None)] = 0.0
+        if solenoidal:
+            invK2 = xp.where(K2 > 0.0, 1.0 / K2, 0.0)
+            kdotV = KX * Vx + KY * Vy + KZ * Vz
+            Vx -= KX * (kdotV * invK2)
+            Vy -= KY * (kdotV * invK2)
+            Vz -= KZ * (kdotV * invK2)
 
-    # back to real space
+        Vx[0, 0, 0] = 0.0
+        Vy[0, 0, 0] = 0.0
+        Vz[0, 0, 0] = 0.0
+        return Vx, Vy, Vz
+
+    if fine_factor > 1 and seed_fine is not None:
+        KX_c, KY_c, KZ_c = _generate_spectral_mesh(coarse_shape, (hx_c, hy_c, hz_c))
+        Vx_c, Vy_c, Vz_c = _generate_spectral_velocities(
+            coarse_shape, KX_c, KY_c, KZ_c, seed
+        )
+
+        vx_c = (
+            xp.fft.ifftn(Vx_c, axes=axes).real if "x" in dims else xp.zeros_like(Vx_c)
+        )
+        vy_c = (
+            xp.fft.ifftn(Vy_c, axes=axes).real if "y" in dims else xp.zeros_like(Vy_c)
+        )
+        vz_c = (
+            xp.fft.ifftn(Vz_c, axes=axes).real if "z" in dims else xp.zeros_like(Vz_c)
+        )
+
+        ones = xp.ones(
+            (
+                fine_factor if "x" in dims else 1,
+                fine_factor if "y" in dims else 1,
+                fine_factor if "z" in dims else 1,
+                1,
+            ),
+            dtype=float,
+        )
+        vx = xp.kron(vx_c, ones)
+        vy = xp.kron(vy_c, ones)
+        vz = xp.kron(vz_c, ones)
+
+        Vx = xp.fft.fftn(vx, axes=axes)
+        Vy = xp.fft.fftn(vy, axes=axes)
+        Vz = xp.fft.fftn(vz, axes=axes)
+
+        KX_f, KY_f, KZ_f = _generate_spectral_mesh(full_shape, (hx, hy, hz))
+        K_f = xp.sqrt(KX_f**2 + KY_f**2 + KZ_f**2)
+        Vx_f, Vy_f, Vz_f = _generate_spectral_velocities(
+            full_shape, KX_f, KY_f, KZ_f, seed_fine
+        )
+
+        k_coarse_nyquist = 1 / (
+            2 * max(h for h, d in zip((hx_c, hy_c, hz_c), dims) if d in dims)
+        )
+        high_k_mask = (K_f > k_coarse_nyquist).astype(float)
+
+        Vx += Vx_f * high_k_mask
+        Vy += Vy_f * high_k_mask
+        Vz += Vz_f * high_k_mask
+    else:
+        KX, KY, KZ = _generate_spectral_mesh(full_shape, (hx, hy, hz))
+        Vx, Vy, Vz = _generate_spectral_velocities(full_shape, KX, KY, KZ, seed)
+
     vx = xp.fft.ifftn(Vx, axes=axes).real if "x" in dims else xp.zeros_like(x)
     vy = xp.fft.ifftn(Vy, axes=axes).real if "y" in dims else xp.zeros_like(x)
     vz = xp.fft.ifftn(Vz, axes=axes).real if "z" in dims else xp.zeros_like(x)
 
-    # global RMS speed -> target M (c_s = 1)
     u2 = vx * vx + vy * vy + vz * vz
     u_rms = float(xp.sqrt(u2.mean()))
     if u_rms > 0.0:
@@ -976,7 +1024,6 @@ def decaying_isotropic_turbulence(
         vy *= s
         vz *= s
 
-    # assemble state like your other ICs
     out = xp.zeros((len(idx.idxs), *full_shape), dtype=float)
     out[idx("rho")] = xp.ones_like(x, dtype=float)
     out[idx("vx")] = vx
