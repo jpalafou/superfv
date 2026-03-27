@@ -961,7 +961,9 @@ def decaying_isotropic_turbulence(
         Vz[0, 0, 0] = 0.0
         return Vx, Vy, Vz
 
-    if fine_factor > 1 and seed_fine is not None:
+    if fine_factor > 1:
+        seed_fine = seed_fine if seed_fine is not None else seed
+
         KX_c, KY_c, KZ_c = _generate_spectral_mesh(coarse_shape, (hx_c, hy_c, hz_c))
         Vx_c, Vy_c, Vz_c = _generate_spectral_velocities(
             coarse_shape, KX_c, KY_c, KZ_c, seed
@@ -1001,7 +1003,7 @@ def decaying_isotropic_turbulence(
         )
 
         k_coarse_nyquist = 1 / (
-            2 * max(h for h, d in zip((hx_c, hy_c, hz_c), dims) if d in dims)
+            2 * max(h for h, d in zip((hx_c, hy_c, hz_c), ("x", "y", "z")) if d in dims)
         )
         high_k_mask = (K_f > k_coarse_nyquist).astype(float)
 
