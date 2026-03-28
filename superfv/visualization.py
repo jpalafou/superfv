@@ -487,8 +487,8 @@ def plot_2d_slice(
         x_arr = getattr(fv_solver.mesh, dim1.upper())[slices[0], slices[1], slices[2]]
         y_arr = getattr(fv_solver.mesh, dim2.upper())[slices[0], slices[1], slices[2]]
     else:
-        x_arr = getattr(fv_solver.mesh, dim1 + "_centers")[slices["xyz".index(dim1)]]
-        y_arr = getattr(fv_solver.mesh, dim2 + "_centers")[slices["xyz".index(dim2)]]
+        x_arr = getattr(fv_solver.mesh, dim1 + "_interfaces")[slices["xyz".index(dim1)]]
+        y_arr = getattr(fv_solver.mesh, dim2 + "_interfaces")[slices["xyz".index(dim2)]]
     f_arr = get_field(
         fv_solver,
         nearest_t,

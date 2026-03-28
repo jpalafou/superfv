@@ -1,4 +1,3 @@
-import argparse
 from functools import partial
 from itertools import product
 
@@ -8,27 +7,18 @@ from superfv import EulerSolver
 from superfv.initial_conditions import decaying_isotropic_turbulence
 from superfv.tools.run_helper import run_multiple_simulations
 
-parser = argparse.ArgumentParser()
-parser.add_argument("-N", type=int, required=True)
-parser.add_argument("--cupy", action="store_true", help="Use CuPy for GPU acceleration")
-args = parser.parse_args()
-
-cupy = args.cupy
-N = args.N
+N = 128
+fine_factor = 8  # how much larger is the reference solution
 
 overwrite = False
-base_path = f"/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/{N}x{N}/"
-if cupy:
-    base_path += "cupy/"
+base_path = "/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/"
 
 run_params = dict(allow_overshoot=True)
 init_params = dict(
     isothermal=True,
     PAD={"rho": (0, None)},
     SED=False,
-    nx=N,
-    ny=N,
-    cupy=cupy,
+    cupy=True,
 )
 
 # Loop parameters
@@ -45,6 +35,7 @@ aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 
 configs = {
+    "ref": musclhancock,
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock | dict(CFL=0.5),
     "ZS3": dict(p=3, GL=True, **apriori),
@@ -111,7 +102,16 @@ def compute_reference_dt(sim):
 simtimes = {}
 for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds):
     dummy_sim = EulerSolver(
-        ic=partial(decaying_isotropic_turbulence, seed=seed, M=M_max, slope=-5 / 3),
+        ic=partial(
+            decaying_isotropic_turbulence,
+            seed=seed,
+            M=M_max,
+            slope=-5 / 3,
+            fine_factor=8 if name == "ref" else 1,
+            seed_fine=seed + 1,
+        ),
+        nx=N * fine_factor if name == "ref" else N,
+        ny=N * fine_factor if name == "ref" else N,
         **init_params,
         **config,
     )
@@ -128,10 +128,17 @@ run_multiple_simulations(
         f"{name}/M_max_{M_max}/seed_{seed:02d}/": (
             dict(
                 ic=partial(
-                    decaying_isotropic_turbulence, seed=seed, M=M_max, slope=-5 / 3
+                    decaying_isotropic_turbulence,
+                    seed=seed,
+                    M=M_max,
+                    slope=-5 / 3,
+                    fine_factor=8 if name == "ref" else 1,
+                    seed_fine=seed + 1,
                 ),
-                **config,
+                nx=N * fine_factor if name == "ref" else N,
+                ny=N * fine_factor if name == "ref" else N,
                 **init_params,
+                **config,
             ),
             dict(
                 T=np.linspace(0, simtimes[f"{name}_{M_max}_{seed}"][0], 4).tolist(),
