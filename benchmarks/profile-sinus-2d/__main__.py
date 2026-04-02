@@ -20,7 +20,7 @@ init_params = dict(
 )
 
 # loop parameters
-N_values = [32, 64, 128, 256, 512, 1024, 2048]
+N_values = [32, 64, 128, 256, 512, 1024, 2048, 3072]
 
 musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
 apriori = dict(ZS=True, lazy_primitives="adaptive", adaptive_dt=False)
@@ -54,6 +54,7 @@ run_multiple_simulations(
         f"{name}/N_{N}": (dict(nx=N, ny=N, **config, **init_params), run_params)
         for (name, config), N in product(configs.items(), N_values)
     },
-    "/scratch/gpfs/jp7427/out/timing-of-2d-sine-wave/" + ("cupy/" if cupy else ""),
+    "/scratch/gpfs/TEYSSIER/jp7427/out/timing-of-2d-sine-wave/"
+    + ("cupy/" if cupy else ""),
     overwrite=True,
 )
