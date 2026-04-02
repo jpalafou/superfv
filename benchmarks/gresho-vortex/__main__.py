@@ -37,8 +37,11 @@ aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
 
 configs = {
     "MUSCL-Hancock": musclhancock,
+    "MUSCL-RK3": musclhancock | dict(CFL=0.5),
     "ZS3/no_v": dict(p=3, GL=True, limiting_vars=("rho",), **apriori),
     "ZS7/no_v": dict(p=7, GL=True, limiting_vars=("rho",), **apriori),
+    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
     "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
 }
@@ -109,7 +112,11 @@ run_multiple_simulations(
                 **init_params,
                 **config,
             ),
-            run_params,
+            dict(
+                muscl_hancock=False if name == "MUSCL-RK3" else True,
+                time_degree=2 if name == "MUSCL-RK3" else None,
+                **run_params,
+            ),
         )
         for (name, config), v0, M_max in product(
             configs.items(), v0_values, M_max_values

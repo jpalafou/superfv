@@ -42,8 +42,8 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3lazy": dict(p=3, GL=True, **(apriori | dict(lazy_primitives="full"))),
     "ZS7lazy": dict(p=7, GL=True, **(apriori | dict(lazy_primitives="full"))),
-    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
     "MM3/1rev/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori_1rev),
     "MM7/1rev/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori_1rev),
 }
@@ -51,14 +51,30 @@ configs = {
 styles = {
     "MUSCL-RK3": dict(color="grey", marker="^", mfc="none"),
     "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none"),
-    "ZS3": dict(color="blue", marker="o", mfc="none"),
-    "ZS3lazy": dict(color="blue", linestyle="--", marker="*", mfc="none"),
-    "MM3/1rev/rtol_1e-3": dict(color="blue", marker="s", mfc="none"),
-    "MM3/1rev/rtol_0": dict(color="blue", linestyle="--", marker="+", mfc="none"),
-    "ZS7": dict(color="red", marker="o", mfc="none"),
-    "ZS7lazy": dict(color="red", linestyle="--", marker="*", mfc="none"),
-    "MM7/1rev/rtol_1e-3": dict(color="red", marker="s", mfc="none"),
-    "MM7/1rev/rtol_0": dict(color="red", linestyle="--", marker="+", mfc="none"),
+    "ZS3": dict(color="blue", marker="o", mfc="none", label="ZS4"),
+    "ZS3lazy": dict(
+        color="blue", linestyle="--", marker="*", mfc="none", label="ZS4, lazy"
+    ),
+    "MM3/1rev/rtol_1e-1": dict(
+        color="blue", marker="s", mfc="none", label=r"MM4, $\epsilon=10^{-1}$"
+    ),
+    "MM3/1rev/rtol_0": dict(
+        color="blue",
+        linestyle="--",
+        marker="+",
+        mfc="none",
+        label=r"MM4, $\epsilon=0$",
+    ),
+    "ZS7": dict(color="red", marker="o", mfc="none", label="ZS8"),
+    "ZS7lazy": dict(
+        color="red", linestyle="--", marker="*", mfc="none", label="ZS8, lazy"
+    ),
+    "MM7/1rev/rtol_1e-1": dict(
+        color="red", marker="s", mfc="none", label=r"MM8, $\epsilon=10^{-1}$"
+    ),
+    "MM7/1rev/rtol_0": dict(
+        color="red", linestyle="--", marker="+", mfc="none", label=r"MM8, $\epsilon=0$"
+    ),
 }
 
 
@@ -93,11 +109,13 @@ def plot_error(name, sim):
         if df_name.empty:
             continue
 
+        style = styles.get(name, dict())
+        if "label" not in style:
+            style["label"] = name
         ax.plot(
             df_name["N"],
             df_name["error"],
-            label=name,
-            **(dict(markersize=5, linewidth=2, alpha=0.7) | styles.get(name, dict())),
+            **(dict(markersize=5, linewidth=2, alpha=0.7) | style),
         )
     ax.legend()
     fig.savefig(plot_path, bbox_inches="tight")
