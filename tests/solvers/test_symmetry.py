@@ -235,4 +235,4 @@ def test_Sod_shock_tube_symmetry_1D(
         solver1.snapshots[-1]["u"][idx("rho")].flatten()
         - solver2.snapshots[-1]["u"][idx("rho")].flatten()
     )
-    assert l1_error == 0
+    assert l1_error < 1e-14

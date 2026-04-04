@@ -88,4 +88,4 @@ def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: st
         solver1.snapshots[-1]["u"][idx("rho")].flatten()
         - solver2.snapshots[-1]["u"][idx("rho")].flatten()
     )
-    assert l1_error == 0
+    assert l1_error < 1e-14

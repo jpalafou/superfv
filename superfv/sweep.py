@@ -1,10 +1,11 @@
-from itertools import product
 from typing import Literal, Tuple
+
+import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
-from superfv.tools.slicing import crop, replace_slice
+from superfv.tools.slicing import crop
 
 
 def stencil_sweep(
@@ -35,16 +36,14 @@ def stencil_sweep(
     _, _, _, _, ninterps = u.shape
     nouterps, stencil_size = weights.shape
 
-    slices = [
-        crop(axis, (i, i - stencil_size + 1), ndim=5) for i in range(stencil_size)
-    ]
-    modified = slices[stencil_size // 2]
+    reach = (stencil_size - 1) // 2
+    modified = crop(axis, (reach, -reach), ndim=5)
 
-    out[modified] = 0.0
-    for i, (same_pos_weights, slc) in product(range(ninterps), zip(weights.T, slices)):
-        in_slc = replace_slice(slc, 4, slice(i, i + 1))
-        out_slc = replace_slice(modified, 4, slice(i * nouterps, (i + 1) * nouterps))
-        out[out_slc] += u[in_slc] * same_pos_weights
+    u_windows = np.lib.stride_tricks.sliding_window_view(
+        u, window_shape=stencil_size, axis=axis
+    )
+    contracted = np.einsum("...ik,ok->...io", u_windows, weights, optimize=True)
+    out[modified] = contracted.reshape(*contracted.shape[:-2], ninterps * nouterps)
 
     return modified
 
