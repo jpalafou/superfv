@@ -36,7 +36,6 @@ def test_1D_advection_mpp(adaptive_dt, p, SED, dim, limiting_vars):
         limiting_vars=limiting_vars,
         PAD={"rho": (0, 1)},
         SED=SED,
-        check_uniformity=False,
         cupy=CUPY_AVAILABLE,
     )
     solver.run(n=10)
@@ -64,8 +63,6 @@ def test_2D_advection_mpp(p, SED, dim1_dim2):
         ZS=True,
         PAD={"rho": (0, 1)},
         SED=SED,
-        check_uniformity=False,
-        uniformity_tol=1e-15,
         cupy=CUPY_AVAILABLE,
     )
     solver.run(n=10)
@@ -88,7 +85,6 @@ def test_3D_advection_mpp(p):
         GL=True,
         ZS=True,
         PAD={"rho": (0, 1)},
-        check_uniformity=False,
         cupy=CUPY_AVAILABLE,
     )
     solver.run(n=3)

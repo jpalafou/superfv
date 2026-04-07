@@ -71,14 +71,13 @@ def test_blend_troubled_cells(dims: str):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("check_uniformity", [False, True])
-def test_compute_alpha(dims: str, check_uniformity: bool):
+def test_compute_alpha(dims: str):
     xp = configure_xp()
 
     u = sample_data(xp, dims)
     alpha = sample_data(xp, dims, fill_value=xp.nan)
 
-    modified = compute_alpha(u, alpha, tuple(dims), check_uniformity)
+    modified = compute_alpha(u, alpha, tuple(dims))
 
     assert not xp.any(xp.isnan(alpha[modified]))
     # skip all-nan check

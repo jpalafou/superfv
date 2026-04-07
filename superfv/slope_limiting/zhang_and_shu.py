@@ -26,17 +26,12 @@ class ZhangShuConfig(LimiterConfig):
     Attributes:
         shock_detection: Whether to enable shock detection.
         smooth_extrema_detection: Whether to enable smooth extrema detection.
-        check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
-            extrema detection is enabled. Uniform regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
         physical_admissibility_detection: Whether to enable physical admissibility
             detection (PAD).
         eta_max: Eta threshold for shock detection if shock_detection is True.
         PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
             respectively, for each variable when physical_admissibility_detection is
             True. Must be provided if physical_admissibility_detection is True.
-        uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
         include_corners: Whether to include corner cells when computing the discrete
             maximum principle.
         adaptive_dt: Whether to use adaptive time stepping. If True,

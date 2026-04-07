@@ -22,8 +22,6 @@ def update_alpha_1d(
     u: np.ndarray,
     alpha: np.ndarray,
     dim: Literal["x", "y", "z"],
-    check_uniformity: bool,
-    uniformity_tol: float = 1e-3,
     eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """
@@ -38,11 +36,6 @@ def update_alpha_1d(
             the minimum with existing values. Has shape (nvars, nx, ny, nz).
         dim: Dimension along which to compute the smooth extrema detector. One of
             "x", "y", or "z".
-        check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
-            regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
-        uniformity_tol: Tolerance used to detect uniform regions.
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
@@ -62,9 +55,6 @@ def update_alpha_1d(
     alpha_l = np.empty_like(u)
     alpha_r = np.empty_like(u)
     alpha_neighbors = np.empty_like(u)
-    dmp_m = np.empty_like(u)
-    dmp_M = np.empty_like(u)
-    uniform = np.empty_like(u)
 
     # compute derivatives
     central_difference(u, du, axis)
@@ -83,19 +73,6 @@ def update_alpha_1d(
     np.minimum(alpha_l, alpha_r, out=alpha_neighbors)
     np.minimum(alpha_neighbors, 1.0, out=alpha_neighbors)
 
-    # relax alpha in uniform regions
-    if check_uniformity:
-        lft_slc = crop(axis, (2, None))
-        ctr_slc = crop(axis, (1, -1))
-        rgt_slc = crop(axis, (None, -2))
-
-        dmp_m[ctr_slc] = np.minimum(np.minimum(u[lft_slc], u[ctr_slc]), u[rgt_slc])
-        dmp_M[ctr_slc] = np.maximum(np.maximum(u[lft_slc], u[ctr_slc]), u[rgt_slc])
-
-        uniform[...] = np.abs(dmp_M - dmp_m) <= uniformity_tol * np.abs(u)
-
-        np.maximum(alpha_neighbors, uniform, out=alpha_neighbors)
-
     # take min of neighbors and return
     left = crop(axis, (2, -4), ndim=4)
     inner = crop(axis, (3, -3), ndim=4)
@@ -112,8 +89,6 @@ def compute_alpha(
     u: ArrayLike,
     alpha: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    check_uniformity: bool,
-    uniformity_tol: float = 1e-3,
     eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """
@@ -127,25 +102,18 @@ def compute_alpha(
             `active_dims` is written. Has shape (nvars, nx, ny, nz).
         active_dims: Tuple of dimensions along which to compute the smooth extrema
             detector. Each dimension is one of "x", "y", or "z".
-        check_uniformity: Whether to relax alpha to 1.0 in uniform regions. Uniform
-            regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
-        uniformity_tol: Tolerance used to detect uniform regions.
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
         Slice objects indicating the modified regions in the output array.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
-        return compute_alpha_kernel_helper(
-            u, alpha, check_uniformity, uniformity_tol, eps
-        )
+        return compute_alpha_kernel_helper(u, alpha, eps)
 
     alpha[...] = 1.0
     valid_slices: List[Tuple[slice, ...]] = []
     for dim in active_dims:
-        valid = update_alpha_1d(u, alpha, dim, check_uniformity, uniformity_tol, eps)
+        valid = update_alpha_1d(u, alpha, dim, eps)
         valid_slices.append(valid)
     return merge_slices(*valid_slices)
 
@@ -159,8 +127,6 @@ if CUPY_AVAILABLE:
         void compute_alpha_kernel(
             const double* __restrict__ u,
             double* __restrict__ alpha,
-            const bool check_uniformity,
-            const double uniformity_tol,
             const double eps,
             const int nvars,
             const int nx,
@@ -259,17 +225,6 @@ if CUPY_AVAILABLE:
 
                         double alpha_dim_j = fmin(fmin(alphal, alphar), 1.0);
 
-                        // relax alpha in uniform regions
-                        if (check_uniformity) {
-                            double m = fmin(fmin(u[j1], u[j2]), u[j3]);
-                            double M = fmax(fmax(u[j1], u[j2]), u[j3]);
-                            bool uniform = fabs(M - m) <= uniformity_tol * fabs(u[j2]);
-
-                            if (uniform) {
-                                alpha_dim_j = 1.0;
-                            }
-                        }
-
                         // update dimension-wise alpha using neighbor min
                         if (alpha_dim_j < alpha_dim_i) {
                             alpha_dim_i = alpha_dim_j;
@@ -290,8 +245,6 @@ if CUPY_AVAILABLE:
     def compute_alpha_kernel_helper(
         u: cp.ndarray,
         alpha: cp.ndarray,
-        check_uniformity: bool,
-        uniformity_tol: float,
         eps: float,
     ) -> Tuple[slice, ...]:
         if not u.flags.c_contiguous or not alpha.flags.c_contiguous:
@@ -317,8 +270,6 @@ if CUPY_AVAILABLE:
             (
                 u,
                 alpha,
-                check_uniformity,
-                uniformity_tol,
                 eps,
                 nvars,
                 nx,

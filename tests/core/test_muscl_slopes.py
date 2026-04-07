@@ -10,14 +10,12 @@ from superfv.tools.device_management import CUPY_AVAILABLE, ArrayManager, xp
 @pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
 @pytest.mark.parametrize("limiter", ["minmod", "moncen", "PP2D"])
 @pytest.mark.parametrize("SED", [False, True])
-@pytest.mark.parametrize("check_uniformity", [False, True])
 @pytest.mark.parametrize("mode", ["uniform", "ramp"])
 def test_field(
     face_dim: str,
     active_dims: str,
     limiter: str,
     SED: bool,
-    check_uniformity: bool,
     mode: str,
 ):
     """

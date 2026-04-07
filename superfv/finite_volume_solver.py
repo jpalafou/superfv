@@ -112,8 +112,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         SED: bool = True,
-        check_uniformity: bool = True,
-        uniformity_tol: float = 1e-15,
         cupy: bool = False,
         sync_timing: bool = True,
     ):
@@ -246,11 +244,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
             SED: Whether to use smooth extrema detection for slope limiting.
-            check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
-                extrema detection is enabled. Uniform regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
-            uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
             cupy: Whether to use CuPy for array operations.
             sync_timing: Whether to synchronize the GPU after each timed method call if
                 using CuPy. This ensures accurate timing measurements when profiling.
@@ -284,8 +277,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             include_corners,
             PAD,
             SED,
-            check_uniformity,
-            uniformity_tol,
             face_fallback,
         )
         self._init_snapshots(log_limiter_scalars)
@@ -446,8 +437,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         include_corners: bool,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
         SED: bool,
-        check_uniformity: bool,
-        uniformity_tol: float,
         face_fallback: bool,
     ):
         self.base_scheme: InterpolationScheme
@@ -476,15 +465,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 lazy_primitives,
                 eta_max,
                 SED,
-                check_uniformity,
-                uniformity_tol,
             )
         elif MUSCL:
             if ZS:
                 raise ValueError("MUSCL scheme cannot be combined with ZS.")
-            self._init_muscl_scheme(
-                p, flux_recipe, MUSCL_limiter, SED, check_uniformity, uniformity_tol
-            )
+            self._init_muscl_scheme(p, flux_recipe, MUSCL_limiter, SED)
         elif ZS:
             self._init_zhang_shu_scheme(
                 p,
@@ -494,8 +479,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 eta_max,
                 include_corners,
                 SED,
-                check_uniformity,
-                uniformity_tol,
                 adaptive_dt,
                 adaptive_dt_tol,
             )
@@ -507,8 +490,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 lazy_primitives,
                 eta_max,
                 SED,
-                check_uniformity,
-                uniformity_tol,
             )
 
         # init a posteriori scheme
@@ -529,8 +510,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 NAD_atol,
                 scale_NAD_rtol_by_dt,
                 SED,
-                check_uniformity,
-                uniformity_tol,
                 include_corners,
             )
         else:
@@ -538,7 +517,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.MOOD_config = MOODConfig(
                 shock_detection=False,
                 smooth_extrema_detection=False,
-                check_uniformity=False,
                 physical_admissibility_detection=False,
             )
 
@@ -572,8 +550,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         lazy_primitives: Literal["none", "full", "adaptive"],
         eta_max: float,
         SED: bool,
-        check_uniformity: bool,
-        uniformity_tol: float,
     ):
         self.p = p
         self.base_scheme = polyInterpolationScheme(
@@ -582,11 +558,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter_config=LimiterConfig(
                 shock_detection=lazy_primitives == "adaptive",
                 smooth_extrema_detection=SED,
-                check_uniformity=check_uniformity,
                 physical_admissibility_detection=self.using_PAD,
                 eta_max=eta_max,
                 PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
-                uniformity_tol=uniformity_tol,
             ),
             gauss_legendre=GL,
             lazy_primitives=lazy_primitives,
@@ -598,8 +572,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         flux_recipe: Literal[1, 2, 3],
         MUSCL_limiter: Optional[Literal["minmod", "moncen", "PP2D"]],
         SED: bool,
-        check_uniformity: bool,
-        uniformity_tol: float,
     ):
         if p != 1:
             warnings.warn("MUSCL overrides p to be 1.")
@@ -613,10 +585,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter_config=musclConfig(
                 shock_detection=False,
                 smooth_extrema_detection=SED,
-                check_uniformity=check_uniformity,
                 physical_admissibility_detection=False,
                 limiter=MUSCL_limiter,
-                uniformity_tol=uniformity_tol,
             ),
         )
 
@@ -629,8 +599,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         eta_max: float,
         include_corners: bool,
         SED: bool,
-        check_uniformity: bool,
-        uniformity_tol: float,
         adaptive_dt: bool,
         adaptive_dt_tol: float,
     ):
@@ -641,11 +609,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             limiter_config=ZhangShuConfig(
                 shock_detection=lazy_primitives == "adaptive",
                 smooth_extrema_detection=SED,
-                check_uniformity=check_uniformity,
                 physical_admissibility_detection=self.using_PAD,
                 eta_max=eta_max,
                 PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
-                uniformity_tol=uniformity_tol,
                 include_corners=include_corners,
                 adaptive_dt=adaptive_dt,
                 adaptive_dt_tol=adaptive_dt_tol,
@@ -669,8 +635,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         NAD_atol: float,
         scale_NAD_rtol_by_dt: bool,
         SED: bool,
-        check_uniformity: bool,
-        uniformity_tol: float,
         include_corners: bool,
     ):
         base_scheme = self.base_scheme
@@ -693,7 +657,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     limiter_config=LimiterConfig(
                         shock_detection=False,
                         smooth_extrema_detection=False,
-                        check_uniformity=False,
                         physical_admissibility_detection=False,
                     ),
                     gauss_legendre=False,
@@ -712,7 +675,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     limiter_config=musclConfig(
                         shock_detection=False,
                         smooth_extrema_detection=False,
-                        check_uniformity=False,
                         physical_admissibility_detection=False,
                         limiter=MUSCL_limiter,
                     ),
@@ -726,7 +688,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                         limiter_config=LimiterConfig(
                             shock_detection=False,
                             smooth_extrema_detection=False,
-                            check_uniformity=False,
                             physical_admissibility_detection=False,
                         ),
                         gauss_legendre=False,
@@ -741,7 +702,6 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                     limiter_config=LimiterConfig(
                         shock_detection=False,
                         smooth_extrema_detection=False,
-                        check_uniformity=False,
                         physical_admissibility_detection=False,
                     ),
                     gauss_legendre=False,
@@ -759,10 +719,8 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.MOOD_config = MOODConfig(
             shock_detection=False,
             smooth_extrema_detection=SED,
-            check_uniformity=check_uniformity,
             physical_admissibility_detection=self.using_PAD,
             PAD_bounds=self.arrays["PAD_bounds"] if self.using_PAD else None,
-            uniformity_tol=uniformity_tol,
             numerical_admissibility_detection=NAD,
             delta=NAD_delta,
             cascade=cascade_list,
@@ -1736,12 +1694,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             scheme: Interpolation scheme to use for the detection.
         """
         active_dims = self.active_dims
-        check_uniformity = scheme.limiter_config.check_uniformity
-        uniformity_tol = scheme.limiter_config.uniformity_tol
-
         alpha = self.arrays["_alpha_"]
 
-        compute_alpha(u, alpha, active_dims, check_uniformity, uniformity_tol)
+        compute_alpha(u, alpha, active_dims)
 
     @MethodTimer(cat="integrate_fluxes")
     def integrate_fluxes(

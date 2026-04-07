@@ -78,8 +78,6 @@ class EulerSolver(FiniteVolumeSolver):
         include_corners: bool = True,
         PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         SED: bool = True,
-        check_uniformity: bool = True,
-        uniformity_tol: float = 1e-15,
         cupy: bool = False,
         sync_timing: bool = True,
         gamma: float = 1.4,
@@ -217,11 +215,6 @@ class EulerSolver(FiniteVolumeSolver):
                 in `PAD` is given a lower and upper bound of `-np.inf` and `np.inf`
                 respectively.
             SED: Whether to use smooth extrema detection for slope limiting.
-            check_uniformity: Whether to relax alpha to 1.0 in uniform regions if smooth
-                extrema detection is enabled. Uniform regions satisfy:
-                max(u_{i-1}, u_i, u_{i+1}) - min(u_{i-1}, u_i, u_{i+1})
-                    <= uniformity_tol * |u_i|
-            uniformity_tol: Tolerance for uniformity check when check_uniformity is True.
             cupy: Whether to use CuPy for array operations.
             sync_timing: Whether to synchronize the GPU after each timed method call if
                 using CuPy. This ensures accurate timing measurements when profiling.
@@ -285,8 +278,6 @@ class EulerSolver(FiniteVolumeSolver):
             include_corners=include_corners,
             PAD=PAD,
             SED=SED,
-            check_uniformity=check_uniformity,
-            uniformity_tol=uniformity_tol,
             cupy=cupy,
             sync_timing=sync_timing,
         )
