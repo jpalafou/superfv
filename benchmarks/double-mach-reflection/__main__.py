@@ -91,12 +91,14 @@ configs = {
     "ZS7": dict(p=7, GL=True, **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
     "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
     "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
+    "ZS3-RK4": dict(p=3, GL=True, **apriori),
+    "ZS7-RK4": dict(p=7, GL=True, **apriori),
+    "MM3-RK4/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
+    "MM7-RK4/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
 }
 
 
@@ -135,8 +137,9 @@ run_multiple_simulations(
         name: (
             init_params | config,
             dict(
-                muscl_hancock=False if "RK3" in name else True,
-                time_degree=2 if "RK3" in name else None,
+                muscl_hancock=False if "RK3" in name or "RK4" in name else True,
+                time_degree=2 if "RK3" in name else 3 if "RK4" in name else None,
+                q_max=3 if "RK4" in name else 2,
                 **run_params,
             ),
         )
