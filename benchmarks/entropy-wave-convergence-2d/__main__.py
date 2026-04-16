@@ -48,32 +48,55 @@ configs = {
     "MM7/1rev/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori_1rev),
 }
 
+markersize = 8
 styles = {
-    "MUSCL-RK3": dict(color="grey", marker="^", mfc="none"),
-    "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none"),
-    "ZS3": dict(color="blue", marker="o", mfc="none", label="ZS4"),
+    "MUSCL-RK3": dict(color="grey", marker="s", mfc="none", markersize=markersize),
+    "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none", markersize=markersize),
+    "ZS3": dict(
+        color="blue", marker="o", mfc="none", markersize=markersize, label="ZS4"
+    ),
     "ZS3lazy": dict(
-        color="blue", linestyle="--", marker="*", mfc="none", label="ZS4, lazy"
+        color="green", marker="o", mfc="none", markersize=markersize, label="ZS4, lazy"
     ),
     "MM3/1rev/rtol_1e-1": dict(
-        color="blue", marker="s", mfc="none", label=r"MM4, $\epsilon=10^{-1}$"
+        color="blue",
+        marker="s",
+        mfc="none",
+        markersize=markersize,
+        label=r"MM4, $\epsilon=10^{-1}$",
     ),
     "MM3/1rev/rtol_0": dict(
-        color="blue",
-        linestyle="--",
-        marker="+",
+        color="green",
+        marker="s",
         mfc="none",
+        markersize=markersize,
         label=r"MM4, $\epsilon=0$",
     ),
-    "ZS7": dict(color="red", marker="o", mfc="none", label="ZS8"),
+    "ZS7": dict(
+        color="red", marker="o", mfc="none", markersize=markersize, label="ZS8"
+    ),
     "ZS7lazy": dict(
-        color="red", linestyle="--", marker="*", mfc="none", label="ZS8, lazy"
+        color="purple",
+        linestyle="--",
+        marker="o",
+        mfc="none",
+        markersize=markersize,
+        label="ZS8, lazy",
     ),
     "MM7/1rev/rtol_1e-1": dict(
-        color="red", marker="s", mfc="none", label=r"MM8, $\epsilon=10^{-1}$"
+        color="red",
+        marker="s",
+        mfc="none",
+        markersize=markersize,
+        label=r"MM8, $\epsilon=10^{-1}$",
     ),
     "MM7/1rev/rtol_0": dict(
-        color="red", linestyle="--", marker="+", mfc="none", label=r"MM8, $\epsilon=0$"
+        color="purple",
+        linestyle="--",
+        marker="s",
+        mfc="none",
+        markersize=markersize,
+        label=r"MM8, $\epsilon=0$",
     ),
 }
 
@@ -98,7 +121,7 @@ def plot_error(name, sim):
     # plot error curves of p over N
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_xlabel("N")
-    ax.set_ylabel("Linf error")
+    ax.set_ylabel(r"$\mathcal{L}^\infty$ error")
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
     ax.grid()
