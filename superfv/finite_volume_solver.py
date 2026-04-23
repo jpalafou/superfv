@@ -1287,6 +1287,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         xp = self.xp
         arrays = self.arrays
         lazy_primitives = getattr(scheme, "lazy_primitives", "none")
+        idx = self.variable_index_map
 
         # allocate arrays
         _u_ = arrays["_u_"]
@@ -1340,6 +1341,10 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _w_[...] = xp.where(_has_shock_, _w1_, _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
+        
+        # ensure density is never transformed to cell center and back to cell averages
+        if "rho" in idx.var_idx_map:
+            _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
 
     def _get_stencil_weights(
         self, key: str, method: Callable[[int], ArrayLike], p: int
