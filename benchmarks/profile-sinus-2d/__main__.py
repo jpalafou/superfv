@@ -20,7 +20,10 @@ init_params = dict(
 )
 
 # loop parameters
-N_values = [32, 64, 128, 256, 512, 1024, 2048, 3072]
+if cupy:
+    N_values = [32, 64, 128, 256, 512, 1024, 2048, 3072]
+else:
+    N_values = [32, 64, 128, 256, 512]
 
 musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
 apriori = dict(ZS=True, lazy_primitives="adaptive", adaptive_dt=False)

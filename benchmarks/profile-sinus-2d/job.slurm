@@ -11,6 +11,8 @@
 #SBATCH --mail-type=ALL                     # notifications for job done & fail
 #SBATCH --output=out/slurm-%j.out           # output file
 
+lscpu
+
 module purge
 module load anaconda3/2025.6
 conda activate superfv
