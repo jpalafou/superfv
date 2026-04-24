@@ -1341,7 +1341,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             _w_[...] = xp.where(_has_shock_, _w1_, _w_)
         else:
             raise ValueError(f"Unknown lazy_primitives option: {lazy_primitives}")
-        
+
         # ensure density is never transformed to cell center and back to cell averages
         if "rho" in idx.var_idx_map:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
