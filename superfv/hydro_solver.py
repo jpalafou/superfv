@@ -30,6 +30,7 @@ from .configs import (
 )
 from .field import MultivarField, UnivarField
 from .initial_conditions import square
+from .mesh import UniformFVMesh
 from .tools.device_management import ArrayManager
 from .tools.yaml_helper import yaml_dump
 
@@ -106,9 +107,12 @@ class HydroSolver:
     ):
         # Define the following attributes:
         self.arrays: ArrayManager
+        self.mesh_arrays: ArrayManager
         self.params: SolverParams
+        self.mesh: UniformFVMesh
 
         self.arrays = ArrayManager()
+        self.mesh_arrays = ArrayManager()
 
         ic_params = InitialConditionParameters(
             ic=ic,
@@ -238,10 +242,15 @@ class HydroSolver:
             shock_detection_params=shock_detection_params,
         )
 
-        # MeshParameters requires nghost, which depends on the FV scheme
-        nghost = self._compute_nghost(fv_scheme_params)
         mesh_params = MeshParameters(
-            nx=nx, ny=ny, nz=nz, nghost=nghost, xlims=xlims, ylims=ylims, zlims=zlims
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            nghost=self._compute_nghost(fv_scheme_params),
+            xlims=xlims,
+            ylims=ylims,
+            zlims=zlims,
+            active_dims=self._compute_active_dims(nx, ny, nz),
         )
 
         self.params = SolverParams(
@@ -250,10 +259,11 @@ class HydroSolver:
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
-            active_dims=self._compute_active_dims(nx, ny, nz),
             cupy=cupy,
             sync_timer=sync_timer,
         )
+
+        self._build_mesh()
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -267,6 +277,21 @@ class HydroSolver:
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         dims = ["x", "y", "z"]
         return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
+
+    def _build_mesh(self):
+        params = self.params.mesh
+
+        self.mesh = UniformFVMesh(
+            nx=params.nx,
+            ny=params.ny,
+            nz=params.nz,
+            nghost=params.nghost,
+            xlims=params.xlims,
+            ylims=params.ylims,
+            zlims=params.zlims,
+            active_dims=params.active_dims,
+            array_manager=self.mesh_arrays,
+        )
 
     def write_config_file(self, path: str):
         with open(Path(path) / "config.yaml", "w") as f:

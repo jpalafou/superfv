@@ -186,14 +186,20 @@ class MeshParameters:
     xlims: Tuple[float, float]
     ylims: Tuple[float, float]
     zlims: Tuple[float, float]
+    active_dims: Tuple[Literal["x", "y", "z"], ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class InitialConditionParameters:
     ic: MultivarField
     passive_ics: List[UnivarField]
 
+    @property
+    def n_passive(self) -> int:
+        return len(self.passive_ics)
 
+
+@dataclass
 class BoundaryCondition(Enum):
     PERIODIC = 0
     DIRICHLET = 1
@@ -206,7 +212,7 @@ class BoundaryCondition(Enum):
     NONE = 8
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class BoundaryConditionParameters:
     bcx: Tuple[BoundaryCondition, BoundaryCondition]
     bcy: Tuple[BoundaryCondition, BoundaryCondition]
@@ -226,12 +232,5 @@ class SolverParams:
     mesh: MeshParameters
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters
-    active_dims: Tuple[Literal["x", "y", "z"], ...]
     cupy: bool = False
     sync_timer: bool = True
-
-    def __post_init__(self):
-        if len(self.active_dims) not in (1, 2, 3):
-            raise ValueError("active_dims must have length 1, 2, or 3.")
-        if len(set(self.active_dims)) != len(self.active_dims):
-            raise ValueError("active_dims must not contain duplicates.")
