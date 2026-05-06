@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from .boundary_conditions import CallableBC
 from .field import MultivarField, UnivarField
@@ -226,5 +226,12 @@ class SolverParams:
     mesh: MeshParameters
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters
+    active_dims: Tuple[Literal["x", "y", "z"], ...]
     cupy: bool = False
     sync_timer: bool = True
+
+    def __post_init__(self):
+        if len(self.active_dims) not in (1, 2, 3):
+            raise ValueError("active_dims must have length 1, 2, or 3.")
+        if len(set(self.active_dims)) != len(self.active_dims):
+            raise ValueError("active_dims must not contain duplicates.")

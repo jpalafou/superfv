@@ -1,7 +1,7 @@
 import warnings
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 
@@ -190,7 +190,7 @@ class HydroSolver:
             )
 
         # FV_SchemeParameters requires a PAD bounds array
-        self.define_PAD_array(PAD_bounds)
+        self._define_PAD_array(PAD_bounds)
 
         SED_params = SmoothExtremaDetectionParameters(use_SED=use_SED, clip_zero_tol=clip_zero_tol)
         PAD_params = PhysicalAdmissibilityParameters(
@@ -239,7 +239,7 @@ class HydroSolver:
         )
 
         # MeshParameters requires nghost, which depends on the FV scheme
-        nghost = self.compute_nghost(fv_scheme_params)
+        nghost = self._compute_nghost(fv_scheme_params)
         mesh_params = MeshParameters(
             nx=nx, ny=ny, nz=nz, nghost=nghost, xlims=xlims, ylims=ylims, zlims=zlims
         )
@@ -250,18 +250,23 @@ class HydroSolver:
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
+            active_dims=self._compute_active_dims(nx, ny, nz),
             cupy=cupy,
             sync_timer=sync_timer,
         )
 
-    def define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
+    def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
         PAD_array = np.empty((0,))
         self.arrays.add("PAD_bounds", PAD_array)
 
-    def compute_nghost(self, fv_scheme_params: FV_SchemeParameters) -> int:
+    def _compute_nghost(self, fv_scheme_params: FV_SchemeParameters) -> int:
         warnings.warn("Using dummy nghost value for now.")
         return 0
+
+    def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
+        dims = ["x", "y", "z"]
+        return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
 
     def write_config_file(self, path: str):
         with open(Path(path) / "config.yaml", "w") as f:
