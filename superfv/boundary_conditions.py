@@ -244,9 +244,7 @@ def apply_reflective_bc(_u_: ArrayLike, context: BCcontext):
     left = context.left
     idx = cast(VariableIndexMap, context.variable_index_map)
 
-    outer_slice = crop(
-        axis, (None, slab_thickness) if left else (-slab_thickness, None)
-    )
+    outer_slice = crop(axis, (None, slab_thickness) if left else (-slab_thickness, None))
     dim = AXIS_TO_DIM[axis]
 
     velocity = "v" + dim

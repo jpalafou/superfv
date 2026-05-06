@@ -15,21 +15,13 @@ TEST_PATH = Path("tests/data")
 
 @pytest.mark.parametrize("snapshot_mode", ["target", "every"])
 @pytest.mark.parametrize("fixed_n_steps", [True, False])
-def test_discarding_snapshots(
-    snapshot_mode: Literal["target", "every"], fixed_n_steps: bool
-):
-    sim1 = EulerSolver(
-        ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=CUPY_AVAILABLE
-    )
-    sim2 = EulerSolver(
-        ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=CUPY_AVAILABLE
-    )
+def test_discarding_snapshots(snapshot_mode: Literal["target", "every"], fixed_n_steps: bool):
+    sim1 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=CUPY_AVAILABLE)
+    sim2 = EulerSolver(ic=sod_shock_tube_1d, bcx="free", nx=100, p=0, cupy=CUPY_AVAILABLE)
 
     if fixed_n_steps:
         sim1.run(n=20, snapshot_mode=snapshot_mode)
-        sim2.run(
-            n=20, snapshot_mode=snapshot_mode, path=TEST_PATH / "out", overwrite=True
-        )
+        sim2.run(n=20, snapshot_mode=snapshot_mode, path=TEST_PATH / "out", overwrite=True)
     else:
         sim1.run([0.1, 0.2], snapshot_mode=snapshot_mode)
         sim2.run(
@@ -67,9 +59,7 @@ def test_OutputLoader(snapshot_mode: Literal["target", "every"], fixed_n_steps: 
     )
 
     if fixed_n_steps:
-        sim.run(
-            n=20, snapshot_mode=snapshot_mode, path=TEST_PATH / "out", overwrite=True
-        )
+        sim.run(n=20, snapshot_mode=snapshot_mode, path=TEST_PATH / "out", overwrite=True)
     else:
         sim.run(
             [0.1, 0.2],

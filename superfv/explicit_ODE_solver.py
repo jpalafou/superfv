@@ -562,8 +562,7 @@ class ExplicitODESolver(ABC):
             target_times = target_times[1:]
             if not target_times:
                 raise ValueError(
-                    "If providing a list of target times, "
-                    "at least one must be greater than 0."
+                    "If providing a list of target times, " "at least one must be greater than 0."
                 )
 
         return target_times
@@ -679,9 +678,7 @@ class ExplicitODESolver(ABC):
             pickle.dump(self.minisnapshots, f)
 
         # write snapshot index as csv
-        df = pd.DataFrame(
-            [{"index": i, "t": t} for i, t in self.snapshots.file_index.items()]
-        )
+        df = pd.DataFrame([{"index": i, "t": t} for i, t in self.snapshots.file_index.items()])
         df.to_csv(self.path / "snapshots" / "index.csv", index=False)
 
     def reset_global_logs(self):
@@ -1048,9 +1045,7 @@ class ExplicitODESolver(ABC):
             author_name = commit_info[1]
             commit_date = commit_info[2]
             branch_name = (
-                commit_info[3].split(",")[0].strip().split()[-1]
-                if len(commit_info) > 3
-                else None
+                commit_info[3].split(",")[0].strip().split()[-1] if len(commit_info) > 3 else None
             )
 
             return {

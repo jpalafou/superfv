@@ -100,14 +100,10 @@ class UniformFVMesh:
             or not (isinstance(lower, (int, float)) and isinstance(upper, (int, float)))
             for lower, upper in (xlim, ylim, zlim)
         ):
-            raise ValueError(
-                "Limits must be tuples of two values (min, max) with min < max."
-            )
+            raise ValueError("Limits must be tuples of two values (min, max) with min < max.")
         if any(dim not in xyz_tup for dim in active_dims):
             raise ValueError("Active dimensions must be 'x', 'y', and/or 'z'.")
-        if any(
-            n > 1 and dim not in active_dims for dim, n in zip(xyz_tup, (nx, ny, nz))
-        ):
+        if any(n > 1 and dim not in active_dims for dim, n in zip(xyz_tup, (nx, ny, nz))):
             raise ValueError("Inactive dimensions must have only one cell.")
         if slab_depth < 0 or not isinstance(slab_depth, int):
             raise ValueError("Slab depth must be a non-negative integer.")
@@ -159,9 +155,7 @@ class UniformFVMesh:
     def _init_core(self):
         arrays = self.array_manager
 
-        X, Y, Z = uniform_3D_mesh(
-            self.nx, self.ny, self.nz, self.xlim, self.ylim, self.zlim
-        )
+        X, Y, Z = uniform_3D_mesh(self.nx, self.ny, self.nz, self.xlim, self.ylim, self.zlim)
 
         arrays.add("core_X", X)
         arrays.add("core_Y", Y)
@@ -189,8 +183,7 @@ class UniformFVMesh:
             if dim not in self.active_dims:
                 continue
             shape = {
-                ax: (slab_depth[ax] if ax == dim else n[ax] + 2 * slab_depth[ax])
-                for ax in "xyz"
+                ax: (slab_depth[ax] if ax == dim else n[ax] + 2 * slab_depth[ax]) for ax in "xyz"
             }
             bounds = {
                 ax: (

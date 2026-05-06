@@ -223,9 +223,7 @@ def hllc_operator(
     Returns:
         Array with the HLLC operator applied.
     """
-    return np.where(
-        sl > 0, ql, np.where(vstar > 0, qstarl, np.where(sr > 0, qstarr, qr))
-    )
+    return np.where(sl > 0, ql, np.where(vstar > 0, qstarl, np.where(sr > 0, qstarr, qr)))
 
 
 def hllct(

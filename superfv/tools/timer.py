@@ -99,23 +99,17 @@ class StepperTimer:
         sorted_cats = sorted(self.cats)
 
         # Fixed width for category column
-        cat_width = (
-            max(len(cat) for cat in sorted_cats) + 5
-        )  # Slightly more for padding
+        cat_width = max(len(cat) for cat in sorted_cats) + 5  # Slightly more for padding
 
         # Start building the report string
-        report_str = (
-            f"{'Category':<{cat_width}} {'Calls':>10} {'Cumulative Time':>20}\n"
-        )
+        report_str = f"{'Category':<{cat_width}} {'Calls':>10} {'Cumulative Time':>20}\n"
         report_str += "-" * (cat_width + 34) + "\n"
 
         # Add the data for each category
         for cat in sorted_cats:
             ncalls = self.total_calls(cat)
             cumtime = self.total_time(cat)
-            report_str += (
-                f"{cat:<{cat_width}} {ncalls:>10} {cumtime:>20.{precision}f}\n"
-            )
+            report_str += f"{cat:<{cat_width}} {ncalls:>10} {cumtime:>20.{precision}f}\n"
 
         print(report_str)
 

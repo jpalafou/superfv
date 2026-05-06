@@ -155,9 +155,7 @@ def test_advection_of_a_1d_square(limiter: str, dim: str, predictor_corrector: b
 @pytest.mark.parametrize("limiter", ["minmod", "PP2D"])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("x", "z"), ("y", "z")])
 @pytest.mark.parametrize("predictor_corrector", [False, True])
-def test_advection_of_a_2d_square(
-    limiter: str, dim1_dim2: tuple, predictor_corrector: bool
-):
+def test_advection_of_a_2d_square(limiter: str, dim1_dim2: tuple, predictor_corrector: bool):
     if limiter == "PP2D" and not predictor_corrector:
         pytest.skip("PP2D only works with predictor-corrector")
 
@@ -211,9 +209,7 @@ def test_advection_of_a_3d_square(limiter: str, predictor_corrector: bool):
 @pytest.mark.parametrize("limiter", ["minmod", "moncen"])
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
 @pytest.mark.parametrize("predictor_corrector", [False, True])
-def test_hydro_advection_of_a_1d_square(
-    limiter: str, dim: str, predictor_corrector: bool
-):
+def test_hydro_advection_of_a_1d_square(limiter: str, dim: str, predictor_corrector: bool):
     N = 64
     n = 10
 
@@ -238,9 +234,7 @@ def test_hydro_advection_of_a_1d_square(
 @pytest.mark.parametrize("limiter", ["minmod", "PP2D"])
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("x", "z"), ("y", "z")])
 @pytest.mark.parametrize("predictor_corrector", [False, True])
-def test_hydro_advection_of_a_2d_square(
-    limiter: str, dim1_dim2: tuple, predictor_corrector: bool
-):
+def test_hydro_advection_of_a_2d_square(limiter: str, dim1_dim2: tuple, predictor_corrector: bool):
     if limiter == "PP2D" and not predictor_corrector:
         pytest.skip("PP2D only works with predictor-corrector")
 

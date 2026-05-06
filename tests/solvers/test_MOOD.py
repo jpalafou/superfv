@@ -21,9 +21,7 @@ def test_mpp_1d(N: int, p: int, config: dict):
     max_MOOD_iters = N
 
     sim = AdvectionSolver(
-        ic=lambda array_slicer, x, y, z, t, xp: ic.square(
-            array_slicer, x, y, z, vx=1, xp=xp
-        ),
+        ic=lambda array_slicer, x, y, z, t, xp: ic.square(array_slicer, x, y, z, vx=1, xp=xp),
         nx=N,
         p=p,
         MOOD=True,
@@ -54,9 +52,7 @@ def test_mpp_2d(N: int, p: int, config: dict):
     max_MOOD_iters = N**2
 
     sim = AdvectionSolver(
-        ic=lambda array_slicer, x, y, z, t, xp: ic.square(
-            array_slicer, x, y, z, vx=1, vy=1, xp=xp
-        ),
+        ic=lambda array_slicer, x, y, z, t, xp: ic.square(array_slicer, x, y, z, vx=1, vy=1, xp=xp),
         nx=N,
         ny=N,
         p=p,

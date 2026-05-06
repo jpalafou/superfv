@@ -8,9 +8,7 @@ from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap
 
 
-def parse_xyz(
-    x: ArrayLike, y: ArrayLike, z: ArrayLike
-) -> Tuple[Literal["x", "y", "z"], ...]:
+def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Tuple[Literal["x", "y", "z"], ...]:
     """
     Returns a string with the dimensions of the input arrays.
 
@@ -90,9 +88,7 @@ def sinus(
             r += y - vy * t
         if "z" in dims:
             r += z - vz * t
-        out[idx("rho")] = (bounds[1] - bounds[0]) * (
-            0.5 * xp.sin(2 * np.pi * r) + 0.5
-        ) + bounds[0]
+        out[idx("rho")] = (bounds[1] - bounds[0]) * (0.5 * xp.sin(2 * np.pi * r) + 0.5) + bounds[0]
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz
@@ -739,9 +735,7 @@ def kelvin_helmholtz_2d(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Kelvin-Helmholtz initial condition requires all hydro variables."
-        )
+        raise ValueError("Kelvin-Helmholtz initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
     if len(dims) != 2:
@@ -805,9 +799,7 @@ def double_mach_reflection(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Double Mach reflection initial condition requires all hydro variables."
-        )
+        raise ValueError("Double Mach reflection initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
     if set(dims) != {"x", "y"}:
@@ -898,19 +890,13 @@ def decaying_isotropic_turbulence(
 
     def _generate_spectral_mesh(shape, spacings):
         kxs = (
-            xp.fft.fftfreq(shape[0], d=spacings[0])
-            if "x" in dims
-            else xp.array([0.0], dtype=float)
+            xp.fft.fftfreq(shape[0], d=spacings[0]) if "x" in dims else xp.array([0.0], dtype=float)
         )
         kys = (
-            xp.fft.fftfreq(shape[1], d=spacings[1])
-            if "y" in dims
-            else xp.array([0.0], dtype=float)
+            xp.fft.fftfreq(shape[1], d=spacings[1]) if "y" in dims else xp.array([0.0], dtype=float)
         )
         kzs = (
-            xp.fft.fftfreq(shape[2], d=spacings[2])
-            if "z" in dims
-            else xp.array([0.0], dtype=float)
+            xp.fft.fftfreq(shape[2], d=spacings[2]) if "z" in dims else xp.array([0.0], dtype=float)
         )
 
         KX = (
@@ -965,19 +951,11 @@ def decaying_isotropic_turbulence(
         seed_fine = seed_fine if seed_fine is not None else seed
 
         KX_c, KY_c, KZ_c = _generate_spectral_mesh(coarse_shape, (hx_c, hy_c, hz_c))
-        Vx_c, Vy_c, Vz_c = _generate_spectral_velocities(
-            coarse_shape, KX_c, KY_c, KZ_c, seed
-        )
+        Vx_c, Vy_c, Vz_c = _generate_spectral_velocities(coarse_shape, KX_c, KY_c, KZ_c, seed)
 
-        vx_c = (
-            xp.fft.ifftn(Vx_c, axes=axes).real if "x" in dims else xp.zeros_like(Vx_c)
-        )
-        vy_c = (
-            xp.fft.ifftn(Vy_c, axes=axes).real if "y" in dims else xp.zeros_like(Vy_c)
-        )
-        vz_c = (
-            xp.fft.ifftn(Vz_c, axes=axes).real if "z" in dims else xp.zeros_like(Vz_c)
-        )
+        vx_c = xp.fft.ifftn(Vx_c, axes=axes).real if "x" in dims else xp.zeros_like(Vx_c)
+        vy_c = xp.fft.ifftn(Vy_c, axes=axes).real if "y" in dims else xp.zeros_like(Vy_c)
+        vz_c = xp.fft.ifftn(Vz_c, axes=axes).real if "z" in dims else xp.zeros_like(Vz_c)
 
         ones = xp.ones(
             (
@@ -998,9 +976,7 @@ def decaying_isotropic_turbulence(
 
         KX_f, KY_f, KZ_f = _generate_spectral_mesh(full_shape, (hx, hy, hz))
         K_f = xp.sqrt(KX_f**2 + KY_f**2 + KZ_f**2)
-        Vx_f, Vy_f, Vz_f = _generate_spectral_velocities(
-            full_shape, KX_f, KY_f, KZ_f, seed_fine
-        )
+        Vx_f, Vy_f, Vz_f = _generate_spectral_velocities(full_shape, KX_f, KY_f, KZ_f, seed_fine)
 
         k_coarse_nyquist = 1 / (
             2 * max(h for h, d in zip((hx_c, hy_c, hz_c), ("x", "y", "z")) if d in dims)
@@ -1068,9 +1044,7 @@ def gresho_vortex(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Gresho vortex initial condition requires all hydro variables."
-        )
+        raise ValueError("Gresho vortex initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
     if len(dims) != 2:
@@ -1143,9 +1117,7 @@ def entropy_wave(
 
     unused_dims = set("xyz") - set(dims)
     if not unused_dims:
-        raise ValueError(
-            "Entropy wave initial condition requires at least one passive dimension."
-        )
+        raise ValueError("Entropy wave initial condition requires at least one passive dimension.")
 
     for dim in ["z", "y", "x"]:
         if dim in unused_dims:

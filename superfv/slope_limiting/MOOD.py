@@ -278,9 +278,7 @@ def detect_troubled_cells(fv_solver: FiniteVolumeSolver, t: float) -> Tuple[int,
             elif isinstance(lim_idxs, np.ndarray):
                 lim_idxs_list = [x.item() for x in lim_idxs]
             else:
-                raise ValueError(
-                    f"Unsupported slice type for lim_slc: {type(lim_idxs)}"
-                )
+                raise ValueError(f"Unsupported slice type for lim_slc: {type(lim_idxs)}")
 
             NAD_mask = xp.array(
                 [1 if i in lim_idxs_list else 0 for i in range(nvars)], dtype=cp.int32
@@ -558,9 +556,7 @@ def revise_fluxes_with_one_fallback_scheme(fv_solver: FiniteVolumeSolver, t: flo
 
     # parse schemes
     if len(cascade) != 2:
-        raise ValueError(
-            "Fallback scheme revision requires a cascade of exactly 2 schemes."
-        )
+        raise ValueError("Fallback scheme revision requires a cascade of exactly 2 schemes.")
     base_scheme = cascade[0]
     fallback_scheme = cascade[1]
 
@@ -686,9 +682,7 @@ def blend_troubled_cells(
         lft_rgt = merge_slices(lft_slc1, rgt_slc2)
         rgt_lft = merge_slices(rgt_slc1, lft_slc2)
         rgt_rgt = merge_slices(rgt_slc1, rgt_slc2)
-        modified = merge_slices(
-            crop(axis1, (1, -1), ndim=4), crop(axis2, (1, -1), ndim=4)
-        )
+        modified = merge_slices(crop(axis1, (1, -1), ndim=4), crop(axis2, (1, -1), ndim=4))
 
         # First neighbors
         theta[lft_slc1] = xp.maximum(0.75 * troubles[rgt_slc1], theta[lft_slc1])
@@ -808,9 +802,7 @@ def append_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver):
         step_log[f"nfine_cascade_idx{i}"].append(n_cascade_idx_i)
 
 
-def log_troubled_cell_scalar_statistics(
-    fv_solver: FiniteVolumeSolver, data: Dict[str, Any]
-):
+def log_troubled_cell_scalar_statistics(fv_solver: FiniteVolumeSolver, data: Dict[str, Any]):
     """
     Log troubled cell statistics from the finite volume solver's step log into the
     provided data dictionary.
@@ -850,23 +842,18 @@ def log_troubled_cell_scalar_statistics(
     # some more MOOD statistics from the MOOD state
     if sum(state.iter_count_hist) != state.iter_count:
         raise ValueError(
-            "MOOD iteration count mismatch: "
-            f"{state.iter_count_hist} != {state.iter_count}"
+            "MOOD iteration count mismatch: " f"{state.iter_count_hist} != {state.iter_count}"
         )
     nfine = state.troubled_cell_count_hist
     if sum(nfine) != state.troubled_cell_count:
         raise ValueError(
-            "MOOD troubled cell count mismatch: "
-            f"{nfine} != {state.troubled_cell_count}"
+            "MOOD troubled cell count mismatch: " f"{nfine} != {state.troubled_cell_count}"
         )
     if not config.skip_trouble_counts and nfine != step_log["nfine_troubles"]:
         raise ValueError(
-            "MOOD troubled cell history mismatch: "
-            f"{nfine} != {step_log['nfine_troubles_max']}"
+            "MOOD troubled cell history mismatch: " f"{nfine} != {step_log['nfine_troubles_max']}"
         )
-    data.update(
-        {"n_MOOD_iters": state.iter_count, "nfine_MOOD_iters": state.iter_count_hist}
-    )
+    data.update({"n_MOOD_iters": state.iter_count, "nfine_MOOD_iters": state.iter_count_hist})
 
 
 if CUPY_AVAILABLE:
@@ -1016,16 +1003,12 @@ if CUPY_AVAILABLE:
             not NAD_violation_amounts.flags.c_contiguous
             or NAD_violation_amounts.dtype != cp.float64
         ):
-            raise ValueError(
-                "NAD_violation_amounts must be a C-contiguous array of dtype float64."
-            )
+            raise ValueError("NAD_violation_amounts must be a C-contiguous array of dtype float64.")
         if (
             not PAD_violation_amounts.flags.c_contiguous
             or PAD_violation_amounts.dtype != cp.float64
         ):
-            raise ValueError(
-                "PAD_violation_amounts must be a C-contiguous array of dtype float64."
-            )
+            raise ValueError("PAD_violation_amounts must be a C-contiguous array of dtype float64.")
         if not troubles.flags.c_contiguous or troubles.dtype != cp.int32:
             raise ValueError("troubles must be a C-contiguous array of dtype int32.")
         if troubles.shape != (1, wnew.shape[1], wnew.shape[2], wnew.shape[3]):

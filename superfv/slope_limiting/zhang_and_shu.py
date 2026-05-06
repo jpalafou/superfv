@@ -50,8 +50,7 @@ class ZhangShuConfig(LimiterConfig):
         LimiterConfig.__post_init__(self)
         if self.adaptive_dt and not self.physical_admissibility_detection:
             raise ValueError(
-                "adaptive_dt can only be True if physical_admissibility_detection"
-                " is True."
+                "adaptive_dt can only be True if physical_admissibility_detection" " is True."
             )
 
     def key(self) -> str:
@@ -183,9 +182,7 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
     theta = arrays["_theta_"][interior][..., 0]
 
     if nvars < 4:
-        raise ValueError(
-            "Zhang-Shu limiter logging requires at least 4 variable slots."
-        )
+        raise ValueError("Zhang-Shu limiter logging requires at least 4 variable slots.")
 
     one_minus_theta = xp.empty_like(theta)
     mean_one_minus_theta = xp.empty_like(theta[0, ...])
@@ -208,9 +205,7 @@ def append_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver):
         step_log[f"nfine_1-theta_{var}"].append(n)
 
 
-def log_zhang_shu_scalar_statistics(
-    fv_solver: FiniteVolumeSolver, data: Dict[str, Any]
-):
+def log_zhang_shu_scalar_statistics(fv_solver: FiniteVolumeSolver, data: Dict[str, Any]):
     """
     Log Zhang-Shu limiter statistics from the finite volume solver's step log into the
     provided data dictionary.
@@ -313,25 +308,15 @@ if CUPY_AVAILABLE:
                 "(nvars, nx, ny, nz)."
             )
         if not M.flags.c_contiguous or M.shape != w.shape:
-            raise ValueError(
-                "Array `M` must be a C-contiguous array of the same shape as `w`."
-            )
+            raise ValueError("Array `M` must be a C-contiguous array of the same shape as `w`.")
         if not m.flags.c_contiguous or m.shape != w.shape:
-            raise ValueError(
-                "Array `m` must be a C-contiguous array of the same shape as `w`."
-            )
+            raise ValueError("Array `m` must be a C-contiguous array of the same shape as `w`.")
         if not Mj.flags.c_contiguous or Mj.shape != w.shape:
-            raise ValueError(
-                "Array `Mj` must be a C-contiguous array of the same shape as `w`."
-            )
+            raise ValueError("Array `Mj` must be a C-contiguous array of the same shape as `w`.")
         if not mj.flags.c_contiguous or mj.shape != w.shape:
-            raise ValueError(
-                "Array `mj` must be a C-contiguous array of the same shape as `w`."
-            )
+            raise ValueError("Array `mj` must be a C-contiguous array of the same shape as `w`.")
         if not theta.flags.c_contiguous or theta.shape != w.shape:
-            raise ValueError(
-                "Array `theta` must be a C-contiguous array of the same shape as `w`."
-            )
+            raise ValueError("Array `theta` must be a C-contiguous array of the same shape as `w`.")
         if (
             w.dtype != cp.float64
             or wj.dtype != cp.float64

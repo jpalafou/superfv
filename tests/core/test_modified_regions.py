@@ -61,9 +61,7 @@ def test_blend_troubled_cells(dims: str):
     theta = sample_data(xp, dims, fill_value=xp.nan)
     troubles1 = sample_data(xp, dims, fill_value=xp.nan)
 
-    modified = blend_troubled_cells(
-        xp, troubles0, tuple(dims), out=troubles1, theta=theta
-    )
+    modified = blend_troubled_cells(xp, troubles0, tuple(dims), out=troubles1, theta=theta)
 
     assert not xp.any(xp.isnan(troubles1[modified]))
     troubles1[modified] = xp.nan

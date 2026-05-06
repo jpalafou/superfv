@@ -52,9 +52,7 @@ markersize = 8
 styles = {
     "MUSCL-RK3": dict(color="grey", marker="s", mfc="none", markersize=markersize),
     "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none", markersize=markersize),
-    "ZS3": dict(
-        color="blue", marker="o", mfc="none", markersize=markersize, label="ZS4"
-    ),
+    "ZS3": dict(color="blue", marker="o", mfc="none", markersize=markersize, label="ZS4"),
     "ZS3lazy": dict(
         color="green", marker="o", mfc="none", markersize=markersize, label="ZS4, lazy"
     ),
@@ -72,9 +70,7 @@ styles = {
         markersize=markersize,
         label=r"MM4, $\epsilon=0$",
     ),
-    "ZS7": dict(
-        color="red", marker="o", mfc="none", markersize=markersize, label="ZS8"
-    ),
+    "ZS7": dict(color="red", marker="o", mfc="none", markersize=markersize, label="ZS8"),
     "ZS7lazy": dict(
         color="purple",
         linestyle="--",

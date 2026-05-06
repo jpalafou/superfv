@@ -485,8 +485,7 @@ class EulerSolver(FiniteVolumeSolver):
     def riemann_solver_kernel(self):
         if self.riemann_solver_name != "hllc":
             raise NotImplementedError(
-                "Elementwise Riemann solver kernels are only implemented for the HLLC "
-                "solver."
+                "Elementwise Riemann solver kernels are only implemented for the HLLC " "solver."
             )
         return make_hllc_elementwise_kernel(self.n_passive_vars)
 
@@ -756,9 +755,7 @@ class EulerSolver(FiniteVolumeSolver):
         E_cons = scalar_packet["E_cons"]
 
         message = super().build_update_message()
-        message += (
-            f" | min(rho)={rho_min:.2e}, min(P)={P_min:.2e} | E_cons={E_cons:.2e}"
-        )
+        message += f" | min(rho)={rho_min:.2e}, min(P)={P_min:.2e} | E_cons={E_cons:.2e}"
 
         return message
 
@@ -870,9 +867,7 @@ if CUPY_AVAILABLE:
         if wj.ndim != 5:
             raise ValueError("wj must have 5 dimensions.")
         if w1.ndim != 4 or w1.shape != wj.shape[:4]:
-            raise ValueError(
-                "w1 must have 4 dimensions and match the first 4 dimensions of wj."
-            )
+            raise ValueError("w1 must have 4 dimensions and match the first 4 dimensions of wj.")
         if (
             fallback_mask.ndim != 5
             or fallback_mask.shape[0] != 1

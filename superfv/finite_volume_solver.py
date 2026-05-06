@@ -526,9 +526,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             warnings.warn("Turning off `face_fallback` since MOOD is used.")
             self.face_fallback = False
 
-    def _init_PAD(
-        self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]
-    ):
+    def _init_PAD(self, PAD: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]]):
         if PAD is None:
             self.using_PAD = False
             return
@@ -639,13 +637,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
     ):
         base_scheme = self.base_scheme
         if not isinstance(base_scheme, polyInterpolationScheme):
-            raise ValueError(
-                "Base scheme must be an instance of polyInterpolationScheme."
-            )
+            raise ValueError("Base scheme must be an instance of polyInterpolationScheme.")
         if getattr(base_scheme, "gauss_legendre", False):
-            raise NotImplementedError(
-                "MOOD is not implemented for Gauss-Legendre schemes."
-            )
+            raise NotImplementedError("MOOD is not implemented for Gauss-Legendre schemes.")
 
         # define list of fallback schemes
         fallback_schemes: List[InterpolationScheme]
@@ -883,9 +877,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             for j, (bc, f) in enumerate(zip(as_pair(bci), as_pair(fi))):
                 if bc == "ic":
                     mode_pair.append("dirichlet")
-                    callable_bc_pair.append(
-                        self._make_conservative_field(self.callable_ic)
-                    )
+                    callable_bc_pair.append(self._make_conservative_field(self.callable_ic))
                 else:
                     mode_pair.append(bc)
                     callable_bc_pair.append(
@@ -1522,9 +1514,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             self.conservatives_to_primitives(nodes, nodes)
 
     @MethodTimer(cat="interpolate_faces:GL")
-    def interpolate_GaussLegendre_nodes(
-        self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
-    ):
+    def interpolate_GaussLegendre_nodes(self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int):
         """
         Interpolate Gauss-Legendre nodes along the opposing faces of `u` using a
         degree `p` polynomial, writing the result to `self.arrays["_{dim}_nodes_"]`.
@@ -1550,9 +1540,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         tdims = self._get_transverse_dims(dim)
 
         if ndim == 1:
-            raise ValueError(
-                "1D interpolation to Gauss-Legendre nodes is not supported."
-            )
+            raise ValueError("1D interpolation to Gauss-Legendre nodes is not supported.")
         elif ndim == 2:
             faces = arrays["_faces_"]
             stencil_sweep(u[..., na], lr_weights, faces, dim)
@@ -1567,9 +1555,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
     @MethodTimer(cat="interpolate_faces:transverse")
-    def interpolate_face_centers(
-        self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int
-    ):
+    def interpolate_face_centers(self, u: ArrayLike, dim: Literal["x", "y", "z"], p: int):
         """
         Interpolate face-centered nodes on the opposing faces of `u` using a
         degree `p` polynomial, writing the result to `self.arrays["_{dim}_nodes_"]`.
@@ -1610,9 +1596,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             raise ValueError(f"Unknown number of dimensions: {ndim}.")
 
     @MethodTimer(cat="zhang_shu_limiter")
-    def zhang_shu_limiter(
-        self, scheme: polyInterpolationScheme, primitives: bool = False
-    ):
+    def zhang_shu_limiter(self, scheme: polyInterpolationScheme, primitives: bool = False):
         """
         Limit the face node arrays (`x_nodes`, `y_nodes`, `z_nodes`) using the
         Zhang-Shu limiter, theta, which is written to the `theta` array.
@@ -1757,9 +1741,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         else:
             if getattr(scheme, "gauss_legendre", False):
                 self.integrate_GaussLegendre_nodes(dim, scheme.p)
-            elif isinstance(
-                scheme, (polyInterpolationScheme, musclInterpolationScheme)
-            ):
+            elif isinstance(scheme, (polyInterpolationScheme, musclInterpolationScheme)):
                 self.integrate_tranverse_nodes(dim, scheme.p)
             else:
                 raise ValueError(
@@ -1887,9 +1869,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # compute the fluxes and assign them to their respective arrays
         for dim in self.active_dims:
-            self.integrate_fluxes(
-                dim, scheme, convert_to_primitives=not limit_primitives
-            )
+            self.integrate_fluxes(dim, scheme, convert_to_primitives=not limit_primitives)
 
     @MethodTimer(cat="MOOD_loop")
     def MOOD_loop(self, t: float):
@@ -2043,9 +2023,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         scheme = self.base_scheme
 
         if not isinstance(scheme.limiter_config, ZhangShuConfig):
-            raise ValueError(
-                "PAD criterion requires a Zhang-Shu limiter configuration."
-            )
+            raise ValueError("PAD criterion requires a Zhang-Shu limiter configuration.")
         if scheme.limiter_config.PAD_bounds is None:
             raise ValueError("PAD bounds are required to enable adaptive dt.")
 
@@ -2080,9 +2058,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             been exceeded, otherwise raises a ValueError.
         """
         if not isinstance(self.base_scheme.limiter_config, ZhangShuConfig):
-            raise ValueError(
-                "PAD criterion requires a Zhang-Shu limiter configuration."
-            )
+            raise ValueError("PAD criterion requires a Zhang-Shu limiter configuration.")
 
         n_dt_revisions = self.n_dt_revisions
         dt_min = self.dt_min
@@ -2191,11 +2167,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
 
         # log emergency face fallback statistics
         data.update(
-            {
-                "nfine_emergency_fallbacks": self.step_log[
-                    "nfine_emergency_fallbacks"
-                ].copy()
-            }
+            {"nfine_emergency_fallbacks": self.step_log["nfine_emergency_fallbacks"].copy()}
         )
 
         if self.log_limiter_scalars:
@@ -2497,15 +2469,11 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         self.update_workspaces(t, u, scheme)
 
         # predictor step
-        self.reconstruct_muscl_faces(
-            scheme, limit_primitives=limit_primitives, hancock=True, dt=dt
-        )
+        self.reconstruct_muscl_faces(scheme, limit_primitives=limit_primitives, hancock=True, dt=dt)
 
         # corrector step
         for dim in self.active_dims:
-            self.integrate_fluxes(
-                dim, scheme, convert_to_primitives=not limit_primitives
-            )
+            self.integrate_fluxes(dim, scheme, convert_to_primitives=not limit_primitives)
 
         dudt = self.compute_RHS().copy()
         self.arrays["unew"][...] = u + dt * dudt
@@ -2575,9 +2543,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         # evolve the cell-center by 1/2 dt
         if hancock:
             if dt is None:
-                raise ValueError(
-                    "dt must be provided for MUSCL-Hancock reconstruction."
-                )
+                raise ValueError("dt must be provided for MUSCL-Hancock reconstruction.")
 
             wcc_for_nodes[...] = wcc
             for dim, slope_arr in slope_arrs.items():
@@ -2588,9 +2554,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             wcc_for_nodes[...] = wcc
 
         # update the face nodes using the limited slopes
-        for (dim, node_arr), (_, slope_arr) in zip(
-            node_arrs.items(), slope_arrs.items()
-        ):
+        for (dim, node_arr), (_, slope_arr) in zip(node_arrs.items(), slope_arrs.items()):
             node_arr[..., 0] = wcc_for_nodes - slope_arr / 2
             node_arr[..., 1] = wcc_for_nodes + slope_arr / 2
 
@@ -2638,8 +2602,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         """
         df = self.get_timings_df()
         df["% time"] = (
-            df["Total time (s)"]
-            / df.loc[df["Routine"] == "wall", "Total time (s)"].values[0]
+            df["Total time (s)"] / df.loc[df["Routine"] == "wall", "Total time (s)"].values[0]
         )
 
         # Nicer labels + hierarchy
@@ -2661,9 +2624,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         totals = df["Total time (s)"].map(
             lambda x: "-" if pd.isna(x) or x == 0 else f"{x:{total_time_spec}}"
         )
-        pct = df["% time"].map(
-            lambda x: "-" if pd.isna(x) or x == 0 else f"{100*x:.1f}"
-        )
+        pct = df["% time"].map(lambda x: "-" if pd.isna(x) or x == 0 else f"{100*x:.1f}")
 
         # Dynamic column widths
         w1 = max(len("Routine"), int(df["Routine"].str.len().max()))
@@ -2672,7 +2633,9 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         w4 = max(len("% time"), int(pd.Series(pct).str.len().max()))
 
         # Write string
-        out = f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}\n"
+        out = (
+            f"{'Routine':<{w1}}  {'# of calls':>{w2}}  {'Total time (s)':>{w3}} {'% time':>{w4}}\n"
+        )
         out += f"{'-'*w1}  {'-'*w2}  {'-'*w3}  {'-'*w4}\n"
         for name, c, tot, p in zip(df["Routine"], calls, totals, pct):
             out += f"{name:<{w1}}  {c:>{w2}}  {tot:>{w3}}  {p:>{w4}}\n"

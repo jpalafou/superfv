@@ -104,8 +104,7 @@ def _parse_txyz_slices(
         if dim not in fv_solver.active_dims:
             if coord is not None:
                 warnings.warn(
-                    f"Dimension {dim} is not active in the solver. "
-                    f"Ignoring coordinate {coord}."
+                    f"Dimension {dim} is not active in the solver. " f"Ignoring coordinate {coord}."
                 )
             slices[dim] = 0
         elif coord is None:
@@ -172,19 +171,12 @@ def get_field(
 
     # first determine the snapshot array to extract from based on `variable`
     arraykey: str
-    if (
-        variable in idx.var_idx_map
-        or variable in idx.group_var_map
-        or variable in ("w", "u")
-    ):
+    if variable in idx.var_idx_map or variable in idx.group_var_map or variable in ("w", "u"):
         if variable in idx.group_var_map["conservatives"] or variable == "u":
             arraykey = "u" if cell_averaged else "ucc"
         elif (
             variable in idx.group_var_map["primitives"]
-            or (
-                "passives" in idx.group_var_map
-                and variable in idx.group_var_map["passives"]
-            )
+            or ("passives" in idx.group_var_map and variable in idx.group_var_map["passives"])
             or variable == "w"
         ):
             arraykey = "w" if cell_averaged else "wcc"
@@ -249,9 +241,7 @@ def get_field(
                 "valid variable or reduction operation, and no multivar_func provided."
             )
     else:
-        raise ValueError(
-            f"Unexpected number of dimensions {array.ndim} for variable {variable}."
-        )
+        raise ValueError(f"Unexpected number of dimensions {array.ndim} for variable {variable}.")
 
     # apply elementwise function if provided
     if func is not None:
@@ -365,9 +355,7 @@ def plot_1d_slice(
 
     # optionally plot troubles
     if trouble_marker is not None:
-        raise NotImplementedError(
-            "Troubled cell plotting is not yet implemented for 1D slices."
-        )
+        raise NotImplementedError("Troubled cell plotting is not yet implemented for 1D slices.")
         ms = line.get_markersize()
         min_trouble_size = (1 - trouble_size_rate) * ms
         trouble_size_rate = trouble_size_rate * ms
@@ -466,9 +454,7 @@ def plot_2d_slice(
     is_valid = _is_None_or_tuple
     active_dims = fv_solver.active_dims
     slicing_dims = [
-        dim
-        for dim, coord in zip("xyz", (x, y, z))
-        if is_valid(coord) and dim in active_dims
+        dim for dim, coord in zip("xyz", (x, y, z)) if is_valid(coord) and dim in active_dims
     ]
     if len(slicing_dims) != 2:
         raise ValueError(
@@ -535,9 +521,7 @@ def plot_2d_slice(
 
     # add colorbar
     if colorbar:
-        cbar = plt.colorbar(
-            ax.images[0] if using == "imshow" else ax.collections[0], ax=ax
-        )
+        cbar = plt.colorbar(ax.images[0] if using == "imshow" else ax.collections[0], ax=ax)
     else:
         cbar = None
 
@@ -610,8 +594,7 @@ def plot_spacetime(
     active_dims = fv_solver.active_dims
     if len(active_dims) != 1:
         raise ValueError(
-            "Spacetime plots are only supported for 1D problems (exactly one active "
-            "dimension)."
+            "Spacetime plots are only supported for 1D problems (exactly one active " "dimension)."
         )
     dim = active_dims[0]
 
@@ -639,9 +622,7 @@ def plot_spacetime(
         cast(float, x_arr[0]),
         cast(float, x_arr[-1]),
     )
-    im = ax.imshow(
-        f_arr, extent=extent, cmap=cmap, origin="lower", aspect="auto", **kwargs
-    )
+    im = ax.imshow(f_arr, extent=extent, cmap=cmap, origin="lower", aspect="auto", **kwargs)
 
     if overlay_troubles:
         troubles_arr = np.empty((len(x_arr), len(t_arr))) * np.nan
@@ -651,9 +632,7 @@ def plot_spacetime(
                 cast(float, t),
                 {"var": f"troubles-{variable}", "any": "troubles-max"}[overlay_mode],
             )[*slices]
-            troubles_arr[:, i] = np.where(
-                current_troubles > 0, current_troubles, np.nan
-            )
+            troubles_arr[:, i] = np.where(current_troubles > 0, current_troubles, np.nan)
 
         ax.imshow(
             troubles_arr,
@@ -679,9 +658,7 @@ def plot_spacetime(
     return im, cbar
 
 
-def power_law(
-    x0: float, f0: float, x1: float, f1: float
-) -> Callable[[np.ndarray], np.ndarray]:
+def power_law(x0: float, f0: float, x1: float, f1: float) -> Callable[[np.ndarray], np.ndarray]:
     """
     Return a power law function `f(x) = f0 * (x  / x0) ** r` from two points (x0, f0)
     and (x1, f1) where `r = log(f1 / f0) / log(x1 / x0)`.
@@ -754,9 +731,7 @@ def plot_timeseries(
         key = variable
 
     if key not in fv_solver.minisnapshots:
-        raise ValueError(
-            f"Variable {key} not found in `FiniteVolumeSolver.minisnapshots`."
-        )
+        raise ValueError(f"Variable {key} not found in `FiniteVolumeSolver.minisnapshots`.")
 
     t = fv_solver.minisnapshots["t"]
     f = fv_solver.minisnapshots[key]

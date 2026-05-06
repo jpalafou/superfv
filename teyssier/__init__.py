@@ -229,32 +229,18 @@ def trace(u, alpha, space=1):
         umiddle = (-u[:, 2:-4] + 26 * u[:, 3:-3] - u[:, 4:-2]) / 24
 
     if space == 4:
-        uleft = (
-            u[:, 1:-5] - 6 * u[:, 2:-4] + 20 * u[:, 3:-3] + 10 * u[:, 4:-2] - u[:, 5:-1]
-        ) / 24
+        uleft = (u[:, 1:-5] - 6 * u[:, 2:-4] + 20 * u[:, 3:-3] + 10 * u[:, 4:-2] - u[:, 5:-1]) / 24
         uright = (
-            -u[:, 1:-5]
-            + 10 * u[:, 2:-4]
-            + 20 * u[:, 3:-3]
-            - 6 * u[:, 4:-2]
-            + u[:, 5:-1]
+            -u[:, 1:-5] + 10 * u[:, 2:-4] + 20 * u[:, 3:-3] - 6 * u[:, 4:-2] + u[:, 5:-1]
         ) / 24
         umiddle = (-u[:, 2:-4] + 26 * u[:, 3:-3] - u[:, 4:-2]) / 24
 
     if space == 5:
         uleft = (
-            2 * u[:, 1:-5]
-            - 13 * u[:, 2:-4]
-            + 47 * u[:, 3:-3]
-            + 27 * u[:, 4:-2]
-            - 3 * u[:, 5:-1]
+            2 * u[:, 1:-5] - 13 * u[:, 2:-4] + 47 * u[:, 3:-3] + 27 * u[:, 4:-2] - 3 * u[:, 5:-1]
         ) / 60
         uright = (
-            -3 * u[:, 1:-5]
-            + 27 * u[:, 2:-4]
-            + 47 * u[:, 3:-3]
-            - 13 * u[:, 4:-2]
-            + 2 * u[:, 5:-1]
+            -3 * u[:, 1:-5] + 27 * u[:, 2:-4] + 47 * u[:, 3:-3] - 13 * u[:, 4:-2] + 2 * u[:, 5:-1]
         ) / 60
         umiddle = (
             27 * u[:, 1:-5]
@@ -367,9 +353,7 @@ def weno(
 
         u1[:, 4:-4] = u[niter - 1]  # copy old solution
 
-        flux, w, cs = cmp_flux(
-            u1, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-        )
+        flux, w, cs = cmp_flux(u1, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
         k1 = -(flux[:, 1:] - flux[:, :-1]) / h
         dt = cfl * h / max(abs(w[1]) + cs)  # compute new time step
 
@@ -381,9 +365,7 @@ def weno(
 
             # u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 2
             u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt  # SSP
-            flux, w, cs = cmp_flux(
-                u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-            )
+            flux, w, cs = cmp_flux(u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
             k2 = -(flux[:, 1:] - flux[:, :-1]) / h
             # unew = u1[:, 4:-4] + k2 * dt
             unew = u1[:, 4:-4] / 2 + (u2[:, 4:-4] + k2 * dt) / 2  # SSP
@@ -392,15 +374,11 @@ def weno(
 
             # u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 3
             u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt  # SSP
-            flux, w, cs = cmp_flux(
-                u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-            )
+            flux, w, cs = cmp_flux(u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
             k2 = -(flux[:, 1:] - flux[:, :-1]) / h
             # u3[:, 4:-4] = u1[:, 4:-4] + k2 * 2 * dt / 3
             u3[:, 4:-4] = 3 / 4 * u1[:, 4:-4] + 1 / 4 * (u2[:, 4:-4] + k2 * dt)  # SSP
-            flux, w, cs = cmp_flux(
-                u3, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-            )
+            flux, w, cs = cmp_flux(u3, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
             k3 = -(flux[:, 1:] - flux[:, :-1]) / h
             # unew = u1[:, 4:-4] + (k1 + 3 * k3) * dt / 4
             unew = 1 / 3 * u1[:, 4:-4] + 2 / 3 * (u3[:, 4:-4] + k3 * dt)  # SSP
@@ -408,19 +386,13 @@ def weno(
         if time == 4:  # RK4
 
             u2[:, 4:-4] = u1[:, 4:-4] + k1 * dt / 2
-            flux, w, cs = cmp_flux(
-                u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-            )
+            flux, w, cs = cmp_flux(u2, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
             k2 = -(flux[:, 1:] - flux[:, :-1]) / h
             u3[:, 4:-4] = u1[:, 4:-4] + k2 * dt / 2
-            flux, w, cs = cmp_flux(
-                u3, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-            )
+            flux, w, cs = cmp_flux(u3, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
             k3 = -(flux[:, 1:] - flux[:, :-1]) / h
             u4[:, 4:-4] = u1[:, 4:-4] + k3 * dt
-            flux, w, cs = cmp_flux(
-                u4, bc_type=bc_type, riemann_solver=riemann_solver, space=space
-            )
+            flux, w, cs = cmp_flux(u4, bc_type=bc_type, riemann_solver=riemann_solver, space=space)
             k4 = -(flux[:, 1:] - flux[:, :-1]) / h
             unew = u1[:, 4:-4] + (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
 

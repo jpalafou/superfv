@@ -193,21 +193,9 @@ def turbulent_power_specta(
     P = P / N  # rescale to get mean(|v|^2) = sum P
 
     # Angular wavenumbers (rad/length)
-    kx = (
-        2.0 * np.pi * np.fft.fftfreq(nx, d=dx)
-        if "x" in active_dims
-        else np.array([0.0])
-    )
-    ky = (
-        2.0 * np.pi * np.fft.fftfreq(ny, d=dy)
-        if "y" in active_dims
-        else np.array([0.0])
-    )
-    kz = (
-        2.0 * np.pi * np.fft.fftfreq(nz, d=dz)
-        if "z" in active_dims
-        else np.array([0.0])
-    )
+    kx = 2.0 * np.pi * np.fft.fftfreq(nx, d=dx) if "x" in active_dims else np.array([0.0])
+    ky = 2.0 * np.pi * np.fft.fftfreq(ny, d=dy) if "y" in active_dims else np.array([0.0])
+    kz = 2.0 * np.pi * np.fft.fftfreq(nz, d=dz) if "z" in active_dims else np.array([0.0])
     KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing="ij")
     Kmag = np.sqrt(KX**2 + KY**2 + KZ**2)
 
@@ -253,9 +241,7 @@ if CUPY_AVAILABLE:
     )
 
     def make_prim_to_cons_elementwise_kernel(npassives: int):
-        in_params = (
-            "float64 rho, float64 vx, float64 vy, float64 vz, float64 P, float64 gamma"
-        )
+        in_params = "float64 rho, float64 vx, float64 vy, float64 vz, float64 P, float64 gamma"
         out_params = "float64 rho_out, float64 mx, float64 my, float64 mz, float64 E"
 
         body = """

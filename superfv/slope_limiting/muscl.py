@@ -76,9 +76,7 @@ class musclInterpolationScheme(InterpolationScheme):
         return dict(
             p=self.p,
             flux_recipe=self.flux_recipe,
-            limiter_config=(
-                None if self.limiter_config is None else self.limiter_config.to_dict()
-            ),
+            limiter_config=(None if self.limiter_config is None else self.limiter_config.to_dict()),
         )
 
 
@@ -136,9 +134,7 @@ def compute_MUSCL_slopes(
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
             dsgn = np.sign(dcen)
-            dslp = dsgn * np.minimum(
-                np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen)
-            )
+            dslp = dsgn * np.minimum(np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen))
             out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
             if SED:
                 if alpha is None:
@@ -378,9 +374,7 @@ if CUPY_AVAILABLE:
                 "function, not the MUSCL_slopes_kernel."
             )
         if u.ndim != 4 or slopes.ndim != 4:
-            raise ValueError(
-                "u and slopes must be 4D arrays with shape (nvars, nx, ny, nz)"
-            )
+            raise ValueError("u and slopes must be 4D arrays with shape (nvars, nx, ny, nz)")
         if u.shape != slopes.shape:
             raise ValueError("u and slopes must have the same shape")
         if not u.flags.c_contiguous or not slopes.flags.c_contiguous:
@@ -392,8 +386,7 @@ if CUPY_AVAILABLE:
                 raise ValueError("alpha array must be provided when SED is True")
             if alpha.ndim != 4 or alpha.shape != u.shape:
                 raise ValueError(
-                    "alpha must be a 4D array with the same shape as u when SED is "
-                    "True"
+                    "alpha must be a 4D array with the same shape as u when SED is " "True"
                 )
             if not alpha.flags.c_contiguous:
                 raise ValueError("alpha must be a C-contiguous array when SED is True")
@@ -402,9 +395,7 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz = u.shape
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (
-            nvars * nx * ny * nz + threads_per_block - 1
-        ) // threads_per_block
+        blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         MUSCL_slopes_kernel(
             (blocks_per_grid,),
@@ -597,8 +588,7 @@ if CUPY_AVAILABLE:
     ) -> Tuple[slice, ...]:
         if u.ndim != 4 or xslopes.ndim != 4 or yslopes.ndim != 4:
             raise ValueError(
-                "u, xslopes, and yslopes must be 4D arrays with shape "
-                "(nvars, nx, ny, nz)"
+                "u, xslopes, and yslopes must be 4D arrays with shape " "(nvars, nx, ny, nz)"
             )
         if u.shape != xslopes.shape or u.shape != yslopes.shape:
             raise ValueError("u, xslopes, and yslopes must have the same shape")
@@ -608,19 +598,14 @@ if CUPY_AVAILABLE:
             or not yslopes.flags.c_contiguous
         ):
             raise ValueError("u, xslopes, and yslopes must be C-contiguous arrays")
-        if (
-            u.dtype != cp.float64
-            or xslopes.dtype != cp.float64
-            or yslopes.dtype != cp.float64
-        ):
+        if u.dtype != cp.float64 or xslopes.dtype != cp.float64 or yslopes.dtype != cp.float64:
             raise ValueError("u, xslopes, and yslopes must be of dtype float64")
         if SED:
             if alpha is None:
                 raise ValueError("alpha array must be provided when SED is True")
             if alpha.ndim != 4 or alpha.shape != u.shape:
                 raise ValueError(
-                    "alpha must be a 4D array with the same shape as u when SED is "
-                    "True"
+                    "alpha must be a 4D array with the same shape as u when SED is " "True"
                 )
             if not alpha.flags.c_contiguous:
                 raise ValueError("alpha must be a C-contiguous array when SED is True")
@@ -629,9 +614,7 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz = u.shape
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (
-            nvars * nx * ny * nz + threads_per_block - 1
-        ) // threads_per_block
+        blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         PP2D_slopes_kernel(
             (blocks_per_grid,),

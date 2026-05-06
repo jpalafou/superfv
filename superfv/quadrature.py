@@ -65,19 +65,12 @@ if CUPY_AVAILABLE:
         nvars, nx, ny, nz, ninterps = uj.shape
 
         if not weights.flags.c_contiguous or weights.shape != (ninterps,):
-            raise ValueError(
-                "Array `weights` must be a C-contiguous array of shape (ninterps,)."
-            )
+            raise ValueError("Array `weights` must be a C-contiguous array of shape (ninterps,).")
         if not out.flags.c_contiguous or out.shape != uj.shape[:4]:
             raise ValueError(
-                "Array `out` must be a C-contiguous array of shape "
-                "(nvars, nx, ny, nz)."
+                "Array `out` must be a C-contiguous array of shape " "(nvars, nx, ny, nz)."
             )
-        if (
-            uj.dtype != cp.float64
-            or weights.dtype != cp.float64
-            or out.dtype != cp.float64
-        ):
+        if uj.dtype != cp.float64 or weights.dtype != cp.float64 or out.dtype != cp.float64:
             raise ValueError("All input arrays must have dtype float64.")
 
         threads_per_block = DEFAULT_THREADS_PER_BLOCK

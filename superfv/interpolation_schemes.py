@@ -31,8 +31,7 @@ class LimiterConfig:
         if self.physical_admissibility_detection:
             if self.PAD_bounds is None:
                 raise ValueError(
-                    "PAD_bounds must be provided when physical_admissibility_detection"
-                    " is True."
+                    "PAD_bounds must be provided when physical_admissibility_detection" " is True."
                 )
 
     def key(self) -> str:
@@ -134,9 +133,5 @@ class polyInterpolationScheme(InterpolationScheme):
 
     def to_dict(self) -> dict:
         out = InterpolationScheme.to_dict(self)
-        out.update(
-            dict(
-                gauss_legendre=self.gauss_legendre, lazy_primitives=self.lazy_primitives
-            )
-        )
+        out.update(dict(gauss_legendre=self.gauss_legendre, lazy_primitives=self.lazy_primitives))
         return out

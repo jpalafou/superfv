@@ -109,9 +109,9 @@ def exact_solution(S, wleft, wright):
                 Stail = vstar - cstar
                 # rarefaction fan
                 if S < Stail:
-                    dg = dl * (
-                        2 / (gamma + 1) + (gamma - 1) / (gamma + 1) * (vl - S) / cl
-                    ) ** (2 / (gamma - 1))
+                    dg = dl * (2 / (gamma + 1) + (gamma - 1) / (gamma + 1) * (vl - S) / cl) ** (
+                        2 / (gamma - 1)
+                    )
                     vg = (gamma - 1) / (gamma + 1) * vl + 2 / (gamma + 1) * (S + cl)
                     pg = pl * (dg / dl) ** gamma
                 # left star state
@@ -156,9 +156,9 @@ def exact_solution(S, wleft, wright):
                 Stail = vstar + cstar
                 # rarefaction fan
                 if S > Stail:
-                    dg = dr * (
-                        2 / (gamma + 1) + (gamma - 1) / (gamma + 1) * (S - vr) / cr
-                    ) ** (2 / (gamma - 1))
+                    dg = dr * (2 / (gamma + 1) + (gamma - 1) / (gamma + 1) * (S - vr) / cr) ** (
+                        2 / (gamma - 1)
+                    )
                     vg = (gamma - 1) / (gamma + 1) * vr + 2 / (gamma + 1) * (S - cr)
                     pg = pr * (dg / dr) ** gamma
                 # right star state

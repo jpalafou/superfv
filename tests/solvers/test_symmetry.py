@@ -59,18 +59,14 @@ def test_AdvectionSolver_symmetry_2D(p: int, GL: bool, dims1_dims2: Tuple[str, s
 
     # set up solvers
     solver1 = AdvectionSolver(
-        ic=lambda idx, x, y, z, t, xp: square(
-            idx, x, y, z, **{f"v{d1x}": 1, f"v{d1y}": 1}, xp=xp
-        ),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{d1x}": 1, f"v{d1y}": 1}, xp=xp),
         p=p,
         GL=GL,
         cupy=CUPY_AVAILABLE,
         **{f"n{d1x}": N, f"n{d1y}": N},
     )
     solver2 = AdvectionSolver(
-        ic=lambda idx, x, y, z, t, xp: square(
-            idx, x, y, z, **{f"v{d2x}": 1, f"v{d2y}": 1}, xp=xp
-        ),
+        ic=lambda idx, x, y, z, t, xp: square(idx, x, y, z, **{f"v{d2x}": 1, f"v{d2y}": 1}, xp=xp),
         p=p,
         GL=GL,
         cupy=CUPY_AVAILABLE,
@@ -129,8 +125,7 @@ def test_AdvectionSolver_rotational_symmetry_2D(p: int, GL: bool):
     # compare solutions
     idx = solver1.variable_index_map
     l1_error = l1_norm(
-        solver1.snapshots[-1]["u"][idx("rho")]
-        - np.flipud(solver2.snapshots[-1]["u"][idx("rho")]),
+        solver1.snapshots[-1]["u"][idx("rho")] - np.flipud(solver2.snapshots[-1]["u"][idx("rho")]),
     )
     assert l1_error < 1e-15
 
@@ -193,9 +188,7 @@ def test_Sod_shock_tube_symmetry_1D(
     Assert that the 1D Sod shock tube solution is the same along each solver dimension.
     """
     if lazy_primitives == "adaptive" and (p < 1 or limiting != "a priori"):
-        pytest.skip(
-            "Adaptive lazy primitives only implemented for a posteriori limiting."
-        )
+        pytest.skip("Adaptive lazy primitives only implemented for a posteriori limiting.")
 
     dim1, dim2 = dim1_dim2
     N = 64

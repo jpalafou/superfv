@@ -118,9 +118,7 @@ run_multiple_simulations(
                 **run_params,
             ),
         )
-        for (name, config), v0, M_max in product(
-            configs.items(), v0_values, M_max_values
-        )
+        for (name, config), v0, M_max in product(configs.items(), v0_values, M_max_values)
     },
     base_path=base_path,
     postprocess=makeplot,

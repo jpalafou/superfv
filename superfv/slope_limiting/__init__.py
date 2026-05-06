@@ -43,10 +43,7 @@ def _gather_neighbor_slices(
                 continue
             all_slices.append(
                 merge_slices(
-                    *[
-                        crop(i, (1 + shift, -1 + shift), ndim=4)
-                        for i, shift in zip(axes, offset)
-                    ]
+                    *[crop(i, (1 + shift, -1 + shift), ndim=4) for i, shift in zip(axes, offset)]
                 )
             )
     else:
@@ -206,9 +203,7 @@ if CUPY_AVAILABLE:
         if u.ndim != 4:
             raise ValueError("Input array must have 4 dimensions (nvars, nx, ny, nz)")
         if M.shape != u.shape or m.shape != u.shape:
-            raise ValueError(
-                "Output arrays M and m must have the same shape as input array u"
-            )
+            raise ValueError("Output arrays M and m must have the same shape as input array u")
 
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (u.size + threads_per_block - 1) // threads_per_block

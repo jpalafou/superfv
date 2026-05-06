@@ -23,9 +23,7 @@ def test_AdvectionSolver_passive_scalar_invariance():
     )
     solver2 = AdvectionSolver(
         ic=lambda idx, x, y, z, t, xp: ic.sinus(idx, x, y, z, vx=1, xp=xp),
-        ic_passives={
-            "passive1": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, 0)
-        },
+        ic_passives={"passive1": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, 0)},
         nx=N,
         p=p,
         cupy=CUPY_AVAILABLE,
@@ -72,9 +70,7 @@ def test_Sod_shock_tube_passive_scalar_invariance(p: int, limiting: str, dim: st
         cupy=CUPY_AVAILABLE,
         **limiting_config,
         ic_passives={
-            "passive_square": lambda x, y, z, t, xp: xp.where(
-                xp.abs(x - 0.5) < 0.25, 1, -1
-            )
+            "passive_square": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, -1)
         },
     )
 
