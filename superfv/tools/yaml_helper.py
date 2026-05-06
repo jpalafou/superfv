@@ -1,6 +1,7 @@
 # superfv/tools/yaml_helper.py
 from __future__ import annotations
 
+from enum import Enum
 from typing import IO, Any, List, Tuple, Union, cast
 
 import yaml
@@ -32,8 +33,24 @@ def _repr_tuple(dumper: TupleDumper, value: Tuple[Any, ...]) -> Node:
     return dumper.represent_sequence(TUP_TAG, list(value), flow_style=True)
 
 
+def _repr_enum(dumper: TupleDumper, data: Enum) -> Node:
+    return dumper.represent_str(data.name)
+
+
+def _repr_function(dumper: TupleDumper, data: Any) -> Node:
+    return dumper.represent_str(f"{data.__module__}.{data.__qualname__}")
+
+
+# array to list
+def _repr_array(dumper: TupleDumper, data: Any) -> Node:
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data.tolist(), flow_style=True)
+
+
 TupleDumper.add_representer(list, _repr_flow_list)
 TupleDumper.add_representer(tuple, _repr_tuple)
+TupleDumper.add_multi_representer(Enum, _repr_enum)
+TupleDumper.add_multi_representer(type(lambda: None), _repr_function)
+TupleDumper.add_multi_representer(object, _repr_array)
 
 # --- Constructor for !tuple with precise node type ---
 

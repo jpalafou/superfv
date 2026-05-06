@@ -3,60 +3,51 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Literal
+from typing import List, Optional, Tuple
 
-import numpy as np
-
+from .boundary_conditions import CallableBC
+from .field import MultivarField, UnivarField
 from .tools.device_management import ArrayLike
 
 
 @dataclass(frozen=True, slots=True)
-class SmoothExtremaDetectionParams:
+class SmoothExtremaDetectionParameters:
     use_SED: bool
     clip_zero_tol: float = 1e-15
 
 
+class MUSCL_SlopeLimiter(Enum):
+    MINMOD = 0
+    MONCEN = 1
+    PP2D = 2
+    NONE = 3
+
+
 @dataclass(frozen=True, slots=True)
-class MUSCL_Params:
+class MUSCL_Parameters:
     use_MUSCL: bool
-    slope_limiter: Literal["minmod", "moncen", "PP2D", "none"]
-    SED_params: SmoothExtremaDetectionParams
-
-    def __post_init__(self):
-        if not self.use_MUSCL:
-            object.__setattr__(self, "slope_limiter", "none")
-            object.__setattr__(self, "SED_params", SmoothExtremaDetectionParams(False, 0.0))
+    MUSCL_limiter: MUSCL_SlopeLimiter
+    SED_params: SmoothExtremaDetectionParameters
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalAdmissibilityParams:
+class PhysicalAdmissibilityParameters:
     use_PAD: bool
     PAD_bounds: ArrayLike
 
-    def __post_init__(self):
-        if not self.use_PAD:
-            object.__setattr__(self, "PAD_bounds", np.empty((0,)))
-
 
 @dataclass(frozen=True, slots=True)
-class ZhangShuParams:
+class ZhangShuParameters:
     use_ZS: bool
     adaptive_dt: bool
-    SED_params: SmoothExtremaDetectionParams
-    PAD_params: PhysicalAdmissibilityParams
+    SED_params: SmoothExtremaDetectionParameters
+    PAD_params: PhysicalAdmissibilityParameters
     adaptive_dt_tol: float = 1e-15
     theta_denom_tol: float = 1e-15
     include_corners: bool = True
     log_limiter_scalars: bool = True
 
     def __post_init__(self):
-        if not self.use_ZS:
-            object.__setattr__(self, "adaptive_dt", False)
-            object.__setattr__(self, "SED_params", SmoothExtremaDetectionParams(False, 0.0))
-            object.__setattr__(
-                self, "PAD_params", PhysicalAdmissibilityParams(False, np.empty((0,)))
-            )
-            object.__setattr__(self, "log_limiter_scalars", False)
         if self.adaptive_dt and not self.PAD_params.use_PAD:
             raise ValueError(
                 "Physical admissibility detection must be enabled when " "adaptive_dt is True."
@@ -64,51 +55,37 @@ class ZhangShuParams:
 
 
 @dataclass(frozen=True, slots=True)
-class NumericalAdmissibilityParams:
-    use_NAD: bool
-    rtol: float
-    atol: float
-    SED_params: SmoothExtremaDetectionParams
-    delta: bool = False
-    include_corners: bool = True
-
-    def __post_init__(self):
-        if not self.use_NAD:
-            object.__setattr__(self, "SED_params", SmoothExtremaDetectionParams(False, 0.0))
+class ShockDetectionParameters:
+    use_shock_detection: bool
+    eta_max: float = 0.025
 
 
 @dataclass(frozen=True, slots=True)
-class MOOD_Params:
+class NumericalAdmissibilityParameters:
+    use_NAD: bool
+    rtol: float
+    atol: float
+    SED_params: SmoothExtremaDetectionParameters
+    delta: bool = False
+    include_corners: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class MOOD_Parameters:
     use_MOOD: bool
-    NAD_params: NumericalAdmissibilityParams
-    PAD_params: PhysicalAdmissibilityParams
-    fallback_cascade: List[FiniteVolumeScheme]
+    NAD_params: NumericalAdmissibilityParameters
+    PAD_params: PhysicalAdmissibilityParameters
+    fallback_cascade: List[FV_SchemeParameters]
     max_revs: int
     skip_trouble_counts: bool = False
     detect_closing_troubles: bool = True
     log_limiter_scalars: bool = True
 
-    def __post_init__(self):
-        if not self.use_MOOD:
-            object.__setattr__(
-                self,
-                "NAD_params",
-                NumericalAdmissibilityParams(
-                    False, 0.0, 0.0, SmoothExtremaDetectionParams(False, 0.0)
-                ),
-            )
-            object.__setattr__(
-                self, "PAD_params", PhysicalAdmissibilityParams(False, np.empty((0,)))
-            )
-            object.__setattr__(self, "fallback_cascade", [])
-            object.__setattr__(self, "max_revs", 0)
-            object.__setattr__(self, "log_limiter_scalars", False)
 
-
-@dataclass(frozen=True, slots=True)
-class ShockDetectionParams:
-    use_shock_detection: bool
-    eta_max: float = 0.025
+class FallbackCascade(Enum):
+    FULL = 0
+    MUSCL = 1
+    MUSCL0 = 2
 
 
 class LazyPrimitiveMode(Enum):
@@ -129,15 +106,15 @@ class FluxQuadrature(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class FiniteVolumeScheme:
+class FV_SchemeParameters:
     p: int
     flux_recipe: FluxRecipe
     flux_quadrature: FluxQuadrature
     lazy_primitive_mode: LazyPrimitiveMode
-    MUSCL_params: MUSCL_Params
-    zhang_shu_params: ZhangShuParams
-    MOOD_params: MOOD_Params
-    shock_detection_params: ShockDetectionParams
+    muscl_params: MUSCL_Parameters
+    zhang_shu_params: ZhangShuParameters
+    mood_params: MOOD_Parameters
+    shock_detection_params: ShockDetectionParameters
 
     def __post_init__(self):
         if self.p < 0:
@@ -145,21 +122,53 @@ class FiniteVolumeScheme:
         if self.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE:
             if not self.shock_detection_params.use_shock_detection:
                 raise ValueError(
-                    "Shock detection must be enabled when lazy_primitive_mode is " "ADAPTIVE."
+                    "Shock detection must be enabled when lazy_primitive_mode is ADAPTIVE."
                 )
-        elif self.shock_detection_params.use_shock_detection:
+        if (
+            sum(
+                [
+                    self.muscl_params.use_MUSCL,
+                    self.zhang_shu_params.use_ZS,
+                    self.mood_params.use_MOOD,
+                ]
+            )
+            > 1
+        ):
+            raise ValueError(
+                "Only one of MUSCL, Zhang-Shu, or MOOD limiting can be enabled at a time."
+            )
+        if self.muscl_params.use_MUSCL and self.p != 1:
             warnings.warn(
-                "Shock detection is enabled but lazy_primitive_mode is not ADAPTIVE. "
-                "Shock detection will be ignored.",
+                f"Changing p from {self.p} to 1 since MUSCL limiting is enabled.", UserWarning
+            )
+            object.__setattr__(self, "p", 1)
+        if self.p <= 1 and self.lazy_primitive_mode != LazyPrimitiveMode.FULL:
+            warnings.warn(
+                "Changing lazy_primitive_mode to FULL since FV scheme is second-order or lower.",
                 UserWarning,
             )
-            object.__setattr__(self, "shock_detection_params", ShockDetectionParams(False, 0.0))
+            object.__setattr__(self, "lazy_primitive_mode", LazyPrimitiveMode.FULL)
+        if (
+            self.shock_detection_params.use_shock_detection
+            and self.lazy_primitive_mode != LazyPrimitiveMode.ADAPTIVE
+        ):
+            warnings.warn(
+                "Disabling shock detection since lazy_primitive_mode is not ADAPTIVE.",
+                UserWarning,
+            )
+            object.__setattr__(self, "shock_detection_params", ShockDetectionParameters(False, 0.0))
+
+
+class RiemannSolver(Enum):
+    UPWIND = 0
+    LLF = 1
+    HLLC = 2
 
 
 @dataclass(frozen=True, slots=True)
-class HydroParams:
+class HydroParameters:
     gamma: float
-    riemann_solver: Literal["upwind", "llf", "hllc"]
+    riemann_solver: RiemannSolver
     CFL: float
     dt_min: float = 1e-15
     rho_min: float = 1e-12
@@ -169,27 +178,53 @@ class HydroParams:
 
 
 @dataclass(frozen=True, slots=True)
-class MeshParams:
+class MeshParameters:
     nx: int
     ny: int
     nz: int
     nghost: int
-    x_min: float = 0.0
-    x_max: float = 1.0
-    y_min: float = 0.0
-    y_max: float = 1.0
-    z_min: float = 0.0
-    z_max: float = 1.0
+    xlims: Tuple[float, float]
+    ylims: Tuple[float, float]
+    zlims: Tuple[float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class InitialConditionParameters:
+    ic: MultivarField
+    passive_ics: List[UnivarField]
+
+
+class BoundaryCondition(Enum):
+    PERIODIC = 0
+    DIRICHLET = 1
+    FREE = 2
+    SYMMETRIC = 3
+    REFLECTIVE = 4
+    ZEROS = 5
+    ONES = 6
+    PATCH = 7
+    NONE = 8
+
+
+@dataclass(frozen=True, slots=True)
+class BoundaryConditionParameters:
+    bcx: Tuple[BoundaryCondition, BoundaryCondition]
+    bcy: Tuple[BoundaryCondition, BoundaryCondition]
+    bcz: Tuple[BoundaryCondition, BoundaryCondition]
+    bcx_callable_lower: Optional[CallableBC] = None
+    bcx_callable_upper: Optional[CallableBC] = None
+    bcy_callable_lower: Optional[CallableBC] = None
+    bcy_callable_upper: Optional[CallableBC] = None
+    bcz_callable_lower: Optional[CallableBC] = None
+    bcz_callable_upper: Optional[CallableBC] = None
 
 
 @dataclass(frozen=True, slots=True)
 class SolverParams:
-    hydro_params: HydroParams
-    mesh_params: MeshParams
-    finite_volume_scheme: FiniteVolumeScheme
+    hydro: HydroParameters
+    ic: InitialConditionParameters
+    mesh: MeshParameters
+    bc: BoundaryConditionParameters
+    fv_scheme: FV_SchemeParameters
     cupy: bool = False
-    sync_timer: bool = False
-
-    def __post_init__(self):
-        if not self.cupy:
-            object.__setattr__(self, "sync_timer", False)
+    sync_timer: bool = True
