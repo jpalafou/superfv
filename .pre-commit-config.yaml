@@ -18,8 +18,10 @@ repos:
     hooks:
       - id: black
         name: black (Python code formatter)
+        args: [--line-length, "100"]
       - id: black-jupyter
         name: black-jupyter (Python code formatter for Jupyter notebooks)
+        args: [--line-length, "100"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 5.13.2
