@@ -1,21 +1,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from types import ModuleType
 from typing import Callable, Literal, Optional, Tuple, Union, cast
 
 from .axes import AXIS_TO_DIM
 from .field import MultivarField
-from .mesh import UniformFVMesh, xyz_tup
+from .mesh import UniformFVMesh
 from .tools.device_management import ArrayLike
 from .tools.slicing import VariableIndexMap, crop
+
+
+class BC(Enum):
+    PERIODIC = 0
+    DIRICHLET = 1
+    FREE = 2
+    SYMMETRIC = 3
+    REFLECTIVE = 4
+    ZEROS = 5
+    ONES = 6
+    PATCH = 7
+    NONE = 8
+    IC = 9  # gets switched to DIRICHLET in the solver
 
 
 @dataclass
 class BCcontext:
     axis: int
-    left: bool
-    slab_thickness: int
+    lower: bool
+    nghost: int
     f: Optional[MultivarField] = None
     variable_index_map: Optional[VariableIndexMap] = None
     mesh: Optional[UniformFVMesh] = None
@@ -24,80 +38,47 @@ class BCcontext:
     xp: Optional[ModuleType] = None
 
 
-BCs = Literal[
-    "none",
-    "periodic",
-    "dirichlet",
-    "free",
-    "symmetric",
-    "reflective",
-    "zeros",
-    "ones",
-    "patch",
-]
 PatchBC = Callable[[ArrayLike, BCcontext], None]
-CallableBC = Union[MultivarField, PatchBC]
 
 
 def apply_bc(
     xp: ModuleType,
     _u_: ArrayLike,
-    pad_width: Tuple[int, int, int],
-    mode: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
-    f: Tuple[
-        Tuple[Optional[CallableBC], Optional[CallableBC]],
-        Tuple[Optional[CallableBC], Optional[CallableBC]],
-        Tuple[Optional[CallableBC], Optional[CallableBC]],
-    ] = ((None, None), (None, None), (None, None)),
+    nghost: int,
+    bcx: Tuple[BC, BC],
+    bcy: Tuple[BC, BC],
+    bcz: Tuple[BC, BC],
+    bcx_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
+    bcx_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
+    bcy_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
+    bcy_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
+    bcz_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
+    bcz_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
     variable_index_map: Optional[VariableIndexMap] = None,
     mesh: Optional[UniformFVMesh] = None,
     t: Optional[float] = None,
     p: Optional[int] = None,
 ):
-    """
-    Apply boundary conditions to the array _u_.
+    for i, (dim, modelr) in enumerate(zip(["x", "y", "z"], [bcx, bcy, bcz])):
+        for j, bound in enumerate(("lower", "upper")):
+            mode = modelr[j]
+            bc_callable = [
+                bcx_callable_lower,
+                bcx_callable_upper,
+                bcy_callable_lower,
+                bcy_callable_upper,
+                bcz_callable_lower,
+                bcz_callable_upper,
+            ][2 * i + j]
 
-    Args:
-        xp: Array module (e.g., numpy or cupy) for array operations.
-        _u_: Array to which the boundary conditions are applied.
-        pad_width: Tuple specifying the thickness of the boundary slabs in each
-            dimension (x, y, z). The same thickness is applied to both sides of each
-            dimension.
-        mode: Tuple specifying the type of boundary condition for each side of each
-            dimension. Supported types are:
-            - "none": No boundary condition applied.
-            - "periodic": Periodic boundary condition.
-            - "dirichlet": Dirichlet boundary condition, requires a function in `f`
-                to specify the boundary values.
-            - "free": Free boundary condition, no constraints applied.
-            - "symmetric": Symmetric boundary condition.
-            - "reflective": Reflective boundary condition, requires 'v' variable in
-                `variable_index_map`.
-            - "zeros": Sets the boundary values to zero.
-            - "ones": Sets the boundary values to one.
-            - "patch": Custom boundary condition, requires a function in `f` to
-                specify the boundary values.
-        f: Tuple of tuples containing functions for Dirichlet or patch boundary
-            conditions. Each function should match the `MultivarField` or `PatchBC`
-            protocol. The structure of `f` should correspond to `mode`.
-        variable_index_map: Optional VariableIndexMap object for indexing variables
-            in _u_. Required for Dirichlet and reflective boundary conditions.
-        mesh: Optional UniformFVMesh object representing the computational mesh.
-            Required for Dirichlet boundary conditions.
-        t: Optional time value to be passed to boundary condition functions.
-        p: Optional polynomial order for numerical integration in Dirichlet boundary
-            conditions.
-    """
-    for i, dim in enumerate(xyz_tup):
-        for j, pos in enumerate(("l", "r")):
-            if mode[i][j] == "none" or pad_width[i] == 0:
+            if mode == BC.NONE or nghost == 0:
                 continue
 
             context = BCcontext(
                 axis=i + 1,
-                left=(j == 0),
-                slab_thickness=pad_width[i],
-                f=None if mode[i][j] == "patch" else cast(MultivarField, f[i][j]),
+                lower=(j == 0),
+                nghost=nghost,
+                f=None if mode != BC.DIRICHLET else cast(MultivarField, bc_callable),
                 variable_index_map=variable_index_map,
                 mesh=mesh,
                 t=t,
@@ -105,66 +86,47 @@ def apply_bc(
                 xp=xp,
             )
 
-            match mode[i][j]:
-                case "periodic":
+            match mode:
+                case BC.PERIODIC:
                     apply_periodic_bc(_u_, context)
-                case "dirichlet":
+                case BC.DIRICHLET:
                     apply_dirichlet_bc(_u_, context)
-                case "free":
+                case BC.FREE:
                     apply_free_bc(_u_, context)
-                case "symmetric":
+                case BC.SYMMETRIC:
                     apply_symmetric_bc(_u_, context)
-                case "reflective":
+                case BC.REFLECTIVE:
                     apply_reflective_bc(_u_, context)
-                case "zeros":
+                case BC.ZEROS:
                     apply_uniform_bc(_u_, context, 0.0)
-                case "ones":
+                case BC.ONES:
                     apply_uniform_bc(_u_, context, 1.0)
-                case "patch":
-                    if f[i][j] is None:
-                        raise ValueError(
-                            "Patch boundary condition function is required to be passed"
-                            " to `f` for 'patch' mode."
-                        )
-                    patch = cast(PatchBC, f[i][j])
+                case BC.PATCH:
+                    patch = cast(PatchBC, bc_callable)
                     patch(_u_, context)
                 case _:
                     raise ValueError(
-                        f"Boundary condition '{mode[i][j]}' not implemented for {dim}{pos} boundary."
+                        f"Boundary condition '{mode}' not implemented for {bound} {dim} boundary."
                     )
 
 
 def apply_periodic_bc(_u_: ArrayLike, context: BCcontext):
-    """
-    Apply periodic boundary conditions to the array _u_ along the specified axis.
-
-    Args:
-        _u_: Array to which the boundary conditions are applied.
-        context: BCcontext object containing parameters for applying the BC.
-    """
-    slab_thickness = context.slab_thickness
+    nghost = context.nghost
     axis = context.axis
-    left = context.left
-    if left:
-        outer_slice = crop(axis, (None, slab_thickness))
-        inner_slice = crop(axis, (-2 * slab_thickness, -slab_thickness))
+    lower = context.lower
+    if lower:
+        outer_slice = crop(axis, (None, nghost))
+        inner_slice = crop(axis, (-2 * nghost, -nghost))
     else:
-        outer_slice = crop(axis, (-slab_thickness, None))
-        inner_slice = crop(axis, (slab_thickness, 2 * slab_thickness))
+        outer_slice = crop(axis, (-nghost, None))
+        inner_slice = crop(axis, (nghost, 2 * nghost))
     _u_[outer_slice] = _u_[inner_slice]
 
 
 def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
-    """
-    Apply Dirichlet boundary conditions to the array _u_ along the specified axis.
-
-    Args:
-        _u_: Array to which the boundary conditions are applied.
-        context: BCcontext object containing parameters for applying the BC.
-    """
-    slab_thickness = context.slab_thickness
+    nghost = context.nghost
     axis = context.axis
-    left = context.left
+    lower = context.lower
     f = cast(MultivarField, context.f)
     idx = cast(VariableIndexMap, context.variable_index_map)
     mesh = cast(UniformFVMesh, context.mesh)
@@ -172,12 +134,12 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     p = cast(int, context.p)
     xp = cast(ModuleType, context.xp)
 
-    if left:
-        outer_slice = crop(axis, (None, slab_thickness), ndim=4)
+    if lower:
+        outer_slice = crop(axis, (None, nghost), ndim=4)
     else:
-        outer_slice = crop(axis, (-slab_thickness, None), ndim=4)
+        outer_slice = crop(axis, (-nghost, None), ndim=4)
 
-    slab_region = AXIS_TO_DIM[axis] + ("l" if left else "r")
+    slab_region = AXIS_TO_DIM[axis] + ("l" if lower else "r")
 
     f_eval = xp.empty_like(_u_[outer_slice])
     mesh.perform_GaussLegendre_quadrature(
@@ -191,60 +153,39 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
 
 
 def apply_free_bc(_u_: ArrayLike, context: BCcontext):
-    """
-    Apply free boundary conditions to the array _u_ along the specified axis.
-
-    Args:
-        _u_: Array to which the boundary conditions are applied.
-        context: BCcontext object containing parameters for applying the BC.
-    """
-    slab_thickness = context.slab_thickness
+    nghost = context.nghost
     axis = context.axis
-    left = context.left
-    if left:
-        outer_slice = crop(axis, (None, slab_thickness))
-        inner_slice = crop(axis, (slab_thickness, slab_thickness + 1))
+    lower = context.lower
+    if lower:
+        outer_slice = crop(axis, (None, nghost))
+        inner_slice = crop(axis, (nghost, nghost + 1))
     else:
-        outer_slice = crop(axis, (-slab_thickness, None))
-        inner_slice = crop(axis, (-slab_thickness - 1, -slab_thickness))
+        outer_slice = crop(axis, (-nghost, None))
+        inner_slice = crop(axis, (-nghost - 1, -nghost))
     _u_[outer_slice] = _u_[inner_slice]
 
 
 def apply_symmetric_bc(_u_: ArrayLike, context: BCcontext):
-    """
-    Apply symmetric boundary conditions to the array _u_ along the specified axis.
-
-    Args:
-        _u_: Array to which the boundary conditions are applied.
-        context: BCcontext object containing parameters for applying the BC.
-    """
-    slab_thickness = context.slab_thickness
+    nghost = context.nghost
     axis = context.axis
-    left = context.left
+    lower = context.lower
     flipper_slice = crop(axis, (None, None), step=-1)
-    if left:
-        outer_slice = crop(axis, (None, slab_thickness))
-        inner_slice = crop(axis, (slab_thickness, 2 * slab_thickness))
+    if lower:
+        outer_slice = crop(axis, (None, nghost))
+        inner_slice = crop(axis, (nghost, 2 * nghost))
     else:
-        outer_slice = crop(axis, (-slab_thickness, None))
-        inner_slice = crop(axis, (-2 * slab_thickness, -slab_thickness))
+        outer_slice = crop(axis, (-nghost, None))
+        inner_slice = crop(axis, (-2 * nghost, -nghost))
     _u_[outer_slice] = _u_[inner_slice][flipper_slice]
 
 
 def apply_reflective_bc(_u_: ArrayLike, context: BCcontext):
-    """
-    Apply reflective boundary conditions to the array _u_ along the specified axis.
-
-    Args:
-        _u_: Array to which the boundary conditions are applied.
-        context: BCcontext object containing parameters for applying the BC.
-    """
-    slab_thickness = context.slab_thickness
+    nghost = context.nghost
     axis = context.axis
-    left = context.left
+    lower = context.lower
     idx = cast(VariableIndexMap, context.variable_index_map)
 
-    outer_slice = crop(axis, (None, slab_thickness) if left else (-slab_thickness, None))
+    outer_slice = crop(axis, (None, nghost) if lower else (-nghost, None))
     dim = AXIS_TO_DIM[axis]
 
     velocity = "v" + dim
@@ -258,19 +199,11 @@ def apply_reflective_bc(_u_: ArrayLike, context: BCcontext):
 
 
 def apply_uniform_bc(_u_: ArrayLike, context: BCcontext, value: float):
-    """
-    Apply uniform boundary conditions to the array _u_ along the specified axis.
-
-    Args:
-        _u_: Array to which the boundary conditions are applied.
-        context: BCcontext object containing parameters for applying the BC.
-        value: Uniform value to set in the boundary region.
-    """
-    slab_thickness = context.slab_thickness
+    nghost = context.nghost
     axis = context.axis
-    left = context.left
+    lower = context.lower
 
-    if left:
-        _u_[crop(axis, (None, slab_thickness))] = value
+    if lower:
+        _u_[crop(axis, (None, nghost))] = value
     else:
-        _u_[crop(axis, (-slab_thickness, None))] = value
+        _u_[crop(axis, (-nghost, None))] = value

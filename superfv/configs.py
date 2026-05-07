@@ -3,9 +3,9 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple, Union
 
-from .boundary_conditions import CallableBC
+from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, UnivarField
 from .tools.device_management import ArrayLike
 
@@ -200,29 +200,55 @@ class InitialConditionParameters:
 
 
 @dataclass
-class BoundaryCondition(Enum):
-    PERIODIC = 0
-    DIRICHLET = 1
-    FREE = 2
-    SYMMETRIC = 3
-    REFLECTIVE = 4
-    ZEROS = 5
-    ONES = 6
-    PATCH = 7
-    NONE = 8
-
-
-@dataclass
 class BoundaryConditionParameters:
-    bcx: Tuple[BoundaryCondition, BoundaryCondition]
-    bcy: Tuple[BoundaryCondition, BoundaryCondition]
-    bcz: Tuple[BoundaryCondition, BoundaryCondition]
-    bcx_callable_lower: Optional[CallableBC] = None
-    bcx_callable_upper: Optional[CallableBC] = None
-    bcy_callable_lower: Optional[CallableBC] = None
-    bcy_callable_upper: Optional[CallableBC] = None
-    bcz_callable_lower: Optional[CallableBC] = None
-    bcz_callable_upper: Optional[CallableBC] = None
+    bcx: Tuple[BC, BC]
+    bcy: Tuple[BC, BC]
+    bcz: Tuple[BC, BC]
+    bcx_callable_lower: Optional[Union[MultivarField, PatchBC]] = None
+    bcx_callable_upper: Optional[Union[MultivarField, PatchBC]] = None
+    bcy_callable_lower: Optional[Union[MultivarField, PatchBC]] = None
+    bcy_callable_upper: Optional[Union[MultivarField, PatchBC]] = None
+    bcz_callable_lower: Optional[Union[MultivarField, PatchBC]] = None
+    bcz_callable_upper: Optional[Union[MultivarField, PatchBC]] = None
+
+    def __post_init__(self):
+        if bool(self.bcx[0] == BC.PERIODIC) != bool(self.bcx[1] == BC.PERIODIC):
+            raise ValueError("Both lower and upper BCs in x must be PERIODIC or neither.")
+        if bool(self.bcy[0] == BC.PERIODIC) != bool(self.bcy[1] == BC.PERIODIC):
+            raise ValueError("Both lower and upper BCs in y must be PERIODIC or neither.")
+        if bool(self.bcz[0] == BC.PERIODIC) != bool(self.bcz[1] == BC.PERIODIC):
+            raise ValueError("Both lower and upper BCs in z must be PERIODIC or neither.")
+
+        if self.bcx[0] == BC.DIRICHLET or self.bcx[0] == BC.PATCH:
+            if self.bcx_callable_lower is None:
+                raise ValueError(
+                    "bcx_callable_lower must be provided for DIRICHLET or PATCH BC in x."
+                )
+        if self.bcx[1] == BC.DIRICHLET or self.bcx[1] == BC.PATCH:
+            if self.bcx_callable_upper is None:
+                raise ValueError(
+                    "bcx_callable_upper must be provided for DIRICHLET or PATCH BC in x."
+                )
+        if self.bcy[0] == BC.DIRICHLET or self.bcy[0] == BC.PATCH:
+            if self.bcy_callable_lower is None:
+                raise ValueError(
+                    "bcy_callable_lower must be provided for DIRICHLET or PATCH BC in y."
+                )
+        if self.bcy[1] == BC.DIRICHLET or self.bcy[1] == BC.PATCH:
+            if self.bcy_callable_upper is None:
+                raise ValueError(
+                    "bcy_callable_upper must be provided for DIRICHLET or PATCH BC in y."
+                )
+        if self.bcz[0] == BC.DIRICHLET or self.bcz[0] == BC.PATCH:
+            if self.bcz_callable_lower is None:
+                raise ValueError(
+                    "bcz_callable_lower must be provided for DIRICHLET or PATCH BC in z."
+                )
+        if self.bcz[1] == BC.DIRICHLET or self.bcz[1] == BC.PATCH:
+            if self.bcz_callable_upper is None:
+                raise ValueError(
+                    "bcz_callable_upper must be provided for DIRICHLET or PATCH BC in z."
+                )
 
 
 @dataclass(frozen=True, slots=True)

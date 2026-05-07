@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .axes import DIM_TO_AXIS
-from .boundary_conditions import BCs, PatchBC, apply_bc
+from .boundary_conditions import BC, PatchBC, apply_bc
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .interpolation_schemes import (
@@ -855,7 +855,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
                 return x
             return (x, x)
 
-        mode_list: List[Tuple[BCs, BCs]] = []
+        mode_list: List[Tuple[BC, BC]] = []
         callable_bc_list: List[
             Tuple[
                 Optional[Union[MultivarField, PatchBC]],
@@ -866,7 +866,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
         for dim, bci, fi in zip(
             xyz_tup, (bcx, bcy, bcz), (bcx_callable, bcy_callable, bcz_callable)
         ):
-            mode_pair: List[BCs] = []
+            mode_pair: List[BC] = []
             callable_bc_pair: List[Optional[Union[MultivarField, PatchBC]]] = []
 
             if dim not in self.active_dims:
@@ -887,7 +887,7 @@ class FiniteVolumeSolver(ExplicitODESolver, ABC):
             mode_list.append((mode_pair[0], mode_pair[1]))
             callable_bc_list.append((callable_bc_pair[0], callable_bc_pair[1]))
 
-        self.bc_mode: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]] = (
+        self.bc_mode: Tuple[Tuple[BC, BC], Tuple[BC, BC], Tuple[BC, BC]] = (
             mode_list[0],
             mode_list[1],
             mode_list[2],

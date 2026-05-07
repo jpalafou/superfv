@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cas
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
-from superfv.boundary_conditions import BCs, apply_bc
+from superfv.boundary_conditions import BC, apply_bc
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import compute_dmp
@@ -455,14 +455,14 @@ def detect_NAD_violations(
 
 @lru_cache(maxsize=None)
 def normalize_troubles_bc(
-    bc_tuple: Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]],
-) -> Tuple[Tuple[BCs, BCs], Tuple[BCs, BCs], Tuple[BCs, BCs]]:
+    bc_tuple: Tuple[Tuple[BC, BC], Tuple[BC, BC], Tuple[BC, BC]],
+) -> Tuple[Tuple[BC, BC], Tuple[BC, BC], Tuple[BC, BC]]:
     """
     Normalize the boundary conditions for the trouble detection.
 
     Args:
         bc_tuple: A tuple of boundary conditions for each dimension, where each
-            boundary condition is a tuple of (left, right) BCs.
+            boundary condition is a tuple of (left, right) BC.
 
     Returns:
         A normalized tuple of boundary conditions for each dimension.
@@ -471,7 +471,7 @@ def normalize_troubles_bc(
         - "zeros" for no-trouble boundary condition
     """
 
-    def map_bc(bc: BCs) -> BCs:
+    def map_bc(bc: BC) -> BC:
         if bc == "none":
             return "none"
         elif bc == "periodic":

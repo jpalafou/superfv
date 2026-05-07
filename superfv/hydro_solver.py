@@ -1,13 +1,13 @@
 import warnings
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple
+from types import ModuleType
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
-from .boundary_conditions import CallableBC
+from .boundary_conditions import BC, PatchBC
 from .configs import (
-    BoundaryCondition,
     BoundaryConditionParameters,
     FallbackCascade,
     FluxQuadrature,
@@ -29,9 +29,11 @@ from .configs import (
     ZhangShuParameters,
 )
 from .field import MultivarField, UnivarField
+from .hydro import prim_to_cons
 from .initial_conditions import square
 from .mesh import UniformFVMesh
-from .tools.device_management import ArrayManager
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager
+from .tools.slicing import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
 
@@ -51,15 +53,15 @@ class HydroSolver:
         ic: MultivarField = square,
         passive_ics: Optional[List[UnivarField]] = None,
         # BC params
-        bcx: Tuple[BoundaryCondition, BoundaryCondition] = BoundaryCondition.PERIODIC,
-        bcy: Tuple[BoundaryCondition, BoundaryCondition] = BoundaryCondition.NONE,
-        bcz: Tuple[BoundaryCondition, BoundaryCondition] = BoundaryCondition.NONE,
-        bcx_callable_lower: Optional[CallableBC] = None,
-        bcx_callable_upper: Optional[CallableBC] = None,
-        bcy_callable_lower: Optional[CallableBC] = None,
-        bcy_callable_upper: Optional[CallableBC] = None,
-        bcz_callable_lower: Optional[CallableBC] = None,
-        bcz_callable_upper: Optional[CallableBC] = None,
+        bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
+        bcy: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
+        bcz: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
+        bcx_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
+        bcx_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
+        bcy_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
+        bcy_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
+        bcz_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
+        bcz_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
         # Mesh params
         nx: int = 64,
         ny: int = 1,
@@ -109,6 +111,8 @@ class HydroSolver:
         self.arrays: ArrayManager
         self.mesh_arrays: ArrayManager
         self.params: SolverParams
+        self.variable_index_map: VariableIndexMap
+        self.u0_func: MultivarField
         self.mesh: UniformFVMesh
 
         self.arrays = ArrayManager()
@@ -259,11 +263,15 @@ class HydroSolver:
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
-            cupy=cupy,
+            cupy=cupy and CUPY_AVAILABLE,
             sync_timer=sync_timer,
         )
 
+        self._build_variable_index_map()
+        self._build_conservative_ic_u0_func()
+        self._enable_ic_bc_or_none_if_inactive()
         self._build_mesh()
+        self._init_cupy()
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -277,6 +285,101 @@ class HydroSolver:
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         dims = ["x", "y", "z"]
         return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
+
+    def _build_variable_index_map(self):
+        params = self.params.ic
+
+        idx = VariableIndexMap(
+            {"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4, "mx": 1, "my": 2, "mz": 3, "E": 4},
+            group_var_map={
+                "v": ["vx", "vy", "vz"],
+                "m": ["mx", "my", "mz"],
+                "primitives": ["rho", "v", "P"],
+                "conservatives": ["rho", "m", "E"],
+            },
+        )
+
+        if params.n_passive > 0:
+            for v in params.passive_ics.keys():
+                if v not in idx.var_idx_map:
+                    idx.add_var(v, idx.nvars)
+            idx.add_var_to_group("passives", params.passive_ics.keys())
+
+        self.variable_index_map = idx
+
+    def _primitive_ic_w0_func(self) -> MultivarField:
+        params = self.params.ic
+
+        def w0_func(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+            *,
+            xp: ModuleType,
+        ) -> ArrayLike:
+            out = self.ic(idx, x, y, z, t, xp=xp)
+            if params.n_passive > 0:
+                for v, func in params.passive_ics.items():
+                    out[idx(v)] = func(x, y, z, t, xp=xp)
+            return out
+
+        return w0_func
+
+    def _build_conservative_ic_u0_func(self):
+
+        w0_func = self._primitive_ic_w0_func()
+
+        def u0_func(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: Optional[float] = None,
+            *,
+            xp: ModuleType,
+        ) -> ArrayLike:
+            w0_arr = w0_func(idx, x, y, z, t, xp=xp)
+            u0_arr = xp.empty_like(w0_arr)
+            self.primitives_to_conservatives(w0_arr, u0_arr)
+            return u0_arr
+
+        self.u0_func = u0_func
+
+    def _enable_ic_bc_or_none_if_inactive(self):
+        bc = self.params.bc
+
+        # set BC to NONE if the corresponding dimension is inactive and disable those callable BCs
+        if "x" not in self.params.mesh.active_dims:
+            bc.bcx = (BC.NONE, BC.NONE)
+            bc.bcx_callable_lower = None
+            bc.bcx_callable_upper = None
+        if "y" not in self.params.mesh.active_dims:
+            bc.bcy = (BC.NONE, BC.NONE)
+            bc.bcy_callable_lower = None
+            bc.bcy_callable_upper = None
+        if "z" not in self.params.mesh.active_dims:
+            bc.bcz = (BC.NONE, BC.NONE)
+            bc.bcz_callable_lower = None
+            bc.bcz_callable_upper = None
+
+        # set BC to DIRICHLET with u0_func if BC is IC
+        for dim in ["x", "y", "z"]:
+            bcdim0 = getattr(bc, f"bc{dim}")[0]
+            bcdim1 = getattr(bc, f"bc{dim}")[1]
+
+            if bcdim0 != BC.IC and bcdim1 != BC.IC:
+                continue
+
+            new_bcdim = [bcdim0, bcdim1]
+            if bcdim0 == BC.IC:
+                new_bcdim[0] = BC.DIRICHLET
+                setattr(bc, f"bc{dim}_callable_lower", self.u0_func)
+            if bcdim1 == BC.IC:
+                new_bcdim[1] = BC.DIRICHLET
+                setattr(bc, f"bc{dim}_callable_upper", self.u0_func)
+            setattr(bc, f"bc{dim}", tuple(new_bcdim))
 
     def _build_mesh(self):
         params = self.params.mesh
@@ -293,6 +396,34 @@ class HydroSolver:
             array_manager=self.mesh_arrays,
         )
 
+    def _init_cupy(self):
+        if self.params.cupy:
+            self.arrays.transfer_to("gpu")
+            self.mesh_arrays.transfer_to("gpu")
+
     def write_config_file(self, path: str):
         with open(Path(path) / "config.yaml", "w") as f:
             f.write(yaml_dump(asdict(self.params)))
+
+    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
+        idx = self.variable_index_map
+        params = self.params
+
+        if params.cupy:
+            self.prim_to_cons_cp(
+                w[idx("rho")],
+                w[idx("vx")],
+                w[idx("vy")],
+                w[idx("vz")],
+                w[idx("P")],
+                params.hydro.gamma,
+                *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
+                u[idx("rho")],
+                u[idx("mx")],
+                u[idx("my")],
+                u[idx("mz")],
+                u[idx("E")],
+                *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
+            )
+        else:
+            u[...] = prim_to_cons(idx, w, params.hydro.gamma)

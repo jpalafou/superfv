@@ -65,6 +65,14 @@ class UniformFVMesh:
         return self.nz + 2 * self.nghost if "z" in self.active_dims else self.nz
 
     @property
+    def shape(self) -> Tuple[int, int, int]:
+        return (self.nx, self.ny, self.nz)
+
+    @property
+    def _shape_(self) -> Tuple[int, int, int]:
+        return (self._nx_, self._ny_, self._nz_)
+
+    @property
     def hx(self) -> float:
         return (self.xlims[1] - self.xlims[0]) / self.nx
 
