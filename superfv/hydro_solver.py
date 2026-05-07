@@ -1,5 +1,6 @@
 import warnings
 from dataclasses import asdict
+from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
@@ -30,13 +31,19 @@ from .configs import (
 )
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
-from .hydro import prim_to_cons
+from .hydro import cons_to_prim, prim_to_cons
 from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
+
+if CUPY_AVAILABLE:
+    from .hydro import (
+        make_cons_to_prim_elementwise_kernel,
+        make_prim_to_cons_elementwise_kernel,
+    )
 
 
 class HydroSolver(ExplicitODESolver):
@@ -576,12 +583,23 @@ class HydroSolver(ExplicitODESolver):
         with open(Path(path) / "config.yaml", "w") as f:
             f.write(yaml_dump(asdict(self.params)))
 
+    @cached_property
+    def _prim_to_cons_cp(self):
+        return make_prim_to_cons_elementwise_kernel(self.params.ic.npassives)
+
+    @cached_property
+    def _cons_to_prim_cp(self):
+        return make_cons_to_prim_elementwise_kernel(self.params.ic.npassives)
+
     def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
+        """
+        Write conservatives to `u` using primitives from `u`.
+        """
         idx = self.params.variable_index_map
         params = self.params
 
         if params.cupy:
-            self.prim_to_cons_cp(
+            self._prim_to_cons_cp(
                 w[idx("rho")],
                 w[idx("vx")],
                 w[idx("vy")],
@@ -598,6 +616,38 @@ class HydroSolver(ExplicitODESolver):
             )
         else:
             u[...] = prim_to_cons(idx, w, params.hydro.gamma)
+
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
+        """
+        Write to primitives `w` from conservatives `u`.
+        """
+        idx = self.params.variable_index_map
+        params = self.params
+
+        if self.cupy:
+            self._cons_to_prim_cp(
+                u[idx("rho")],
+                u[idx("mx")],
+                u[idx("my")],
+                u[idx("mz")],
+                u[idx("E")],
+                params.hydro.gamma,
+                params.hydro.isothermal.params.hydro.iso_cs,
+                *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
+                w[idx("rho")],
+                w[idx("vx")],
+                w[idx("vy")],
+                w[idx("vz")],
+                w[idx("P")],
+                *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
+            )
+        else:
+            w[...] = cons_to_prim(
+                self.variable_index_map,
+                u,
+                params.hydro.gamma,
+                params.hydro.isothermal.params.hydro.iso_cs,
+            )
 
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         warnings.warn("Using dunmmy compute_dt")
