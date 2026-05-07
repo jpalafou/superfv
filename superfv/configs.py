@@ -8,6 +8,7 @@ from typing import List, Literal, Optional, Tuple, Union
 from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, UnivarField
 from .tools.device_management import ArrayLike
+from .tools.variable_index_map import VariableIndexMap
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,7 +196,7 @@ class InitialConditionParameters:
     passive_ics: List[UnivarField]
 
     @property
-    def n_passive(self) -> int:
+    def npassives(self) -> int:
         return len(self.passive_ics)
 
 
@@ -258,5 +259,6 @@ class SolverParams:
     mesh: MeshParameters
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters
+    variable_index_map: VariableIndexMap
     cupy: bool = False
     sync_timer: bool = True

@@ -32,8 +32,9 @@ from .field import MultivarField, UnivarField
 from .hydro import prim_to_cons
 from .initial_conditions import square
 from .mesh import UniformFVMesh
+from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager
-from .tools.slicing import VariableIndexMap
+from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
 
@@ -111,7 +112,6 @@ class HydroSolver:
         self.arrays: ArrayManager
         self.mesh_arrays: ArrayManager
         self.params: SolverParams
-        self.variable_index_map: VariableIndexMap
         self.u0_func: MultivarField
         self.mesh: UniformFVMesh
 
@@ -263,14 +263,15 @@ class HydroSolver:
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
+            variable_index_map=self._define_complete_variable_index_map(ic_params),
             cupy=cupy and CUPY_AVAILABLE,
             sync_timer=sync_timer,
         )
 
-        self._build_variable_index_map()
         self._build_conservative_ic_u0_func()
         self._enable_ic_bc_or_none_if_inactive()
         self._build_mesh()
+        self._allocate_arrays()
         self._init_cupy()
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
@@ -286,10 +287,8 @@ class HydroSolver:
         dims = ["x", "y", "z"]
         return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
 
-    def _build_variable_index_map(self):
-        params = self.params.ic
-
-        idx = VariableIndexMap(
+    def _define_base_variable_index_map(self) -> VariableIndexMap:
+        return VariableIndexMap(
             {"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4, "mx": 1, "my": 2, "mz": 3, "E": 4},
             group_var_map={
                 "v": ["vx", "vy", "vz"],
@@ -299,16 +298,21 @@ class HydroSolver:
             },
         )
 
-        if params.n_passive > 0:
-            for v in params.passive_ics.keys():
+    def _define_complete_variable_index_map(
+        self, ic_params: InitialConditionParameters
+    ) -> VariableIndexMap:
+        idx = self._define_base_variable_index_map()
+
+        if ic_params.npassives > 0:
+            for v in ic_params.passive_ics.keys():
                 if v not in idx.var_idx_map:
                     idx.add_var(v, idx.nvars)
-            idx.add_var_to_group("passives", params.passive_ics.keys())
+            idx.add_var_to_group("passives", ic_params.passive_ics.keys())
 
-        self.variable_index_map = idx
+        return idx
 
     def _primitive_ic_w0_func(self) -> MultivarField:
-        params = self.params.ic
+        ic_params = self.params.ic
 
         def w0_func(
             idx: VariableIndexMap,
@@ -320,8 +324,8 @@ class HydroSolver:
             xp: ModuleType,
         ) -> ArrayLike:
             out = self.ic(idx, x, y, z, t, xp=xp)
-            if params.n_passive > 0:
-                for v, func in params.passive_ics.items():
+            if ic_params.npassives > 0:
+                for v, func in ic_params.passive_ics.items():
                     out[idx(v)] = func(x, y, z, t, xp=xp)
             return out
 
@@ -395,6 +399,35 @@ class HydroSolver:
             active_dims=params.active_dims,
             array_manager=self.mesh_arrays,
         )
+
+    def _compute_ninterps_per_face(self, quantity: Literal["nodes", "lines"]) -> int:
+        fv_scheme = self.params.fv_scheme
+        ndim = self.mesh.ndim
+        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
+
+        if quantity == "nodes":
+            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+                return n_gauss_legendre ** (ndim - 1)
+            else:
+                return 1
+        elif quantity == "lines":
+            if ndim == 1:
+                return 0
+            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+                return n_gauss_legendre ** (ndim - 2)
+            else:
+                return 1
+        else:
+            raise ValueError(f"Unknown quantity: {quantity}")
+
+    def _allocate_arrays(self):
+        nvars = self.params.variable_index_map.nvars
+        nx, ny, nz = self.mesh.shape
+        _nx_, _ny_, _nz_ = self.mesh._shape_
+
+        arrays = self.arrays
+
+        arrays.add("u", np.empty((nvars, nx, ny, nz)))
 
     def _init_cupy(self):
         if self.params.cupy:
