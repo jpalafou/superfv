@@ -42,12 +42,6 @@ class UniformFVMesh:
     active_dims: Tuple[Literal["x", "y", "z"], ...]
     array_manager: ArrayManager = field(default_factory=ArrayManager)
 
-    def __post_init__(self):
-        if len(self.active_dims) not in (1, 2, 3):
-            raise ValueError("active_dims must have length 1, 2, or 3.")
-        if len(set(self.active_dims)) != len(self.active_dims):
-            raise ValueError("active_dims must not contain duplicates.")
-
     @property
     def ndim(self) -> int:
         return len(self.active_dims)
@@ -83,6 +77,16 @@ class UniformFVMesh:
     @property
     def hz(self) -> float:
         return (self.zlims[1] - self.zlims[0]) / self.nz
+
+    def __post_init__(self):
+        if len(self.active_dims) not in (1, 2, 3):
+            raise ValueError("active_dims must have length 1, 2, or 3.")
+        if len(set(self.active_dims)) != len(self.active_dims):
+            raise ValueError("active_dims must not contain duplicates.")
+
+        self._set_interfaces_and_centers()
+        self._init_core()
+        self._init_slabs()
 
     def _set_interfaces_and_centers(self):
         arrays = self.array_manager

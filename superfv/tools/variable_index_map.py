@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Union
 
 import numpy as np
 
@@ -10,16 +10,16 @@ class VariableIndexMap:
     group_var_map: Dict[str, List[str]]
 
     @property
-    def var_names(self) -> List[str]:
-        return list(self.var_idx_map.keys())
+    def var_names(self) -> Set[str]:
+        return set(self.var_idx_map.keys())
 
     @property
-    def group_names(self) -> List[str]:
-        return list(self.group_var_map.keys())
+    def group_names(self) -> Set[str]:
+        return set(self.group_var_map.keys())
 
     @property
-    def all_names(self) -> List[str]:
-        return self.var_names + self.group_names
+    def all_names(self) -> Set[str]:
+        return self.var_names | self.group_names
 
     @property
     def idxs(self) -> List[int]:
@@ -31,11 +31,11 @@ class VariableIndexMap:
 
     def __post_init__(self):
         # check that no group names are also variable names
-        if set(self.var_names) & set(self.group_names):
+        if self.var_names & self.group_names:
             raise KeyError("Variables and groups cannot share names.")
 
         # check that no group contains a non-existent variable
-        for group in self.group_names:
+        for group in self.group_var_map.keys():
             gen = self._retrieve_vars_from_group(group)
             _ = list(gen)
 
@@ -103,3 +103,6 @@ class VariableIndexMap:
                 yield from self._retrieve_vars_from_group(member, _visiting | {group_name})
             else:
                 raise KeyError(f"Member '{member}' not found as variable or group.")
+
+    def __contains__(self, name: str) -> bool:
+        return name in self.all_names

@@ -61,7 +61,7 @@ def test_empty_groups():
         },
     )
 
-    assert idx.all_names == [
+    assert idx.all_names == {
         "rho",
         "vx",
         "vy",
@@ -69,7 +69,7 @@ def test_empty_groups():
         "primitives",
         "conservatives",
         "v",
-    ]
+    }
     assert np.array_equal(idx.idxs, np.arange(4))
     assert idx.nvars == 4
 
@@ -98,7 +98,7 @@ def test_hydro_groups():
         {},
     )
 
-    assert idx.all_names == ["rho", "vx", "vy", "vz", "P", "E", "mx", "my", "mz"]
+    assert idx.all_names == {"rho", "vx", "vy", "vz", "P", "E", "mx", "my", "mz"}
     assert np.array_equal(idx.idxs, np.arange(5))
     assert idx.nvars == 5
 
@@ -130,7 +130,7 @@ def test_hydro_groups():
     assert idx("conservatives") == slice(0, 5)
     assert np.array_equal(idx("state"), np.array([0, 4]))
 
-    assert idx.all_names == [
+    assert idx.all_names == {
         "rho",
         "vx",
         "vy",
@@ -145,7 +145,7 @@ def test_hydro_groups():
         "primitives",
         "conservatives",
         "state",
-    ]
+    }
     assert np.array_equal(idx.idxs, np.arange(5))
     assert idx.nvars == 5
 

@@ -2,7 +2,7 @@ import warnings
 from dataclasses import asdict
 from pathlib import Path
 from types import ModuleType
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -28,17 +28,18 @@ from .configs import (
     SolverParams,
     ZhangShuParameters,
 )
+from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .hydro import prim_to_cons
 from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .stencils import conservative_interpolation
-from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
 
-class HydroSolver:
+class HydroSolver(ExplicitODESolver):
     def __init__(
         self,
         # Hydro params
@@ -114,6 +115,7 @@ class HydroSolver:
         self.params: SolverParams
         self.u0_func: MultivarField
         self.mesh: UniformFVMesh
+        self.xp: ModuleType
 
         self.arrays = ArrayManager()
         self.mesh_arrays = ArrayManager()
@@ -271,8 +273,9 @@ class HydroSolver:
         self._build_conservative_ic_u0_func()
         self._enable_ic_bc_or_none_if_inactive()
         self._build_mesh()
+        self._init_cupy(cupy, CUPY_AVAILABLE)
+        self._compute_ic_array_and_initialize_ODE_solver()
         self._allocate_arrays()
-        self._init_cupy()
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -323,7 +326,7 @@ class HydroSolver:
             *,
             xp: ModuleType,
         ) -> ArrayLike:
-            out = self.ic(idx, x, y, z, t, xp=xp)
+            out = ic_params.ic(idx, x, y, z, t, xp=xp)
             if ic_params.npassives > 0:
                 for v, func in ic_params.passive_ics.items():
                     out[idx(v)] = func(x, y, z, t, xp=xp)
@@ -400,6 +403,42 @@ class HydroSolver:
             array_manager=self.mesh_arrays,
         )
 
+    def _init_cupy(self, tried_cupy: bool, cupy_available: bool):
+        if tried_cupy and not cupy_available:
+            warnings.warn("CuPy is not available. Using NumPy instead.")
+        if not tried_cupy and cupy_available:
+            warnings.warn("CuPy not requested, but CuPy is available. Using NumPy instead.")
+
+        if self.params.cupy:
+            self.arrays.transfer_to("gpu")
+            self.mesh_arrays.transfer_to("gpu")
+
+            self.xp = xp
+        else:
+            self.xp = np
+
+    def _compute_ic_array_and_initialize_ODE_solver(self):
+        params = self.params
+        idx = params.variable_index_map
+        nvars = idx.nvars
+        mesh = self.mesh
+        nx, ny, nz = mesh.shape
+        arrays = self.arrays
+
+        u0 = self.xp.empty((nvars, nx, ny, nz))
+        if params.fv_scheme.p > 1:
+            mesh.perform_GaussLegendre_quadrature(
+                lambda x, y, z: self.u0_func(idx, x, y, z, 0.0, xp=self.xp),
+                u0,
+                mesh_region="core",
+                cell_region="interior",
+                p=params.fv_scheme.p,
+            )
+        else:
+            u0[...] = self.u0_func(idx, *mesh.get_cell_centers(), 0.0, xp=self.xp)
+
+        ExplicitODESolver.__init__(self, u0, arrays, params.hydro.dt_min)  # adds "u0" to arrays
+
     def _compute_ninterps_per_face(self, quantity: Literal["nodes", "lines"]) -> int:
         fv_scheme = self.params.fv_scheme
         ndim = self.mesh.ndim
@@ -422,24 +461,19 @@ class HydroSolver:
 
     def _allocate_arrays(self):
         nvars = self.params.variable_index_map.nvars
-        nx, ny, nz = self.mesh.shape
-        _nx_, _ny_, _nz_ = self.mesh._shape_
-
+        mesh = self.mesh
+        nx, ny, nz = mesh.shape
+        _nx_, _ny_, _nz_ = mesh._shape_
         arrays = self.arrays
 
-        arrays.add("u", np.empty((nvars, nx, ny, nz)))
-
-    def _init_cupy(self):
-        if self.params.cupy:
-            self.arrays.transfer_to("gpu")
-            self.mesh_arrays.transfer_to("gpu")
+        arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
     def write_config_file(self, path: str):
         with open(Path(path) / "config.yaml", "w") as f:
             f.write(yaml_dump(asdict(self.params)))
 
     def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
-        idx = self.variable_index_map
+        idx = self.params.variable_index_map
         params = self.params
 
         if params.cupy:
@@ -460,3 +494,24 @@ class HydroSolver:
             )
         else:
             u[...] = prim_to_cons(idx, w, params.hydro.gamma)
+
+    def compute_dt(self, t: float, u: ArrayLike) -> float:
+        warnings.warn("Using dunmmy compute_dt")
+        return 1.0
+
+    def f(self, t: float, u: ArrayLike) -> ArrayLike:
+        warnings.warn("Using dummy f")
+        return 0.0 * u
+
+    def build_opening_message(self) -> str:
+        return "dummy opening message"
+
+    def build_update_message(self) -> str:
+        return "dummy update message"
+
+    def build_closing_message(self) -> str:
+        return "dummy closing message"
+
+    def prepare_snapshot_data(self) -> Any:
+        warnings.warn("Using dummy snapshot data")
+        return None
