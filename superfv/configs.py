@@ -108,6 +108,7 @@ class FluxQuadrature(Enum):
 
 @dataclass(frozen=True, slots=True)
 class FV_SchemeParameters:
+    name: str
     p: int
     flux_recipe: FluxRecipe
     flux_quadrature: FluxQuadrature

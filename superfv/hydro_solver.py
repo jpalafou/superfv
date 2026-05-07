@@ -162,6 +162,7 @@ class HydroSolver(ExplicitODESolver):
             for reduced_p in range(p, -1, -1):
                 fallback_cascade_list.append(
                     FV_SchemeParameters(
+                        name=f"fallback_{p=}",
                         p=reduced_p,
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
@@ -175,6 +176,7 @@ class HydroSolver(ExplicitODESolver):
         elif fallback_cascade in (FallbackCascade.MUSCL, FallbackCascade.MUSCL0):
             fallback_cascade_list.append(
                 FV_SchemeParameters(
+                    name="fallback_MUSCL",
                     p=1,
                     flux_recipe=flux_recipe,
                     flux_quadrature=flux_quadrature,
@@ -188,6 +190,7 @@ class HydroSolver(ExplicitODESolver):
         if fallback_cascade == FallbackCascade.MUSCL0:
             fallback_cascade_list.append(
                 FV_SchemeParameters(
+                    name="fallback_p0",
                     p=0,
                     flux_recipe=flux_recipe,
                     flux_quadrature=flux_quadrature,
@@ -211,6 +214,7 @@ class HydroSolver(ExplicitODESolver):
         )
 
         fv_scheme_params = FV_SchemeParameters(
+            name="base_scheme",
             p=p,
             flux_recipe=flux_recipe,
             flux_quadrature=flux_quadrature,
@@ -389,17 +393,17 @@ class HydroSolver(ExplicitODESolver):
             setattr(bc, f"bc{dim}", tuple(new_bcdim))
 
     def _build_mesh(self):
-        params = self.params.mesh
+        mesh_params = self.params.mesh
 
         self.mesh = UniformFVMesh(
-            nx=params.nx,
-            ny=params.ny,
-            nz=params.nz,
-            nghost=params.nghost,
-            xlims=params.xlims,
-            ylims=params.ylims,
-            zlims=params.zlims,
-            active_dims=params.active_dims,
+            nx=mesh_params.nx,
+            ny=mesh_params.ny,
+            nz=mesh_params.nz,
+            nghost=mesh_params.nghost,
+            xlims=mesh_params.xlims,
+            ylims=mesh_params.ylims,
+            zlims=mesh_params.zlims,
+            active_dims=mesh_params.active_dims,
             array_manager=self.mesh_arrays,
         )
 
@@ -461,12 +465,112 @@ class HydroSolver(ExplicitODESolver):
 
     def _allocate_arrays(self):
         nvars = self.params.variable_index_map.nvars
+        fv_scheme = self.params.fv_scheme
         mesh = self.mesh
         nx, ny, nz = mesh.shape
         _nx_, _ny_, _nz_ = mesh._shape_
+        active_dims = mesh.active_dims
+        ndim = mesh.ndim
         arrays = self.arrays
 
+        n_lines = self._compute_ninterps_per_face("lines")
+        n_nodes = self._compute_ninterps_per_face("nodes")
+
+        # define cell-centered/cell-averaged arrays
+        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+        arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_wp_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_w1_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
+
+        # define arrays associated faces along the x-direction
+        if "x" in active_dims:
+            arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
+            arrays.add("_f_nodes_", np.empty((nvars, nx + 1, _ny_, _nz_, n_nodes)))
+            arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, 1)))
+            arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
+            if ndim == 3:
+                arrays.add("_f_lines_", np.empty((nvars, nx + 1, _ny_, _nz_, n_lines)))
+
+        # define arrays associated with faces along the y-direction
+        if "y" in active_dims:
+            arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
+            arrays.add("_g_nodes_", np.empty((nvars, _nx_, ny + 1, _nz_, n_nodes)))
+            arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, 1)))
+            arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
+            if ndim == 3:
+                arrays.add("_g_lines_", np.empty((nvars, _nx_, ny + 1, _nz_, n_lines)))
+
+        # define arrays associated with faces along the z-direction
+        if "z" in active_dims:
+            arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
+            arrays.add("_h_nodes_", np.empty((nvars, _nx_, _ny_, nz + 1, n_nodes)))
+            arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, 1)))
+            arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
+            if ndim == 3:
+                arrays.add("_h_lines_", np.empty((nvars, _nx_, _ny_, nz + 1, n_lines)))
+
+        self.flux_names = {"x": "F", "y": "G", "z": "H"}  # helpful
+
+        # define buffer and interpolation arrays
+        arrays.add("_buffer1_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        if ndim >= 2:
+            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+                arrays.add("_faces_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
+            arrays.add("_midline_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+        if ndim == 3:
+            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+                ngl = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
+                arrays.add("_lines_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * ngl)))
+            arrays.add("_midface_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
+
+        # define slope-limiting arrays
+        arrays.add("_flux_jvp_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_M_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_m_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        if "x" in active_dims:
+            arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        if "y" in active_dims:
+            arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        if "z" in active_dims:
+            arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+
+        # define Zhang-Shu limiter arrays
+        arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
+        arrays.add("_Mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
+
+        total_nodes = 1 + self.mesh.ndim * 2 * n_nodes
+        arrays.add("_wj_all_", np.empty((nvars, _nx_, _ny_, _nz_, total_nodes)))
+
+        # define MOOD arrays
+        for scheme in fv_scheme.mood_params.fallback_cascade:
+            if "x" in active_dims:
+                arrays.add("F_" + scheme.name, np.empty((nvars, nx + 1, ny, nz)))
+            if "y" in active_dims:
+                arrays.add("G_" + scheme.name, np.empty((nvars, nx, ny + 1, nz)))
+            if "z" in active_dims:
+                arrays.add("H_" + scheme.name, np.empty((nvars, nx, ny, nz + 1)))
+
+        arrays.add("_unew_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_wnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_NAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_PAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("_troubles2_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
+        arrays.add("_blended_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_)))
+        arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
+        arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
+        arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
+        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
     def write_config_file(self, path: str):
         with open(Path(path) / "config.yaml", "w") as f:
