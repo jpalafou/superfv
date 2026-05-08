@@ -45,20 +45,11 @@ def _repr_array(dumper: TupleDumper, data: Any) -> Node:
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data.tolist(), flow_style=True)
 
 
-def _repr_slice(dumper: TupleDumper, value: slice) -> Node:
-    # slices as start:stop:step
-    slice_str = f"{value.start}:{value.stop}"
-    if value.step is not None:
-        slice_str += f":{value.step}"
-    return dumper.represent_str(slice_str)
-
-
 TupleDumper.add_representer(list, _repr_flow_list)
 TupleDumper.add_representer(tuple, _repr_tuple)
 TupleDumper.add_multi_representer(Enum, _repr_enum)
 TupleDumper.add_multi_representer(type(lambda: None), _repr_function)
 TupleDumper.add_multi_representer(object, _repr_array)
-TupleDumper.add_multi_representer(slice, _repr_slice)
 
 # --- Constructor for !tuple with precise node type ---
 

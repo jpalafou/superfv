@@ -125,6 +125,7 @@ class HydroSolver(ExplicitODESolver):
         self.arrays: ArrayManager
         self.mesh_arrays: ArrayManager
         self.params: SolverParams
+        self.interior: Tuple[slice, slice, slice, slice]
         self.u0_func: MultivarField
         self.mesh: UniformFVMesh
         self.xp: ModuleType
@@ -283,11 +284,11 @@ class HydroSolver(ExplicitODESolver):
             bc=bc_params,
             fv_scheme=fv_scheme_params,
             variable_index_map=self._define_complete_variable_index_map(ic_params),
-            interior=self._compute_interior(mesh_params.nghost, mesh_params.active_dims),
             cupy=cupy and CUPY_AVAILABLE,
             sync_timer=sync_timer,
         )
 
+        self._build_interior_slice()
         self._build_conservative_ic_u0_func()
         self._enable_ic_bc_or_none_if_inactive()
         self._build_mesh()
@@ -307,13 +308,6 @@ class HydroSolver(ExplicitODESolver):
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         dims = ["x", "y", "z"]
         return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
-
-    def _compute_interior(
-        self, nghost: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
-    ) -> Tuple[slice, slice, slice, slice]:
-        return merge_slices(
-            *[crop({"x": 1, "y": 2, "z": 3}[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
-        )
 
     def _define_base_variable_index_map(self) -> VariableIndexMap:
         return VariableIndexMap(
@@ -358,6 +352,13 @@ class HydroSolver(ExplicitODESolver):
             return out
 
         return w0_func
+
+    def _build_interior_slice(self):
+        active_dims = self.params.mesh.active_dims
+        nghost = self.params.mesh.nghost
+        self.interior = merge_slices(
+            *[crop({"x": 1, "y": 2, "z": 3}[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
+        )
 
     def _build_conservative_ic_u0_func(self):
 
@@ -710,8 +711,7 @@ class HydroSolver(ExplicitODESolver):
         _temp2_ = arrays["_midface_"] if ndim == 3 else None  # shape (..., 1) or None
 
         # 0) conservatives FV averages + BC
-        print(self.params.interior)
-        _u_[self.params.interior] = u
+        _u_[self.interior] = u
         self.apply_bc(_u_, t, fv_scheme.p)
 
         # 1) conservative and primitive centroids

@@ -266,6 +266,5 @@ class SolverParams:
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters
     variable_index_map: VariableIndexMap
-    interior: Tuple[slice, slice, slice, slice]
     cupy: bool = False
     sync_timer: bool = True
