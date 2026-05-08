@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
-from .boundary_conditions import BC, PatchBC
+from .boundary_conditions import BC, PatchBC, apply_bc
 from .configs import (
     BoundaryConditionParameters,
     FallbackCascade,
@@ -31,11 +31,13 @@ from .configs import (
 )
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
+from .finite_volume_driver import integrate_cell_averages, interpolate_cell_centers
 from .hydro import cons_to_prim, prim_to_cons
 from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
+from .tools.slicing import crop, merge_slices
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
@@ -47,6 +49,9 @@ if CUPY_AVAILABLE:
 
 
 class HydroSolver(ExplicitODESolver):
+
+    # Initialization methods
+
     def __init__(
         self,
         # Hydro params
@@ -169,7 +174,7 @@ class HydroSolver(ExplicitODESolver):
             for reduced_p in range(p, -1, -1):
                 fallback_cascade_list.append(
                     FV_SchemeParameters(
-                        name=f"fallback_{p=}",
+                        name=f"fallback_p={reduced_p}",
                         p=reduced_p,
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
@@ -268,6 +273,7 @@ class HydroSolver(ExplicitODESolver):
             ylims=ylims,
             zlims=zlims,
             active_dims=self._compute_active_dims(nx, ny, nz),
+            ndim=len(self._compute_active_dims(nx, ny, nz)),
         )
 
         self.params = SolverParams(
@@ -277,6 +283,7 @@ class HydroSolver(ExplicitODESolver):
             bc=bc_params,
             fv_scheme=fv_scheme_params,
             variable_index_map=self._define_complete_variable_index_map(ic_params),
+            interior=self._compute_interior(mesh_params.nghost, mesh_params.active_dims),
             cupy=cupy and CUPY_AVAILABLE,
             sync_timer=sync_timer,
         )
@@ -300,6 +307,13 @@ class HydroSolver(ExplicitODESolver):
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         dims = ["x", "y", "z"]
         return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
+
+    def _compute_interior(
+        self, nghost: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
+    ) -> Tuple[slice, slice, slice, slice]:
+        return merge_slices(
+            *[crop({"x": 1, "y": 2, "z": 3}[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
+        )
 
     def _define_base_variable_index_map(self) -> VariableIndexMap:
         return VariableIndexMap(
@@ -579,9 +593,7 @@ class HydroSolver(ExplicitODESolver):
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
-    def write_config_file(self, path: str):
-        with open(Path(path) / "config.yaml", "w") as f:
-            f.write(yaml_dump(asdict(self.params)))
+    # Helper functions
 
     @cached_property
     def _prim_to_cons_cp(self):
@@ -591,12 +603,14 @@ class HydroSolver(ExplicitODESolver):
     def _cons_to_prim_cp(self):
         return make_cons_to_prim_elementwise_kernel(self.params.ic.npassives)
 
+    # Hydro solver functions
+
     def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
         """
         Write conservatives to `u` using primitives from `u`.
         """
-        idx = self.params.variable_index_map
         params = self.params
+        idx = params.variable_index_map
 
         if params.cupy:
             self._prim_to_cons_cp(
@@ -621,10 +635,10 @@ class HydroSolver(ExplicitODESolver):
         """
         Write to primitives `w` from conservatives `u`.
         """
-        idx = self.params.variable_index_map
         params = self.params
+        idx = params.variable_index_map
 
-        if self.cupy:
+        if params.cupy:
             self._cons_to_prim_cp(
                 u[idx("rho")],
                 u[idx("mx")],
@@ -632,7 +646,8 @@ class HydroSolver(ExplicitODESolver):
                 u[idx("mz")],
                 u[idx("E")],
                 params.hydro.gamma,
-                params.hydro.isothermal.params.hydro.iso_cs,
+                params.hydro.isothermal,
+                params.hydro.iso_cs,
                 *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
                 w[idx("rho")],
                 w[idx("vx")],
@@ -643,15 +658,93 @@ class HydroSolver(ExplicitODESolver):
             )
         else:
             w[...] = cons_to_prim(
-                self.variable_index_map,
+                idx,
                 u,
                 params.hydro.gamma,
-                params.hydro.isothermal.params.hydro.iso_cs,
+                params.hydro.isothermal,
+                params.hydro.iso_cs,
             )
+
+    def apply_bc(self, _u_: ArrayLike, t: float, p: int):
+        bc_params = self.params.bc
+        mesh_params = self.params.mesh
+        idx = self.params.variable_index_map
+        mesh = self.mesh
+
+        apply_bc(
+            self.xp,
+            _u_,
+            mesh_params.nghost,
+            bc_params.bcx,
+            bc_params.bcy,
+            bc_params.bcz,
+            bc_params.bcx_callable_lower,
+            bc_params.bcx_callable_upper,
+            bc_params.bcy_callable_lower,
+            bc_params.bcy_callable_upper,
+            bc_params.bcz_callable_lower,
+            bc_params.bcz_callable_upper,
+            idx,
+            mesh,
+            t,
+            p,
+        )
+
+    def update_cell_centers_and_primitive_cell_averages(
+        self, t: float, u: ArrayLike, fv_scheme: FV_SchemeParameters
+    ):
+        idx = self.params.variable_index_map
+        active_dims = self.mesh.active_dims
+        ndim = self.mesh.ndim
+        na = self.xp.newaxis
+        arrays = self.arrays
+
+        # allocate arrays
+        _u_ = arrays["_u_"]
+        _ucc_ = arrays["_ucc_"]  # shape (..., 1)
+        _wcc_ = arrays["_wcc_"]  # shape (..., 1)
+        _wp_ = arrays["_wp_"]  # shape (..., 1)
+        _w1_ = arrays["_w1_"]
+        _w_ = arrays["_w_"]
+        _temp1_ = arrays["_midline_"] if ndim >= 2 else None  # shape (..., 1) or None
+        _temp2_ = arrays["_midface_"] if ndim == 3 else None  # shape (..., 1) or None
+
+        # 0) conservatives FV averages + BC
+        print(self.params.interior)
+        _u_[self.params.interior] = u
+        self.apply_bc(_u_, t, fv_scheme.p)
+
+        # 1) conservative and primitive centroids
+        interpolate_cell_centers(_u_[..., na], _ucc_, active_dims, fv_scheme.p, _temp1_, _temp2_)
+        self.conservatives_to_primitives(_ucc_, _wcc_)
+
+        # 2) primitive FV averages
+        self.conservatives_to_primitives(_u_, _w1_)
+
+        match fv_scheme.lazy_primitive_mode:
+            case LazyPrimitiveMode.NONE:
+                integrate_cell_averages(_wcc_, _wp_, active_dims, fv_scheme.p, _temp1_, _temp2_)
+                _w_[...] = _wp_[..., 0]
+            case LazyPrimitiveMode.FULL:
+                _w_[...] = _w1_
+            case LazyPrimitiveMode.ADAPTIVE:
+                raise NotImplementedError("Adaptive lazy primitives not implemented yet.")
+
+        # ensure density is always transformed in the lazy way
+        if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
+            _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
 
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         warnings.warn("Using dunmmy compute_dt")
         return 1.0
+
+    # Useful user functions
+
+    def write_config_file(self, path: str):
+        with open(Path(path) / "config.yaml", "w") as f:
+            f.write(yaml_dump(asdict(self.params)))
+
+    # ODE solver functions
 
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         warnings.warn("Using dummy f")

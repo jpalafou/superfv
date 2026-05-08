@@ -189,6 +189,11 @@ class MeshParameters:
     ylims: Tuple[float, float]
     zlims: Tuple[float, float]
     active_dims: Tuple[Literal["x", "y", "z"], ...]
+    ndim: int
+
+    def __post_init__(self):
+        if self.ndim != len(self.active_dims):
+            raise ValueError("ndim must be equal to the length of active_dims")
 
 
 @dataclass
@@ -261,5 +266,6 @@ class SolverParams:
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters
     variable_index_map: VariableIndexMap
+    interior: Tuple[slice, slice, slice, slice]
     cupy: bool = False
     sync_timer: bool = True
