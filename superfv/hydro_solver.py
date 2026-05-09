@@ -32,7 +32,7 @@ from .configs import (
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .finite_volume_driver import integrate_cell_averages, interpolate_cell_centers
-from .hydro import cons_to_prim, prim_to_cons
+from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .stencils import conservative_interpolation
@@ -45,6 +45,7 @@ if CUPY_AVAILABLE:
     from .hydro import (
         make_cons_to_prim_elementwise_kernel,
         make_prim_to_cons_elementwise_kernel,
+        sound_speed_cp,
     )
 
 
@@ -303,7 +304,7 @@ class HydroSolver(ExplicitODESolver):
 
     def _compute_nghost(self, fv_scheme_params: FV_SchemeParameters) -> int:
         warnings.warn("Using dummy nghost value for now.")
-        return 0
+        return 2
 
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         dims = ["x", "y", "z"]
@@ -500,7 +501,6 @@ class HydroSolver(ExplicitODESolver):
 
         # define cell-centered/cell-averaged arrays
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
-        arrays.add("sum_of_s_over_h", np.empty((nx, ny, nz)))
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
@@ -666,6 +666,42 @@ class HydroSolver(ExplicitODESolver):
                 params.hydro.iso_cs,
             )
 
+    def compute_sound_speed(self, w: ArrayLike, c: ArrayLike):
+        """
+        Write sound speed to `c` from primitives `w`.
+        """
+        params = self.params
+        idx = params.variable_index_map
+
+        if params.hydro.isothermal:
+            c[...] = params.hydro.iso_cs
+        elif params.cupy:
+            c[...] = sound_speed_cp(w[idx("rho")], w[idx("P")], params.hydro.gamma)
+        else:
+            c[...] = sound_speed(idx, w, params.hydro.gamma)
+
+    def compute_dt(self, t: float, u: ArrayLike) -> float:
+        params = self.params
+        idx = params.variable_index_map
+
+        w = self.xp.empty_like(u)
+        c = self.xp.empty_like(u[0, ...])
+        sum_of_s_over_h = self.xp.zeros_like(u[0, ...])
+
+        self.conservatives_to_primitives(u, w)
+        self.compute_sound_speed(w, c)
+
+        for dim, h in zip(["x", "y", "z"], [params.mesh.hx, params.mesh.hy, params.mesh.hz]):
+            if dim not in params.mesh.active_dims:
+                continue
+            s = self.xp.abs(w[idx("v" + dim)]) + c
+            sum_of_s_over_h += s / h
+
+        max_speed = self.xp.max(sum_of_s_over_h).item()
+        dt = params.hydro.CFL / max_speed
+
+        return dt
+
     def apply_bc(self, _u_: ArrayLike, t: float, p: int):
         bc_params = self.params.bc
         mesh_params = self.params.mesh
@@ -733,10 +769,6 @@ class HydroSolver(ExplicitODESolver):
         # ensure density is always transformed in the lazy way
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
-
-    def compute_dt(self, t: float, u: ArrayLike) -> float:
-        warnings.warn("Using dunmmy compute_dt")
-        return 1.0
 
     # Useful user functions
 

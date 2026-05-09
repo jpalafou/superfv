@@ -78,7 +78,7 @@ def apply_bc(
                 axis=i + 1,
                 lower=(j == 0),
                 nghost=nghost,
-                f=None if mode != BC.DIRICHLET else cast(MultivarField, bc_callable),
+                f=cast(MultivarField, bc_callable) if mode == BC.DIRICHLET else None,
                 variable_index_map=variable_index_map,
                 mesh=mesh,
                 t=t,
