@@ -389,7 +389,6 @@ class UniformFVMesh:
         for dim in active_dims:  # the lr sweep is first
             if cell_region != "interior" and cell_region[0] == dim:
                 sweep_instructions[dim] = "lr"
-        sweep_instructions = {}
         for dim in active_dims:
             if cell_region == "interior" or cell_region[0] != dim:
                 sweep_instructions[dim] = "gl"
