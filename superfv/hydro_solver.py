@@ -31,10 +31,17 @@ from .configs import (
 )
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
-from .finite_volume_driver import integrate_cell_averages, interpolate_cell_centers
+from .finite_volume_driver import (
+    integrate_cell_averages,
+    integrate_gauss_legendre_face_nodes,
+    integrate_transverse_nodes,
+    interpolate_cell_centers,
+    interpolate_face_nodes,
+)
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .initial_conditions import square
 from .mesh import UniformFVMesh
+from .riemann_solvers import hllc
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
@@ -47,6 +54,7 @@ if CUPY_AVAILABLE:
         make_prim_to_cons_elementwise_kernel,
         sound_speed_cp,
     )
+    from .riemann_solvers import make_hllc_elementwise_kernel
 
 
 class HydroSolver(ExplicitODESolver):
@@ -466,8 +474,9 @@ class HydroSolver(ExplicitODESolver):
 
         ExplicitODESolver.__init__(self, u0, arrays, params.hydro.dt_min)  # adds "u0" to arrays
 
-    def _compute_ninterps_per_face(self, quantity: Literal["nodes", "lines"]) -> int:
-        fv_scheme = self.params.fv_scheme
+    def _compute_ninterps_per_face(
+        self, fv_scheme: FV_SchemeParameters, quantity: Literal["nodes", "lines"]
+    ) -> int:
         ndim = self.mesh.ndim
         n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
 
@@ -496,8 +505,8 @@ class HydroSolver(ExplicitODESolver):
         ndim = mesh.ndim
         arrays = self.arrays
 
-        n_lines = self._compute_ninterps_per_face("lines")
-        n_nodes = self._compute_ninterps_per_face("nodes")
+        n_lines = self._compute_ninterps_per_face(fv_scheme, "lines")
+        n_nodes = self._compute_ninterps_per_face(fv_scheme, "nodes")
 
         # define cell-centered/cell-averaged arrays
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
@@ -534,8 +543,6 @@ class HydroSolver(ExplicitODESolver):
             arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
             if ndim == 3:
                 arrays.add("_h_lines_", np.empty((nvars, _nx_, _ny_, nz + 1, n_lines)))
-
-        self.flux_names = {"x": "F", "y": "G", "z": "H"}  # helpful
 
         # define buffer and interpolation arrays
         arrays.add("_buffer1_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
@@ -603,6 +610,23 @@ class HydroSolver(ExplicitODESolver):
     @cached_property
     def _cons_to_prim_cp(self):
         return make_cons_to_prim_elementwise_kernel(self.params.ic.npassives)
+
+    @cached_property
+    def _riemann_solver_func(self):
+        rs = self.params.hydro.riemann_solver
+
+        if self.params.cupy:
+            if rs == RiemannSolver.HLLC:
+                return make_hllc_elementwise_kernel(self.params.ic.npassives)
+            else:
+                raise NotImplementedError(
+                    f"CuPy kernel for Riemann solver '{rs}' is not implemented."
+                )
+        else:
+            if rs == RiemannSolver.HLLC:
+                return hllc
+            else:
+                raise NotImplementedError(f"Riemann solver '{rs}' is not implemented.")
 
     # Hydro solver functions
 
@@ -769,6 +793,180 @@ class HydroSolver(ExplicitODESolver):
         # ensure density is always transformed in the lazy way
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
+
+    def _convert_nodes_to_primitives(self):
+        params = self.params
+        arrays = self.arrays
+
+        for dim in params.mesh.active_dims:
+            _nodes_ = arrays[f"_{dim}_nodes_"]
+            self.conservatives_to_primitives(_nodes_, _nodes_)
+
+    def _ensure_positive_nodes(self):
+        params = self.params
+        idx = params.variable_index_map
+        arrays = self.arrays
+
+        for dim in params.mesh.active_dims:
+            _nodes_ = arrays[f"_{dim}_nodes_"]
+            self.xp.maximum(_nodes_[idx("rho")], params.hydro.rho_min, out=_nodes_[idx("rho")])
+            self.xp.maximum(_nodes_[idx("P")], params.hydro.P_min, out=_nodes_[idx("P")])
+
+    def riemann_solver(
+        self,
+        left_of_interface: ArrayLike,
+        right_of_interface: ArrayLike,
+        fluxes: ArrayLike,
+        dim: str,
+    ):
+        params = self.params
+        idx = params.variable_index_map
+
+        if params.cupy:
+            cl = self.xp.empty_like(left_of_interface[0, ...])
+            cr = self.xp.empty_like(right_of_interface[0, ...])
+
+            self.compute_sound_speed(left_of_interface, cl)
+            self.compute_sound_speed(right_of_interface, cr)
+
+            self._riemann_solver_func(
+                left_of_interface[idx("rho")],
+                right_of_interface[idx("rho")],
+                left_of_interface[idx("vx")],
+                right_of_interface[idx("vx")],
+                left_of_interface[idx("vy")],
+                right_of_interface[idx("vy")],
+                left_of_interface[idx("vz")],
+                right_of_interface[idx("vz")],
+                left_of_interface[idx("P")],
+                right_of_interface[idx("P")],
+                cl,
+                cr,
+                params.hydro.gamma,
+                {"x": 1, "y": 2, "z": 3}[dim],
+                *[
+                    x
+                    for v in idx.group_var_map.get("passives", [])
+                    for x in (left_of_interface[idx(v)], right_of_interface[idx(v)])
+                ],
+                fluxes[idx("rho")],
+                fluxes[idx("mx")],
+                fluxes[idx("my")],
+                fluxes[idx("mz")],
+                fluxes[idx("E")],
+                *[fluxes[idx(v)] for v in idx.group_var_map.get("passives", [])],
+            )
+        else:
+            fluxes[...] = self._riemann_solver_func(
+                idx,
+                left_of_interface,
+                right_of_interface,
+                dim,
+                params.hydro.gamma,
+                params.hydro.isothermal,
+                params.hydro.iso_cs,
+            )
+
+    def _update_nodal_fluxes(self, fv_scheme: FV_SchemeParameters, dim: Literal["x", "y", "z"]):
+        params = self.params
+        nghost = params.mesh.nghost
+        nnodes = self._compute_ninterps_per_face(fv_scheme, "nodes")
+        axis = {"x": 1, "y": 2, "z": 3}[dim]
+        arrays = self.arrays
+
+        _nodes_ = arrays[f"_{dim}_nodes_"]
+        _fnodes_ = arrays[{"x": "_f_nodes_", "y": "_g_nodes_", "z": "_h_nodes_"}[dim]]
+
+        left_of_interface = merge_slices(
+            crop(4, (nnodes, 2 * nnodes), ndim=5), crop(axis, (nghost - 1, -nghost), ndim=5)
+        )
+        right_of_interface = merge_slices(
+            crop(4, (None, nnodes), ndim=5), crop(axis, (nghost, -nghost + 1), ndim=5)
+        )
+
+        self.riemann_solver(_nodes_[left_of_interface], _nodes_[right_of_interface], _fnodes_, dim)
+
+    def _update_flux_arrays(self):
+        params = self.params
+        nghost = self.params.mesh.nghost
+        arrays = self.arrays
+
+        for dim in params.mesh.active_dims:
+            _fnodes_ = arrays[{"x": "_f_nodes_", "y": "_g_nodes_", "z": "_h_nodes_"}[dim]]
+            _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
+            Fluxes = arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
+
+            if params.mesh.ndim == 1:
+                Fluxes[...] = _fnodes_[..., 0]  # no need for flux integral in 1D
+                continue
+
+            interior = merge_slices(
+                *[
+                    crop(axis, (nghost, -nghost), ndim=5)
+                    for d, axis in zip(["x", "y", "z"], [1, 2, 3])
+                    if d in params.mesh.active_dims and d != dim
+                ],
+                (slice(None), slice(None), slice(None), slice(None), 0),
+            )
+            Fluxes[...] = _Fluxes_[interior]
+
+    def update_fluxes(self, fv_scheme: FV_SchemeParameters):
+        params = self.params
+        active_dims = params.mesh.active_dims
+        na = self.xp.newaxis
+        arrays = self.arrays
+
+        _q_ = arrays["_w_"] if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else arrays["_u_"]
+        _qtemp1_ = arrays["_faces_"] if params.mesh.ndim >= 2 else None
+        _qtemp2_ = arrays["_lines_"] if params.mesh.ndim == 3 else None
+
+        for dim in params.mesh.active_dims:
+            _nodes_ = arrays[f"_{dim}_nodes_"]
+            interpolate_face_nodes(
+                _q_[..., na],
+                _nodes_,
+                dim,
+                active_dims,
+                fv_scheme.p,
+                fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
+                _qtemp1_,
+                _qtemp2_,
+            )
+
+        if fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+            self._convert_nodes_to_primitives()
+
+        # slope limiting goes here
+        if fv_scheme.zhang_shu_params.use_ZS:
+            raise NotImplementedError("Zhang-Shu limiter not implemented yet.")
+
+        if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+            self._convert_nodes_to_primitives()
+
+        self._ensure_positive_nodes()
+        for dim in params.mesh.active_dims:
+            _fnodes_ = arrays[{"x": "_f_nodes_", "y": "_g_nodes_", "z": "_h_nodes_"}[dim]]
+            _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
+
+            self._update_nodal_fluxes(fv_scheme, dim)
+
+            if params.mesh.ndim == 1:
+                continue
+            elif fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+                integrate_gauss_legendre_face_nodes(
+                    _fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p
+                )
+            else:
+                _Ftemp_ = (
+                    arrays[{"x": "_f_lines_", "y": "_g_lines_", "z": "_h_lines_"}[dim]]
+                    if params.mesh.ndim == 3
+                    else None
+                )
+                integrate_transverse_nodes(
+                    _fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p, _Ftemp_
+                )
+
+        self._update_flux_arrays()
 
     # Useful user functions
 

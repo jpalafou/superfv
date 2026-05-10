@@ -110,7 +110,8 @@ def square(
     t: float = 0.0,
     *,
     xp: ModuleType,
-    bounds: Tuple[float, float] = (0, 1),
+    rhomax: float = 2,
+    rhomin: float = 1,
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
@@ -127,7 +128,8 @@ def square(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        bounds: Bounds of the density square function.
+        rhomax: Maximum density of the square function.
+        rhomin: Minimum density of the square function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
@@ -153,7 +155,7 @@ def square(
             za = (z - vz * t) % 1
             r &= (za >= 0.25) & (za <= 0.75)
         r = r.astype(float)
-        out[idx("rho")] = (bounds[1] - bounds[0]) * r + bounds[0]
+        out[idx("rho")] = (rhomax - rhomin) * r + rhomin
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz
