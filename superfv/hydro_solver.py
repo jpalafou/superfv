@@ -67,6 +67,12 @@ class TimeIntegrator(Enum):
     RK4 = 3
 
 
+class SnapshotMode(Enum):
+    TARGET = 0
+    EVERY = 1
+    NONE = 2
+
+
 class HydroSolver:
 
     # Initialization methods
@@ -337,6 +343,7 @@ class HydroSolver:
         self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
         self._init_step_history()  # defines self.t, self.step_summary, self.step_history
+        self._take_snapshot()  # take initial snapshot
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -628,9 +635,13 @@ class HydroSolver:
                     rho_min=self.xp.min(u[idx("rho")]).item(),
                     E_total=self.xp.sum(u[idx("E")]).item(),
                     substeps=[],
-                )]
+                )
+            ]
         )
-        self._reset_step_summary() # defines self.step_summary
+        self._reset_step_summary()  # defines self.step_summary
+
+    def _take_snapshot(self):
+        print("Took snapshot.")
 
     # Helper functions
 
@@ -1236,12 +1247,25 @@ class HydroSolver:
         self.t = tnew
         self._summarize_step()
 
-    def take_n_steps(self, n: int, time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3):
+    def take_n_steps(
+        self,
+        n: int,
+        time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3,
+        snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
+    ):
         for i in range(n):
             self._take_step(time_integtrator)
 
+            if snapshot_mode == SnapshotMode.TARGET and i == n - 1:
+                self._take_snapshot()
+            elif snapshot_mode == SnapshotMode.EVERY:
+                self._take_snapshot()
+
     def run(
-        self, t: Union[float, List[float]], time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3
+        self,
+        t: Union[float, List[float]],
+        time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
+        snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
     ):
         if not isinstance(t, list):
             target_times = [t]
@@ -1254,9 +1278,16 @@ class HydroSolver:
             raise ValueError("Target times must be non-negative.")
 
         while target_times:
+
             self._take_step(time_integrator, dt_min=target_times[0] - self.t)
+
             if self.t >= target_times[0]:
+                if snapshot_mode == SnapshotMode.TARGET:
+                    self._take_snapshot()
                 target_times.pop(0)
+
+            if snapshot_mode == SnapshotMode.EVERY:
+                self._take_snapshot()
 
     def build_opening_message(self) -> str:
         return "dummy opening message"
