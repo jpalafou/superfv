@@ -131,6 +131,7 @@ class HydroSolver:
         use_MOOD: bool = False,
         fallback_cascade: FallbackCascade = FallbackCascade.MUSCL0,
         max_revs: int = 1,
+        blend_troubles: bool = False,
         skip_trouble_counts: bool = False,
         detect_closing_troubles: bool = True,
         # Shared Zhang-Shu / MOOD params
@@ -190,7 +191,7 @@ class HydroSolver:
         null_PAD = PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
         null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD)
         null_NAD = NumericalAdmissibilityParameters(False, 0.0, 0.0, null_SED)
-        null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0)
+        null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0, False)
         null_shock = ShockDetectionParameters(False)
 
         fallback_cascade_list: List[FV_SchemeParameters] = []
@@ -241,16 +242,6 @@ class HydroSolver:
         # And a PAD bound array
         self._define_PAD_array(PAD_bounds)
 
-        SED_params = SmoothExtremaDetectionParameters(use_SED, clip_zero_tol)
-        PAD_params = (
-            PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
-            if PAD_bounds is None
-            else PhysicalAdmissibilityParameters(True, self.arrays["PAD_bounds"], PAD_bounds)
-        )
-        shock_detection_params = ShockDetectionParameters(
-            lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE, eta_max
-        )
-
         fv_scheme_params = FV_SchemeParameters(
             name="base_scheme",
             p=p,
@@ -258,48 +249,72 @@ class HydroSolver:
             flux_quadrature=flux_quadrature,
             lazy_primitive_mode=lazy_primitive_mode,
             muscl_params=MUSCL_Parameters(
-                use_MUSCL=use_MUSCL, MUSCL_limiter=MUSCL_limiter, SED_params=SED_params
+                use_MUSCL=use_MUSCL and p > 0,
+                MUSCL_limiter=MUSCL_limiter,
+                SED_params=SmoothExtremaDetectionParameters(
+                    use_SED and use_MUSCL and p > 0, clip_zero_tol
+                ),
             ),
             zhang_shu_params=ZhangShuParameters(
-                use_ZS=use_ZS,
+                use_ZS=use_ZS and p > 0,
                 adaptive_dt=adaptive_dt,
-                SED_params=SED_params,
-                PAD_params=PAD_params,
+                SED_params=SmoothExtremaDetectionParameters(
+                    use_SED and use_ZS and p > 0, clip_zero_tol
+                ),
+                PAD_params=(
+                    PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
+                    if PAD_bounds is None
+                    else PhysicalAdmissibilityParameters(
+                        use_ZS, self.arrays["PAD_bounds"], PAD_bounds
+                    )
+                ),
                 adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=theta_denom_tol,
                 include_corners=include_corners,
                 log_limiter_scalars=log_limiter_scalars,
             ),
             mood_params=MOOD_Parameters(
-                use_MOOD=use_MOOD,
+                use_MOOD=use_MOOD and p > 0,
                 NAD_params=NumericalAdmissibilityParameters(
-                    use_NAD=use_NAD,
+                    use_NAD=use_NAD and use_MOOD and p > 0,
                     rtol=rtol,
                     atol=atol,
-                    SED_params=SED_params,
+                    SED_params=SmoothExtremaDetectionParameters(
+                        use_SED and use_NAD and use_MOOD and p > 0, clip_zero_tol
+                    ),
                     delta=delta,
                     include_corners=include_corners,
                 ),
-                PAD_params=PAD_params,
+                PAD_params=(
+                    PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
+                    if PAD_bounds is None
+                    else PhysicalAdmissibilityParameters(
+                        use_MOOD and p > 0, self.arrays["PAD_bounds"], PAD_bounds
+                    )
+                ),
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,
+                blend_troubles=blend_troubles,
                 skip_trouble_counts=skip_trouble_counts,
                 detect_closing_troubles=detect_closing_troubles,
                 log_limiter_scalars=log_limiter_scalars,
             ),
-            shock_detection_params=shock_detection_params,
+            shock_detection_params=ShockDetectionParameters(
+                lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE, eta_max
+            ),
         )
 
+        active_dims = self._compute_active_dims(nx, ny, nz)
         mesh_params = MeshParameters(
             nx=nx,
             ny=ny,
             nz=nz,
-            nghost=self._compute_nghost(fv_scheme_params),
+            nghost=self._compute_nghost(fv_scheme_params, len(active_dims)),
             xlims=xlims,
             ylims=ylims,
             zlims=zlims,
-            active_dims=self._compute_active_dims(nx, ny, nz),
-            ndim=len(self._compute_active_dims(nx, ny, nz)),
+            active_dims=active_dims,
+            ndim=len(active_dims),
         )
 
         # At last, we can define self.params
@@ -327,9 +342,41 @@ class HydroSolver:
         PAD_array = np.empty((0,))
         self.arrays.add("PAD_bounds", PAD_array)
 
-    def _compute_nghost(self, fv_scheme_params: FV_SchemeParameters) -> int:
-        warnings.warn("Using dummy nghost value for now.")
-        return 2
+    def _compute_nghost(self, fv_scheme: FV_SchemeParameters, ndim: int) -> int:
+        dummy_stencil = conservative_interpolation.left_right(fv_scheme.p)
+
+        # Ghost cell cost of interpolating cell center and face nodes
+        nghost = dummy_stencil.shape[1] // 2
+
+        if (
+            fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM
+            and fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL
+        ):
+            nghost *= 3
+
+        if (
+            fv_scheme.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE
+            and fv_scheme.shock_detection_params.use_shock_detection
+        ):
+            nghost += 2
+
+        # Ghost cell cost of integrating fluxes and Riemann Solver
+        if fv_scheme.flux_quadrature == FluxQuadrature.TRANSVERSE and ndim >= 2:
+            nghost += max(dummy_stencil.shape[1] // 2, 1)
+        else:
+            nghost += 1
+
+        # Ghost cell cost of slope limiter
+        nghost += max(
+            1 if fv_scheme.zhang_shu_params.use_ZS else 0,
+            (1 if fv_scheme.mood_params.NAD_params.use_NAD else 0)
+            + (1 if fv_scheme.mood_params.blend_troubles else 0),
+            3 if fv_scheme.muscl_params.SED_params.use_SED else 0,
+            3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 0,
+            3 if fv_scheme.mood_params.NAD_params.SED_params.use_SED else 0,
+        )
+
+        return nghost
 
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         dims = ["x", "y", "z"]

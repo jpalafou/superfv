@@ -74,9 +74,16 @@ class MOOD_Parameters:
     PAD_params: PhysicalAdmissibilityParameters
     fallback_cascade: List[FV_SchemeParameters]
     max_revs: int
+    blend_troubles: bool
     skip_trouble_counts: bool = False
     detect_closing_troubles: bool = True
     log_limiter_scalars: bool = True
+
+    def __post_init__(self):
+        if self.blend_troubles and len(self.fallback_cascade) != 1:
+            raise ValueError(
+                "fallback_cascade must have exactly one scheme when blend_troubles is True."
+            )
 
 
 class FallbackCascade(Enum):
