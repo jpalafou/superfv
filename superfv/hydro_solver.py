@@ -150,6 +150,7 @@ class HydroSolver:
         self.mesh: UniformFVMesh
         self.xp: ModuleType
         self.t: float
+        self.step_summary: StepSummary
         self.step_history: StepHistory
 
         # These are pretty straightforward
@@ -335,7 +336,7 @@ class HydroSolver:
         self._build_mesh()  # defines self.mesh
         self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
-        self._init_step_history()  # defines self.t and self.step_history
+        self._init_step_history()  # defines self.t, self.step_summary, self.step_history
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -600,6 +601,17 @@ class HydroSolver:
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
+    def _reset_step_summary(self, n: int = 1):
+        self.step_summary = StepSummary(
+            step=n,
+            t_sim=np.nan,
+            t_wall=np.nan,
+            n_dt_revisions=0,
+            rho_min=np.nan,
+            E_total=np.nan,
+            substeps=[],
+        )
+
     def _init_step_history(self):
         idx = self.params.variable_index_map
 
@@ -614,11 +626,11 @@ class HydroSolver:
                     t_wall=time.time(),
                     n_dt_revisions=0,
                     rho_min=self.xp.min(u[idx("rho")]).item(),
-                    E_total=self.xp.sum(u[idx("rho")]).item(),
+                    E_total=self.xp.sum(u[idx("E")]).item(),
                     substeps=[],
-                )
-            ]
+                )]
         )
+        self._reset_step_summary() # defines self.step_summary
 
     # Helper functions
 
@@ -1111,39 +1123,29 @@ class HydroSolver:
         return dudt
 
     def _summarize_substep(self):
-        current_step = self.step_history[-1]
+        step_summary = self.step_summary
 
-        current_step.substeps.append(
+        step_summary.substeps.append(
             SubstepSummary(
-                substep=current_step.substeps[-1].substep + 1 if current_step.substeps else 1,
+                substep=step_summary.substeps[-1].substep + 1 if step_summary.substeps else 1,
                 t_wall=time.time(),
             )
         )
 
     def _summarize_step(self):
         idx = self.params.variable_index_map
-        current_step = self.step_history[-1]
-        n = current_step.step
+        step_summary = self.step_summary
+        n = step_summary.step
 
         u = self.arrays["u"]
 
-        current_step.t_sim = self.t
-        current_step.t_wall = time.time()
-        current_step.rho_min = self.xp.min(u[idx("rho")]).item()
-        current_step.E_total = self.xp.sum(u[idx("E")]).item()
+        step_summary.t_sim = self.t
+        step_summary.t_wall = time.time()
+        step_summary.rho_min = self.xp.min(u[idx("rho")]).item()
+        step_summary.E_total = self.xp.sum(u[idx("E")]).item()
+        self.step_history.append(step_summary)
 
-        # init next step summary
-        self.step_history.append(
-            StepSummary(
-                step=n + 1,
-                t_sim=np.nan,
-                t_wall=np.nan,
-                n_dt_revisions=0,
-                rho_min=np.nan,
-                E_total=np.nan,
-                substeps=[],
-            )
-        )
+        self._reset_step_summary(n + 1)
 
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
         arrays = self.arrays
