@@ -654,6 +654,7 @@ class HydroSolver(ExplicitODESolver):
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         params = self.params
         idx = params.variable_index_map
+        mesh = self.mesh
 
         w = self.xp.empty_like(u)
         c = self.xp.empty_like(u[0, ...])
@@ -662,7 +663,7 @@ class HydroSolver(ExplicitODESolver):
         self.conservatives_to_primitives(u, w)
         self.compute_sound_speed(w, c)
 
-        for dim, h in zip(["x", "y", "z"], [params.mesh.hx, params.mesh.hy, params.mesh.hz]):
+        for dim, h in zip(["x", "y", "z"], [mesh.hx, mesh.hy, mesh.hz]):
             if dim not in params.mesh.active_dims:
                 continue
             s = self.xp.abs(w[idx("v" + dim)]) + c
@@ -1005,9 +1006,27 @@ class HydroSolver(ExplicitODESolver):
 
     def f(self, t: float, u: ArrayLike) -> ArrayLike:
         base_scheme = self.params.fv_scheme
+        active_dims = self.params.mesh.active_dims
+        hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
+
+        dudt = self.xp.zeros_like(u)
 
         self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
         self.update_fluxes(base_scheme)
+
+        if "x" in active_dims:
+            F_fluxes = self.arrays["F"]
+            dudt -= (F_fluxes[:, 1:, :, :] - F_fluxes[:, :-1, :, :]) / hx
+
+        if "y" in active_dims:
+            G_fluxes = self.arrays["G"]
+            dudt -= (G_fluxes[:, :, 1:, :] - G_fluxes[:, :, :-1, :]) / hy
+
+        if "z" in active_dims:
+            H_fluxes = self.arrays["H"]
+            dudt -= (H_fluxes[:, :, :, 1:] - H_fluxes[:, :, :, :-1]) / hz
+
+        return dudt
 
     def build_opening_message(self) -> str:
         return "dummy opening message"
@@ -1021,3 +1040,33 @@ class HydroSolver(ExplicitODESolver):
     def prepare_snapshot_data(self) -> Any:
         warnings.warn("Using dummy snapshot data")
         return None
+
+    def run(
+        self,
+        T: Optional[Union[float, List[float]]] = None,
+        n: Optional[int] = None,
+        snapshot_mode: Literal["target", "none", "every"] = "target",
+        allow_overshoot: bool = False,
+        verbose: bool = True,
+        log_freq: int = 100,
+        max_steps: Optional[int] = None,
+        path: Optional[str] = None,
+        overwrite: bool = False,
+        discard: bool = True,
+        q_max: int = 2,
+        time_degree: Optional[int] = None,
+        muscl_hancock: bool = True,
+        reduce_CFL: bool = False,
+    ):
+        self.ssprk3(
+            T,
+            n,
+            snapshot_mode,
+            allow_overshoot,
+            verbose,
+            log_freq,
+            max_steps,
+            path,
+            overwrite,
+            discard,
+        )
