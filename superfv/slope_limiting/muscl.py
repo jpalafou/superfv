@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal, Optional, Tuple
 
 import numpy as np
@@ -9,6 +10,13 @@ from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
+
+
+class MUSCL_SlopeLimiter(Enum):
+    MINMOD = 0
+    MONCEN = 1
+    PP2D = 2
+    NONE = 3
 
 
 @dataclass(frozen=True, slots=True)

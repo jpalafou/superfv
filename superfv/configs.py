@@ -7,6 +7,8 @@ from typing import Dict, List, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, UnivarField
+from .riemann_solvers import RiemannSolver
+from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import ArrayLike
 from .tools.variable_index_map import VariableIndexMap
 
@@ -15,13 +17,6 @@ from .tools.variable_index_map import VariableIndexMap
 class SmoothExtremaDetectionParameters:
     use_SED: bool
     clip_zero_tol: float = 1e-15
-
-
-class MUSCL_SlopeLimiter(Enum):
-    MINMOD = 0
-    MONCEN = 1
-    PP2D = 2
-    NONE = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,12 +155,6 @@ class FV_SchemeParameters:
                 UserWarning,
             )
             object.__setattr__(self, "shock_detection_params", ShockDetectionParameters(False, 0.0))
-
-
-class RiemannSolver(Enum):
-    UPWIND = 0
-    LLF = 1
-    HLLC = 2
 
 
 @dataclass(frozen=True, slots=True)
