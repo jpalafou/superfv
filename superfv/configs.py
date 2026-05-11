@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, UnivarField
@@ -35,6 +35,7 @@ class MUSCL_Parameters:
 class PhysicalAdmissibilityParameters:
     use_PAD: bool
     PAD_bounds: ArrayLike
+    PAD_dict: Dict[str, Tuple[Optional[float], Optional[float]]]
 
 
 @dataclass(frozen=True, slots=True)

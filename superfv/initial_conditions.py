@@ -49,7 +49,8 @@ def sinus(
     t: float = 0.0,
     *,
     xp: ModuleType,
-    bounds: Tuple[float, float] = (0, 1),
+    rho_max: float = 2,
+    rho_min: float = 1,
     vx: float = 0,
     vy: float = 0,
     vz: float = 0,
@@ -66,7 +67,8 @@ def sinus(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        bounds: Bounds of the density sinusoidal function.
+        rho_max: Maximum density of the sinusoidal function.
+        rho_min: Minimum density of the sinusoidal function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
@@ -88,7 +90,7 @@ def sinus(
             r += y - vy * t
         if "z" in dims:
             r += z - vz * t
-        out[idx("rho")] = (bounds[1] - bounds[0]) * (0.5 * xp.sin(2 * np.pi * r) + 0.5) + bounds[0]
+        out[idx("rho")] = (rho_max - rho_min) * (0.5 * xp.sin(2 * np.pi * r) + 0.5) + rho_min
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz

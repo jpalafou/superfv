@@ -1,8 +1,13 @@
 from enum import Enum
 from functools import lru_cache
-from typing import Literal, Optional, Tuple
+from typing import Dict, Literal, Optional, Tuple
+
+import numpy as np
 
 from .quadrature import perform_quadrature
+from .slope_limiting import compute_dmp
+from .slope_limiting.smooth_extrema_detection import compute_alpha
+from .slope_limiting.zhang_and_shu import compute_theta
 from .stencils import conservative_interpolation, transverse_integration
 from .sweep import stencil_sweep
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
@@ -242,3 +247,73 @@ def integrate_transverse_nodes(
         return
 
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
+
+
+def apply_zhang_shu_limiter(
+    _q_: ArrayLike,
+    _qcc_: ArrayLike,
+    _theta_: ArrayLike,
+    eps: float,
+    include_corners: bool,
+    detect_smooth_extrema: bool,
+    physical_admissibility_detection: bool,
+    _x_nodes_: Optional[ArrayLike] = None,
+    _y_nodes_: Optional[ArrayLike] = None,
+    _z_nodes_: Optional[ArrayLike] = None,
+    _alpha_: Optional[ArrayLike] = None,
+    PAD_bounds: Optional[Dict[int, Tuple[Optional[float], Optional[float]]]] = None,
+):
+    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    na = cp.newaxis if cupy else np.newaxis
+    active_dims = tuple(
+        d
+        for d, nodes in zip(["x", "y", "z"], [_x_nodes_, _y_nodes_, _z_nodes_])
+        if nodes is not None
+    )
+
+    # allocate arrays
+    _qj_shape_ = _q_.shape[:4] + (
+        1 + sum(nodes.shape[4] for nodes in [_x_nodes_, _y_nodes_, _z_nodes_] if nodes is not None),
+    )
+    _qj_ = cp.empty(_qj_shape_) if cupy else np.empty(_qj_shape_)
+    _M_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
+    _m_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
+    _Mj_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
+    _mj_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
+
+    # stack all nodes into into _qj_
+    _qj_[..., 0] = _qcc_
+    for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
+        n = nodes.shape[4]
+        idx1 = 1 + i * n
+        idx2 = 1 + (i + 1) * n
+        _qj_[..., slice(idx1, idx2)] = nodes
+
+    compute_dmp(_q_, _M_, _m_, active_dims, include_corners)  # update _M_ and _m_ with DMP
+    compute_theta(_q_, _qj_, _M_, _m_, _Mj_, _mj_, _theta_, eps)  # update _Mj_, _mj_, and _theta_
+
+    if detect_smooth_extrema:
+        if _alpha_ is None:
+            raise ValueError("_alpha_ must be provided if detect_smooth_extrema is True")
+        compute_alpha(_q_, _alpha_, active_dims)
+
+        if physical_admissibility_detection:
+            _physical_ = cp.ones_like(_alpha_[0]) if cupy else np.ones_like(_alpha_[0])
+            for i, (lb, ub) in PAD_bounds.items():
+                if ub is not None:
+                    _physical_ &= _Mj_[i] <= ub
+                if lb is not None:
+                    _physical_ &= _mj_[i] >= lb
+            _alpha_ *= _physical_
+        if cupy:
+            cp.maximum(_theta_, _alpha_, out=_theta_)
+        else:
+            np.maximum(_theta_, _alpha_, out=_theta_)
+
+    # apply limiter to face nodes
+    if _x_nodes_ is not None:
+        _x_nodes_[...] = _theta_[..., na] * (_x_nodes_ - _q_[..., na]) + _q_[..., na]
+    if _y_nodes_ is not None:
+        _y_nodes_[...] = _theta_[..., na] * (_y_nodes_ - _q_[..., na]) + _q_[..., na]
+    if _z_nodes_ is not None:
+        _z_nodes_[...] = _theta_[..., na] * (_z_nodes_ - _q_[..., na]) + _q_[..., na]

@@ -32,6 +32,7 @@ from .configs import (
 from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .finite_volume_driver import (
+    apply_zhang_shu_limiter,
     integrate_cell_averages,
     integrate_gauss_legendre_face_nodes,
     integrate_transverse_nodes,
@@ -173,7 +174,7 @@ class HydroSolver(ExplicitODESolver):
         # parse fallback scheme cascade since FV_SchemeParameters requires a fallback_cascade list
         null_SED = SmoothExtremaDetectionParameters(False)
         null_MUSCL = MUSCL_Parameters(False, MUSCL_SlopeLimiter.NONE, null_SED)
-        null_PAD = PhysicalAdmissibilityParameters(False, np.empty((0,)))
+        null_PAD = PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
         null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD)
         null_NAD = NumericalAdmissibilityParameters(False, 0.0, 0.0, null_SED)
         null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0)
@@ -227,12 +228,14 @@ class HydroSolver(ExplicitODESolver):
         # FV_SchemeParameters requires a PAD bounds array
         self._define_PAD_array(PAD_bounds)
 
-        SED_params = SmoothExtremaDetectionParameters(use_SED=use_SED, clip_zero_tol=clip_zero_tol)
-        PAD_params = PhysicalAdmissibilityParameters(
-            use_PAD=PAD_bounds is not None, PAD_bounds=self.arrays["PAD_bounds"]
+        SED_params = SmoothExtremaDetectionParameters(use_SED, clip_zero_tol)
+        PAD_params = (
+            PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
+            if PAD_bounds is None
+            else PhysicalAdmissibilityParameters(True, self.arrays["PAD_bounds"], PAD_bounds)
         )
         shock_detection_params = ShockDetectionParameters(
-            use_shock_detection=lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE, eta_max=eta_max
+            lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE, eta_max
         )
 
         fv_scheme_params = FV_SchemeParameters(
@@ -558,8 +561,6 @@ class HydroSolver(ExplicitODESolver):
 
         # define slope-limiting arrays
         arrays.add("_flux_jvp_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_M_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_m_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
@@ -571,13 +572,8 @@ class HydroSolver(ExplicitODESolver):
             arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
 
         # define Zhang-Shu limiter arrays
-        arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_, 1)))
+        arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_)))
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
-        arrays.add("_Mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_mj_", np.empty((nvars, _nx_, _ny_, _nz_)))
-
-        total_nodes = 1 + self.mesh.ndim * 2 * n_nodes
-        arrays.add("_wj_all_", np.empty((nvars, _nx_, _ny_, _nz_, total_nodes)))
 
         # define MOOD arrays
         for scheme in fv_scheme.mood_params.fallback_cascade:
@@ -802,7 +798,35 @@ class HydroSolver(ExplicitODESolver):
             _nodes_ = arrays[f"_{dim}_nodes_"]
             self.conservatives_to_primitives(_nodes_, _nodes_)
 
-    def _ensure_positive_nodes(self):
+    def zhang_shu_limiter(self, fv_scheme: FV_SchemeParameters):
+        flux_recipe = fv_scheme.flux_recipe
+        params = self.params
+        arrays = self.arrays
+
+        _q_ = arrays["_u_"] if flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
+        _qcc_ = arrays["_ucc_"] if flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_wcc_"]
+        _x_nodes_ = arrays["_x_nodes_"] if "x" in params.mesh.active_dims else None
+        _y_nodes_ = arrays["_y_nodes_"] if "y" in params.mesh.active_dims else None
+        _z_nodes_ = arrays["_z_nodes_"] if "z" in params.mesh.active_dims else None
+        _theta_ = arrays["_theta_"]
+        _alpha_ = arrays["_alpha_"]
+
+        apply_zhang_shu_limiter(
+            _q_,
+            _qcc_[..., 0],
+            _theta_,
+            fv_scheme.zhang_shu_params.theta_denom_tol,
+            fv_scheme.zhang_shu_params.include_corners,
+            fv_scheme.zhang_shu_params.SED_params.use_SED,
+            fv_scheme.zhang_shu_params.PAD_params.use_PAD,
+            _x_nodes_,
+            _y_nodes_,
+            _z_nodes_,
+            _alpha_,
+            fv_scheme.zhang_shu_params.PAD_params.PAD_dict,
+        )
+
+    def _ensure_positive_nodes(self, fv_scheme: FV_SchemeParameters):
         params = self.params
         idx = params.variable_index_map
         arrays = self.arrays
@@ -938,12 +962,12 @@ class HydroSolver(ExplicitODESolver):
 
         # slope limiting goes here
         if fv_scheme.zhang_shu_params.use_ZS:
-            raise NotImplementedError("Zhang-Shu limiter not implemented yet.")
+            self.zhang_shu_limiter(fv_scheme)
 
         if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             self._convert_nodes_to_primitives()
 
-        self._ensure_positive_nodes()
+        self._ensure_positive_nodes(fv_scheme)
         for dim in params.mesh.active_dims:
             _fnodes_ = arrays[{"x": "_f_nodes_", "y": "_g_nodes_", "z": "_h_nodes_"}[dim]]
             _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
