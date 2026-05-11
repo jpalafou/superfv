@@ -1,3 +1,4 @@
+import time
 import warnings
 from dataclasses import asdict
 from enum import Enum
@@ -46,6 +47,7 @@ from .riemann_solvers import hllc
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
+from .tools.step_history import StepHistory, StepSummary, SubstepSummary
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
@@ -147,6 +149,7 @@ class HydroSolver:
         self.mesh: UniformFVMesh
         self.xp: ModuleType
         self.t: float
+        self.step_history: StepHistory
 
         # These are pretty straightforward
         self.arrays = ArrayManager()
@@ -317,7 +320,7 @@ class HydroSolver:
         self._build_mesh()  # defines self.mesh
         self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
-        self._set_up_timestepping()  # defines self.t
+        self._init_step_history()  # defines self.t and self.step_history
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -550,8 +553,25 @@ class HydroSolver:
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
-    def _set_up_timestepping(self):
+    def _init_step_history(self):
+        idx = self.params.variable_index_map
+
+        u = self.arrays["u"]  # this should be the initial condition array at this point
+
         self.t = 0.0
+        self.step_history = StepHistory(
+            steps=[
+                StepSummary(
+                    step=0,
+                    t_sim=self.t,
+                    t_wall=time.time(),
+                    n_dt_revisions=0,
+                    rho_min=self.xp.min(u[idx("rho")]).item(),
+                    E_total=self.xp.sum(u[idx("rho")]).item(),
+                    substeps=[],
+                )
+            ]
+        )
 
     # Helper functions
 
@@ -1042,6 +1062,41 @@ class HydroSolver:
 
         return dudt
 
+    def _summarize_substep(self):
+        current_step = self.step_history[-1]
+
+        current_step.substeps.append(
+            SubstepSummary(
+                substep=current_step.substeps[-1].substep + 1 if current_step.substeps else 1,
+                t_wall=time.time(),
+            )
+        )
+
+    def _summarize_step(self):
+        idx = self.params.variable_index_map
+        current_step = self.step_history[-1]
+        n = current_step.step
+
+        u = self.arrays["u"]
+
+        current_step.t_sim = self.t
+        current_step.t_wall = time.time()
+        current_step.rho_min = self.xp.min(u[idx("rho")]).item()
+        current_step.E_total = self.xp.sum(u[idx("E")]).item()
+
+        # init next step summary
+        self.step_history.append(
+            StepSummary(
+                step=n + 1,
+                t_sim=np.nan,
+                t_wall=np.nan,
+                n_dt_revisions=0,
+                rho_min=np.nan,
+                E_total=np.nan,
+                substeps=[],
+            )
+        )
+
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
         arrays = self.arrays
 
@@ -1050,6 +1105,7 @@ class HydroSolver:
         match time_integrator:
             case TimeIntegrator.FORWARD_EULER:
                 unew[...] = u + self.f(t, u, dt) * dt
+                self._summarize_substep()
                 return
             case TimeIntegrator.SSPRK2:
                 k0 = self.xp.empty_like(u)
@@ -1057,9 +1113,11 @@ class HydroSolver:
 
                 k0[...] = self.f(t, u, dt)
                 unew[...] = u + dt * k0
+                self._summarize_substep()
 
                 k1[...] = self.f(t + dt, unew, dt)
                 unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
+                self._summarize_substep()
                 return
             case TimeIntegrator.SSPRK3:
                 k0 = self.xp.empty_like(u)
@@ -1068,11 +1126,14 @@ class HydroSolver:
 
                 k0[...] = self.f(t, u, dt)
                 unew[...] = u + dt * k0
+                self._summarize_substep()
 
                 k1[...] = self.f(t + dt, unew, dt)
+                self._summarize_substep()
 
                 k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)
                 unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+                self._summarize_substep()
                 return
             case TimeIntegrator.RK4:
                 k0 = self.xp.empty_like(u)
@@ -1081,11 +1142,17 @@ class HydroSolver:
                 k3 = self.xp.empty_like(u)
 
                 k0[...] = self.f(t, u, dt)
-                k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)
-                k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)
-                k3[...] = self.f(t + dt, u + dt * k2, dt)
+                self._summarize_substep()
 
+                k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)
+                self._summarize_substep()
+
+                k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)
+                self._summarize_substep()
+
+                k3[...] = self.f(t + dt, u + dt * k2, dt)
                 unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
+                self._summarize_substep()
                 return
             case _:
                 raise ValueError(f"Unsupported time integrator: {time_integrator}")
@@ -1113,6 +1180,7 @@ class HydroSolver:
         # Update the state
         u[...] = unew
         self.t = tnew
+        self._summarize_step()
 
     def take_n_steps(self, n: int, time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3):
         for i in range(n):
