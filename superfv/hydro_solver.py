@@ -1,5 +1,6 @@
 import warnings
 from dataclasses import asdict
+from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
@@ -29,7 +30,6 @@ from .configs import (
     SolverParams,
     ZhangShuParameters,
 )
-from .explicit_ODE_solver import ExplicitODESolver
 from .field import MultivarField, UnivarField
 from .finite_volume_driver import (
     apply_zhang_shu_limiter,
@@ -58,7 +58,14 @@ if CUPY_AVAILABLE:
     from .riemann_solvers import make_hllc_elementwise_kernel
 
 
-class HydroSolver(ExplicitODESolver):
+class TimeIntegrator(Enum):
+    FORWARD_EULER = 0
+    SSPRK2 = 1
+    SSPRK3 = 2
+    RK4 = 3
+
+
+class HydroSolver:
 
     # Initialization methods
 
@@ -139,10 +146,13 @@ class HydroSolver(ExplicitODESolver):
         self.u0_func: MultivarField
         self.mesh: UniformFVMesh
         self.xp: ModuleType
+        self.t: float
 
+        # These are pretty straightforward
         self.arrays = ArrayManager()
         self.mesh_arrays = ArrayManager()
 
+        # self.params requires many sub-parameters to be defined
         ic_params = InitialConditionParameters(
             ic=ic,
             passive_ics={} if passive_ics is None else passive_ics,
@@ -171,7 +181,7 @@ class HydroSolver(ExplicitODESolver):
             iso_cs=iso_cs,
         )
 
-        # parse fallback scheme cascade since FV_SchemeParameters requires a fallback_cascade list
+        # Such as the fallback scheme cascade
         null_SED = SmoothExtremaDetectionParameters(False)
         null_MUSCL = MUSCL_Parameters(False, MUSCL_SlopeLimiter.NONE, null_SED)
         null_PAD = PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
@@ -225,7 +235,7 @@ class HydroSolver(ExplicitODESolver):
                 )
             )
 
-        # FV_SchemeParameters requires a PAD bounds array
+        # And a PAD bound array
         self._define_PAD_array(PAD_bounds)
 
         SED_params = SmoothExtremaDetectionParameters(use_SED, clip_zero_tol)
@@ -289,6 +299,7 @@ class HydroSolver(ExplicitODESolver):
             ndim=len(self._compute_active_dims(nx, ny, nz)),
         )
 
+        # At last, we can define self.params
         self.params = SolverParams(
             hydro=hydro_params,
             ic=ic_params,
@@ -300,13 +311,13 @@ class HydroSolver(ExplicitODESolver):
             sync_timer=sync_timer,
         )
 
-        self._build_interior_slice()
-        self._build_conservative_ic_u0_func()
+        self._build_interior_slice()  # defines self.interior
+        self._build_conservative_ic_u0_func()  # defines self.u0_func
         self._enable_ic_bc_or_none_if_inactive()
-        self._build_mesh()
-        self._init_cupy(cupy, CUPY_AVAILABLE)
-        self._compute_ic_array_and_initialize_ODE_solver()
+        self._build_mesh()  # defines self.mesh
+        self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
+        self._set_up_timestepping()  # defines self.t
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -345,6 +356,13 @@ class HydroSolver(ExplicitODESolver):
 
         return idx
 
+    def _build_interior_slice(self):
+        active_dims = self.params.mesh.active_dims
+        nghost = self.params.mesh.nghost
+        self.interior = merge_slices(
+            *[crop({"x": 1, "y": 2, "z": 3}[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
+        )
+
     def _primitive_ic_w0_func(self) -> MultivarField:
         ic_params = self.params.ic
 
@@ -364,13 +382,6 @@ class HydroSolver(ExplicitODESolver):
             return out
 
         return w0_func
-
-    def _build_interior_slice(self):
-        active_dims = self.params.mesh.active_dims
-        nghost = self.params.mesh.nghost
-        self.interior = merge_slices(
-            *[crop({"x": 1, "y": 2, "z": 3}[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
-        )
 
     def _build_conservative_ic_u0_func(self):
 
@@ -455,13 +466,12 @@ class HydroSolver(ExplicitODESolver):
         else:
             self.xp = np
 
-    def _compute_ic_array_and_initialize_ODE_solver(self):
+    def _compute_ic_array(self) -> ArrayLike:
         params = self.params
         idx = params.variable_index_map
         nvars = idx.nvars
         mesh = self.mesh
         nx, ny, nz = mesh.shape
-        arrays = self.arrays
 
         u0 = self.xp.empty((nvars, nx, ny, nz))
         if params.fv_scheme.p > 1:
@@ -475,16 +485,7 @@ class HydroSolver(ExplicitODESolver):
         else:
             u0[...] = self.u0_func(idx, *mesh.get_cell_centers(), 0.0, xp=self.xp)
 
-        ExplicitODESolver.__init__(self, u0, arrays, params.hydro.dt_min)  # adds "u0" to arrays
-
-    def _compute_nnodes_per_face(self, fv_scheme: FV_SchemeParameters) -> int:
-        ndim = self.mesh.ndim
-        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
-
-        if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-            return n_gauss_legendre ** (ndim - 1)
-        else:
-            return 1
+        return u0
 
     def _allocate_arrays(self):
         nvars = self.params.variable_index_map.nvars
@@ -496,7 +497,8 @@ class HydroSolver(ExplicitODESolver):
         arrays = self.arrays
 
         # define cell-centered/cell-averaged arrays
-        arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
+        arrays.add("u", self._compute_ic_array())
+        arrays.add("unew", np.empty((nvars, nx, ny, nz)))
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_)))
@@ -547,6 +549,9 @@ class HydroSolver(ExplicitODESolver):
         arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
+
+    def _set_up_timestepping(self):
+        self.t = 0.0
 
     # Helper functions
 
@@ -739,6 +744,15 @@ class HydroSolver(ExplicitODESolver):
         # ensure density is always transformed in the lazy way
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
+
+    def _compute_nnodes_per_face(self, fv_scheme: FV_SchemeParameters) -> int:
+        ndim = self.mesh.ndim
+        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
+
+        if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+            return n_gauss_legendre ** (ndim - 1)
+        else:
+            return 1
 
     def _prepare_interpolation_arrays(
         self, dim: Literal["x", "y", "z"], fv_scheme: FV_SchemeParameters
@@ -1004,7 +1018,7 @@ class HydroSolver(ExplicitODESolver):
 
     # ODE solver functions
 
-    def f(self, t: float, u: ArrayLike) -> ArrayLike:
+    def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         base_scheme = self.params.fv_scheme
         active_dims = self.params.mesh.active_dims
         hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
@@ -1028,6 +1042,100 @@ class HydroSolver(ExplicitODESolver):
 
         return dudt
 
+    def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
+        arrays = self.arrays
+
+        unew = arrays["unew"]
+
+        match time_integrator:
+            case TimeIntegrator.FORWARD_EULER:
+                unew[...] = u + self.f(t, u, dt) * dt
+                return
+            case TimeIntegrator.SSPRK2:
+                k0 = self.xp.empty_like(u)
+                k1 = self.xp.empty_like(u)
+
+                k0[...] = self.f(t, u, dt)
+                unew[...] = u + dt * k0
+
+                k1[...] = self.f(t + dt, unew, dt)
+                unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
+                return
+            case TimeIntegrator.SSPRK3:
+                k0 = self.xp.empty_like(u)
+                k1 = self.xp.empty_like(u)
+                k2 = self.xp.empty_like(u)
+
+                k0[...] = self.f(t, u, dt)
+                unew[...] = u + dt * k0
+
+                k1[...] = self.f(t + dt, unew, dt)
+
+                k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)
+                unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+                return
+            case TimeIntegrator.RK4:
+                k0 = self.xp.empty_like(u)
+                k1 = self.xp.empty_like(u)
+                k2 = self.xp.empty_like(u)
+                k3 = self.xp.empty_like(u)
+
+                k0[...] = self.f(t, u, dt)
+                k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)
+                k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)
+                k3[...] = self.f(t + dt, u + dt * k2, dt)
+
+                unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
+                return
+            case _:
+                raise ValueError(f"Unsupported time integrator: {time_integrator}")
+
+    def _take_step(self, time_integrator: TimeIntegrator, dt_min: Optional[float] = None):
+        """
+        Update "u" and self.t by taking a single step in time with the specified time integrator
+        and optional minimum dt constraint.
+        """
+        arrays = self.arrays
+        t = self.t
+
+        u = arrays["u"]
+        unew = arrays["unew"]
+
+        # Compute dt which may need to be clipped
+        dt = self.compute_dt(t, u)
+        if dt_min is not None:
+            dt = min(dt, dt_min)
+
+        # Compute new state
+        self._update_unew(t, u, dt, time_integrator)
+        tnew = t + dt
+
+        # Update the state
+        u[...] = unew
+        self.t = tnew
+
+    def take_n_steps(self, n: int, time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3):
+        for i in range(n):
+            self._take_step(time_integtrator)
+
+    def run(
+        self, t: Union[float, List[float]], time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3
+    ):
+        if not isinstance(t, list):
+            target_times = [t]
+        else:
+            if t != sorted(set(t)):
+                raise ValueError("Target times must be given in sorted order without duplicates.")
+            target_times = t
+
+        if any(targets < 0 for targets in target_times):
+            raise ValueError("Target times must be non-negative.")
+
+        while target_times:
+            self._take_step(time_integrator, dt_min=target_times[0] - self.t)
+            if self.t >= target_times[0]:
+                target_times.pop(0)
+
     def build_opening_message(self) -> str:
         return "dummy opening message"
 
@@ -1040,33 +1148,3 @@ class HydroSolver(ExplicitODESolver):
     def prepare_snapshot_data(self) -> Any:
         warnings.warn("Using dummy snapshot data")
         return None
-
-    def run(
-        self,
-        T: Optional[Union[float, List[float]]] = None,
-        n: Optional[int] = None,
-        snapshot_mode: Literal["target", "none", "every"] = "target",
-        allow_overshoot: bool = False,
-        verbose: bool = True,
-        log_freq: int = 100,
-        max_steps: Optional[int] = None,
-        path: Optional[str] = None,
-        overwrite: bool = False,
-        discard: bool = True,
-        q_max: int = 2,
-        time_degree: Optional[int] = None,
-        muscl_hancock: bool = True,
-        reduce_CFL: bool = False,
-    ):
-        self.ssprk3(
-            T,
-            n,
-            snapshot_mode,
-            allow_overshoot,
-            verbose,
-            log_freq,
-            max_steps,
-            path,
-            overwrite,
-            discard,
-        )
