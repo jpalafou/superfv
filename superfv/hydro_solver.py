@@ -505,71 +505,43 @@ class HydroSolver(ExplicitODESolver):
         nx, ny, nz = mesh.shape
         _nx_, _ny_, _nz_ = mesh._shape_
         active_dims = mesh.active_dims
-        ndim = mesh.ndim
         arrays = self.arrays
 
-        n_lines = self._compute_ninterps_per_face(fv_scheme, "lines")
         n_nodes = self._compute_ninterps_per_face(fv_scheme, "nodes")
 
         # define cell-centered/cell-averaged arrays
         arrays.add("dudt", np.empty((nvars, nx, ny, nz)))
         arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_wp_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        arrays.add("_w1_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_w1_", np.empty((nvars, _nx_, _ny_, _nz_)))
 
         # define arrays associated faces along the x-direction
         if "x" in active_dims:
             arrays.add("_x_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
             arrays.add("_f_nodes_", np.empty((nvars, nx + 1, _ny_, _nz_, n_nodes)))
-            arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_, 1)))
+            arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_)))
             arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
-            if ndim == 3:
-                arrays.add("_f_lines_", np.empty((nvars, nx + 1, _ny_, _nz_, n_lines)))
 
         # define arrays associated with faces along the y-direction
         if "y" in active_dims:
             arrays.add("_y_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
             arrays.add("_g_nodes_", np.empty((nvars, _nx_, ny + 1, _nz_, n_nodes)))
-            arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_, 1)))
+            arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_)))
             arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
-            if ndim == 3:
-                arrays.add("_g_lines_", np.empty((nvars, _nx_, ny + 1, _nz_, n_lines)))
 
         # define arrays associated with faces along the z-direction
         if "z" in active_dims:
             arrays.add("_z_nodes_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * n_nodes)))
             arrays.add("_h_nodes_", np.empty((nvars, _nx_, _ny_, nz + 1, n_nodes)))
-            arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1, 1)))
+            arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1)))
             arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
-            if ndim == 3:
-                arrays.add("_h_lines_", np.empty((nvars, _nx_, _ny_, nz + 1, n_lines)))
-
-        # define buffer and interpolation arrays
-        arrays.add("_buffer1_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        if ndim >= 2:
-            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-                arrays.add("_faces_", np.empty((nvars, _nx_, _ny_, _nz_, 2)))
-            arrays.add("_midline_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
-        if ndim == 3:
-            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-                ngl = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
-                arrays.add("_lines_", np.empty((nvars, _nx_, _ny_, _nz_, 2 * ngl)))
-            arrays.add("_midface_", np.empty((nvars, _nx_, _ny_, _nz_, 1)))
 
         # define slope-limiting arrays
-        arrays.add("_flux_jvp_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-        if "x" in active_dims:
-            arrays.add("_xslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
-        if "y" in active_dims:
-            arrays.add("_yslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
-        if "z" in active_dims:
-            arrays.add("_zslopes_", np.zeros((nvars, _nx_, _ny_, _nz_)))
 
         # define Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_)))
@@ -584,8 +556,7 @@ class HydroSolver(ExplicitODESolver):
             if "z" in active_dims:
                 arrays.add("H_" + scheme.name, np.empty((nvars, nx, ny, nz + 1)))
 
-        arrays.add("_unew_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_wnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_qnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_NAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_PAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
@@ -752,26 +723,21 @@ class HydroSolver(ExplicitODESolver):
     ):
         idx = self.params.variable_index_map
         active_dims = self.mesh.active_dims
-        ndim = self.mesh.ndim
-        na = self.xp.newaxis
         arrays = self.arrays
 
         # allocate arrays
         _u_ = arrays["_u_"]
-        _ucc_ = arrays["_ucc_"]  # shape (..., 1)
-        _wcc_ = arrays["_wcc_"]  # shape (..., 1)
-        _wp_ = arrays["_wp_"]  # shape (..., 1)
-        _w1_ = arrays["_w1_"]
+        _ucc_ = arrays["_ucc_"]
+        _wcc_ = arrays["_wcc_"]
         _w_ = arrays["_w_"]
-        _temp1_ = arrays["_midline_"] if ndim >= 2 else None  # shape (..., 1) or None
-        _temp2_ = arrays["_midface_"] if ndim == 3 else None  # shape (..., 1) or None
+        _w1_ = arrays["_w1_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
         self.apply_bc(_u_, t, fv_scheme.p)
 
         # 1) conservative and primitive centroids
-        interpolate_cell_centers(_u_[..., na], _ucc_, active_dims, fv_scheme.p, _temp1_, _temp2_)
+        interpolate_cell_centers(_u_, _ucc_, active_dims, fv_scheme.p)
         self.conservatives_to_primitives(_ucc_, _wcc_)
 
         # 2) primitive FV averages
@@ -779,8 +745,7 @@ class HydroSolver(ExplicitODESolver):
 
         match fv_scheme.lazy_primitive_mode:
             case LazyPrimitiveMode.NONE:
-                integrate_cell_averages(_wcc_, _wp_, active_dims, fv_scheme.p, _temp1_, _temp2_)
-                _w_[...] = _wp_[..., 0]
+                integrate_cell_averages(_wcc_, _w_, active_dims, fv_scheme.p)
             case LazyPrimitiveMode.FULL:
                 _w_[...] = _w1_
             case LazyPrimitiveMode.ADAPTIVE:
@@ -813,7 +778,7 @@ class HydroSolver(ExplicitODESolver):
 
         apply_zhang_shu_limiter(
             _q_,
-            _qcc_[..., 0],
+            _qcc_,
             _theta_,
             fv_scheme.zhang_shu_params.theta_denom_tol,
             fv_scheme.zhang_shu_params.include_corners,
@@ -930,31 +895,25 @@ class HydroSolver(ExplicitODESolver):
                     for d, axis in zip(["x", "y", "z"], [1, 2, 3])
                     if d in params.mesh.active_dims and d != dim
                 ],
-                (slice(None), slice(None), slice(None), slice(None), 0),
             )
             Fluxes[...] = _Fluxes_[interior]
 
     def update_fluxes(self, fv_scheme: FV_SchemeParameters):
         params = self.params
         active_dims = params.mesh.active_dims
-        na = self.xp.newaxis
         arrays = self.arrays
 
         _q_ = arrays["_w_"] if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else arrays["_u_"]
-        _qtemp1_ = arrays["_faces_"] if params.mesh.ndim >= 2 else None
-        _qtemp2_ = arrays["_lines_"] if params.mesh.ndim == 3 else None
 
         for dim in params.mesh.active_dims:
             _nodes_ = arrays[f"_{dim}_nodes_"]
             interpolate_face_nodes(
-                _q_[..., na],
+                _q_,
                 _nodes_,
                 dim,
                 active_dims,
                 fv_scheme.p,
                 fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
-                _qtemp1_,
-                _qtemp2_,
             )
 
         if fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:

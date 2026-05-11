@@ -56,34 +56,36 @@ def interpolate_cell_centers(
     _qcc_: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
-    _qtemp1_: Optional[ArrayLike] = None,
-    _qtemp2_: Optional[ArrayLike] = None,
 ):
     """
     Interpolate finite volume cell centers from `_q_` and write them to `_qcc_`.
     """
-    ndim = len(active_dims)
-
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
     weights = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER, p, cupy)
+    na = cp.newaxis if cupy else np.newaxis
+    ndim = len(active_dims)
+
+    if _q_.ndim != 4:
+        raise ValueError("_q_ must be 4D.")
+    if _q_.shape != _qcc_.shape:
+        raise ValueError("_q_ and _qcc_ must have the same shape.")
 
     if ndim == 1:
-        stencil_sweep(_q_, weights, _qcc_, active_dims[0])
+        stencil_sweep(_q_[..., na], weights, _qcc_[..., na], active_dims[0])
         return
     elif ndim == 2:
-        if _qtemp1_ is None:
-            raise ValueError("_qtemp1_ must be provided for 2D interpolation")
-        stencil_sweep(_q_, weights, _qtemp1_, active_dims[0])
-        stencil_sweep(_qtemp1_, weights, _qcc_, active_dims[1])
+        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+
+        stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
+        stencil_sweep(_qtemp1_, weights[..., na], _qcc_[..., na], active_dims[1])
         return
     elif ndim == 3:
-        if _qtemp1_ is None:
-            raise ValueError("_qtemp1_ must be provided for 3D interpolation")
-        if _qtemp2_ is None:
-            raise ValueError("_qtemp2_ must be provided for 3D interpolation")
-        stencil_sweep(_q_, weights, _qtemp1_, active_dims[0])
+        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+        _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+
+        stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qtemp2_, active_dims[1])
-        stencil_sweep(_qtemp2_, weights, _qcc_, active_dims[2])
+        stencil_sweep(_qtemp2_, weights, _qcc_[..., na], active_dims[2])
         return
 
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
@@ -94,34 +96,36 @@ def integrate_cell_averages(
     _q_: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
-    _qtemp1_: Optional[ArrayLike] = None,
-    _qtemp2_: Optional[ArrayLike] = None,
 ):
     """
     Interpolate finite volume cell averages from `_qcc_` and write them to `_q_`.
     """
-    ndim = len(active_dims)
-
     cupy = CUPY_AVAILABLE and isinstance(_qcc_, cp.ndarray)
     weights = _stencil_cache(FV_Stencil.TRANSVERSE_INTEGRATION, p, cupy)
+    na = cp.newaxis if cupy else np.newaxis
+    ndim = len(active_dims)
+
+    if _qcc_.ndim != 4:
+        raise ValueError("_qcc_ must be 4D.")
+    if _qcc_.shape != _q_.shape:
+        raise ValueError("_qcc_ and _q_ must have the same shape.")
 
     if ndim == 1:
-        stencil_sweep(_qcc_, weights, _q_, active_dims[0])
+        stencil_sweep(_qcc_[..., na], weights, _q_[..., na], active_dims[0])
         return
     elif ndim == 2:
-        if _qtemp1_ is None:
-            raise ValueError("_qtemp1_ must be provided for 2D interpolation")
-        stencil_sweep(_qcc_, weights, _qtemp1_, active_dims[0])
-        stencil_sweep(_qtemp1_, weights, _q_, active_dims[1])
+        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+
+        stencil_sweep(_qcc_[..., na], weights, _qtemp1_, active_dims[0])
+        stencil_sweep(_qtemp1_, weights, _q_[..., na], active_dims[1])
         return
     elif ndim == 3:
-        if _qtemp1_ is None:
-            raise ValueError("_qtemp1_ must be provided for 3D interpolation")
-        if _qtemp2_ is None:
-            raise ValueError("_qtemp2_ must be provided for 3D interpolation")
-        stencil_sweep(_qcc_, weights, _qtemp1_, active_dims[0])
+        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+        _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+
+        stencil_sweep(_qcc_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qtemp2_, active_dims[1])
-        stencil_sweep(_qtemp2_, weights, _q_, active_dims[2])
+        stencil_sweep(_qtemp2_, weights, _q_[..., na], active_dims[2])
         return
 
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
@@ -134,61 +138,85 @@ def interpolate_face_nodes(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     gauss_legendre: bool = False,
-    _qtemp1_: Optional[ArrayLike] = None,
-    _qtemp2_: Optional[ArrayLike] = None,
 ):
+    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    lr_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT, p, cupy)
+    na = cp.newaxis if cupy else np.newaxis
     ndim = len(active_dims)
+
     if dim not in active_dims:
         raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
+    if _q_.ndim != 4:
+        raise ValueError("_q_ must be 4D.")
+    if _q_.shape[:4] != _qj_.shape[:4]:
+        raise ValueError("The first 4 dimensions of _q_ and _qj_ must match.")
 
-    cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
-    lr_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT, p, cupy)
+    base_shape = _q_.shape
 
     if ndim == 1:
         if gauss_legendre:
             raise ValueError("No Gauss-Legendre face nodes in 1D.")
-        stencil_sweep(_q_, lr_stencil, _qj_, dim)
+        if _qj_.shape[4] != 2:
+            raise ValueError("The 5th dimension of _qj_ must be 2 for 1D interpolation.")
+        stencil_sweep(_q_[..., na], lr_stencil, _qj_, dim)
         return
 
     if gauss_legendre:
         gl_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE, p, cupy)
+        ngl = gl_stencil.shape[0]
+
         if ndim == 2:
-            if _qtemp1_ is None:
-                raise ValueError("_qtemp1_ must be provided for 2D interpolation")
+            if _qj_.shape[4] != 2 * ngl:
+                raise ValueError(
+                    "The 5th dimension of _qj_ must be 2 two times the number of GL nodes."
+                )
+
+            _qtemp1_ = cp.empty((*base_shape, 2)) if cupy else np.empty((*base_shape, 2))
+
             trans_dim = [d for d in active_dims if d != dim][0]
-            stencil_sweep(_q_, lr_stencil, _qtemp1_, dim)
+            stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
             stencil_sweep(_qtemp1_, gl_stencil, _qj_, trans_dim)
             return
         elif ndim == 3:
-            if _qtemp1_ is None:
-                raise ValueError("_qtemp1_ must be provided for 3D interpolation")
-            if _qtemp2_ is None:
-                raise ValueError("_qtemp2_ must be provided for 3D interpolation")
+            if _qj_.shape[4] != 2 * ngl**2:
+                raise ValueError(
+                    "The 5th dimension of _qj_ must be 2 two times the number of GL nodes squared."
+                )
+
+            _qtemp1_ = cp.empty((*base_shape, 2)) if cupy else np.empty((*base_shape, 2))
+            _qtemp2_ = (
+                cp.empty((*base_shape, 2 * ngl)) if cupy else np.empty((*base_shape, 2 * ngl))
+            )
+
             trans_dims = [d for d in active_dims if d != dim]
             trans_dim1 = trans_dims[0]
             trans_dim2 = trans_dims[1]
-            stencil_sweep(_q_, lr_stencil, _qtemp1_, dim)
+            stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
             stencil_sweep(_qtemp1_, gl_stencil, _qtemp2_, trans_dim1)
             stencil_sweep(_qtemp2_, gl_stencil, _qj_, trans_dim2)
             return
     else:
         cc_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER, p, cupy)
+        if _qj_.shape[4] != 2:
+            raise ValueError(
+                "The 5th dimension of _qj_ must be 2 for transverse integration in 2D or 3D."
+            )
+
         if ndim == 2:
-            if _qtemp1_ is None:
-                raise ValueError("_qtemp1_ must be provided for 2D interpolation")
+            _qtemp1_ = cp.empty(_q_[..., na]) if cupy else np.empty(_q_[..., na])
+
             trans_dim = [d for d in active_dims if d != dim][0]
-            stencil_sweep(_q_, cc_stencil, _qtemp1_, trans_dim)
+            stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim)
             stencil_sweep(_qtemp1_, lr_stencil, _qj_, dim)
             return
         elif ndim == 3:
-            if _qtemp1_ is None:
-                raise ValueError("_qtemp1_ must be provided for 3D interpolation")
-            if _qtemp2_ is None:
-                raise ValueError("_qtemp2_ must be provided for 3D interpolation")
+            _qtemp1_ = cp.empty(_q_[..., na]) if cupy else np.empty(_q_[..., na])
+            _qtemp2_ = cp.empty(_q_[..., na]) if cupy else np.empty(_q_[..., na])
+
             trans_dims = [d for d in active_dims if d != dim]
             trans_dim1 = trans_dims[0]
             trans_dim2 = trans_dims[1]
-            stencil_sweep(_q_, cc_stencil, _qtemp1_, trans_dim2)
+            stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim2)
             stencil_sweep(_qtemp1_, cc_stencil, _qtemp2_, trans_dim1)
             stencil_sweep(_qtemp2_, lr_stencil, _qj_, dim)
             return
@@ -203,14 +231,20 @@ def integrate_gauss_legendre_face_nodes(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
 ):
+    cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
     ndim = len(active_dims)
+    weights = _gauss_legendre_weights_cache(p, ndim, cupy)
+
     if ndim == 1:
         raise ValueError("No Gauss-Legendre face nodes in 1D.")
     if dim not in active_dims:
         raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
-
-    cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
-    weights = _gauss_legendre_weights_cache(p, ndim, cupy)
+    if _qj_.ndim != 5:
+        raise ValueError("_qj_ must be 5D.")
+    if _qF_.ndim != 4:
+        raise ValueError("_qF_ must be 4D.")
+    if _qj_.shape[:4] != _qF_.shape[:4]:
+        raise ValueError("The first 4 dimensions of _qj_ and _qF_ must match.")
 
     perform_quadrature(_qj_, weights, _qF_)
 
@@ -221,29 +255,33 @@ def integrate_transverse_nodes(
     dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
-    _qtemp_: Optional[ArrayLike] = None,
 ):
-    ndim = len(active_dims)
-    if dim not in active_dims:
-        raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
-
     cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
     stencil = _stencil_cache(FV_Stencil.TRANSVERSE_INTEGRATION, p, cupy)
+    na = cp.newaxis if cupy else np.newaxis
+    ndim = len(active_dims)
+
+    if dim not in active_dims:
+        raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
+    if _qj_.ndim != 4:
+        raise ValueError("_qj_ must be 4D.")
+    if _qF_.shape != _qj_.shape:
+        raise ValueError("_qF_ and _qj_ must have the same shape.")
 
     if ndim == 1:
         raise ValueError("Cannot integrate transverse face nodes in 1D.")
     if ndim == 2:
         trans_dim = [d for d in active_dims if d != dim][0]
-        stencil_sweep(_qj_, stencil, _qF_, trans_dim)
+        stencil_sweep(_qj_[..., na], stencil, _qF_[..., na], trans_dim)
         return
     elif ndim == 3:
-        if _qtemp_ is None:
-            raise ValueError("_qtemp_ must be provided for 3D transverse integration")
+        _qtemp_ = cp.empty_like(_qj_[..., na]) if cupy else np.empty_like(_qj_[..., na])
+
         trans_dims = [d for d in active_dims if d != dim]
         trans_dim1 = trans_dims[0]
         trans_dim2 = trans_dims[1]
-        stencil_sweep(_qj_, stencil, _qtemp_, trans_dim1)
-        stencil_sweep(_qtemp_, stencil, _qF_, trans_dim2)
+        stencil_sweep(_qj_[..., na], stencil, _qtemp_, trans_dim1)
+        stencil_sweep(_qtemp_, stencil, _qF_[..., na], trans_dim2)
         return
 
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
@@ -270,6 +308,15 @@ def apply_zhang_shu_limiter(
         for d, nodes in zip(["x", "y", "z"], [_x_nodes_, _y_nodes_, _z_nodes_])
         if nodes is not None
     )
+
+    if _q_.ndim != 4:
+        raise ValueError("_q_ must be 4D.")
+    if _q_.shape != _qcc_.shape:
+        raise ValueError("_q_ and _qcc_ must have the same shape.")
+    if _theta_.shape != _q_.shape:
+        raise ValueError("_theta_ must have the same shape as _q_.")
+    if _alpha_ is not None and _alpha_.shape != _q_.shape:
+        raise ValueError("_alpha_ must have the same shape as _q_.")
 
     # allocate arrays
     _qj_shape_ = _q_.shape[:4] + (
