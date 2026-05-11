@@ -1218,6 +1218,10 @@ class HydroSolver:
 
         # Compute dt which may need to be clipped
         dt = self.compute_dt(t, u)
+        if dt < self.params.hydro.dt_min:
+            raise RuntimeError(
+                f"Computed dt={dt} is smaller than the minimum allowed={self.params.hydro.dt_min}."
+            )
         if dt_min is not None:
             dt = min(dt, dt_min)
 
