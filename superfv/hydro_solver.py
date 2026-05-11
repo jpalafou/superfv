@@ -701,6 +701,10 @@ class HydroSolver(ExplicitODESolver):
     def update_cell_centers_and_primitive_cell_averages(
         self, t: float, u: ArrayLike, fv_scheme: FV_SchemeParameters
     ):
+        """
+        Update the cell averaged / cell centered values "_u_", "_ucc_", "_wcc_", and/or "_w_"
+        based on time t, conservatives u, and the specified fv_scheme.
+        """
         idx = self.params.variable_index_map
         active_dims = self.mesh.active_dims
         arrays = self.arrays
@@ -735,11 +739,9 @@ class HydroSolver(ExplicitODESolver):
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
 
-    def _prepare_interpolation_arrays(self, fv_scheme: FV_SchemeParameters) -> Tuple[
-        Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
-        Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
-        Tuple[Optional[ArrayLike], Optional[ArrayLike], Optional[ArrayLike]],
-    ]:
+    def _prepare_interpolation_arrays(
+        self, dim: Literal["x", "y", "z"], fv_scheme: FV_SchemeParameters
+    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         params = self.params
         active_dims = params.mesh.active_dims
         nvars = params.variable_index_map.nvars
@@ -747,38 +749,29 @@ class HydroSolver(ExplicitODESolver):
         _nx_, _ny_, _nz_ = self.mesh._shape_
         nnodes = self._compute_nnodes_per_face(fv_scheme)
 
-        if "x" in active_dims:
+        if dim not in active_dims:
+            raise ValueError(f"Dimension '{dim}' is not active.")
+
+        if dim == "x":
             _x_nodes_ = self.xp.empty((nvars, _nx_, _ny_, _nz_, 2 * nnodes))
             _f_nodes_ = self.xp.empty((nvars, nx + 1, _ny_, _nz_, nnodes))
             _F_integral_ = self.xp.empty((nvars, nx + 1, _ny_, _nz_))
-        else:
-            _x_nodes_ = None
-            _f_nodes_ = None
-            _F_integral_ = None
 
-        if "y" in active_dims:
+            return _x_nodes_, _f_nodes_, _F_integral_
+
+        if dim == "y":
             _y_nodes_ = self.xp.empty((nvars, _nx_, _ny_, _nz_, 2 * nnodes))
             _g_nodes_ = self.xp.empty((nvars, _nx_, ny + 1, _nz_, nnodes))
             _G_integral_ = self.xp.empty((nvars, _nx_, ny + 1, _nz_))
-        else:
-            _y_nodes_ = None
-            _g_nodes_ = None
-            _G_integral_ = None
 
-        if "z" in active_dims:
+            return _y_nodes_, _g_nodes_, _G_integral_
+
+        if dim == "z":
             _z_nodes_ = self.xp.empty((nvars, _nx_, _ny_, _nz_, 2 * nnodes))
             _h_nodes_ = self.xp.empty((nvars, _nx_, _ny_, nz + 1, nnodes))
             _H_integral_ = self.xp.empty((nvars, _nx_, _ny_, nz + 1))
-        else:
-            _z_nodes_ = None
-            _h_nodes_ = None
-            _H_integral_ = None
 
-        return (
-            (_x_nodes_, _f_nodes_, _F_integral_),
-            (_y_nodes_, _g_nodes_, _G_integral_),
-            (_z_nodes_, _h_nodes_, _H_integral_),
-        )
+            return _z_nodes_, _h_nodes_, _H_integral_
 
     def _convert_nodes_to_primitives(
         self,
@@ -943,60 +936,64 @@ class HydroSolver(ExplicitODESolver):
             Fluxes[...] = _Fintegral_[interior]
 
     def update_fluxes(self, fv_scheme: FV_SchemeParameters):
+        """
+        Update the flux arrays "F", "G", and/or "H" with the specified fv_scheme based on the
+        current cell averaged / cell centered values "_u_", "_ucc_", "_wcc_", and/or "_w_".
+        """
         params = self.params
         active_dims = params.mesh.active_dims
         arrays = self.arrays
 
         _q_ = arrays["_w_"] if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else arrays["_u_"]
-        (
-            (_x_nodes_, _f_nodes_, _F_integral_),
-            (_y_nodes_, _g_nodes_, _G_integral_),
-            (_z_nodes_, _h_nodes_, _H_integral_),
-        ) = self._prepare_interpolation_arrays(fv_scheme)
 
-        for dim, _nodes_ in zip(["x", "y", "z"], [_x_nodes_, _y_nodes_, _z_nodes_]):
-            if dim in active_dims:
-                interpolate_face_nodes(
-                    _q_,
-                    _nodes_,
-                    dim,
-                    active_dims,
-                    fv_scheme.p,
-                    fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
-                )
+        # Allocate tmemporary arrays
+        tmp = {dim: self._prepare_interpolation_arrays(dim, fv_scheme) for dim in active_dims}
+        _x_nodes_ = tmp["x"][0] if "x" in tmp else None
+        _y_nodes_ = tmp["y"][0] if "y" in tmp else None
+        _z_nodes_ = tmp["z"][0] if "z" in tmp else None
 
+        # Interpolate nodes at cell faces
+        for dim in active_dims:
+            _nodes_, _, _ = tmp[dim]
+            interpolate_face_nodes(
+                _q_,
+                _nodes_,
+                dim,
+                active_dims,
+                fv_scheme.p,
+                fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
+            )
+
+        # Convert nodes to primitives if needed, apply a priori limiting, and ensure positivity
         if fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
             self._convert_nodes_to_primitives(_x_nodes_, _y_nodes_, _z_nodes_)
 
-        # slope limiting goes here
         if fv_scheme.zhang_shu_params.use_ZS:
             self.zhang_shu_limiter(fv_scheme, _x_nodes_, _y_nodes_, _z_nodes_)
 
         if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             self._convert_nodes_to_primitives(_x_nodes_, _y_nodes_, _z_nodes_)
-
         self._ensure_positive_nodes(_x_nodes_, _y_nodes_, _z_nodes_)
-        for dim, (_nodes_, _f_, _Fintegral_) in zip(
-            ["x", "y", "z"],
-            [
-                (_x_nodes_, _f_nodes_, _F_integral_),
-                (_y_nodes_, _g_nodes_, _G_integral_),
-                (_z_nodes_, _h_nodes_, _H_integral_),
-            ],
-        ):
-            if dim not in active_dims:
-                continue
 
-            self._update_nodal_fluxes(_nodes_, _f_, fv_scheme, dim)
+        # Compute flux integrals
+        for dim in active_dims:
+            _nodes_, _fnodes_, _Fintegral_ = tmp[dim]
+
+            self._update_nodal_fluxes(_nodes_, _fnodes_, fv_scheme, dim)
 
             if params.mesh.ndim == 1:
-                _Fintegral_[...] = _f_[..., 0]  # no need for flux integral in 1D
+                _Fintegral_[...] = _fnodes_[..., 0]  # no need for flux integral in 1D
             elif fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-                integrate_gauss_legendre_face_nodes(_f_, _Fintegral_, dim, active_dims, fv_scheme.p)
+                integrate_gauss_legendre_face_nodes(
+                    _fnodes_, _Fintegral_, dim, active_dims, fv_scheme.p
+                )
             else:
-                integrate_transverse_nodes(_f_, _Fintegral_, dim, active_dims, fv_scheme.p)
-
-        self._update_flux_arrays(_F_integral_, _G_integral_, _H_integral_)
+                integrate_transverse_nodes(_fnodes_, _Fintegral_, dim, active_dims, fv_scheme.p)
+        self._update_flux_arrays(
+            tmp["x"][2] if "x" in tmp else None,
+            tmp["y"][2] if "y" in tmp else None,
+            tmp["z"][2] if "z" in tmp else None,
+        )
 
     # Useful user functions
 
