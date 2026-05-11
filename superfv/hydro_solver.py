@@ -1092,8 +1092,9 @@ class HydroSolver:
 
         dudt = self.xp.zeros_like(u)
 
-        self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
-        self.update_fluxes(base_scheme)
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
+            self.update_fluxes(base_scheme)
 
         if "x" in active_dims:
             F_fluxes = self.arrays["F"]
