@@ -905,7 +905,7 @@ class HydroSolver(ExplicitODESolver):
 
         _q_ = arrays["_w_"] if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else arrays["_u_"]
 
-        for dim in params.mesh.active_dims:
+        for dim in active_dims:
             _nodes_ = arrays[f"_{dim}_nodes_"]
             interpolate_face_nodes(
                 _q_,
@@ -927,8 +927,8 @@ class HydroSolver(ExplicitODESolver):
             self._convert_nodes_to_primitives()
 
         self._ensure_positive_nodes(fv_scheme)
-        for dim in params.mesh.active_dims:
-            _fnodes_ = arrays[{"x": "_f_nodes_", "y": "_g_nodes_", "z": "_h_nodes_"}[dim]]
+        for dim in active_dims:
+            _f_ = arrays[{"x": "_f_nodes_", "y": "_g_nodes_", "z": "_h_nodes_"}[dim]]
             _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
 
             self._update_nodal_fluxes(fv_scheme, dim)
@@ -936,18 +936,9 @@ class HydroSolver(ExplicitODESolver):
             if params.mesh.ndim == 1:
                 continue
             elif fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-                integrate_gauss_legendre_face_nodes(
-                    _fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p
-                )
+                integrate_gauss_legendre_face_nodes(_f_, _Fluxes_, dim, active_dims, fv_scheme.p)
             else:
-                _Ftemp_ = (
-                    arrays[{"x": "_f_lines_", "y": "_g_lines_", "z": "_h_lines_"}[dim]]
-                    if params.mesh.ndim == 3
-                    else None
-                )
-                integrate_transverse_nodes(
-                    _fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p, _Ftemp_
-                )
+                integrate_transverse_nodes(_f_, _Fluxes_, dim, active_dims, fv_scheme.p)
 
         self._update_flux_arrays()
 
