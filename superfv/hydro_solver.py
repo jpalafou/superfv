@@ -47,6 +47,7 @@ from .riemann_solvers import hllc
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
+from .tools.snapshot import Snapshot, SnapshotHistory
 from .tools.step_history import StepHistory, StepSummary, SubstepSummary
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
@@ -71,6 +72,12 @@ class SnapshotMode(Enum):
     TARGET = 0
     EVERY = 1
     NONE = 2
+
+
+class LogArrayAction(Enum):
+    SUBSTEP_ADD = 0
+    SUBSTEP_AVERAGE = 1
+    RESET = 2
 
 
 class HydroSolver:
@@ -158,6 +165,7 @@ class HydroSolver:
         self.t: float
         self.step_summary: StepSummary
         self.step_history: StepHistory
+        self.snapshot_history: SnapshotHistory
 
         # These are pretty straightforward
         self.arrays = ArrayManager()
@@ -343,7 +351,7 @@ class HydroSolver:
         self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
         self._init_step_history()  # defines self.t, self.step_summary, self.step_history
-        self._take_snapshot()  # take initial snapshot
+        self._init_snapshot_history()  # defines self.snapshot_history
 
     def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
         warnings.warn("Using dummy PAD bounds array for now.")
@@ -641,7 +649,39 @@ class HydroSolver:
         self._reset_step_summary()  # defines self.step_summary
 
     def _take_snapshot(self):
-        print("Took snapshot.")
+        params = self.params
+
+        u = self.arrays["u"]
+        w = self.xp.empty_like(u)
+
+        self.conservatives_to_primitives(u, w)
+
+        self.snapshot_history.append(
+            Snapshot(
+                t=self.t,
+                u=self.arrays.get_numpy_copy("u"),
+                w=self.xp.asnumpy(w) if self.params.cupy else w,
+                theta=(
+                    self.arrays.get_numpy_copy("theta_log")
+                    if params.fv_scheme.zhang_shu_params.use_ZS
+                    else np.empty((0,))
+                ),
+                troubles=(
+                    self.arrays.get_numpy_copy("troubles_log")
+                    if params.fv_scheme.mood_params.use_MOOD
+                    else np.empty((0,))
+                ),
+                cascade_idx=(
+                    self.arrays.get_numpy_copy("cascade_idx_log")
+                    if params.fv_scheme.mood_params.use_MOOD
+                    else np.empty((0,))
+                ),
+            )
+        )
+
+    def _init_snapshot_history(self):
+        self.snapshot_history = SnapshotHistory([])
+        self._take_snapshot()
 
     # Helper functions
 
@@ -1143,6 +1183,94 @@ class HydroSolver:
             )
         )
 
+    def _update_log_arrays(self, action: LogArrayAction):
+        interior = self.interior
+        arrays = self.arrays
+
+        match action:
+            case LogArrayAction.SUBSTEP_ADD:
+                arrays["theta_log"] += arrays["_theta_"][interior]
+                arrays["troubles_log"] += arrays["_troubles_"][interior]
+                arrays["cascade_idx_log"] += arrays["_cascade_idx_"][interior]
+            case LogArrayAction.SUBSTEP_AVERAGE:
+                n_substeps = max(1, len(self.step_summary.substeps))
+
+                arrays["theta_log"] /= n_substeps
+                arrays["troubles_log"] /= n_substeps
+                arrays["cascade_idx_log"] /= n_substeps
+            case LogArrayAction.RESET:
+                arrays["theta_log"][...] = 0.0
+                arrays["troubles_log"][...] = 0.0
+                arrays["cascade_idx_log"][...] = 0.0
+
+    def _close_substep(self):
+        self._summarize_substep()
+        self._update_log_arrays(LogArrayAction.SUBSTEP_ADD)
+
+    def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
+        arrays = self.arrays
+
+        unew = arrays["unew"]
+
+        match time_integrator:
+            case TimeIntegrator.FORWARD_EULER:
+                unew[...] = u + self.f(t, u, dt) * dt
+                self._close_substep()
+                return
+            case TimeIntegrator.SSPRK2:
+                k0 = self.xp.empty_like(u)
+                k1 = self.xp.empty_like(u)
+
+                k0[...] = self.f(t, u, dt)
+                unew[...] = u + dt * k0
+                self._close_substep()
+
+                k1[...] = self.f(t + dt, unew, dt)
+                unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
+                self._close_substep()
+                return
+            case TimeIntegrator.SSPRK3:
+                k0 = self.xp.empty_like(u)
+                k1 = self.xp.empty_like(u)
+                k2 = self.xp.empty_like(u)
+
+                k0[...] = self.f(t, u, dt)
+                unew[...] = u + dt * k0
+                self._close_substep()
+
+                k1[...] = self.f(t + dt, unew, dt)
+                self._close_substep()
+
+                k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)
+                unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
+                self._close_substep()
+                return
+            case TimeIntegrator.RK4:
+                k0 = self.xp.empty_like(u)
+                k1 = self.xp.empty_like(u)
+                k2 = self.xp.empty_like(u)
+                k3 = self.xp.empty_like(u)
+
+                k0[...] = self.f(t, u, dt)
+                self._close_substep()
+
+                k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)
+                self._close_substep()
+
+                k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)
+                self._close_substep()
+
+                k3[...] = self.f(t + dt, u + dt * k2, dt)
+                unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
+                self._close_substep()
+                return
+            case _:
+                raise ValueError(f"Unsupported time integrator: {time_integrator}")
+
+    def _open_step(self):
+        # TIMER START GOES HERE
+        self._update_log_arrays(LogArrayAction.RESET)
+
     def _summarize_step(self):
         idx = self.params.variable_index_map
         step_summary = self.step_summary
@@ -1158,71 +1286,18 @@ class HydroSolver:
 
         self._reset_step_summary(n + 1)
 
-    def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
-        arrays = self.arrays
-
-        unew = arrays["unew"]
-
-        match time_integrator:
-            case TimeIntegrator.FORWARD_EULER:
-                unew[...] = u + self.f(t, u, dt) * dt
-                self._summarize_substep()
-                return
-            case TimeIntegrator.SSPRK2:
-                k0 = self.xp.empty_like(u)
-                k1 = self.xp.empty_like(u)
-
-                k0[...] = self.f(t, u, dt)
-                unew[...] = u + dt * k0
-                self._summarize_substep()
-
-                k1[...] = self.f(t + dt, unew, dt)
-                unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
-                self._summarize_substep()
-                return
-            case TimeIntegrator.SSPRK3:
-                k0 = self.xp.empty_like(u)
-                k1 = self.xp.empty_like(u)
-                k2 = self.xp.empty_like(u)
-
-                k0[...] = self.f(t, u, dt)
-                unew[...] = u + dt * k0
-                self._summarize_substep()
-
-                k1[...] = self.f(t + dt, unew, dt)
-                self._summarize_substep()
-
-                k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)
-                unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
-                self._summarize_substep()
-                return
-            case TimeIntegrator.RK4:
-                k0 = self.xp.empty_like(u)
-                k1 = self.xp.empty_like(u)
-                k2 = self.xp.empty_like(u)
-                k3 = self.xp.empty_like(u)
-
-                k0[...] = self.f(t, u, dt)
-                self._summarize_substep()
-
-                k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)
-                self._summarize_substep()
-
-                k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)
-                self._summarize_substep()
-
-                k3[...] = self.f(t + dt, u + dt * k2, dt)
-                unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
-                self._summarize_substep()
-                return
-            case _:
-                raise ValueError(f"Unsupported time integrator: {time_integrator}")
+    def _close_step(self):
+        self._update_log_arrays(LogArrayAction.SUBSTEP_AVERAGE)
+        self._summarize_step()
+        # TIMER STOP GOES HERE
 
     def _take_step(self, time_integrator: TimeIntegrator, dt_min: Optional[float] = None):
         """
         Update "u" and self.t by taking a single step in time with the specified time integrator
         and optional minimum dt constraint.
         """
+        self._open_step()
+
         arrays = self.arrays
         t = self.t
 
@@ -1245,7 +1320,8 @@ class HydroSolver:
         # Update the state
         u[...] = unew
         self.t = tnew
-        self._summarize_step()
+
+        self._close_step()
 
     def take_n_steps(
         self,
@@ -1297,7 +1373,3 @@ class HydroSolver:
 
     def build_closing_message(self) -> str:
         return "dummy closing message"
-
-    def prepare_snapshot_data(self) -> Any:
-        warnings.warn("Using dummy snapshot data")
-        return None
