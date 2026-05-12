@@ -9,7 +9,6 @@ from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, UnivarField
 from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
-from .tools.device_management import ArrayLike
 from .tools.variable_index_map import VariableIndexMap
 
 
@@ -29,8 +28,7 @@ class MUSCL_Parameters:
 @dataclass(frozen=True, slots=True)
 class PhysicalAdmissibilityParameters:
     use_PAD: bool
-    PAD_bounds: ArrayLike
-    PAD_dict: Dict[str, Tuple[Optional[float], Optional[float]]]
+    bounds: Dict[str, Tuple[Optional[float], Optional[float]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +37,7 @@ class ZhangShuParameters:
     adaptive_dt: bool
     SED_params: SmoothExtremaDetectionParameters
     PAD_params: PhysicalAdmissibilityParameters
+    omit_vars: List[str]
     adaptive_dt_tol: float = 1e-15
     theta_denom_tol: float = 1e-15
     include_corners: bool = True
@@ -63,6 +62,7 @@ class NumericalAdmissibilityParameters:
     rtol: float
     atol: float
     SED_params: SmoothExtremaDetectionParameters
+    omit_vars: List[str]
     delta: bool = False
     include_corners: bool = True
 
@@ -265,3 +265,66 @@ class SolverParams:
     variable_index_map: VariableIndexMap
     cupy: bool = False
     sync_timer: bool = True
+
+    def __post_init__(self):
+        # PAD bound dicts cannot contain variables not in the variable index map
+        if (
+            self.fv_scheme.zhang_shu_params.use_ZS
+            and self.fv_scheme.zhang_shu_params.PAD_params.use_PAD
+            and any(
+                v not in self.variable_index_map.var_idx_map
+                for v in self.fv_scheme.zhang_shu_params.PAD_params.bounds.keys()
+            )
+        ):
+            raise ValueError(
+                "All variables in zhang_shu_params.PAD_params.bounds must be in the variable index map."
+            )
+        if (
+            self.fv_scheme.mood_params.use_MOOD
+            and self.fv_scheme.mood_params.PAD_params.use_PAD
+            and any(
+                v not in self.variable_index_map.var_idx_map
+                for v in self.fv_scheme.mood_params.PAD_params.bounds.keys()
+            )
+        ):
+            raise ValueError(
+                "All variables in mood_params.PAD_params.bounds must be in the variable index map."
+            )
+
+        # Omit vars lists cannot contain variables not in the variable index map
+        if (
+            self.fv_scheme.zhang_shu_params.use_ZS
+            and self.fv_scheme.zhang_shu_params.omit_vars
+            and any(
+                v not in self.variable_index_map.var_idx_map
+                for v in self.fv_scheme.zhang_shu_params.omit_vars
+            )
+        ):
+            raise ValueError(
+                "All variables in zhang_shu_params.omit_vars must be in the variable index map."
+            )
+        if (
+            self.fv_scheme.mood_params.use_MOOD
+            and self.fv_scheme.mood_params.NAD_params.omit_vars
+            and any(
+                v not in self.variable_index_map.var_idx_map
+                for v in self.fv_scheme.mood_params.NAD_params.omit_vars
+            )
+        ):
+            raise ValueError(
+                "All variables in mood_params.NAD_params.omit_vars must be in the variable index map."
+            )
+
+        # If limiting conservatives, then all PAD bounds must be in primitives
+        if (
+            self.fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM
+            and self.fv_scheme.zhang_shu_params.use_ZS
+            and self.fv_scheme.zhang_shu_params.PAD_params.use_PAD
+            and any(
+                v not in self.variable_index_map.group_var_map["primitives"]
+                for v in self.fv_scheme.zhang_shu_params.PAD_params.bounds.keys()
+            )
+        ):
+            raise ValueError(
+                "All variables with PAD bounds must be in primitives when using CONS_LIM_PRIM flux recipe."
+            )

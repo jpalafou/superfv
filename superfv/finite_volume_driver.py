@@ -1,9 +1,12 @@
 from enum import Enum
 from functools import lru_cache
-from typing import Dict, Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 
+from superfv.tools.slicing import VariableIndexMap
+
+from .configs import ZhangShuParameters
 from .quadrature import perform_quadrature
 from .slope_limiting import compute_dmp
 from .slope_limiting.smooth_extrema_detection import compute_alpha
@@ -288,20 +291,17 @@ def integrate_transverse_nodes(
 
 
 def apply_zhang_shu_limiter(
-    _q_: ArrayLike,
-    _qcc_: ArrayLike,
+    _w_: ArrayLike,
+    _wcc_: ArrayLike,
     _theta_: ArrayLike,
-    eps: float,
-    include_corners: bool,
-    detect_smooth_extrema: bool,
-    physical_admissibility_detection: bool,
+    _alpha_: ArrayLike,
+    idx: VariableIndexMap,
+    params: ZhangShuParameters,
     _x_nodes_: Optional[ArrayLike] = None,
     _y_nodes_: Optional[ArrayLike] = None,
     _z_nodes_: Optional[ArrayLike] = None,
-    _alpha_: Optional[ArrayLike] = None,
-    PAD_bounds: Optional[Dict[int, Tuple[Optional[float], Optional[float]]]] = None,
 ):
-    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
     na = cp.newaxis if cupy else np.newaxis
     active_dims = tuple(
         d
@@ -309,58 +309,65 @@ def apply_zhang_shu_limiter(
         if nodes is not None
     )
 
-    if _q_.ndim != 4:
-        raise ValueError("_q_ must be 4D.")
-    if _q_.shape != _qcc_.shape:
-        raise ValueError("_q_ and _qcc_ must have the same shape.")
-    if _theta_.shape != _q_.shape:
-        raise ValueError("_theta_ must have the same shape as _q_.")
-    if _alpha_ is not None and _alpha_.shape != _q_.shape:
-        raise ValueError("_alpha_ must have the same shape as _q_.")
+    if _w_.ndim != 4:
+        raise ValueError("_w_ must be 4D.")
+    if _w_.shape != _wcc_.shape:
+        raise ValueError("_w_ and _wcc_ must have the same shape.")
+    if _theta_.shape != _w_.shape:
+        raise ValueError("_theta_ must have the same shape as _w_.")
+    if _alpha_.shape != _w_.shape:
+        raise ValueError("_alpha_ must have the same shape as _w_.")
 
     # allocate arrays
-    _qj_shape_ = _q_.shape[:4] + (
+    _qj_shape_ = _w_.shape[:4] + (
         1 + sum(nodes.shape[4] for nodes in [_x_nodes_, _y_nodes_, _z_nodes_] if nodes is not None),
     )
     _qj_ = cp.empty(_qj_shape_) if cupy else np.empty(_qj_shape_)
-    _M_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
-    _m_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
-    _Mj_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
-    _mj_ = cp.empty_like(_q_) if cupy else np.empty_like(_q_)
+    _M_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
+    _m_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
+    _Mj_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
+    _mj_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
 
     # stack all nodes into into _qj_
-    _qj_[..., 0] = _qcc_
+    _qj_[..., 0] = _wcc_
     for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
         n = nodes.shape[4]
         idx1 = 1 + i * n
         idx2 = 1 + (i + 1) * n
         _qj_[..., slice(idx1, idx2)] = nodes
 
-    compute_dmp(_q_, _M_, _m_, active_dims, include_corners)  # update _M_ and _m_ with DMP
-    compute_theta(_q_, _qj_, _M_, _m_, _Mj_, _mj_, _theta_, eps)  # update _Mj_, _mj_, and _theta_
+    compute_dmp(_w_, _M_, _m_, active_dims, params.include_corners)  # update _M_ and _m_ with DMP
+    compute_theta(
+        _w_, _qj_, _M_, _m_, _Mj_, _mj_, _theta_, params.theta_denom_tol
+    )  # update _Mj_, _mj_, and _theta_
 
-    if detect_smooth_extrema:
+    if params.SED_params.use_SED:
         if _alpha_ is None:
             raise ValueError("_alpha_ must be provided if detect_smooth_extrema is True")
-        compute_alpha(_q_, _alpha_, active_dims)
+        compute_alpha(_w_, _alpha_, active_dims)
 
-        if physical_admissibility_detection:
+        if params.PAD_params.use_PAD:
             _physical_ = cp.ones_like(_alpha_[0]) if cupy else np.ones_like(_alpha_[0])
-            for i, (lb, ub) in PAD_bounds.items():
+            for v, (lb, ub) in params.PAD_params.bounds.items():
                 if ub is not None:
-                    _physical_ &= _Mj_[i] <= ub
+                    _physical_ &= _Mj_[idx(v)] <= ub
                 if lb is not None:
-                    _physical_ &= _mj_[i] >= lb
+                    _physical_ &= _mj_[idx(v)] >= lb
             _alpha_ *= _physical_
         if cupy:
             cp.maximum(_theta_, _alpha_, out=_theta_)
         else:
             np.maximum(_theta_, _alpha_, out=_theta_)
 
+    # omit variables from limiting
+    if params.omit_vars:
+        omit_indices = [idx(v) for v in params.omit_vars]
+        _theta_[omit_indices] = 1.0
+
     # apply limiter to face nodes
     if _x_nodes_ is not None:
-        _x_nodes_[...] = _theta_[..., na] * (_x_nodes_ - _q_[..., na]) + _q_[..., na]
+        _x_nodes_[...] = _theta_[..., na] * (_x_nodes_ - _w_[..., na]) + _w_[..., na]
     if _y_nodes_ is not None:
-        _y_nodes_[...] = _theta_[..., na] * (_y_nodes_ - _q_[..., na]) + _q_[..., na]
+        _y_nodes_[...] = _theta_[..., na] * (_y_nodes_ - _w_[..., na]) + _w_[..., na]
     if _z_nodes_ is not None:
-        _z_nodes_[...] = _theta_[..., na] * (_z_nodes_ - _q_[..., na]) + _q_[..., na]
+        _z_nodes_[...] = _theta_[..., na] * (_z_nodes_ - _w_[..., na]) + _w_[..., na]

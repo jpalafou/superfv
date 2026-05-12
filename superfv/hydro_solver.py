@@ -5,7 +5,7 @@ from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -127,9 +127,10 @@ class HydroSolver:
         use_MUSCL: bool = False,
         MUSCL_limiter: MUSCL_SlopeLimiter = MUSCL_SlopeLimiter.MONCEN,
         # PAD params
-        PAD_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+        PAD_bounds: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         # Zhang-Shu params
         use_ZS: bool = False,
+        omit_vars_from_ZS: Optional[List[str]] = None,
         adaptive_dt: bool = False,
         adaptive_dt_tol: float = 1e-15,
         theta_denom_tol: float = 1e-15,
@@ -139,6 +140,7 @@ class HydroSolver:
         use_NAD: bool = True,
         rtol: float = 1e-5,
         atol: float = 0.0,
+        omit_vars_from_NAD: Optional[List[str]] = None,
         delta: bool = False,
         # MOOD params
         use_MOOD: bool = False,
@@ -203,9 +205,9 @@ class HydroSolver:
         # Such as the fallback scheme cascade
         null_SED = SmoothExtremaDetectionParameters(False)
         null_MUSCL = MUSCL_Parameters(False, MUSCL_SlopeLimiter.NONE, null_SED)
-        null_PAD = PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
-        null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD)
-        null_NAD = NumericalAdmissibilityParameters(False, 0.0, 0.0, null_SED)
+        null_PAD = PhysicalAdmissibilityParameters(False, {})
+        null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
+        null_NAD = NumericalAdmissibilityParameters(False, 0.0, 0.0, null_SED, [])
         null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0, False)
         null_shock = ShockDetectionParameters(False)
 
@@ -254,9 +256,6 @@ class HydroSolver:
                 )
             )
 
-        # And a PAD bound array
-        self._define_PAD_array(PAD_bounds)
-
         fv_scheme_params = FV_SchemeParameters(
             name="base_scheme",
             p=p,
@@ -276,13 +275,10 @@ class HydroSolver:
                 SED_params=SmoothExtremaDetectionParameters(
                     use_SED and use_ZS and p > 0, clip_zero_tol
                 ),
-                PAD_params=(
-                    PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
-                    if PAD_bounds is None
-                    else PhysicalAdmissibilityParameters(
-                        use_ZS, self.arrays["PAD_bounds"], PAD_bounds
-                    )
+                PAD_params=PhysicalAdmissibilityParameters(
+                    PAD_bounds is not None and use_ZS and p > 0, PAD_bounds or {}
                 ),
+                omit_vars=omit_vars_from_ZS or [],
                 adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=theta_denom_tol,
                 include_corners=include_corners,
@@ -297,15 +293,12 @@ class HydroSolver:
                     SED_params=SmoothExtremaDetectionParameters(
                         use_SED and use_NAD and use_MOOD and p > 0, clip_zero_tol
                     ),
+                    omit_vars=omit_vars_from_NAD or [],
                     delta=delta,
                     include_corners=include_corners,
                 ),
-                PAD_params=(
-                    PhysicalAdmissibilityParameters(False, np.empty((0,)), {})
-                    if PAD_bounds is None
-                    else PhysicalAdmissibilityParameters(
-                        use_MOOD and p > 0, self.arrays["PAD_bounds"], PAD_bounds
-                    )
+                PAD_params=PhysicalAdmissibilityParameters(
+                    PAD_bounds is not None and use_MOOD and p > 0, PAD_bounds or {}
                 ),
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,
@@ -352,11 +345,6 @@ class HydroSolver:
         self._allocate_arrays()
         self._init_step_history()  # defines self.t, self.step_summary, self.step_history
         self._init_snapshot_history()  # defines self.snapshot_history
-
-    def _define_PAD_array(self, PAD_bounds: Optional[Dict[str, Tuple[float, float]]]):
-        warnings.warn("Using dummy PAD bounds array for now.")
-        PAD_array = np.empty((0,))
-        self.arrays.add("PAD_bounds", PAD_array)
 
     def _compute_nghost(self, fv_scheme: FV_SchemeParameters, ndim: int) -> int:
         dummy_stencil = conservative_interpolation.left_right(fv_scheme.p)
@@ -947,15 +935,12 @@ class HydroSolver:
             _q_,
             _qcc_,
             _theta_,
-            fv_scheme.zhang_shu_params.theta_denom_tol,
-            fv_scheme.zhang_shu_params.include_corners,
-            fv_scheme.zhang_shu_params.SED_params.use_SED,
-            fv_scheme.zhang_shu_params.PAD_params.use_PAD,
+            _alpha_,
+            self.params.variable_index_map,
+            fv_scheme.zhang_shu_params,
             _x_nodes_,
             _y_nodes_,
             _z_nodes_,
-            _alpha_,
-            fv_scheme.zhang_shu_params.PAD_params.PAD_dict,
         )
 
     def _ensure_positive_nodes(
