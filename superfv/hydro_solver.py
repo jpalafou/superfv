@@ -44,6 +44,7 @@ from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .riemann_solvers import hllc
+from .slope_limiting.MOOD_new import mood_loop
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
@@ -165,11 +166,13 @@ class HydroSolver:
         self.mesh: UniformFVMesh
         self.xp: ModuleType
         self.t: float
+        self.t_wall_start: float
+        self.substep_summary: SubstepSummary
         self.step_summary: StepSummary
         self.step_history: StepHistory
         self.snapshot_history: SnapshotHistory
 
-        # These are pretty straightforward
+        # These are straightforward
         self.arrays = ArrayManager()
         self.mesh_arrays = ArrayManager()
 
@@ -213,7 +216,7 @@ class HydroSolver:
 
         fallback_cascade_list: List[FV_SchemeParameters] = []
         if fallback_cascade == FallbackCascade.FULL:
-            for reduced_p in range(p, -1, -1):
+            for reduced_p in range(p - 1, -1, -1):
                 fallback_cascade_list.append(
                     FV_SchemeParameters(
                         name=f"fallback_p={reduced_p}",
@@ -227,7 +230,7 @@ class HydroSolver:
                         shock_detection_params=null_shock,
                     )
                 )
-        elif fallback_cascade in (FallbackCascade.MUSCL, FallbackCascade.MUSCL0):
+        if fallback_cascade in (FallbackCascade.MUSCL, FallbackCascade.MUSCL0):
             fallback_cascade_list.append(
                 FV_SchemeParameters(
                     name="fallback_MUSCL",
@@ -241,7 +244,7 @@ class HydroSolver:
                     shock_detection_params=null_shock,
                 )
             )
-        if fallback_cascade == FallbackCascade.MUSCL0:
+        if fallback_cascade in (FallbackCascade.MUSCL0, FallbackCascade.FIRST_ORDER):
             fallback_cascade_list.append(
                 FV_SchemeParameters(
                     name="fallback_p0",
@@ -343,7 +346,10 @@ class HydroSolver:
         self._build_mesh()  # defines self.mesh
         self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
-        self._init_step_history()  # defines self.t, self.step_summary, self.step_history
+        self._init_time()  # defines self.t and self.t_wall_start
+        self._init_step_history()  # defines self.step_history
+        self._reset_substep_summary()  # defines self.substep_summary
+        self._reset_step_summary()  # defines self.step_summary
         self._init_snapshot_history()  # defines self.snapshot_history
 
     def _compute_nghost(self, fv_scheme: FV_SchemeParameters, ndim: int) -> int:
@@ -584,7 +590,7 @@ class HydroSolver:
         arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
 
         # define MOOD arrays
-        for scheme in fv_scheme.mood_params.fallback_cascade:
+        for scheme in [fv_scheme] + fv_scheme.mood_params.fallback_cascade:
             if "x" in active_dims:
                 arrays.add("F_" + scheme.name, np.empty((nvars, nx + 1, ny, nz)))
             if "y" in active_dims:
@@ -592,17 +598,41 @@ class HydroSolver:
             if "z" in active_dims:
                 arrays.add("H_" + scheme.name, np.empty((nvars, nx, ny, nz + 1)))
 
+        arrays.add("_qold_", np.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_qnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_NAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_PAD_violations_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-        arrays.add("_troubles2_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-        arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=int))
-        arrays.add("_blended_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_)))
-        arrays.add("_mask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1), dtype=int))
-        arrays.add("_fmask_", np.zeros((1, _nx_ + 1, _ny_ + 1, _nz_ + 1)))
+        arrays.add("revisable_troubles", np.zeros((1, nx, ny, nz), dtype=np.int32))
+        arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
+
+    def _init_time(self):
+        self.t = 0.0
+        self.t_wall_start = np.nan
+
+    def _init_step_history(self):
+        idx = self.params.variable_index_map
+
+        u = self.arrays["u"]  # this should be the initial condition array at this point
+
+        self.step_history = StepHistory(
+            steps=[
+                StepSummary(
+                    step=0,
+                    t_sim=self.t,
+                    t_wall=np.nan,
+                    n_dt_revisions=0,
+                    rho_min=self.xp.min(u[idx("rho")]).item(),
+                    E_total=self.xp.sum(u[idx("E")]).item(),
+                    substeps=[],
+                )
+            ]
+        )
+
+    def _reset_substep_summary(self):
+        self.substep_summary = SubstepSummary(
+            substep=-1, t_wall=np.nan, n_MOOD_revisions=0, n_troubles_hist=[]
+        )
 
     def _reset_step_summary(self, n: int = 1):
         self.step_summary = StepSummary(
@@ -614,27 +644,6 @@ class HydroSolver:
             E_total=np.nan,
             substeps=[],
         )
-
-    def _init_step_history(self):
-        idx = self.params.variable_index_map
-
-        u = self.arrays["u"]  # this should be the initial condition array at this point
-
-        self.t = 0.0
-        self.step_history = StepHistory(
-            steps=[
-                StepSummary(
-                    step=0,
-                    t_sim=self.t,
-                    t_wall=time.time(),
-                    n_dt_revisions=0,
-                    rho_min=self.xp.min(u[idx("rho")]).item(),
-                    E_total=self.xp.sum(u[idx("E")]).item(),
-                    substeps=[],
-                )
-            ]
-        )
-        self._reset_step_summary()  # defines self.step_summary
 
     def _take_snapshot(self):
         params = self.params
@@ -1133,16 +1142,11 @@ class HydroSolver:
 
     # ODE solver functions
 
-    def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
-        base_scheme = self.params.fv_scheme
+    def compute_time_derivative(self) -> ArrayLike:
         active_dims = self.params.mesh.active_dims
         hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
 
-        dudt = self.xp.zeros_like(u)
-
-        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-            self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
-            self.update_fluxes(base_scheme)
+        dudt = self.xp.zeros_like(self.arrays["u"])
 
         if "x" in active_dims:
             F_fluxes = self.arrays["F"]
@@ -1158,15 +1162,31 @@ class HydroSolver:
 
         return dudt
 
-    def _summarize_substep(self):
-        step_summary = self.step_summary
+    def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
+        base_scheme = self.params.fv_scheme
 
-        step_summary.substeps.append(
-            SubstepSummary(
-                substep=step_summary.substeps[-1].substep + 1 if step_summary.substeps else 1,
-                t_wall=time.time(),
-            )
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
+            self.update_fluxes(base_scheme)
+
+            if base_scheme.mood_params.use_MOOD:
+                mood_loop(self, t, dt)
+
+        dudt = self.compute_time_derivative()
+
+        return dudt
+
+    def _summarize_substep(self):
+        Step_summary = self.step_summary
+        substep_summary = self.substep_summary
+
+        substep_summary.substep = (
+            1 if not Step_summary.substeps else Step_summary.substeps[-1].substep + 1
         )
+        substep_summary.t_wall = time.time() - self.t_wall_start
+
+        Step_summary.substeps.append(substep_summary)
+        self._reset_substep_summary()
 
     def _update_log_arrays(self, action: LogArrayAction):
         interior = self.interior
@@ -1264,7 +1284,7 @@ class HydroSolver:
         u = self.arrays["u"]
 
         step_summary.t_sim = self.t
-        step_summary.t_wall = time.time()
+        step_summary.t_wall = time.time() - self.t_wall_start
         step_summary.rho_min = self.xp.min(u[idx("rho")]).item()
         step_summary.E_total = self.xp.sum(u[idx("E")]).item()
         self.step_history.append(step_summary)
@@ -1275,6 +1295,9 @@ class HydroSolver:
         self._update_log_arrays(LogArrayAction.SUBSTEP_AVERAGE)
         self._summarize_step()
         # TIMER STOP GOES HERE
+
+    def _start_wall_timer(self):
+        self.t_wall_start = time.time()
 
     def _take_step(self, time_integrator: TimeIntegrator, dt_min: Optional[float] = None):
         """
@@ -1314,6 +1337,8 @@ class HydroSolver:
         time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
     ):
+        self._start_wall_timer()
+
         for i in range(n):
             self._take_step(time_integtrator)
 
@@ -1328,6 +1353,8 @@ class HydroSolver:
         time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
     ):
+        self._start_wall_timer()
+
         if not isinstance(t, list):
             target_times = [t]
         else:

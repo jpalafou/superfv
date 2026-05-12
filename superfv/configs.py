@@ -85,11 +85,15 @@ class MOOD_Parameters:
                 "fallback_cascade must have exactly one scheme when blend_troubles is True."
             )
 
+        if self.max_revs < len(self.fallback_cascade):
+            raise ValueError("max_revs must be at least the length of fallback_cascade.")
+
 
 class FallbackCascade(Enum):
     FULL = 0
     MUSCL = 1
     MUSCL0 = 2
+    FIRST_ORDER = 3
 
 
 class LazyPrimitiveMode(Enum):

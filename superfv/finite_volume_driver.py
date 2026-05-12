@@ -347,7 +347,11 @@ def apply_zhang_shu_limiter(
         compute_alpha(_w_, _alpha_, active_dims)
 
         if params.PAD_params.use_PAD:
-            _physical_ = cp.ones_like(_alpha_[0]) if cupy else np.ones_like(_alpha_[0])
+            _physical_ = (
+                cp.ones_like(_alpha_[0], dtype=bool)
+                if cupy
+                else np.ones_like(_alpha_[0], dtype=bool)
+            )
             for v, (lb, ub) in params.PAD_params.bounds.items():
                 if ub is not None:
                     _physical_ &= _Mj_[idx(v)] <= ub

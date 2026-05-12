@@ -6,6 +6,8 @@ from typing import Any, List
 class SubstepSummary:
     substep: int
     t_wall: float
+    n_MOOD_revisions: int
+    n_troubles_hist: List[int]
 
 
 @dataclass
@@ -23,11 +25,17 @@ class StepSummary:
 class StepHistory:
     steps: List[StepSummary]
 
-    def get_substep_history_as_list(self, substep_attr: str) -> List[Any]:
+    def get_history(self, name: str) -> List[Any]:
         out = []
         for step in self.steps:
+            if name in step.__dataclass_fields__:
+                out.append(getattr(step, name))
+                continue
             for substep in step.substeps:
-                out.append(getattr(substep, substep_attr))
+                if name in substep.__dataclass_fields__:
+                    out.append(getattr(substep, name))
+                    continue
+                raise ValueError(f"Field '{name}' not found in StepSummary or SubstepSummary.")
         return out
 
     def __getitem__(self, i: int) -> StepSummary:
