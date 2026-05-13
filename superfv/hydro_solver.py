@@ -1257,8 +1257,9 @@ class HydroSolver:
                 if not params.fv_scheme.muscl_params.use_MUSCL:
                     raise ValueError("MUSCL-Hancock time integrator requires a MUSCL FV scheme.")
 
-                self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
-                update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
+                with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                    self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
+                    update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
                 k0 = self.compute_time_derivative()
 
                 unew[...] = u + dt * k0
@@ -1342,6 +1343,34 @@ class HydroSolver:
 
     def _start_wall_timer(self):
         self.t_wall_start = time.time()
+        self._progress_line_len = 0
+
+    def _build_message(
+        self,
+        current_time: Optional[float] = None,
+        stopping_time: Optional[float] = None,
+        current_steps: Optional[int] = None,
+        total_steps: Optional[int] = None,
+    ) -> str:
+        step_summary = self.step_history[-1]
+        energy_conservation = abs(step_summary.E_total - self.step_history[0].E_total)
+
+        parts = ["SuperFV: "]
+        if current_steps is not None and total_steps is not None:
+            parts.append(f"step {current_steps}/{total_steps}")
+        elif current_steps is not None:
+            parts.append("1 step" if current_steps == 1 else f"{current_steps} steps")
+        if current_time is not None and stopping_time is not None:
+            parts.append(f"[t={current_time:.2e}/{stopping_time:.2e}]")
+        parts.append(f"rho_min={step_summary.rho_min:.2e}")
+        parts.append(f"E_cons={energy_conservation:.2e}")
+        parts.append(f"wall={step_summary.t_wall:.2e}s")
+
+        message = parts[0] + " | ".join(parts[1:])
+        return message
+
+    def _print(self, message: str):
+        print(f"\r{message}", end="", flush=True)
 
     def _take_step(self, time_integrator: TimeIntegrator, dt_min: Optional[float] = None):
         """
@@ -1380,10 +1409,13 @@ class HydroSolver:
         n: int,
         time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
+        print_update: bool = True,
+        print_frequency: int = 100,
     ):
         self._start_wall_timer()
 
-        for i in range(n):
+        print_frequency = max(1, print_frequency)
+        for i in range(1, n + 1):
             self._take_step(time_integtrator)
 
             if snapshot_mode == SnapshotMode.TARGET and i == n - 1:
@@ -1391,13 +1423,22 @@ class HydroSolver:
             elif snapshot_mode == SnapshotMode.EVERY:
                 self._take_snapshot()
 
+            if print_update and (i % print_frequency == 0 or i == n):
+                self._print(self._build_message(current_steps=i, total_steps=n))
+
+        if print_update:
+            self._print(self._build_message(current_steps=n, total_steps=n) + " (done)\n")
+
     def run(
         self,
         t: Union[float, List[float]],
         time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
+        print_update: bool = True,
+        print_frequency: int = 100,
     ):
         self._start_wall_timer()
+        print_frequency = max(1, print_frequency)
 
         if not isinstance(t, list):
             target_times = [t]
@@ -1405,12 +1446,12 @@ class HydroSolver:
             if t != sorted(set(t)):
                 raise ValueError("Target times must be given in sorted order without duplicates.")
             target_times = t
+        tstop = target_times[-1]
 
         if any(targets < 0 for targets in target_times):
             raise ValueError("Target times must be non-negative.")
 
         while target_times:
-
             self._take_step(time_integrator, dt_min=target_times[0] - self.t)
 
             if self.t >= target_times[0]:
@@ -1420,6 +1461,18 @@ class HydroSolver:
 
             if snapshot_mode == SnapshotMode.EVERY:
                 self._take_snapshot()
+
+            n = len(self.step_history)
+            if print_update and n % print_frequency == 0:
+                self._print(
+                    self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
+                )
+
+        if print_update:
+            self._print(
+                self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
+                + " (done)\n"
+            )
 
     # Useful user functions
 
