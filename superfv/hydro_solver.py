@@ -217,12 +217,41 @@ class HydroSolver:
         null_shock = ShockDetectionParameters(False)
 
         fallback_cascade_list: List[FV_SchemeParameters] = []
-        if fallback_cascade == FallbackCascade.FULL:
-            for reduced_p in range(p - 1, -1, -1):
+        if use_MOOD:
+            if fallback_cascade == FallbackCascade.FULL:
+                for reduced_p in range(p - 1, -1, -1):
+                    fallback_cascade_list.append(
+                        FV_SchemeParameters(
+                            name=f"fallback_p={reduced_p}",
+                            p=reduced_p,
+                            flux_recipe=flux_recipe,
+                            flux_quadrature=flux_quadrature,
+                            lazy_primitive_mode=lazy_primitive_mode,
+                            muscl_params=null_MUSCL,
+                            zhang_shu_params=null_ZS,
+                            mood_params=null_MOOD,
+                            shock_detection_params=null_shock,
+                        )
+                    )
+            if fallback_cascade in (FallbackCascade.MUSCL, FallbackCascade.MUSCL0):
                 fallback_cascade_list.append(
                     FV_SchemeParameters(
-                        name=f"fallback_p={reduced_p}",
-                        p=reduced_p,
+                        name="fallback_MUSCL",
+                        p=1,
+                        flux_recipe=flux_recipe,
+                        flux_quadrature=flux_quadrature,
+                        lazy_primitive_mode=lazy_primitive_mode,
+                        muscl_params=MUSCL_Parameters(True, MUSCL_limiter, null_SED),
+                        zhang_shu_params=null_ZS,
+                        mood_params=null_MOOD,
+                        shock_detection_params=null_shock,
+                    )
+                )
+            if fallback_cascade in (FallbackCascade.MUSCL0, FallbackCascade.FIRST_ORDER):
+                fallback_cascade_list.append(
+                    FV_SchemeParameters(
+                        name="fallback_p0",
+                        p=0,
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
                         lazy_primitive_mode=lazy_primitive_mode,
@@ -232,34 +261,6 @@ class HydroSolver:
                         shock_detection_params=null_shock,
                     )
                 )
-        if fallback_cascade in (FallbackCascade.MUSCL, FallbackCascade.MUSCL0):
-            fallback_cascade_list.append(
-                FV_SchemeParameters(
-                    name="fallback_MUSCL",
-                    p=1,
-                    flux_recipe=flux_recipe,
-                    flux_quadrature=flux_quadrature,
-                    lazy_primitive_mode=lazy_primitive_mode,
-                    muscl_params=MUSCL_Parameters(True, MUSCL_limiter, null_SED),
-                    zhang_shu_params=null_ZS,
-                    mood_params=null_MOOD,
-                    shock_detection_params=null_shock,
-                )
-            )
-        if fallback_cascade in (FallbackCascade.MUSCL0, FallbackCascade.FIRST_ORDER):
-            fallback_cascade_list.append(
-                FV_SchemeParameters(
-                    name="fallback_p0",
-                    p=0,
-                    flux_recipe=flux_recipe,
-                    flux_quadrature=flux_quadrature,
-                    lazy_primitive_mode=lazy_primitive_mode,
-                    muscl_params=null_MUSCL,
-                    zhang_shu_params=null_ZS,
-                    mood_params=null_MOOD,
-                    shock_detection_params=null_shock,
-                )
-            )
 
         fv_scheme_params = FV_SchemeParameters(
             name="base_scheme",
@@ -1175,12 +1176,6 @@ class HydroSolver:
 
         return jvp
 
-    # Useful user functions
-
-    def write_config_file(self, path: str):
-        with open(Path(path) / "config.yaml", "w") as f:
-            f.write(yaml_dump(asdict(self.params)))
-
     # ODE solver functions
 
     def compute_time_derivative(self) -> ArrayLike:
@@ -1426,11 +1421,8 @@ class HydroSolver:
             if snapshot_mode == SnapshotMode.EVERY:
                 self._take_snapshot()
 
-    def build_opening_message(self) -> str:
-        return "dummy opening message"
+    # Useful user functions
 
-    def build_update_message(self) -> str:
-        return "dummy update message"
-
-    def build_closing_message(self) -> str:
-        return "dummy closing message"
+    def write_config_file(self, path: str):
+        with open(Path(path) / "config.yaml", "w") as f:
+            f.write(yaml_dump(asdict(self.params)))
