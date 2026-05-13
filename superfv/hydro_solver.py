@@ -206,6 +206,7 @@ class HydroSolver:
             isothermal=isothermal,
             iso_cs=iso_cs,
         )
+        updated_PAD_bounds = self._configure_PAD_bounds(PAD_bounds, hydro_params)
 
         # Such as the fallback scheme cascade
         null_SED = SmoothExtremaDetectionParameters(False)
@@ -282,7 +283,7 @@ class HydroSolver:
                     use_SED and use_ZS and p > 0, clip_zero_tol
                 ),
                 PAD_params=PhysicalAdmissibilityParameters(
-                    PAD_bounds is not None and use_ZS and p > 0, PAD_bounds or {}
+                    updated_PAD_bounds and use_ZS and p > 0, updated_PAD_bounds
                 ),
                 omit_vars=omit_vars_from_ZS or [],
                 adaptive_dt_tol=adaptive_dt_tol,
@@ -304,7 +305,7 @@ class HydroSolver:
                     include_corners=include_corners,
                 ),
                 PAD_params=PhysicalAdmissibilityParameters(
-                    PAD_bounds is not None and use_MOOD and p > 0, PAD_bounds or {}
+                    updated_PAD_bounds and use_MOOD and p > 0, updated_PAD_bounds
                 ),
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,
@@ -354,6 +355,34 @@ class HydroSolver:
         self._reset_substep_summary()  # defines self.substep_summary
         self._reset_step_summary()  # defines self.step_summary
         self._init_snapshot_history()  # defines self.snapshot_history
+
+    def _configure_PAD_bounds(
+        self,
+        PAD_bounds: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]],
+        hydro_params: HydroParameters,
+    ) -> Dict[str, Tuple[Optional[float], Optional[float]]]:
+        if PAD_bounds is None:
+            PAD_bounds = {}
+
+        update = {}
+        if "rho" in PAD_bounds:
+            if PAD_bounds["rho"][0] != hydro_params.rho_min:
+                warnings.warn(
+                    f"PAD lower bound for 'rho' is {PAD_bounds['rho'][0]}, "
+                    f"which is different from the hydro parameter rho_min={hydro_params.rho_min}."
+                )
+        else:
+            update["rho"] = (hydro_params.rho_min, None)
+        if "P" in PAD_bounds:
+            if PAD_bounds["P"][0] != hydro_params.P_min:
+                warnings.warn(
+                    f"PAD lower bound for 'P' is {PAD_bounds['P'][0]}, "
+                    f"which is different from the hydro parameter P_min={hydro_params.P_min}."
+                )
+        else:
+            update["P"] = (hydro_params.P_min, None)
+
+        return {**PAD_bounds, **update}
 
     def _compute_nghost(self, fv_scheme: FV_SchemeParameters, ndim: int) -> int:
         dummy_stencil = conservative_interpolation.left_right(fv_scheme.p)

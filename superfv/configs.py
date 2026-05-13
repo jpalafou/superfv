@@ -9,9 +9,8 @@ from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, UnivarField
 from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
-from .tools.variable_index_map import VariableIndexMap
-
 from .tools.device_management import CUPY_AVAILABLE
+from .tools.variable_index_map import VariableIndexMap
 
 
 @dataclass(frozen=True, slots=True)

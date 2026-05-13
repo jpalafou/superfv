@@ -128,7 +128,7 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
         if "PAD_bounds" not in arrays:
             physical_bounds = cp.empty((idx.nvars, 2), dtype=np.float64)
             idx_bound_map = {
-                idx(v): (lb, ub) for v, (lb, ub) in mood_params.PAD_params.physical_bounds.items()
+                idx(v): (lb, ub) for v, (lb, ub) in mood_params.PAD_params.bounds.items()
             }
             for i in range(idx.nvars):
                 lb = idx_bound_map[i][0] if i in idx_bound_map else None
@@ -164,11 +164,11 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
             )
 
         if mood_params.PAD_params.use_PAD:
-            for v, (lb, ub) in mood_params.PAD_params.physical_bounds.items():
+            for v, (lb, ub) in mood_params.PAD_params.bounds.items():
                 if lb is not None:
-                    np.maximum(_troubles_, _wnew_[idx[v]] < lb, out=_troubles_)
+                    np.maximum(_troubles_, _wnew_[idx(v)] < lb, out=_troubles_)
                 if ub is not None:
-                    np.maximum(_troubles_, _wnew_[idx[v]] > ub, out=_troubles_)
+                    np.maximum(_troubles_, _wnew_[idx(v)] > ub, out=_troubles_)
 
     # Return number of revisable troubled cells
     sim.xp.minimum(_troubles_[interior], _cascade_idx_[interior] < n_cascade, out=rev_troubles)
