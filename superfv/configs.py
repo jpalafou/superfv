@@ -11,6 +11,8 @@ from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.variable_index_map import VariableIndexMap
 
+from .tools.device_management import CUPY_AVAILABLE
+
 
 @dataclass(frozen=True, slots=True)
 class SmoothExtremaDetectionParameters:
@@ -286,6 +288,9 @@ class SolverParams:
     sync_timer: bool = True
 
     def __post_init__(self):
+        if self.cupy and not CUPY_AVAILABLE:
+            raise ValueError("CuPy is not available but cupy is set to True.")
+
         # PAD bound dicts cannot contain variables not in the variable index map
         if (
             self.fv_scheme.zhang_shu_params.use_ZS
