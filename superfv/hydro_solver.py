@@ -147,7 +147,7 @@ class HydroSolver:
         delta: bool = False,
         # MOOD params
         use_MOOD: bool = False,
-        fallback_cascade: FallbackCascade = FallbackCascade.MUSCL0,
+        fallback_cascade: FallbackCascade = FallbackCascade.MUSCL,
         max_revs: int = 1,
         blend_troubles: bool = False,
         skip_trouble_counts: bool = False,
