@@ -43,6 +43,7 @@ from .finite_volume_driver import (
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .initial_conditions import square
 from .mesh import UniformFVMesh
+from .muscl_solver import update_fluxes_with_muscl_scheme
 from .riemann_solvers import hllc
 from .slope_limiting.MOOD_new import mood_loop
 from .stencils import conservative_interpolation
@@ -63,10 +64,11 @@ if CUPY_AVAILABLE:
 
 
 class TimeIntegrator(Enum):
-    FORWARD_EULER = 0
-    SSPRK2 = 1
-    SSPRK3 = 2
-    RK4 = 3
+    MUSCL_HANCOCK = 0
+    FORWARD_EULER = 1
+    SSPRK2 = 2
+    SSPRK3 = 3
+    RK4 = 4
 
 
 class SnapshotMode(Enum):
@@ -1079,6 +1081,10 @@ class HydroSolver:
         Update the flux arrays "F", "G", and/or "H" with the specified fv_scheme based on the
         current cell averaged / cell centered values "_u_", "_ucc_", "_wcc_", and/or "_w_".
         """
+        if fv_scheme.muscl_params.use_MUSCL:
+            update_fluxes_with_muscl_scheme(self, fv_scheme, 0.0)
+            return
+
         params = self.params
         active_dims = params.mesh.active_dims
         arrays = self.arrays
@@ -1134,6 +1140,41 @@ class HydroSolver:
             tmp["z"][2] if "z" in tmp else None,
         )
 
+    def compute_flux_jvp(
+        self,
+        q: ArrayLike,
+        vec: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        primitives: bool = True,
+    ) -> ArrayLike:
+        """
+        Compute the Jacobian-vector product for the flux function.
+        """
+        if not primitives:
+            raise NotImplementedError("JVP for conservative variable fluxes not implemented yet.")
+
+        idx = self.params.variable_index_map
+        hydro_params = self.params.hydro
+
+        jvp = self.xp.zeros_like(q)
+
+        iv = idx("v" + dim)
+
+        jvp[idx("rho")] = q[iv] * vec[idx("rho")] + q[idx("rho")] * vec[iv]
+        jvp[idx("vx")] = q[iv] * vec[idx("vx")]
+        jvp[idx("vy")] = q[iv] * vec[idx("vy")]
+        jvp[idx("vz")] = q[iv] * vec[idx("vz")]
+        jvp[iv] += (1 / q[idx("rho")]) * vec[idx("P")]
+        jvp[idx("P")] = (
+            hydro_params.iso_cs**2 * jvp[idx("rho")]
+            if hydro_params.isothermal
+            else hydro_params.gamma * q[idx("P")] * vec[iv] + q[iv] * vec[idx("P")]
+        )
+        if "passives" in idx.group_var_map:
+            jvp[idx("passives")] = q[iv] * vec[idx("passives")] + q[idx("passives")] * vec[iv]
+
+        return jvp
+
     # Useful user functions
 
     def write_config_file(self, path: str):
@@ -1172,9 +1213,7 @@ class HydroSolver:
             if base_scheme.mood_params.use_MOOD:
                 mood_loop(self, t, dt)
 
-        dudt = self.compute_time_derivative()
-
-        return dudt
+        return self.compute_time_derivative()
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
@@ -1213,11 +1252,21 @@ class HydroSolver:
         self._update_log_arrays(LogArrayAction.SUBSTEP_ADD)
 
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
+        params = self.params
         arrays = self.arrays
 
         unew = arrays["unew"]
 
         match time_integrator:
+            case TimeIntegrator.MUSCL_HANCOCK:
+                if not params.fv_scheme.muscl_params.use_MUSCL:
+                    raise ValueError("MUSCL-Hancock time integrator requires a MUSCL FV scheme.")
+
+                self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
+                update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
+                k0 = self.compute_time_derivative()
+
+                unew[...] = u + dt * k0
             case TimeIntegrator.FORWARD_EULER:
                 unew[...] = u + self.f(t, u, dt) * dt
                 self._close_substep()

@@ -93,7 +93,7 @@ def compute_MUSCL_slopes(
     alpha: ArrayLike,
     out: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    limiter: Optional[Literal["minmod", "moncen"]] = None,
+    limiter: MUSCL_SlopeLimiter,
     SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
@@ -107,8 +107,7 @@ def compute_MUSCL_slopes(
         out: Output array to which the limited slopes are written. Has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
-        limiter: The slope limiter to use. Can be "minmod", "moncen", or None for no
-            limiting.
+        limiter: The slope limiter to use.
         SED: Whether to apply smooth extrema detection (SED). If True, the limited
             slopes are relaxed to the unlimited centered difference slopes in smooth
             extrema regions where alpha >= 1.
@@ -126,7 +125,7 @@ def compute_MUSCL_slopes(
 
     # write slopes to `out` array
     match limiter:
-        case "minmod":
+        case MUSCL_SlopeLimiter.MINMOD:
             dlft = u[inner] - u[left]
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
@@ -137,7 +136,7 @@ def compute_MUSCL_slopes(
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
-        case "moncen":
+        case MUSCL_SlopeLimiter.MONCEN:
             dlft = u[inner] - u[left]
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
@@ -148,9 +147,9 @@ def compute_MUSCL_slopes(
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
-        case "PP2D":
+        case MUSCL_SlopeLimiter.PP2D:
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
-        case None:
+        case MUSCL_SlopeLimiter.NONE:
             out[inner] = 0.5 * (u[right] - u[left])
         case _:
             raise ValueError(f"Unknown limiter: {limiter}.")

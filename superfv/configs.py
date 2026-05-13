@@ -48,6 +48,11 @@ class ZhangShuParameters:
             raise ValueError(
                 "Physical admissibility detection must be enabled when " "adaptive_dt is True."
             )
+        if not self.use_ZS:
+            if self.SED_params.use_SED:
+                raise ValueError("SED cannot be used if the Zhang-Shu limiter is not used.")
+            if self.PAD_params.use_PAD:
+                raise ValueError("PAD cannot be used if the Zhang-Shu limiter is not used.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +71,10 @@ class NumericalAdmissibilityParameters:
     delta: bool = False
     include_corners: bool = True
 
+    def __post_init__(self):
+        if not self.use_NAD and self.SED_params.use_SED:
+            raise ValueError("Smooth extrema detection cannot be used if NAD is not used.")
+
 
 @dataclass(frozen=True, slots=True)
 class MOOD_Parameters:
@@ -80,13 +89,19 @@ class MOOD_Parameters:
     log_limiter_scalars: bool = True
 
     def __post_init__(self):
-        if self.blend_troubles and len(self.fallback_cascade) != 1:
+        if self.use_MOOD and self.blend_troubles and len(self.fallback_cascade) != 1:
             raise ValueError(
                 "fallback_cascade must have exactly one scheme when blend_troubles is True."
             )
 
-        if self.max_revs < len(self.fallback_cascade):
+        if self.use_MOOD and self.max_revs < len(self.fallback_cascade):
             raise ValueError("max_revs must be at least the length of fallback_cascade.")
+
+        if not self.use_MOOD:
+            if self.NAD_params.use_NAD:
+                raise ValueError("NAD cannot be used if MOOD is not used.")
+            if self.PAD_params.use_PAD:
+                raise ValueError("PAD cannot be used if MOOD is not used.")
 
 
 class FallbackCascade(Enum):
@@ -332,3 +347,11 @@ class SolverParams:
             raise ValueError(
                 "All variables with PAD bounds must be in primitives when using CONS_LIM_PRIM flux recipe."
             )
+
+        # PP2D MUSCL slopes can only be used in 2D
+        if (
+            self.fv_scheme.muscl_params.use_MUSCL
+            and self.fv_scheme.muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D
+            and self.mesh.ndim != 2
+        ):
+            raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
