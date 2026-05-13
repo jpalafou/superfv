@@ -31,6 +31,14 @@ class PhysicalAdmissibilityParameters:
     use_PAD: bool
     bounds: Dict[str, Tuple[Optional[float], Optional[float]]]
 
+    def __post_init__(self):
+        if self.use_PAD and not any(
+            lb is not None or ub is not None for lb, ub in self.bounds.values()
+        ):
+            raise ValueError(
+                "At least one variable must have a non-None bound when use_PAD is True."
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class ZhangShuParameters:
@@ -45,15 +53,20 @@ class ZhangShuParameters:
     log_limiter_scalars: bool = True
 
     def __post_init__(self):
-        if self.adaptive_dt and not self.PAD_params.use_PAD:
-            raise ValueError(
-                "Physical admissibility detection must be enabled when " "adaptive_dt is True."
-            )
         if not self.use_ZS:
+            if self.adaptive_dt:
+                raise ValueError(
+                    "Adaptive time-stepping cannot be used if the Zhang-Shu limiter is not used."
+                )
             if self.SED_params.use_SED:
                 raise ValueError("SED cannot be used if the Zhang-Shu limiter is not used.")
             if self.PAD_params.use_PAD:
                 raise ValueError("PAD cannot be used if the Zhang-Shu limiter is not used.")
+
+        if self.adaptive_dt and not self.PAD_params.use_PAD:
+            raise ValueError(
+                "Physical admissibility detection must be enabled when adaptive_dt is True."
+            )
 
 
 @dataclass(frozen=True, slots=True)

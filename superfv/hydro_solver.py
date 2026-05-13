@@ -1292,6 +1292,7 @@ class HydroSolver:
                 k0 = self.compute_time_derivative()
 
                 unew[...] = u + dt * k0
+                return
             case TimeIntegrator.FORWARD_EULER:
                 unew[...] = u + self.f(t, u, dt) * dt
                 self._close_substep()
@@ -1401,6 +1402,37 @@ class HydroSolver:
     def _print(self, message: str):
         print(f"\r{message}", end="", flush=True)
 
+    def _check_dt(self, dt: float):
+        if not np.isfinite(dt):
+            raise RuntimeError(f"Computed dt={dt} is not finite.")
+        if dt < self.params.hydro.dt_min:
+            raise RuntimeError(
+                f"Computed dt={dt} is smaller than the minimum allowed={self.params.hydro.dt_min}."
+            )
+
+    def _check_unew_for_dt_revision(self) -> bool:
+        params = self.params
+        tol = params.fv_scheme.zhang_shu_params.adaptive_dt_tol
+        idx = params.variable_index_map
+
+        if not params.fv_scheme.zhang_shu_params.adaptive_dt:
+            raise RuntimeError(
+                "DT revision check called but adaptive_dt is not enabled in the parameters."
+            )
+
+        unew = self.arrays["unew"]
+        wnew = self.xp.empty_like(unew)
+
+        self.conservatives_to_primitives(unew, wnew)
+
+        for v, (lb, ub) in params.fv_scheme.zhang_shu_params.PAD_params.bounds.items():
+            if lb is not None and self.xp.any(wnew[idx(v)] < lb - tol):
+                return True
+            if ub is not None and self.xp.any(wnew[idx(v)] > ub + tol):
+                return True
+
+        return False
+
     def _take_step(self, time_integrator: TimeIntegrator, dt_min: Optional[float] = None):
         """
         Update "u" and self.t by taking a single step in time with the specified time integrator
@@ -1416,20 +1448,24 @@ class HydroSolver:
 
         # Compute dt which may need to be clipped
         dt = self.compute_dt(t, u)
-        if dt < self.params.hydro.dt_min:
-            raise RuntimeError(
-                f"Computed dt={dt} is smaller than the minimum allowed={self.params.hydro.dt_min}."
-            )
+        self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
 
         # Compute new state
         self._update_unew(t, u, dt, time_integrator)
-        tnew = t + dt
+
+        # Revise time-step size if needed
+        if self.params.fv_scheme.zhang_shu_params.adaptive_dt:
+            while self._check_unew_for_dt_revision():
+                dt /= 2
+                self._check_dt(dt)
+                self._update_unew(t, u, dt, time_integrator)
+                self.step_summary.n_dt_revisions += 1
 
         # Update the state
         u[...] = unew
-        self.t = tnew
+        self.t += dt
 
         self._close_step()
 
