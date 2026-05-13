@@ -8,6 +8,7 @@ class Snapshot:
     t: float
     u: np.ndarray
     w: np.ndarray
+    has_shock: np.ndarray
     theta: np.ndarray
     troubles: np.ndarray
     cascade_idx: np.ndarray

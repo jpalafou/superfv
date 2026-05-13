@@ -46,6 +46,7 @@ from .mesh import UniformFVMesh
 from .muscl_solver import update_fluxes_with_muscl_scheme
 from .riemann_solvers import hllc
 from .slope_limiting.MOOD_new import mood_loop
+from .slope_limiting.shock_detection import detect_shocks
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
@@ -614,12 +615,10 @@ class HydroSolver:
 
         # define slope-limiting arrays
         arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_eta_", np.zeros((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
 
         # define Zhang-Shu limiter arrays
         arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
 
         # define MOOD arrays
         for scheme in [fv_scheme] + fv_scheme.mood_params.fallback_cascade:
@@ -635,6 +634,10 @@ class HydroSolver:
         arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
         arrays.add("revisable_troubles", np.zeros((1, nx, ny, nz), dtype=np.int32))
         arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+
+        # define snapshot arrays
+        arrays.add("has_shock_log", np.zeros((1, nx, ny, nz)))
+        arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
         arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
         arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
 
@@ -690,6 +693,11 @@ class HydroSolver:
                 t=self.t,
                 u=self.arrays.get_numpy_copy("u"),
                 w=self.xp.asnumpy(w) if self.params.cupy else w,
+                has_shock=(
+                    self.arrays.get_numpy_copy("has_shock_log")
+                    if params.fv_scheme.shock_detection_params.use_shock_detection
+                    else np.empty((0,))
+                ),
                 theta=(
                     self.arrays.get_numpy_copy("theta_log")
                     if params.fv_scheme.zhang_shu_params.use_ZS
@@ -863,6 +871,42 @@ class HydroSolver:
             p,
         )
 
+    def detect_shocks(self, fv_scheme: FV_SchemeParameters):
+        """
+        Detect shocks in "_u_" or "_w_" and write the result to "_has_shock_".
+        """
+        if not fv_scheme.shock_detection_params.use_shock_detection:
+            raise ValueError("Shock detection is not enabled in the provided FV scheme.")
+
+        params = self.params
+        idx = params.variable_index_map
+        active_dims = params.mesh.active_dims
+        eta_max = fv_scheme.shock_detection_params.eta_max
+        arrays = self.arrays
+
+        _u_ = arrays["_u_"]
+        _w_ = arrays["_w_"]
+        _has_shock_ = arrays["_has_shock_"]
+        _q_ref_ = self.xp.empty_like(_u_)
+        _c_ = self.xp.empty_like(_u_[:1, ...])
+        _eta_ = self.xp.empty_like(_u_)
+
+        self.compute_sound_speed(_w_, _c_)
+
+        if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+            # Detect shocks using conservatives
+            _q_ref_[...] = _u_
+            _c_ *= _u_[idx("rho", keepdims=True)]
+            for dim in active_dims:
+                _q_ref_[idx("v" + dim)] = _c_
+            detect_shocks(_u_, _q_ref_, _eta_, _has_shock_, active_dims, eta_max)
+        else:
+            # Detect shocks using primitives
+            _q_ref_[...] = _w_
+            for dim in active_dims:
+                _q_ref_[idx("v" + dim)] = _c_
+            detect_shocks(_w_, _q_ref_, _eta_, _has_shock_, active_dims, eta_max)
+
     def update_cell_centers_and_primitive_cell_averages(
         self, t: float, u: ArrayLike, fv_scheme: FV_SchemeParameters
     ):
@@ -880,6 +924,7 @@ class HydroSolver:
         _wcc_ = arrays["_wcc_"]
         _w_ = arrays["_w_"]
         _w1_ = arrays["_w1_"]
+        _has_shock_ = arrays["_has_shock_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
@@ -898,7 +943,22 @@ class HydroSolver:
             case LazyPrimitiveMode.FULL:
                 _w_[...] = _w1_
             case LazyPrimitiveMode.ADAPTIVE:
-                raise NotImplementedError("Adaptive lazy primitives not implemented yet.")
+                integrate_cell_averages(_wcc_, _w_, active_dims, fv_scheme.p)
+                self.detect_shocks(fv_scheme)  # updates "_has_shock_"
+
+                # Flag PAD violations as shocks
+                if fv_scheme.mood_params.PAD_params.use_PAD:
+                    raise NotImplementedError(
+                        "Adaptive primitive mode with MOOD PAD is not implemented yet."
+                    )
+                if fv_scheme.zhang_shu_params.PAD_params.use_PAD:
+                    for v, (lb, ub) in fv_scheme.zhang_shu_params.PAD_params.bounds.items():
+                        if lb is not None:
+                            self.xp.maximum(_has_shock_, _w_[idx(v)] < lb, out=_has_shock_)
+                        if ub is not None:
+                            self.xp.maximum(_has_shock_, _w_[idx(v)] > ub, out=_has_shock_)
+
+                _w_[...] = self.xp.where(_has_shock_, _w_, _w1_)
 
         # ensure density is always transformed in the lazy way
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
@@ -1257,16 +1317,19 @@ class HydroSolver:
 
         match action:
             case LogArrayAction.SUBSTEP_ADD:
+                arrays["has_shock_log"] += arrays["_has_shock_"][interior]
                 arrays["theta_log"] += arrays["_theta_"][interior]
                 arrays["troubles_log"] += arrays["_troubles_"][interior]
                 arrays["cascade_idx_log"] += arrays["_cascade_idx_"][interior]
             case LogArrayAction.SUBSTEP_AVERAGE:
                 n_substeps = max(1, len(self.step_summary.substeps))
 
+                arrays["has_shock_log"] /= n_substeps
                 arrays["theta_log"] /= n_substeps
                 arrays["troubles_log"] /= n_substeps
                 arrays["cascade_idx_log"] /= n_substeps
             case LogArrayAction.RESET:
+                arrays["has_shock_log"][...] = 0.0
                 arrays["theta_log"][...] = 0.0
                 arrays["troubles_log"][...] = 0.0
                 arrays["cascade_idx_log"][...] = 0.0
@@ -1399,7 +1462,7 @@ class HydroSolver:
         message = parts[0] + " | ".join(parts[1:])
         return message
 
-    def _print(self, message: str):
+    def _print_message(self, message: str):
         print(f"\r{message}", end="", flush=True)
 
     def _check_dt(self, dt: float):
@@ -1483,16 +1546,16 @@ class HydroSolver:
         for i in range(1, n + 1):
             self._take_step(time_integtrator)
 
-            if snapshot_mode == SnapshotMode.TARGET and i == n - 1:
+            if snapshot_mode == SnapshotMode.TARGET and i == n:
                 self._take_snapshot()
             elif snapshot_mode == SnapshotMode.EVERY:
                 self._take_snapshot()
 
             if print_update and (i % print_frequency == 0 or i == n):
-                self._print(self._build_message(current_steps=i, total_steps=n))
+                self._print_message(self._build_message(current_steps=i, total_steps=n))
 
         if print_update:
-            self._print(self._build_message(current_steps=n, total_steps=n) + " (done)\n")
+            self._print_message(self._build_message(current_steps=n, total_steps=n) + " (done)\n")
 
     def run(
         self,
@@ -1529,12 +1592,12 @@ class HydroSolver:
 
             n = len(self.step_history)
             if print_update and n % print_frequency == 0:
-                self._print(
+                self._print_message(
                     self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
                 )
 
         if print_update:
-            self._print(
+            self._print_message(
                 self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
                 + " (done)\n"
             )
