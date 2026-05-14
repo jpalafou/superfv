@@ -4,7 +4,7 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 
-from superfv.tools.slicing import VariableIndexMap
+from superfv.tools.variable_index_map import VariableIndexMap
 
 from .configs import ZhangShuParameters
 from .quadrature import perform_quadrature

@@ -5,8 +5,8 @@ import numpy as np
 
 from .hydro import fluxes, prim_to_cons, sound_speed
 from .tools.device_management import CUPY_AVAILABLE
-from .tools.slicing import VariableIndexMap
 from .tools.stability import avoid0
+from .tools.variable_index_map import VariableIndexMap
 
 
 class RiemannSolver(Enum):

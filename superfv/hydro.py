@@ -4,7 +4,7 @@ import numpy as np
 
 from .mesh import UniformFVMesh
 from .tools.device_management import CUPY_AVAILABLE
-from .tools.slicing import VariableIndexMap
+from .tools.variable_index_map import VariableIndexMap
 
 
 def sound_speed(idx: VariableIndexMap, w: np.ndarray, gamma: float) -> np.ndarray:

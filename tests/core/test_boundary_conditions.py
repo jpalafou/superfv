@@ -4,7 +4,7 @@ import pytest
 from superfv.boundary_conditions import BC, apply_bc
 from superfv.mesh import UniformFVMesh
 from superfv.tools.norms import linf_norm
-from superfv.tools.slicing import VariableIndexMap, crop
+from superfv.tools.variable_index_map import VariableIndexMap, crop
 
 
 @pytest.mark.parametrize("bc_type", [BC.PERIODIC, BC.FREE, BC.SYMMETRIC, BC.ZEROS, BC.ONES])

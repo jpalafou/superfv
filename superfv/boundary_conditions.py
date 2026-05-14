@@ -9,7 +9,8 @@ from .axes import AXIS_TO_DIM
 from .field import MultivarField
 from .mesh import UniformFVMesh
 from .tools.device_management import ArrayLike
-from .tools.slicing import VariableIndexMap, crop
+from .tools.slicing import crop
+from .tools.variable_index_map import VariableIndexMap
 
 
 class BC(Enum):

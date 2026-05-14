@@ -5,7 +5,7 @@ import teyssier
 from superfv.hydro import cons_to_prim, fluxes, prim_to_cons
 from superfv.tools.device_management import CUPY_AVAILABLE, xp
 from superfv.tools.norms import l1_norm, linf_norm
-from superfv.tools.slicing import VariableIndexMap
+from superfv.tools.variable_index_map import VariableIndexMap
 
 if CUPY_AVAILABLE:
     from superfv.hydro import (

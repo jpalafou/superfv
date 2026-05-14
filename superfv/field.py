@@ -2,7 +2,7 @@ from types import ModuleType
 from typing import Optional, Protocol
 
 from .tools.device_management import ArrayLike
-from .tools.slicing import VariableIndexMap
+from .tools.variable_index_map import VariableIndexMap
 
 
 class MultivarField(Protocol):

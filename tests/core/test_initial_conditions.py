@@ -4,7 +4,7 @@ import pytest
 from superfv.initial_conditions import sinus, slotted_disk, square
 from superfv.mesh import UniformFVMesh
 from superfv.tools.norms import linf_norm
-from superfv.tools.slicing import VariableIndexMap
+from superfv.tools.variable_index_map import VariableIndexMap
 
 
 def get_core_mesh(dims):

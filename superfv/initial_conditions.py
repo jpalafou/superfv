@@ -5,7 +5,7 @@ import numpy as np
 
 from .mesh import xyz_tup
 from .tools.device_management import ArrayLike
-from .tools.slicing import VariableIndexMap
+from .tools.variable_index_map import VariableIndexMap
 
 
 def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Tuple[Literal["x", "y", "z"], ...]:
