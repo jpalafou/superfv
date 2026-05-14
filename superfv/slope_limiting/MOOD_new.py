@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import ModuleType
-from typing import TYPE_CHECKING, Literal, Tuple
+from typing import TYPE_CHECKING, List, Literal, Tuple
 
 import numpy as np
 
@@ -340,13 +340,12 @@ def assign_blended_fluxes(sim: HydroSolver):
         arrays[name] = (1 - theta_fv) * F_high_order + theta_fv * F_fallback
 
 
-def assign_fluxes(sim: HydroSolver):
+def assign_fluxes(sim: HydroSolver, computed_fallback_fluxes: List[FV_SchemeParameters]):
     """
     Update the flux arrays "F", ... based on the current "_cascade_idx_"
     """
     params = sim.params
     fv_scheme = params.fv_scheme
-    cascade = fv_scheme.mood_params.fallback_cascade
     active_dims = params.mesh.active_dims
     nghost = params.mesh.nghost
     arrays = sim.arrays
@@ -362,7 +361,7 @@ def assign_fluxes(sim: HydroSolver):
         name = {"x": "F", "y": "G", "z": "H"}[dim]
         arrays[name][...] = 0.0
         cascade_face_mask = get_face_mask(sim.xp, _cascade_idx_, dim, active_dims, nghost)
-        for i, scheme in enumerate([fv_scheme] + cascade):
+        for i, scheme in enumerate([fv_scheme] + computed_fallback_fluxes):
             in_mask = cascade_face_mask == i
             arrays[name] += arrays[name + "_" + scheme.name] * in_mask
 
@@ -383,7 +382,7 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
 
     # Initialize MOOD arrays
     init_mood(sim)
-    max_fallback_idx = 0
+    computed_fallback_fluxes = []
 
     for _ in range(mood_params.max_revs):
         n_troubles = detect_troubled_cells(sim, t, dt)
@@ -397,17 +396,19 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
         sim.xp.minimum(_cascade_idx_ + _troubles_, n_cascade, out=_cascade_idx_)
 
         i_max = sim.xp.max(_cascade_idx_).item()
-        if i_max == max_fallback_idx + 1:
-            compute_fallback_fluxes(sim, mood_params.fallback_cascade[i_max - 1])
-            max_fallback_idx += 1
-        elif i_max != max_fallback_idx:
+        if i_max == len(computed_fallback_fluxes) + 1:
+            next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
+            compute_fallback_fluxes(sim, next_fallback_scheme)
+            computed_fallback_fluxes.append(next_fallback_scheme)
+        elif i_max != len(computed_fallback_fluxes):
             raise RuntimeError(
-                f"Unexpected cascade index: {i_max} (previous max was {max_fallback_idx})"
+                f"Unexpected cascade index {i_max} with {len(computed_fallback_fluxes)} "
+                "computed fallback fluxes."
             )
 
         # Update state
         substep_summary.n_MOOD_revisions += 1
-        assign_fluxes(sim)
+        assign_fluxes(sim, computed_fallback_fluxes)
 
 
 if CUPY_AVAILABLE:
