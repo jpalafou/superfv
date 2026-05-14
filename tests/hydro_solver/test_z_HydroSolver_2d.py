@@ -8,6 +8,7 @@ from superfv import (
     FluxQuadrature,
     HydroSolver,
     LazyPrimitiveMode,
+    MUSCL_SlopeLimiter,
     TimeIntegrator,
     ic,
 )
@@ -49,3 +50,38 @@ def test_sedov(scheme):
         sim.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK, print_frequency=1)
     else:
         sim.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3, print_frequency=1)
+
+
+@pytest.mark.parametrize(
+    "scheme",
+    [
+        dict(p=1, use_MUSCL=True, MUSCL_limiter=MUSCL_SlopeLimiter.PP2D),
+        dict(
+            p=7,
+            use_ZS=True,
+            adaptive_dt=True,
+            lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE,
+            flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+        ),
+        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, rtol=0, max_revs=64),
+    ],
+)
+def test_preservation_of_maximum_principle(scheme):
+    with pytest.warns(
+        UserWarning,
+        match="PAD lower bound for 'rho' is 1, which is different from the hydro parameter rho_min=1e-12.",
+    ):
+        sim = HydroSolver(
+            ic=partial(ic.square, rhomin=1, rhomax=2, vx=2, vy=1),
+            PAD_bounds={"rho": (1, 2)},
+            nx=64,
+            ny=64,
+            **scheme,
+        )
+    if scheme.get("use_MUSCL", False):
+        sim.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+    else:
+        sim.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3)
+
+    assert min(sim.step_history.get_history("rho_min")) > 1 - 1e-14
+    assert min(sim.step_history.get_history("rho_min")) < 2 + 1e-14
