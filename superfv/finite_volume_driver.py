@@ -80,7 +80,7 @@ def interpolate_cell_centers(
         _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
 
         stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
-        stencil_sweep(_qtemp1_, weights[..., na], _qcc_[..., na], active_dims[1])
+        stencil_sweep(_qtemp1_, weights, _qcc_[..., na], active_dims[1])
         return
     elif ndim == 3:
         _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
@@ -206,15 +206,15 @@ def interpolate_face_nodes(
             )
 
         if ndim == 2:
-            _qtemp1_ = cp.empty(_q_[..., na]) if cupy else np.empty(_q_[..., na])
+            _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
 
             trans_dim = [d for d in active_dims if d != dim][0]
             stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim)
             stencil_sweep(_qtemp1_, lr_stencil, _qj_, dim)
             return
         elif ndim == 3:
-            _qtemp1_ = cp.empty(_q_[..., na]) if cupy else np.empty(_q_[..., na])
-            _qtemp2_ = cp.empty(_q_[..., na]) if cupy else np.empty(_q_[..., na])
+            _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+            _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
 
             trans_dims = [d for d in active_dims if d != dim]
             trans_dim1 = trans_dims[0]
@@ -266,24 +266,24 @@ def integrate_transverse_nodes(
 
     if dim not in active_dims:
         raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
-    if _qj_.ndim != 4:
-        raise ValueError("_qj_ must be 4D.")
-    if _qF_.shape != _qj_.shape:
-        raise ValueError("_qF_ and _qj_ must have the same shape.")
+    if _qj_.ndim != 5 and _qj_.shape[4] == 1:
+        raise ValueError("_qj_ must be 5D with the 5th dimension equal to 1.")
+    if _qF_.shape != _qj_.shape[:4]:
+        raise ValueError("The shape of _qF_ must match the first 4 dimensions of _qj_.")
 
     if ndim == 1:
         raise ValueError("Cannot integrate transverse face nodes in 1D.")
     if ndim == 2:
         trans_dim = [d for d in active_dims if d != dim][0]
-        stencil_sweep(_qj_[..., na], stencil, _qF_[..., na], trans_dim)
+        stencil_sweep(_qj_, stencil, _qF_[..., na], trans_dim)
         return
     elif ndim == 3:
-        _qtemp_ = cp.empty_like(_qj_[..., na]) if cupy else np.empty_like(_qj_[..., na])
+        _qtemp_ = cp.empty_like(_qj_) if cupy else np.empty_like(_qj_)
 
         trans_dims = [d for d in active_dims if d != dim]
         trans_dim1 = trans_dims[0]
         trans_dim2 = trans_dims[1]
-        stencil_sweep(_qj_[..., na], stencil, _qtemp_, trans_dim1)
+        stencil_sweep(_qj_, stencil, _qtemp_, trans_dim1)
         stencil_sweep(_qtemp_, stencil, _qF_[..., na], trans_dim2)
         return
 
