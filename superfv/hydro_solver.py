@@ -50,7 +50,7 @@ from .slope_limiting.shock_detection import detect_shocks
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
-from .tools.snapshot import Snapshot, SnapshotHistory
+from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
 from .tools.step_history import StepHistory, StepSummary, SubstepSummary
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
@@ -159,6 +159,8 @@ class HydroSolver:
         # Other params
         cupy: bool = False,
         sync_timer: bool = True,
+        output_path: Optional[Union[str, Path]] = None,
+        discard_after_writing: bool = True,
     ):
         # Define the following attributes:
         self.arrays: ArrayManager
@@ -343,6 +345,8 @@ class HydroSolver:
             variable_index_map=self._define_complete_variable_index_map(ic_params),
             cupy=cupy and CUPY_AVAILABLE,
             sync_timer=sync_timer,
+            output_path=Path(output_path) if output_path is not None else None,
+            discard_after_writing=discard_after_writing,
         )
 
         self._build_interior_slice()  # defines self.interior
@@ -355,6 +359,7 @@ class HydroSolver:
         self._init_step_history()  # defines self.step_history
         self._reset_substep_summary()  # defines self.substep_summary
         self._reset_step_summary()  # defines self.step_summary
+        self._prepare_output_directory()
         self._init_snapshot_history()  # defines self.snapshot_history
 
     def _configure_PAD_bounds(
@@ -680,6 +685,21 @@ class HydroSolver:
             substeps=[],
         )
 
+    def _prepare_output_directory(self):
+        """
+        Prepare the output directory and write the configuration file.
+        """
+        output_path = self.params.output_path
+
+        if output_path is None:
+            return
+        if output_path.exists():
+            raise FileExistsError(f"Output path '{output_path}' already exists.")
+
+        output_path.mkdir(parents=True, exist_ok=False)
+        with open(output_path / "params.yaml", "w") as f:
+            f.write(yaml_dump(asdict(self.params)))
+
     def _take_snapshot(self):
         params = self.params
 
@@ -688,8 +708,15 @@ class HydroSolver:
 
         self.conservatives_to_primitives(u, w)
 
-        self.snapshot_history.append(
-            Snapshot(
+        if params.output_path is not None:
+            n = len(self.snapshot_history)
+            ndigits = params.output_n_digits
+            path = params.output_path / f"output_{n:0{ndigits}d}.pkl"
+        else:
+            path = None
+
+        snapshot = Snapshot(
+            data=SnapshotData(
                 t=self.t,
                 u=self.arrays.get_numpy_copy("u"),
                 w=self.xp.asnumpy(w) if self.params.cupy else w,
@@ -713,8 +740,15 @@ class HydroSolver:
                     if params.fv_scheme.mood_params.use_MOOD
                     else np.empty((0,))
                 ),
-            )
+            ),
+            path=path,
         )
+
+        if snapshot.path is not None:
+            with open(params.output_path / "output_times.txt", "a") as f:
+                f.write(f"{snapshot.path.name},{snapshot.data.t}\n")
+            snapshot.dump(params.discard_after_writing)
+        self.snapshot_history.append(snapshot)
 
     def _init_snapshot_history(self):
         self.snapshot_history = SnapshotHistory([])
@@ -1601,9 +1635,3 @@ class HydroSolver:
                 self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
                 + " (done)\n"
             )
-
-    # Useful user functions
-
-    def write_config_file(self, path: str):
-        with open(Path(path) / "config.yaml", "w") as f:
-            f.write(yaml_dump(asdict(self.params)))

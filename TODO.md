@@ -1,3 +1,4 @@
-writing snapshots to disk
 timer
 plotting
+detect closing troubles
+add commit hash to configs

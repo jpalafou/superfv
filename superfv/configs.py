@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import BC, PatchBC
@@ -298,6 +299,9 @@ class SolverParams:
     variable_index_map: VariableIndexMap
     cupy: bool = False
     sync_timer: bool = True
+    output_path: Optional[Path] = None
+    discard_after_writing: bool = True
+    output_n_digits: int = 6
 
     def __post_init__(self):
         if self.cupy and not CUPY_AVAILABLE:
