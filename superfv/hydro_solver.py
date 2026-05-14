@@ -1574,7 +1574,7 @@ class HydroSolver:
     def take_n_steps(
         self,
         n: int,
-        time_integtrator: TimeIntegrator = TimeIntegrator.SSPRK3,
+        time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
         print_update: bool = True,
         print_frequency: int = 100,
@@ -1583,7 +1583,7 @@ class HydroSolver:
 
         print_frequency = max(1, print_frequency)
         for i in range(1, n + 1):
-            self._take_step(time_integtrator)
+            self._take_step(time_integrator)
 
             if snapshot_mode == SnapshotMode.TARGET and i == n:
                 self._take_snapshot()
