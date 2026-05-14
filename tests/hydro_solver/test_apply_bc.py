@@ -4,7 +4,8 @@ import pytest
 from superfv.boundary_conditions import BC, apply_bc
 from superfv.mesh import UniformFVMesh
 from superfv.tools.norms import linf_norm
-from superfv.tools.variable_index_map import VariableIndexMap, crop
+from superfv.tools.slicing import crop
+from superfv.tools.variable_index_map import VariableIndexMap
 
 
 @pytest.mark.parametrize("bc_type", [BC.PERIODIC, BC.FREE, BC.SYMMETRIC, BC.ZEROS, BC.ONES])
@@ -53,7 +54,7 @@ def test_reflective_boundary_conditions(ref_slab):
     N = 32
     nghost = 16
 
-    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4})
+    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4}, {})
 
     u = np.random.rand(5, N, N, N)
     _u_ref = np.empty((5, N + 2 * nghost, N + 2 * nghost, N + 2 * nghost))
@@ -129,7 +130,7 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
     N = 32
     nghost = 16
 
-    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4})
+    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4}, {})
     t = 0.1
 
     # define a sinusoidal function for the boundary condition
