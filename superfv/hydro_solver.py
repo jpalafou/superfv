@@ -1,3 +1,4 @@
+import shutil
 import time
 import warnings
 from dataclasses import asdict
@@ -161,6 +162,7 @@ class HydroSolver:
         sync_timer: bool = True,
         output_path: Optional[Union[str, Path]] = None,
         discard_after_writing: bool = True,
+        overwrite: bool = False,
     ):
         # Define the following attributes:
         self.arrays: ArrayManager
@@ -359,7 +361,7 @@ class HydroSolver:
         self._init_step_history()  # defines self.step_history
         self._reset_substep_summary()  # defines self.substep_summary
         self._reset_step_summary()  # defines self.step_summary
-        self._prepare_output_directory()
+        self._prepare_output_directory(overwrite)
         self._init_snapshot_history()  # defines self.snapshot_history
 
     def _configure_PAD_bounds(
@@ -685,7 +687,7 @@ class HydroSolver:
             substeps=[],
         )
 
-    def _prepare_output_directory(self):
+    def _prepare_output_directory(self, overwrite: bool):
         """
         Prepare the output directory and write the configuration file.
         """
@@ -693,7 +695,10 @@ class HydroSolver:
 
         if output_path is None:
             return
-        if output_path.exists():
+        if output_path.exists() and overwrite:
+            warnings.warn(f"Output path '{output_path}' already exists. Overwriting.")
+            shutil.rmtree(output_path)
+        elif output_path.exists():
             raise FileExistsError(f"Output path '{output_path}' already exists.")
 
         output_path.mkdir(parents=True, exist_ok=False)
