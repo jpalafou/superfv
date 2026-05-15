@@ -49,12 +49,12 @@ def sinus(
     t: float = 0.0,
     *,
     xp: ModuleType,
-    rho_max: float = 2,
-    rho_min: float = 1,
-    vx: float = 0,
-    vy: float = 0,
-    vz: float = 0,
-    P: float = 1,
+    rho_max: float = 2.0,
+    rho_min: float = 1.0,
+    vx: float = 0.0,
+    vy: float = 0.0,
+    vz: float = 0.0,
+    P: float = 1.0,
 ) -> ArrayLike:
     """
     Returns array for sinusoidal initial condition that is periodic on the interval
@@ -112,12 +112,12 @@ def square(
     t: float = 0.0,
     *,
     xp: ModuleType,
-    rhomax: float = 2,
-    rhomin: float = 1,
-    vx: float = 0,
-    vy: float = 0,
-    vz: float = 0,
-    P: float = 1,
+    rho_max: float = 2.0,
+    rho_min: float = 1.0,
+    vx: float = 0.0,
+    vy: float = 0.0,
+    vz: float = 0.0,
+    P: float = 1.0,
 ) -> ArrayLike:
     """
     Returns array for the square wave initial condition that is periodic on the
@@ -130,8 +130,8 @@ def square(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        rhomax: Maximum density of the square function.
-        rhomin: Minimum density of the square function.
+        rho_max: Maximum density of the square function.
+        rho_min: Minimum density of the square function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
@@ -157,7 +157,7 @@ def square(
             za = (z - vz * t) % 1
             r &= (za >= 0.25) & (za <= 0.75)
         r = r.astype(float)
-        out[idx("rho")] = (rhomax - rhomin) * r + rhomin
+        out[idx("rho")] = (rho_max - rho_min) * r + rho_min
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz
@@ -263,8 +263,9 @@ def slotted_disk(
     t: float = 0.0,
     *,
     xp: ModuleType,
-    rho_min_max: Tuple[float, float] = (0.0, 1.0),
-    P: float = 1,
+    rho_max: float = 2.0,
+    rho_min: float = 1.0,
+    P: float = 1.0,
     rotation: Literal["cw", "ccw"] = "ccw",
 ) -> ArrayLike:
     """
@@ -277,7 +278,8 @@ def slotted_disk(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        rho_min_max: Minimum and maximum values of the density.
+        rho_min: Minimum value of the density.
+        rho_max: Maximum value of the density.
         P: Pressure.
         rotation: Rotation direction of the disk: "cw" for clockwise, "ccw" for
             counter-clockwise.
@@ -285,6 +287,11 @@ def slotted_disk(
     Returns:
         ArrayLike: Array with the initial conditions for the given variables.
     """
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Slotted disk initial condition is only defined in 2D.")
+    dim1, dim2 = dims[0], dims[1]
+
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -293,7 +300,7 @@ def slotted_disk(
         theta = -omega * t if rotation == "ccw" else omega * t
 
         # rotate coordinates backward in time
-        x0, y0 = x - 0.5, y - 0.5
+        x0, y0 = {"x": x, "y": y, "z": z}[dim1] - 0.5, {"x": x, "y": y, "z": z}[dim2] - 0.5
         x_rot = xp.cos(theta) * x0 - xp.sin(theta) * y0
         y_rot = xp.sin(theta) * x0 + xp.cos(theta) * y0
 
@@ -302,10 +309,10 @@ def slotted_disk(
         inside_disk = rsq < 0.15
         inside_disk &= ~((xp.abs(x_rot) < 0.025) & (y_rot < 0.35))
 
-        out[idx("rho")] = xp.where(inside_disk, rho_min_max[1], rho_min_max[0])
-        out[idx("vx")] = -y0 if rotation == "ccw" else y0
-        out[idx("vy")] = x0 if rotation == "ccw" else -x0
-        out[idx("vz")] = 0.0
+        out[idx("rho")] = xp.where(inside_disk, rho_max, rho_min)
+        out[idx("v")] = 0.0
+        out[idx(f"v{dim1}")] = -y0 if rotation == "ccw" else y0
+        out[idx(f"v{dim2}")] = x0 if rotation == "ccw" else -x0
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
