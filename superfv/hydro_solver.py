@@ -103,7 +103,7 @@ class HydroSolver:
         iso_cs: float = 1.0,
         # IC params
         ic: MultivarField = square,
-        passive_ics: Optional[List[UnivarField]] = None,
+        passive_ics: Optional[Dict[str, UnivarField]] = None,
         # BC params
         bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
         bcy: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
@@ -453,7 +453,7 @@ class HydroSolver:
             for v in ic_params.passive_ics.keys():
                 if v not in idx.var_idx_map:
                     idx.add_var(v, idx.nvars)
-            idx.add_var_to_group("passives", ic_params.passive_ics.keys())
+                idx.add_var_to_group(v, "passives")
 
         return idx
 

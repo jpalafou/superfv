@@ -230,7 +230,7 @@ class MeshParameters:
 @dataclass
 class InitialConditionParameters:
     ic: MultivarField
-    passive_ics: List[UnivarField]
+    passive_ics: Dict[str, UnivarField]
 
     @property
     def npassives(self) -> int:
