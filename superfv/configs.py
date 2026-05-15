@@ -307,6 +307,9 @@ class SolverParams:
         if self.cupy and not CUPY_AVAILABLE:
             raise ValueError("CuPy is not available but cupy is set to True.")
 
+        if self.sync_timer and not self.cupy:
+            raise ValueError("sync_timer cannot be True if cupy is False.")
+
         # PAD bound dicts cannot contain variables not in the variable index map
         if (
             self.fv_scheme.zhang_shu_params.use_ZS

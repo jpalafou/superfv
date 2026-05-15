@@ -346,7 +346,7 @@ class HydroSolver:
             fv_scheme=fv_scheme_params,
             variable_index_map=self._define_complete_variable_index_map(ic_params),
             cupy=cupy and CUPY_AVAILABLE,
-            sync_timer=sync_timer,
+            sync_timer=sync_timer and cupy and CUPY_AVAILABLE,
             output_path=Path(output_path) if output_path is not None else None,
             discard_after_writing=discard_after_writing,
         )
@@ -674,7 +674,7 @@ class HydroSolver:
         )
 
     def _take_snapshot(self):
-        self.step_summary.timer.start("take_snapshot", self.params.cupy)  # TIMER START
+        self.step_summary.timer.start("take_snapshot", self.params.sync_timer)  # TIMER START
 
         params = self.params
 
@@ -725,7 +725,7 @@ class HydroSolver:
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
 
-        self.step_summary.timer.stop("take_snapshot", self.params.cupy)  # TIMER STOP
+        self.step_summary.timer.stop("take_snapshot", self.params.sync_timer)  # TIMER STOP
 
     def _prepare_output_directory(self, overwrite: bool):
         """
@@ -1454,10 +1454,10 @@ class HydroSolver:
 
     def _open_step(self):
         self._update_log_arrays(LogArrayAction.RESET)
-        self.step_summary.timer.start("take_step", self.params.cupy)  # TIMER START
+        self.step_summary.timer.start("take_step", self.params.sync_timer)  # TIMER START
 
     def _close_step(self, take_snapshot: bool):
-        self.step_summary.timer.stop("take_step", self.params.cupy)  # TIMER STOP
+        self.step_summary.timer.stop("take_step", self.params.sync_timer)  # TIMER STOP
         self._update_log_arrays(LogArrayAction.SUBSTEP_AVERAGE)
         self._summarize_step(take_snapshot)
 
@@ -1535,12 +1535,12 @@ class HydroSolver:
         unew = arrays["unew"]
 
         # Compute dt which may need to be clipped
-        self.step_summary.timer.start("compute_dt", self.params.cupy)  # TIMER START
+        self.step_summary.timer.start("compute_dt", self.params.sync_timer)  # TIMER START
         dt = self.compute_dt(t, u)
         self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
-        self.step_summary.timer.stop("compute_dt", self.params.cupy)  # TIMER STOP
+        self.step_summary.timer.stop("compute_dt", self.params.sync_timer)  # TIMER STOP
 
         # Compute new state
         self._update_unew(t, u, dt, time_integrator)
