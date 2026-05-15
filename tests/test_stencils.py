@@ -12,7 +12,6 @@ from superfv.tools.device_management import xp
 from superfv.tools.norms import linf_norm
 
 
-@pytest.mark.parametrize("interp_dim", ["x", "y", "z"])
 @pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "yz", "xz", "xyz"])
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7])
 @pytest.mark.parametrize(
@@ -25,10 +24,7 @@ from superfv.tools.norms import linf_norm
     ],
 )
 @pytest.mark.parametrize("ninterps", [1, 2])
-def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps):
-    if interp_dim not in active_dims:
-        pytest.skip("Interpolation dimension must be among active dimensions")
-
+def test_trivial_interpolation(active_dims, p, stencil, ninterps):
     N = 64
     shape = (
         1,
@@ -54,6 +50,6 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps):
     u = xp.ones(shape + (ninterps,))
     uj = xp.empty(shape + (ninterps * nouterps,))
 
-    modified = stencil_sweep(u, weights, uj, interp_dim)
-
-    assert linf_norm(uj[modified] - 1.0) < 1e-15
+    for interp_dim in active_dims:
+        modified = stencil_sweep(u, weights, uj, interp_dim)
+        assert linf_norm(uj[modified] - 1.0) < 1e-15
