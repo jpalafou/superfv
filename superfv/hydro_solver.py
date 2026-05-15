@@ -691,8 +691,8 @@ class HydroSolver:
             path = None
 
         snapshot = Snapshot(
+            t=self.t,
             data=SnapshotData(
-                t=self.t,
                 u=self.arrays.get_numpy_copy("u"),
                 w=self.xp.asnumpy(w) if self.params.cupy else w,
                 has_shock=(

@@ -7,7 +7,6 @@ import numpy as np
 
 @dataclass(slots=True, frozen=True)
 class SnapshotData:
-    t: float
     u: np.ndarray
     w: np.ndarray
     has_shock: np.ndarray
@@ -18,6 +17,7 @@ class SnapshotData:
 
 @dataclass
 class Snapshot:
+    t: float
     data: Optional[SnapshotData] = None
     path: Optional[str] = None
 
@@ -32,6 +32,7 @@ class Snapshot:
         if self.data is None:
             with open(self.path, "rb") as f:
                 self.data = pickle.load(f)
+        print(f"Loaded snapshot at t={self.data.t} from {self.path}.")
 
     def dump(self, clear: bool = False):
         if self.path is None:
@@ -44,14 +45,15 @@ class Snapshot:
             self.data = None
 
     def __getattr__(self, name):
+        if name in {"t", "data", "path"}:
+            return super().__getattribute__(name)
         if self.data is None:
             self.load()
         return getattr(self.data, name)
 
     def __setattr__(self, name, value):
-        if name in {"data", "path"}:
-            super().__setattr__(name, value)
-            return
+        if name in {"t", "data", "path"}:
+            return super().__setattr__(name, value)
         if self.data is None:
             self.load()
         setattr(self.data, name, value)
