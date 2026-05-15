@@ -3,6 +3,7 @@ from .boundary_conditions import BC
 from .configs import FallbackCascade, FluxQuadrature, FluxRecipe, LazyPrimitiveMode
 from .hydro import turbulent_power_specta
 from .hydro_solver import HydroSolver, SnapshotMode, TimeIntegrator
+from .hydro_solver_output import HydroSolverOutput
 from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import CUPY_AVAILABLE
@@ -18,6 +19,7 @@ __all__ = [
     "LazyPrimitiveMode",
     "turbulent_power_specta",
     "HydroSolver",
+    "HydroSolverOutput",
     "SnapshotMode",
     "TimeIntegrator",
     "RiemannSolver",

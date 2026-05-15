@@ -721,6 +721,9 @@ class HydroSolver:
         )
 
         if snapshot.path is not None:
+            if len(self.step_history) > 0:
+                print()  # for better separation of snapshot logs in the terminal
+
             with open(params.output_path / "output_times.txt", "a") as f:
                 f.write(f"{snapshot.path.name},{snapshot.t}\n")
             snapshot.dump(params.discard_after_writing)
@@ -728,11 +731,13 @@ class HydroSolver:
 
         self.step_summary.timer.stop("take_snapshot", self.params.sync_timer)  # TIMER STOP
 
-    def _write_config_file(self):
+    def _write_params_files(self):
         output_path = self.params.output_path
         if output_path is not None:
             with open(output_path / "params.yaml", "w") as f:
                 f.write(yaml_dump(asdict(self.params)))
+            with open(output_path / "params.pkl", "wb") as f:
+                pickle.dump(self.params, f)
 
     def _write_mesh(self):
         output_path = self.params.output_path
@@ -758,7 +763,7 @@ class HydroSolver:
 
         output_path.mkdir(parents=True, exist_ok=False)
 
-        self._write_config_file()
+        self._write_params_files()
         self._write_mesh()
 
     def _summarize_step(self, take_snapshot: bool = False):
@@ -1573,6 +1578,23 @@ class HydroSolver:
         u[...] = unew
         self.t += dt
 
+    def _finish_run(self):
+        output_path = self.params.output_path
+
+        if output_path is None:
+            return
+
+        # Write step history to output path
+        with open(output_path / "step_history.pkl", "wb") as f:
+            pickle.dump(self.step_history, f)
+
+        # Dump all snapshots and write snapshot history to output path
+        for snapshot in self.snapshot_history:
+            if snapshot.data is not None:
+                snapshot.clear()
+        with open(output_path / "snapshot_history.pkl", "wb") as f:
+            pickle.dump(self.snapshot_history, f)
+
     def take_n_steps(
         self,
         n: int,
@@ -1598,6 +1620,8 @@ class HydroSolver:
 
         if print_update:
             self._print_message(self._build_message(current_steps=n, total_steps=n) + " (done)\n")
+
+        self._finish_run()
 
     def run(
         self,
@@ -1646,3 +1670,5 @@ class HydroSolver:
                 self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
                 + " (done)\n"
             )
+
+        self._finish_run()

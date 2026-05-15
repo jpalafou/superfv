@@ -32,7 +32,12 @@ class Snapshot:
         if self.data is None:
             with open(self.path, "rb") as f:
                 self.data = pickle.load(f)
-        print(f"Loaded snapshot at t={self.t} from {self.path}.")
+        print(f"-> Loaded snapshot at t={self.t} from {self.path}.")
+
+    def clear(self, verbose: bool = True):
+        self.data = None
+        if verbose:
+            print(f"-> Cleared snapshot data at t={self.t}.")
 
     def dump(self, clear: bool = False):
         if self.path is None:
@@ -41,22 +46,28 @@ class Snapshot:
             raise ValueError("Cannot dump snapshot: no data to dump.")
         with open(self.path, "wb") as f:
             pickle.dump(self.data, f)
+
         if clear:
-            self.data = None
+            self.clear(verbose=False)
+            print(f"-> Dumped and cleared snapshot at t={self.t} to {self.path}.")
+        else:
+            print(f"-> Dumped snapshot at t={self.t} to {self.path}.")
 
     def __getattr__(self, name):
-        if name in {"t", "data", "path"}:
+        try:
+            if self.data is None:
+                self.load()
+            return getattr(self.data, name)
+        except AttributeError:
             return super().__getattribute__(name)
-        if self.data is None:
-            self.load()
-        return getattr(self.data, name)
 
-    def __setattr__(self, name, value):
-        if name in {"t", "data", "path"}:
-            return super().__setattr__(name, value)
-        if self.data is None:
-            self.load()
-        setattr(self.data, name, value)
+    def __getstate__(self):
+        return {"t": self.t, "data": self.data, "path": self.path}
+
+    def __setstate__(self, state):
+        object.__setattr__(self, "t", state["t"])
+        object.__setattr__(self, "data", state["data"])
+        object.__setattr__(self, "path", state["path"])
 
 
 @dataclass
