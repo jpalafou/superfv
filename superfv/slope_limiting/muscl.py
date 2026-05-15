@@ -26,7 +26,9 @@ def compute_MUSCL_slopes(
     SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
-    Compute limited slopes and write them to the `out` array.
+    Compute limited MUSCL slopes from `u` and write them to the `out` array with optional
+    relaxation from the smooth extrema detector `alpha`. Renders a single ghost cell layer
+    along the `face_dim` dimension of the output array invalid.
 
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
@@ -42,7 +44,7 @@ def compute_MUSCL_slopes(
             extrema regions where alpha >= 1.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output array.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
         return MUSCL_slopes_kernel_helper(u, alpha, out, face_dim, limiter, SED)
@@ -96,7 +98,10 @@ def compute_PP2D_slopes(
     SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
-    Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays.
+    Compute PP2D limited slopes from `u` and write them to the `Sx` and `Sy`
+    arrays with optional relaxation from the smooth extrema detector `alpha`.
+    Renders a single ghost cell layer along each active dimension of the
+    output arrays invalid.
 
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
@@ -114,10 +119,7 @@ def compute_PP2D_slopes(
             extrema regions where alpha >= 1.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
-
-    Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output arrays `Sx` and `Sy`.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
         return PP2D_slopes_kernel_helper(

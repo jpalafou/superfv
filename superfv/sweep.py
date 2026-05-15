@@ -16,7 +16,8 @@ def stencil_sweep(
 ) -> Tuple[slice, ...]:
     """
     Perform a sweep of stencils contained in `weights` along the specified dimension
-    `dim` on the input array `u`, storing the results in `out`.
+    `dim` on the input array `u`, storing the results in `out`. Renders a number of layers
+    of ghost cells on the boundaries of `out` invalid, as determined by the stencil size.
 
     Args:
         u: Input array with shape (nvars, nx, ny, nz, ninterps).

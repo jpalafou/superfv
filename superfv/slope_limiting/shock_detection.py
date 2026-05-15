@@ -9,7 +9,7 @@ from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
 
 
-def update_eta_1d(
+def _update_eta_1d(
     w1: np.ndarray,
     wr: np.ndarray,
     eta: np.ndarray,
@@ -76,7 +76,8 @@ def detect_shocks(
 ) -> Tuple[slice, ...]:
     """
     Detect shocks in the primitive variable array `w1`, writing the results to
-    `eta` and `has_shock`.
+    `eta` and `has_shock`, both taking the maximum across all `active_dims`.
+    Renders two ghost cell layers along each active dimension of the output arrays invalid.
 
     Args:
         w1: Array of lazy primitive variables. Has shape (nvars, nx, ny, nz).
@@ -91,7 +92,7 @@ def detect_shocks(
         eps: Small value to avoid division by zero.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output arrays.
     """
     if CUPY_AVAILABLE and isinstance(w1, cp.ndarray):
         return detect_shocks_kernel_helper(w1, wr, eta, has_shock, eta_threshold, eps)
@@ -99,7 +100,7 @@ def detect_shocks(
     eta[...] = 0.0
     valid_slices: List[Tuple[slice, ...]] = []
     for dim in active_dims:
-        valid = update_eta_1d(w1, wr, eta, dim, eps)
+        valid = _update_eta_1d(w1, wr, eta, dim, eps)
         valid_slices.append(valid)
 
     valid = merge_slices(*valid_slices)

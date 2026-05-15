@@ -17,7 +17,10 @@ def compute_theta(
     tol: float = 1e-15,
 ):
     """
-    Compute Zhang and Shu's a priori slope limiting parameter and write it to `theta`.
+    Compute Zhang and Shu's a priori slope limiting parameter and write it to `theta`
+    while alpha updating the nodal maxima and minima, `Mj` and `mj`, respectively.
+    Renders a single ghost cell layer along each active dimension of the output arrays
+    invalid.
 
     Args:
         w: Array of cell-average values with shape (nvars, nx, ny, nz).

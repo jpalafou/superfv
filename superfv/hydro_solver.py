@@ -87,6 +87,38 @@ class LogArrayAction(Enum):
 
 
 class HydroSolver:
+    """
+    SuperFV Hydrodynamics Solver for the compressible Euler equations in 1D, 2D, or 3D.
+
+    Initialize the solver with the desired parameters:
+
+        from superfv import HydroSolver, ic
+        sim = HydroSolver(ic=ic.square, ...)
+
+    Then call the `take_n_steps` or `run` methods to advance the simulation in time. e.g. to
+    take 10 steps:
+
+        sim.take_n_steps(n=10, ...)
+
+    or to run until t=1.0:
+
+        sim.run(t=1.0, ...)
+
+    Reference the `step_history` to access the simulation history and the `snapshot_history`
+    to access the snapshots. e.g. to get the total energy across all steps:
+
+        sim.step_history.get_get_history("E_total")
+
+    or to get the density field from the 5th snapshot:
+
+        idx = sim.params.variable_index_map
+        sim.snapshot_history[5].u[idx("rho")]
+
+    or to get the pressure field at time t=1.0:
+
+        sim.snapshot_history(1.0).w[idx("P")]
+
+    """
 
     # Initialization methods
 
@@ -158,13 +190,117 @@ class HydroSolver:
         # Shared Zhang-Shu / MOOD params
         include_corners: bool = True,
         log_limiter_scalars: bool = True,
-        # Other params
+        # Solver params
         cupy: bool = False,
         sync_timer: bool = True,
         output_path: Optional[Union[str, Path]] = None,
         discard_after_writing: bool = True,
         overwrite: bool = False,
     ):
+        """
+        Initialize the HydroSolver with the specified parameters.
+
+        Hydro parameters:
+            gamma: Adiabatic index for the ideal gas equation of state.
+            riemann_solver: Riemann solver specified by the `RiemannSolver` enum. Possible values
+                include RiemannSolver.UPWIND, RiemannSolver.LLF, and RiemannSolver.HLLC.
+            CFL: CFL number for time step calculation.
+            dt_min: Minimum allowed time step size.
+            rho_min: Minimum allowed density.
+            P_min: Minimum allowed pressure.
+            isothermal: If True, use an isothermal equation of state.
+            iso_cs: Isothermal sound speed (only used if isothermal=True).
+
+        Initial condition parameters:
+            ic: Initial condition function that takes (idx, x, y, z, t, xp=xp) and returns an
+                array of shape (nvars, nx, ny, nz).
+            passive_ics: Optional dictionary with keys as variable names and values as functions
+                that take (x, y, z, t, xp=xp) and return an array of shape (nx, ny, nz).
+
+        Boundary condition parameters:
+            bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
+                `BC` enums (lower, upper). Possible values include BC.PERIODIC, BC.DIRICHLET,
+                BC.FREE, BC.SYMMETRIC, BC.REFLECTIVE, BC.PATCH, and BC.IC.
+            bcx_callable_lower, bcx_callable_upper, bcy_callable_lower,
+            bcy_callable_upper, bcz_callable_lower, bcz_callable_upper: Optional callable functions
+                for Dirichlet boundary conditions. Each should take (idx, x, y, z, t, xp=xp) and
+                return an array of shape (nvars, nx, ny, nz).
+
+        Mesh parameters:
+            nx, ny, nz: Number of cells in x, y, z directions for a uniform mesh.
+            xlims, ylims, zlims: Tuples specifying the lower and upper bounds of the domain in
+                x, y, z directions.
+
+        Finite volume scheme parameters:
+            p: Polynomial degree for the base finite volume scheme.
+            flux_recipe: Flux recipe specified by the `FluxRecipe` enum. Possible values include
+                FluxRecipe.CONS_LIM_PRIM, FluxRecipe.CONS_PRIM_LIM, and FluxRecipe.PRIM_PRIM_LIM.
+            flux_quadrature: Flux quadrature specified by the `FluxQuadrature` enum. Possible
+                values include FluxQuadrature.TRANSVERSE and FluxQuadrature.GAUSS_LEGENDRE.
+            lazy_primitive_mode: Lazy primitive mode specified by the `LazyPrimitiveMode` enum.
+                Possible values include LazyPrimitiveMode.FULL, LazyPrimitiveMode.NONE, and
+                LazyPrimitiveMode.ADAPTIVE, which uses the shock detection threshold `eta_max`
+                to determine when to use high-order primitive cell averages.
+
+        Slope limiting parameters (smooth extrema detection):
+            use_SED: If True, enable smooth extrema detection.
+            clip_zero_tol: Tolerance for clipping near-zero values in SED.
+
+        Slope limiting parameters (MUSCL):
+            use_MUSCL: If True, enable MUSCL scheme.
+            MUSCL_limiter: Slope limiter specified by the `MUSCL_SlopeLimiter` enum.
+                Possible values include MUSCL_SlopeLimiter.MINMOD, MUSCL_SlopeLimiter.MONCEN,
+                MUSCL_SlopeLimiter.PP2D (can only be used in 2D), and
+                MUSCL_SlopeLimiter.NONE (no slope limiting).
+
+        Slope limiting parameters (physical admissibility detection):
+            PAD_bounds: Optional dictionary specifying lower and upper bounds for physical
+                admissibility detection. Keys are variable names, and values are tuples of
+                (lower_bound, upper_bound).
+
+        Slope limiting parameters (Zhang-Shu):
+            use_ZS: If True, enable Zhang-Shu limiter.
+            omit_vars_from_ZS: Optional list of variable names to omit from Zhang-Shu limiter.
+            adaptive_dt: If True, enable adaptive time stepping based on Zhang-Shu limiter.
+            adaptive_dt_tol: Tolerance for adaptive time stepping.
+            theta_denom_tol: Tolerance for denominator in theta calculation.
+
+        Slope limiting parameters (shock detection):
+            eta_max: Maximum allowed shock detection parameter.
+
+        Slope limiting parameters (MOOD, numerical admissibility detection):
+            use_NAD: If True, enable numerical admissibility detection.
+            rtol: Relative tolerance for numerical admissibility detection.
+            atol: Absolute tolerance for numerical admissibility detection.
+            omit_vars_from_NAD: Optional list of variable names to omit from numerical
+                admissibility detection.
+            delta: If True, enable delta-based numerical admissibility detection.
+
+        Slope limiting parameters (MOOD):
+            use_MOOD: If True, enable MOOD scheme.
+            fallback_cascade: Fallback cascade specified by the `FallbackCascade` enum. Possible
+                values include FallbackCascade.FULL (which falls back to progressively lower-order
+                schemes from `p` to 0 in increments of 1), FallbackCascade.MUSCL (which falls back
+                to MUSCL), FallbackCascade.FIRST_ORDER (which falls back to first-order),
+                and FallbackCascade.MUSCL0 (which falls back first to MUSCL and then first-order).
+            max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
+                number of fallback schemes in the cascade.
+            blend_troubles: If True, blend troubled cells in MOOD scheme.
+            skip_trouble_counts: If True, skip counting troubled cells in MOOD scheme.
+            detect_closing_troubles: If True, detect closing troubled cells in MOOD scheme.
+
+        Slope limiting parameters (shared between Zhang-Shu and MOOD):
+            include_corners: If True, include corner cells when computing the discrete maximum
+                principle.
+            log_limiter_scalars: If True, log limiter scalars for analysis.
+
+        Solver parameters:
+            cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
+            sync_timer: If True, synchronize timers when using CuPy.
+            output_path: Optional path to save simulation outputs. If None, no outputs are saved.
+            discard_after_writing: If True, discard arrays after writing to disk to save memory.
+            overwrite: If True, overwrite existing output directory if it exists.
+        """
         # Define the following attributes:
         self.arrays: ArrayManager
         self.mesh_arrays: ArrayManager

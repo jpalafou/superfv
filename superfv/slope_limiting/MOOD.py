@@ -31,7 +31,9 @@ def numerical_admissibility_detection(
     params: NumericalAdmissibilityParameters,
 ):
     """
-    Update _troubles_ based on NAD criteria.
+    Update `_troubles_` based on NAD criteria compute from `_qold_` and `_qnew_` with
+    optional relaxation from the smooth extrema detector `_alpha_`. Renders a single
+    ghost cell layer along each active dimension of the output array invalid.
     """
     _NAD_troubles_ = np.zeros_like(_qold_, dtype=bool)
     _dmp_M_ = np.empty_like(_qold_)
