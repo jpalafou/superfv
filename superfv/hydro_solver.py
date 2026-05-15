@@ -1588,6 +1588,7 @@ class HydroSolver:
         t: Union[float, List[float]],
         time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
+        allow_overshoot: bool = False,
         print_update: bool = True,
         print_frequency: int = 100,
     ):
@@ -1607,7 +1608,9 @@ class HydroSolver:
 
         while target_times:
             self._open_step()
-            self._take_step(time_integrator, dt_min=target_times[0] - self.t)
+            self._take_step(
+                time_integrator, dt_min=None if allow_overshoot else target_times[0] - self.t
+            )
 
             take_snapshot_this_step = snapshot_mode == SnapshotMode.EVERY
             if self.t >= target_times[0]:
