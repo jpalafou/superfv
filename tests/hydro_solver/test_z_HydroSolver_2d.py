@@ -4,6 +4,7 @@ import pytest
 
 from superfv import (
     BC,
+    CUPY_AVAILABLE,
     FallbackCascade,
     FluxQuadrature,
     HydroSolver,
@@ -44,6 +45,7 @@ def test_sedov(scheme):
         gamma=1.4,
         nx=64,
         ny=64,
+        cupy=CUPY_AVAILABLE,
         **scheme,
     )
     if scheme.get("use_MUSCL", False):
@@ -76,6 +78,7 @@ def test_preservation_of_maximum_principle(scheme):
             PAD_bounds={"rho": (1, 2)},
             nx=64,
             ny=64,
+            cupy=CUPY_AVAILABLE,
             **scheme,
         )
     if scheme.get("use_MUSCL", False):
