@@ -52,7 +52,7 @@ from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices
 from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
-from .tools.step_history import StepHistory, StepSummary, SubstepSummary
+from .tools.step_history import MultiTimer, StepHistory, StepSummary, SubstepSummary
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
@@ -358,11 +358,11 @@ class HydroSolver:
         self._init_cupy(cupy, CUPY_AVAILABLE)  # defines self.xp
         self._allocate_arrays()
         self._init_time()  # defines self.t and self.t_wall_start
-        self._init_step_history()  # defines self.step_history
+        self._init_step_and_snapshot_histories()  # self.step_history, self.snapshot_history
         self._reset_substep_summary()  # defines self.substep_summary
         self._reset_step_summary()  # defines self.step_summary
         self._prepare_output_directory(overwrite)
-        self._init_snapshot_history()  # defines self.snapshot_history
+        self._summarize_step(take_snapshot=True)
 
     def _configure_PAD_bounds(
         self,
@@ -652,31 +652,16 @@ class HydroSolver:
         self.t = 0.0
         self.t_wall_start = np.nan
 
-    def _init_step_history(self):
-        idx = self.params.variable_index_map
-
-        u = self.arrays["u"]  # this should be the initial condition array at this point
-
-        self.step_history = StepHistory(
-            steps=[
-                StepSummary(
-                    step=0,
-                    t_sim=self.t,
-                    t_wall=np.nan,
-                    n_dt_revisions=0,
-                    rho_min=self.xp.min(u[idx("rho")]).item(),
-                    E_total=self.xp.sum(u[idx("E")]).item(),
-                    substeps=[],
-                )
-            ]
-        )
+    def _init_step_and_snapshot_histories(self):
+        self.step_history = StepHistory([])
+        self.snapshot_history = SnapshotHistory([])
 
     def _reset_substep_summary(self):
         self.substep_summary = SubstepSummary(
             substep=-1, t_wall=np.nan, n_MOOD_revisions=0, n_troubles_hist=[]
         )
 
-    def _reset_step_summary(self, n: int = 1):
+    def _reset_step_summary(self, n: int = 0):
         self.step_summary = StepSummary(
             step=n,
             t_sim=np.nan,
@@ -685,27 +670,12 @@ class HydroSolver:
             rho_min=np.nan,
             E_total=np.nan,
             substeps=[],
+            timer=MultiTimer(["take_snapshot", "take_step", "compute_dt"]),
         )
 
-    def _prepare_output_directory(self, overwrite: bool):
-        """
-        Prepare the output directory and write the configuration file.
-        """
-        output_path = self.params.output_path
-
-        if output_path is None:
-            return
-        if output_path.exists() and overwrite:
-            warnings.warn(f"Output path '{output_path}' already exists. Overwriting.")
-            shutil.rmtree(output_path)
-        elif output_path.exists():
-            raise FileExistsError(f"Output path '{output_path}' already exists.")
-
-        output_path.mkdir(parents=True, exist_ok=False)
-        with open(output_path / "params.yaml", "w") as f:
-            f.write(yaml_dump(asdict(self.params)))
-
     def _take_snapshot(self):
+        self.step_summary.timer.start("take_snapshot", self.params.cupy)  # TIMER START
+
         params = self.params
 
         u = self.arrays["u"]
@@ -755,9 +725,42 @@ class HydroSolver:
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
 
-    def _init_snapshot_history(self):
-        self.snapshot_history = SnapshotHistory([])
-        self._take_snapshot()
+        self.step_summary.timer.stop("take_snapshot", self.params.cupy)  # TIMER STOP
+
+    def _prepare_output_directory(self, overwrite: bool):
+        """
+        Prepare the output directory and write the configuration file.
+        """
+        output_path = self.params.output_path
+
+        if output_path is None:
+            return
+        if output_path.exists() and overwrite:
+            warnings.warn(f"Output path '{output_path}' already exists. Overwriting.")
+            shutil.rmtree(output_path)
+        elif output_path.exists():
+            raise FileExistsError(f"Output path '{output_path}' already exists.")
+
+        output_path.mkdir(parents=True, exist_ok=False)
+        with open(output_path / "params.yaml", "w") as f:
+            f.write(yaml_dump(asdict(self.params)))
+
+    def _summarize_step(self, take_snapshot: bool = False):
+        idx = self.params.variable_index_map
+        step_summary = self.step_summary
+
+        u = self.arrays["u"]
+
+        step_summary.t_sim = self.t
+        step_summary.t_wall = time.time() - self.t_wall_start
+        step_summary.rho_min = self.xp.min(u[idx("rho")]).item()
+        step_summary.E_total = self.xp.sum(u[idx("E")]).item()
+
+        if take_snapshot:
+            self._take_snapshot()  # updates step_summary.timer
+
+        self.step_history.append(step_summary)
+        self._reset_step_summary(step_summary.step + 1)
 
     # Helper functions
 
@@ -1450,28 +1453,13 @@ class HydroSolver:
                 raise ValueError(f"Unsupported time integrator: {time_integrator}")
 
     def _open_step(self):
-        # TIMER START GOES HERE
         self._update_log_arrays(LogArrayAction.RESET)
+        self.step_summary.timer.start("take_step", self.params.cupy)  # TIMER START
 
-    def _summarize_step(self):
-        idx = self.params.variable_index_map
-        step_summary = self.step_summary
-        n = step_summary.step
-
-        u = self.arrays["u"]
-
-        step_summary.t_sim = self.t
-        step_summary.t_wall = time.time() - self.t_wall_start
-        step_summary.rho_min = self.xp.min(u[idx("rho")]).item()
-        step_summary.E_total = self.xp.sum(u[idx("E")]).item()
-        self.step_history.append(step_summary)
-
-        self._reset_step_summary(n + 1)
-
-    def _close_step(self):
+    def _close_step(self, take_snapshot: bool):
+        self.step_summary.timer.stop("take_step", self.params.cupy)  # TIMER STOP
         self._update_log_arrays(LogArrayAction.SUBSTEP_AVERAGE)
-        self._summarize_step()
-        # TIMER STOP GOES HERE
+        self._summarize_step(take_snapshot)
 
     def _start_wall_timer(self):
         self.t_wall_start = time.time()
@@ -1540,8 +1528,6 @@ class HydroSolver:
         Update "u" and self.t by taking a single step in time with the specified time integrator
         and optional minimum dt constraint.
         """
-        self._open_step()
-
         arrays = self.arrays
         t = self.t
 
@@ -1549,10 +1535,12 @@ class HydroSolver:
         unew = arrays["unew"]
 
         # Compute dt which may need to be clipped
+        self.step_summary.timer.start("compute_dt", self.params.cupy)  # TIMER START
         dt = self.compute_dt(t, u)
         self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
+        self.step_summary.timer.stop("compute_dt", self.params.cupy)  # TIMER STOP
 
         # Compute new state
         self._update_unew(t, u, dt, time_integrator)
@@ -1569,8 +1557,6 @@ class HydroSolver:
         u[...] = unew
         self.t += dt
 
-        self._close_step()
-
     def take_n_steps(
         self,
         n: int,
@@ -1583,12 +1569,13 @@ class HydroSolver:
 
         print_frequency = max(1, print_frequency)
         for i in range(1, n + 1):
-            self._take_step(time_integrator)
+            take_snapshot_this_step = (
+                snapshot_mode == SnapshotMode.TARGET and i == n
+            ) or snapshot_mode == SnapshotMode.EVERY
 
-            if snapshot_mode == SnapshotMode.TARGET and i == n:
-                self._take_snapshot()
-            elif snapshot_mode == SnapshotMode.EVERY:
-                self._take_snapshot()
+            self._open_step()
+            self._take_step(time_integrator)
+            self._close_step(take_snapshot_this_step)
 
             if print_update and (i % print_frequency == 0 or i == n):
                 self._print_message(self._build_message(current_steps=i, total_steps=n))
@@ -1619,15 +1606,15 @@ class HydroSolver:
             raise ValueError("Target times must be non-negative.")
 
         while target_times:
+            self._open_step()
             self._take_step(time_integrator, dt_min=target_times[0] - self.t)
 
+            take_snapshot_this_step = snapshot_mode == SnapshotMode.EVERY
             if self.t >= target_times[0]:
                 if snapshot_mode == SnapshotMode.TARGET:
-                    self._take_snapshot()
+                    take_snapshot_this_step = True
                 target_times.pop(0)
-
-            if snapshot_mode == SnapshotMode.EVERY:
-                self._take_snapshot()
+            self._close_step(take_snapshot_this_step)
 
             n = len(self.step_history)
             if print_update and n % print_frequency == 0:
