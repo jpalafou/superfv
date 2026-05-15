@@ -1,12 +1,17 @@
+from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Literal, Protocol, runtime_checkable
+from functools import cached_property
+from typing import Literal
 
 import numpy as np
 
 from .hydro import fluxes, prim_to_cons, sound_speed
-from .tools.device_management import CUPY_AVAILABLE
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.stability import avoid0
 from .tools.variable_index_map import VariableIndexMap
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
 
 
 class RiemannSolver(Enum):
@@ -15,20 +20,12 @@ class RiemannSolver(Enum):
     HLLC = 2
 
 
-@runtime_checkable
-class AdvectionRiemannSolver(Protocol):
-    def __call__(
-        self,
-        idx: VariableIndexMap,
-        wl: np.ndarray,
-        wr: np.ndarray,
-        dim: Literal["x", "y", "z"],
-    ) -> np.ndarray: ...
+class RiemmannSolverBase(ABC):
+    def __init__(self, npassives: int):
+        self.npassives = npassives
 
-
-@runtime_checkable
-class HydroRiemannSolver(Protocol):
-    def __call__(
+    @abstractmethod
+    def numpy_func(
         self,
         idx: VariableIndexMap,
         wl: np.ndarray,
@@ -37,173 +34,235 @@ class HydroRiemannSolver(Protocol):
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> np.ndarray: ...
+    ) -> np.ndarray:
+        pass
 
+    @abstractmethod
+    def cuda_elementwise_kernel_body(self, npassives: int) -> str:
+        pass
 
-def advection_upwind(
-    idx: VariableIndexMap,
-    wl: np.ndarray,
-    wr: np.ndarray,
-    dim: Literal["x", "y", "z"],
-) -> np.ndarray:
-    """
-    Compute the upwind advection flux for a given dimension.
+    def cuda_elementwise_kernel_in_params(self, npassives: int) -> str:
+        in_params = (
+            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, "
+            "float64 v2l, float64 v2r, float64 v3l, float64 v3r, "
+            "float64 gamma, bool isothermal, float64 iso_cs, int8 dim"
+        )
+        for i in range(npassives):
+            in_params += f", float64 passl{i}, float64 passr{i}"
+        return in_params
 
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        wl: Array of the left state as primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        wr: Array of the right state as primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        dim: Dimension for the advection flux ("x", "y", or "z").
+    def cuda_elementwise_kernel_out_params(self, npassives: int) -> str:
+        out_params = "float64 Frho, float64 Fv1, float64 Fv2, float64 Fv3, float64 FE"
+        for i in range(npassives):
+            out_params += f", float64 Fpass{i}"
+        return out_params
 
-    Returns:
-        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
-    """
-    vl = wl[idx("v" + dim)]
-    vr = wr[idx("v" + dim)]
-    v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
-
-    F = np.empty_like(wl)
-
-    F[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
-    F[idx("vx")] = 0.0
-    F[idx("vy")] = 0.0
-    F[idx("vz")] = 0.0
-    if "passives" in idx.group_var_map:
-        F[idx("passives")] = F[idx("rho")] * np.where(
-            v > 0, wl[idx("passives")], wr[idx("passives")]
+    @cached_property
+    def cuda_kernel(self):
+        return cp.ElementwiseKernel(
+            in_params=self.cuda_elementwise_kernel_in_params(self.npassives),
+            out_params=self.cuda_elementwise_kernel_out_params(self.npassives),
+            operation=self.cuda_elementwise_kernel_body(self.npassives),
+            name=f"{self.__class__.__name__}_npass_{self.npassives}",
+            no_return=True,
         )
 
-    return F
+    def __call__(
+        self,
+        idx: VariableIndexMap,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ) -> ArrayLike:
+        if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
+            Fluxes = np.empty_like(wl)
+            self.cuda_kernel(
+                wl[idx("rho")],
+                wr[idx("rho")],
+                wl[idx("vx")],
+                wr[idx("vx")],
+                wl[idx("vy")],
+                wr[idx("vy")],
+                wl[idx("vz")],
+                wr[idx("vz")],
+                wl[idx("P")],
+                wr[idx("P")],
+                gamma,
+                isothermal,
+                iso_cs,
+                {"x": 1, "y": 2, "z": 3}[dim],
+                *[
+                    x
+                    for v in idx.group_var_map.get("passives", [])
+                    for x in (wl[idx(v)], wr[idx(v)])
+                ],
+                Fluxes[idx("rho")],
+                Fluxes[idx("mx")],
+                Fluxes[idx("my")],
+                Fluxes[idx("mz")],
+                Fluxes[idx("E")],
+                *[Fluxes[idx(v)] for v in idx.group_var_map.get("passives", [])],
+            )
+        else:
+            Fluxes = np.empty_like(wl)
+            Fluxes[...] = self.numpy_func(idx, wl, wr, dim, gamma, isothermal, iso_cs)
+        return Fluxes
 
 
-def llf(
-    idx: VariableIndexMap,
-    wl: np.ndarray,
-    wr: np.ndarray,
-    dim: Literal["x", "y", "z"],
-    gamma: float,
-    isothermal: bool = False,
-    iso_cs: float = 1.0,
-) -> np.ndarray:
-    """
-    Compute the LLF flux for the Euler equations in the specified dimension.
+class UpwindRiemannSolver(RiemmannSolverBase):
+    def numpy_func(
+        self,
+        idx: VariableIndexMap,
+        wl: np.ndarray,
+        wr: np.ndarray,
+        dim: Literal["x", "y", "z"],
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ) -> np.ndarray:
+        v = np.empty_like(wl)
+        Fluxes = np.empty_like(wl)
 
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        wl: Array of the left state as primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        wr: Array of the right state as primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
-        gamma: Adiabatic index.
-        isothermal: Whether to use isothermal sound speed.
-        iso_cs: Isothermal sound speed (if isothermal is True).
+        vl = wl[idx("v" + dim)]
+        vr = wr[idx("v" + dim)]
+        v[...] = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
-    Returns:
-        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
-    """
-    ul = prim_to_cons(idx, wl, gamma)
-    ur = prim_to_cons(idx, wr, gamma)
+        Fluxes[...] = 0.0
+        Fluxes[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
+        if "passives" in idx.group_var_map:
+            Fluxes[idx("passives")] = Fluxes[idx("rho")] * np.where(
+                v > 0, wl[idx("passives")], wr[idx("passives")]
+            )
 
-    csl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
-    csr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
-    sl = csl + np.abs(wl[idx("v" + dim)])
-    sr = csr + np.abs(wr[idx("v" + dim)])
-    smax = np.maximum(sl, sr)
+        return Fluxes
 
-    Fl = fluxes(idx, wl, dim, gamma)
-    Fr = fluxes(idx, wr, dim, gamma)
+    def cuda_elementwise_kernel_body(self, npassives: int) -> str:
+        body = """
+        double vl;
+        double vr;
+        if (dim == 1) {
+            vl = v1l;
+            vr = v1r;
+        } else if (dim == 2) {
+            vl = v2l;
+            vr = v2r;
+        } else {
+            vl = v3l;
+            vr = v3r;
+        }
 
-    F = 0.5 * (Fl + Fr - smax * (ur - ul))
+        double v = fabs(vl) > fabs(vr) ? vl : vr;
 
-    return F
+        Frho = v * (v > 0 ? rhol : rhor);
+        Fv1 = 0.0;
+        Fv2 = 0.0;
+        Fv3 = 0.0;
+        """
+        for i in range(npassives):
+            body += f"\nFpass{i} = Frho * (v > 0 ? passl{i} : passr{i});"
+        return body
 
 
-def hllc(
-    idx: VariableIndexMap,
-    wl: np.ndarray,
-    wr: np.ndarray,
-    dim: Literal["x", "y", "z"],
-    gamma: float,
-    isothermal: bool = False,
-    iso_cs: float = 1.0,
-) -> np.ndarray:
-    """
-    Compute the HLLC flux for the Euler equations in the specified dimension.
+class LLF_RiemannSolver(RiemmannSolverBase):
+    def numpy_func(
+        self,
+        idx: VariableIndexMap,
+        wl: np.ndarray,
+        wr: np.ndarray,
+        dim: Literal["x", "y", "z"],
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ) -> np.ndarray:
+        ul = prim_to_cons(idx, wl, gamma)
+        ur = prim_to_cons(idx, wr, gamma)
 
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        wl: Array of the left state as primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        wr: Array of the right state as primitive variables. Has shape
-            (nvars, nx, ny, nz, ...).
-        dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
-        gamma: Adiabatic index.
-        isothermal: Whether to use isothermal sound speed.
-        iso_cs: Isothermal sound speed (if isothermal is True).
+        csl = iso_cs if isothermal else np.sqrt(gamma * wl[idx("P")] / wl[idx("rho")])
+        csr = iso_cs if isothermal else np.sqrt(gamma * wr[idx("P")] / wr[idx("rho")])
+        sl = csl + np.abs(wl[idx("v" + dim)])
+        sr = csr + np.abs(wr[idx("v" + dim)])
+        smax = np.maximum(sl, sr)
 
-    Returns:
-        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
-    """
-    d1 = dim
-    d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
+        Fl = fluxes(idx, wl, dim, gamma)
+        Fr = fluxes(idx, wr, dim, gamma)
 
-    ul = prim_to_cons(idx, wl, gamma)
-    ur = prim_to_cons(idx, wr, gamma)
+        Fluxes = 0.5 * (Fl + Fr - smax * (ur - ul))
 
-    rhol = wl[idx("rho")]
-    v1l = wl[idx("v" + d1)]
-    v2l = wl[idx("v" + d2)]
-    v3l = wl[idx("v" + d3)]
-    Pl = wl[idx("P")]
-    El = ul[idx("E")]
-    rhor = wr[idx("rho")]
-    v1r = wr[idx("v" + d1)]
-    v2r = wr[idx("v" + d2)]
-    v3r = wr[idx("v" + d3)]
-    Pr = wr[idx("P")]
-    Er = ur[idx("E")]
+        return Fluxes
 
-    cl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
-    cr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
-    cmax = np.maximum(cl, cr)
+    def cuda_elementwise_kernel_body(self, npassives: int) -> str:
+        body = """
+        // Compute maximum wave speed
+        double vl, vr;
+        if (dim == 1) {
+            vl = v1l;
+            vr = v1r;
+        } else if (dim == 2) {
+            vl = v2l;
+            vr = v2r;
+        } else {
+            vl = v3l;
+            vr = v3r;
+        }
+        double csl = isothermal ? iso_cs : sqrt(gamma * Pl / rhol);
+        double csr = isothermal ? iso_cs : sqrt(gamma * Pr / rhor);
+        double sl = csl + fabs(vl);
+        double sr = csr + fabs(vr);
+        double smax = fmax(sl, sr);
 
-    sl = np.minimum(v1l, v1r) - cmax
-    sr = np.maximum(v1l, v1r) + cmax
+        // Compute left and right conservative variables
+        double m1l = rhol * v1l;
+        double m1r = rhor * v1r;
+        double m2l = rhol * v2l;
+        double m2r = rhor * v2r;
+        double m3l = rhol * v3l;
+        double m3r = rhor * v3r;
+        double KEl = 0.5 * rhol * (v1l * v1l + v2l * v2l + v3l * v3l);
+        double KEr = 0.5 * rhor * (v1r * v1r + v2r * v2r + v3r * v3r);
+        double El = Pl / (gamma - 1.0) + KEl;
+        double Er = Pr / (gamma - 1.0) + KEr;
 
-    rcl = rhol * (v1l - sl)
-    rcr = rhor * (sr - v1r)
+        // Compute left and right fluxes
+        double Flrho = rhol * vl;
+        double Frrho = rhor * vr;
+        Fm1l = Flrho * v1l;
+        Fm1r = Frrho * v1r;
+        Fm2l = Flrho * v2l;
+        Fm2r = Frrho * v2r;
+        Fm3l = Flrho * v3l;
+        Fm3r = Frrho * v3r;
+        if (dim == 1) {
+            Fm1l += Pl;
+            Fm1r += Pr;
+        } else if (dim == 2) {
+            Fm2l += Pl;
+            Fm2r += Pr;
+        } else {
+            Fm3l += Pl;
+            Fm3r += Pr;
+        }
+        FEl = vl * (El + Pl);
+        FEr = vr * (Er + Pr);
 
-    vP_star_denom = avoid0(rcl + rcr)
-    vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / vP_star_denom
-    Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / vP_star_denom
-
-    rhoE_starl_denoml = avoid0(sl - vstar)
-    rhoE_starr_denomr = avoid0(sr - vstar)
-    rhostarl = rhol * (sl - v1l) / rhoE_starl_denoml
-    rhostarr = rhor * (sr - v1r) / rhoE_starr_denomr
-    Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / rhoE_starl_denoml
-    Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / rhoE_starr_denomr
-
-    rhogdv = hllc_operator(sl, sr, vstar, rhol, rhor, rhostarl, rhostarr)
-    v1gdv = hllc_operator(sl, sr, vstar, v1l, v1r, vstar, vstar)
-    Pgdv = hllc_operator(sl, sr, vstar, Pl, Pr, Pstar, Pstar)
-    Egdv = hllc_operator(sl, sr, vstar, El, Er, Estarl, Estarr)
-
-    F = np.empty_like(wl)
-    F[idx("rho")] = rhogdv * v1gdv
-    F[idx("m" + d1)] = F[idx("rho")] * v1gdv + Pgdv
-    F[idx("E")] = v1gdv * (Egdv + Pgdv)
-    F[idx("m" + d2)] = F[idx("rho")] * np.where(vstar > 0, v2l, v2r)
-    F[idx("m" + d3)] = F[idx("rho")] * np.where(vstar > 0, v3l, v3r)
-    if "passives" in idx.group_var_map:
-        F[idx("passives")] = F[idx("rho")] * np.where(
-            vstar > 0, wl[idx("passives")], wr[idx("passives")]
-        )
-
-    return F
+        // Compute LLF flux
+        Frho = 0.5 * (Flrho + Frrho - smax * (rhor - rhol));
+        Fm1 = 0.5 * (Fm1l + Fm1r - smax * (m1r - m1l));
+        Fm2 = 0.5 * (Fm2l + Fm2r - smax * (m2r - m2l));
+        Fm3 = 0.5 * (Fm3l + Fm3r - smax * (m3r - m3l));
+        FE = 0.5 * (FEl + FEr - smax * (Er - El));
+        """
+        for i in range(npassives):
+            body += f"""
+            double conspassl{i} = rhol * passl{i};
+            double conspassr{i} = rhor * passr{i};
+            double Fpassl = conspassl{i} * vl;
+            double Fpassr = conspassr{i} * vr;
+            Fpass{i} = 0.5 * (Fpassl + Fpassr - smax * (conspassr{i} - conspassl{i}));
+            """
+        return body
 
 
 def hllc_operator(
@@ -233,121 +292,76 @@ def hllc_operator(
     return np.where(sl > 0, ql, np.where(vstar > 0, qstarl, np.where(sr > 0, qstarr, qr)))
 
 
-def hllct(
-    idx: VariableIndexMap,
-    wl: np.ndarray,
-    wr: np.ndarray,
-    dim: Literal["x", "y", "z"],
-    gamma: float,
-) -> np.ndarray:
-    """
-    Compute Romain's HLLC flux for the Euler equations in the specified dimension.
+class HLLC_RiemannSolver(RiemmannSolverBase):
+    def numpy_func(
+        self,
+        idx: VariableIndexMap,
+        wl: np.ndarray,
+        wr: np.ndarray,
+        dim: Literal["x", "y", "z"],
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ) -> np.ndarray:
+        d1 = dim
+        d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
 
-    Args:
-        idx: VariableIndexMap providing indices for 'rho', 'v*', 'P', 'E', etc.
-        wl: Left primitive state [rho, v*, ..., P, passives?].
-        wr: Right primitive state.
-        dim: Flux direction ("x", "y", or "z").
-        gamma: Adiabatic index.
+        ul = prim_to_cons(idx, wl, gamma)
+        ur = prim_to_cons(idx, wr, gamma)
 
-    Returns:
-        F: Flux array with same shape as wl (nvars, ...).
-    """
-    d1 = dim
+        rhol = wl[idx("rho")]
+        v1l = wl[idx("v" + d1)]
+        v2l = wl[idx("v" + d2)]
+        v3l = wl[idx("v" + d3)]
+        Pl = wl[idx("P")]
+        El = ul[idx("E")]
+        rhor = wr[idx("rho")]
+        v1r = wr[idx("v" + d1)]
+        v2r = wr[idx("v" + d2)]
+        v3r = wr[idx("v" + d3)]
+        Pr = wr[idx("P")]
+        Er = ur[idx("E")]
 
-    flux = 0.0 * wl
-    uleft = prim_to_cons(idx, wl, gamma)
-    uright = prim_to_cons(idx, wr, gamma)
-    # left state
-    dl = wl[idx("rho")]
-    vl = wl[idx("v" + d1)]
-    pl = wl[idx("P")]
-    el = uleft[idx("E")]
-    # right state
-    dr = wr[idx("rho")]
-    vr = wr[idx("v" + d1)]
-    pr = wr[idx("P")]
-    er = uright[idx("E")]
-    # sound speed
-    cl = np.sqrt(gamma * pl / dl)
-    cr = np.sqrt(gamma * pr / dr)
-    # waves speed
-    sl = np.minimum(vl, vr) - np.maximum(cl, cr)
-    sr = np.maximum(vl, vr) + np.maximum(cl, cr)
-    dcl = dl * (vl - sl)
-    dcr = dr * (sr - vr)
-    # star state velocity and pressure
-    vstar = (dcl * vl + dcr * vr + pl - pr) / (dcl + dcr)
-    pstar = (dcl * pr + dcr * pl + dcl * dcr * (vl - vr)) / (dcl + dcr)
-    # left and right star states
-    dstarl = dl * (sl - vl) / (sl - vstar)
-    dstarr = dr * (sr - vr) / (sr - vstar)
-    estarl = ((sl - vl) * el - pl * vl + pstar * vstar) / (sl - vstar)
-    estarr = ((sr - vr) * er - pr * vr + pstar * vstar) / (sr - vstar)
-    # sample godunov state
-    dg = np.where(sl > 0, dl, np.where(vstar > 0, dstarl, np.where(sr > 0, dstarr, dr)))
-    vg = np.where(sl > 0, vl, np.where(vstar > 0, vstar, np.where(sr > 0, vstar, vr)))
-    pg = np.where(sl > 0, pl, np.where(vstar > 0, pstar, np.where(sr > 0, pstar, pr)))
-    eg = np.where(sl > 0, el, np.where(vstar > 0, estarl, np.where(sr > 0, estarr, er)))
-    # compute godunov flux
-    flux[idx("rho")] = dg * vg
-    flux[idx("m" + d1)] = dg * vg * vg + pg
-    flux[idx("E")] = (eg + pg) * vg
-    return flux
+        cl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
+        cr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
+        cmax = np.maximum(cl, cr)
 
+        sl = np.minimum(v1l, v1r) - cmax
+        sr = np.maximum(v1l, v1r) + cmax
 
-if CUPY_AVAILABLE:
-    import cupy as cp  # type: ignore
+        rcl = rhol * (v1l - sl)
+        rcr = rhor * (sr - v1r)
 
-    def make_advection_upwind_elementwise_kernel(npassives: int):
-        in_params = (
-            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, "
-            "float64 v2l, float64 v2r, float64 v3l, float64 v3r, "
-            "int8 dim"
-        )
-        out_params = "float64 Frho, float64 Fv1, float64 Fv2, float64 Fv3"
-        body = """
-        double vl;
-        double vr;
-        if (dim == 1) {
-            vl = v1l;
-            vr = v1r;
-        } else if (dim == 2) {
-            vl = v2l;
-            vr = v2r;
-        } else {
-            vl = v3l;
-            vr = v3r;
-        }
+        vP_star_denom = avoid0(rcl + rcr)
+        vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / vP_star_denom
+        Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / vP_star_denom
 
-        double v = fabs(vl) > fabs(vr) ? vl : vr;
+        rhoE_starl_denoml = avoid0(sl - vstar)
+        rhoE_starr_denomr = avoid0(sr - vstar)
+        rhostarl = rhol * (sl - v1l) / rhoE_starl_denoml
+        rhostarr = rhor * (sr - v1r) / rhoE_starr_denomr
+        Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / rhoE_starl_denoml
+        Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / rhoE_starr_denomr
 
-        Frho = v * (v > 0 ? rhol : rhor);
-        Fv1 = 0.0;
-        Fv2 = 0.0;
-        Fv3 = 0.0;
-        """
+        rhogdv = hllc_operator(sl, sr, vstar, rhol, rhor, rhostarl, rhostarr)
+        v1gdv = hllc_operator(sl, sr, vstar, v1l, v1r, vstar, vstar)
+        Pgdv = hllc_operator(sl, sr, vstar, Pl, Pr, Pstar, Pstar)
+        Egdv = hllc_operator(sl, sr, vstar, El, Er, Estarl, Estarr)
 
-        for i in range(npassives):
-            in_params += f", float64 passl{i}, float64 passr{i}"
-            out_params += f", float64 Fpass{i}"
-            body += f"\nFpass{i} = Frho * (v > 0 ? passl{i} : passr{i});"
+        Fluxes = np.empty_like(wl)
+        Fluxes[idx("rho")] = rhogdv * v1gdv
+        Fluxes[idx("m" + d1)] = Fluxes[idx("rho")] * v1gdv + Pgdv
+        Fluxes[idx("E")] = v1gdv * (Egdv + Pgdv)
+        Fluxes[idx("m" + d2)] = Fluxes[idx("rho")] * np.where(vstar > 0, v2l, v2r)
+        Fluxes[idx("m" + d3)] = Fluxes[idx("rho")] * np.where(vstar > 0, v3l, v3r)
+        if "passives" in idx.group_var_map:
+            Fluxes[idx("passives")] = Fluxes[idx("rho")] * np.where(
+                vstar > 0, wl[idx("passives")], wr[idx("passives")]
+            )
 
-        return cp.ElementwiseKernel(
-            in_params=in_params,
-            out_params=out_params,
-            operation=body,
-            name=f"advection_upwind_npass_{npassives}",
-            no_return=True,
-        )
+        return Fluxes
 
-    def make_hllc_elementwise_kernel(npassives: int):
-        in_params = (
-            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, "
-            "float64 v2l, float64 v2r, float64 v3l, float64 v3r, "
-            "float64 Pl, float64 Pr, float64 cl, float64 cr, float64 gamma, int8 dim"
-        )
-        out_params = "float64 Frho, float64 Fm1, float64 Fm2, float64 Fm3, float64 FE"
+    def cuda_elementwise_kernel_body(self, npassives: int):
         body = """
         double vl;
         double vr;
@@ -444,16 +458,6 @@ if CUPY_AVAILABLE:
         }
         FE = vgdv * (Egdv + Pgdv);
         """
-
         for i in range(npassives):
-            in_params += f", float64 passl{i}, float64 passr{i}"
-            out_params += f", float64 Fpass{i}"
             body += f"\nFpass{i} = Frho * (vstar > 0 ? passl{i} : passr{i});"
-
-        return cp.ElementwiseKernel(
-            in_params=in_params,
-            out_params=out_params,
-            operation=body,
-            name=f"hllc_npass_{npassives}",
-            no_return=True,
-        )
+        return body

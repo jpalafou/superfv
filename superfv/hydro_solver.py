@@ -46,7 +46,7 @@ from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .muscl_solver import update_fluxes_with_muscl_scheme
-from .riemann_solvers import hllc
+from .riemann_solvers import HLLC_RiemannSolver, LLF_RiemannSolver, UpwindRiemannSolver
 from .slope_limiting.MOOD import mood_loop
 from .slope_limiting.shock_detection import detect_shocks
 from .stencils import conservative_interpolation
@@ -63,7 +63,6 @@ if CUPY_AVAILABLE:
         make_prim_to_cons_elementwise_kernel,
         sound_speed_cp,
     )
-    from .riemann_solvers import make_hllc_elementwise_kernel
 
 
 class TimeIntegrator(Enum):
@@ -931,20 +930,19 @@ class HydroSolver:
 
     @cached_property
     def _riemann_solver_func(self):
-        rs = self.params.hydro.riemann_solver
+        params = self.params
+        rs = params.hydro.riemann_solver
+        npassives = params.ic.npassives
 
-        if self.params.cupy:
-            if rs == RiemannSolver.HLLC:
-                return make_hllc_elementwise_kernel(self.params.ic.npassives)
-            else:
-                raise NotImplementedError(
-                    f"CuPy kernel for Riemann solver '{rs}' is not implemented."
-                )
-        else:
-            if rs == RiemannSolver.HLLC:
-                return hllc
-            else:
-                raise NotImplementedError(f"Riemann solver '{rs}' is not implemented.")
+        match rs:
+            case RiemannSolver.UPWIND:
+                return UpwindRiemannSolver(npassives)
+            case RiemannSolver.LLF:
+                return LLF_RiemannSolver(npassives)
+            case RiemannSolver.HLLC:
+                return HLLC_RiemannSolver(npassives)
+            case _:
+                raise ValueError(f"Unknown Riemann solver: {rs}")
 
     # Hydro solver functions
 
