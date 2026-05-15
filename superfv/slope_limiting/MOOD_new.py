@@ -390,7 +390,7 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
 
         # Do not revise if no revisable troubled cells
         if n_troubles == 0:
-            break
+            return
 
         # Update cascade index and compute new fluxes
         sim.xp.minimum(_cascade_idx_ + _troubles_, n_cascade, out=_cascade_idx_)
@@ -409,6 +409,10 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
         # Update state
         substep_summary.n_MOOD_revisions += 1
         assign_fluxes(sim, computed_fallback_fluxes)
+
+    if mood_params.detect_closing_troubles:
+        n_closing_troubles = detect_troubled_cells(sim, t, dt)
+        substep_summary.n_troubles_hist.append(n_closing_troubles)
 
 
 if CUPY_AVAILABLE:
