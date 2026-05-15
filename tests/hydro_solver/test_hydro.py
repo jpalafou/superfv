@@ -31,12 +31,11 @@ def euler_slicer():
             "passive_scalar2": 6,
             "passive_scalar3": 7,
         },
-    )
-    _euler_slicer.add_var_to_group("v", ("vx", "vy", "vz"))
-    _euler_slicer.add_var_to_group("m", ("mx", "my", "mz"))
-    _euler_slicer.add_var_to_group(
-        "passives",
-        ("passive_scalar1", "passive_scalar2", "passive_scalar3"),
+        {
+            "v": ["vx", "vy", "vz"],
+            "m": ["mx", "my", "mz"],
+            "passives": ["passive_scalar1", "passive_scalar2", "passive_scalar3"],
+        },
     )
     return _euler_slicer
 
@@ -169,7 +168,10 @@ def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
 
 def test_teyssier_prim_to_cons(euler_slicer):
     idx = euler_slicer
-    idx.add_var_to_group("test", ("rho", "vx", "P"))
+
+    idx.add_var_to_group("rho", "test")
+    idx.add_var_to_group("vx", "test")
+    idx.add_var_to_group("P", "test")
 
     N = 64
 
@@ -188,7 +190,10 @@ def test_teyssier_prim_to_cons(euler_slicer):
 
 def test_teyssier_cons_to_prim(euler_slicer):
     idx = euler_slicer
-    idx.add_var_to_group("test", ("rho", "mx", "E"))
+
+    idx.add_var_to_group("rho", "test")
+    idx.add_var_to_group("mx", "test")
+    idx.add_var_to_group("E", "test")
 
     N = 64
 
@@ -207,7 +212,10 @@ def test_teyssier_cons_to_prim(euler_slicer):
 
 def test_teyssier_compute_fluxes(euler_slicer):
     idx = euler_slicer
-    idx.add_var_to_group("test", ("rho", "vx", "P"))
+
+    idx.add_var_to_group("rho", "test")
+    idx.add_var_to_group("vx", "test")
+    idx.add_var_to_group("P", "test")
 
     N = 64
 

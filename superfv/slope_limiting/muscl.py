@@ -1,12 +1,10 @@
-from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Optional, Tuple
+from typing import Literal, Tuple
 
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
@@ -17,75 +15,6 @@ class MUSCL_SlopeLimiter(Enum):
     MONCEN = 1
     PP2D = 2
     NONE = 3
-
-
-@dataclass(frozen=True, slots=True)
-class musclConfig(LimiterConfig):
-    """
-    Configuration for the MUSCL slope limiter.
-
-    Attributes:
-        shock_detection: Whether to enable shock detection.
-        smooth_extrema_detection: Whether to enable smooth extrema detection.
-        physical_admissibility_detection: Whether to enable physical admissibility
-            detection (PAD).
-        eta_max: Eta threshold for shock detection if shock_detection is True.
-        PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
-            respectively, for each variable when physical_admissibility_detection is
-            True. Must be provided if physical_admissibility_detection is True.
-        limiter: Optional slope limiter specification of "minmod", "moncen", "PP2D".
-    """
-
-    limiter: Optional[Literal["minmod", "moncen", "PP2D"]] = None
-
-    def key(self) -> str:
-        return f"muscl-{self.limiter}"
-
-    def to_dict(self) -> dict:
-        out = LimiterConfig.to_dict(self)
-        out.update(dict(limiter=self.limiter))
-        return out
-
-
-@dataclass(frozen=True, slots=True)
-class musclInterpolationScheme(InterpolationScheme):
-    """
-    Configuration for MUSCL interpolation schemes.
-
-    Attributes:
-        p: The polynomial degree. Must be 1.
-        flux_recipe: The flux recipe to use. For MUSCL schemes, this simplifies to:
-            - 1: compute conservative slopes -> limit conservative slopes -> compute
-                primitive nodes -> compute fluxes
-            - 2: compute primitive cell averages -> compute primitive slopes -> limit
-                primitive slopes -> compute fluxes
-        limiter_config: The MUSCL limiter configuration to use.
-    """
-
-    p: int = 1
-    flux_recipe: Literal[1, 2] = 2
-    limiter_config: musclConfig = musclConfig(
-        shock_detection=False,
-        smooth_extrema_detection=False,
-        physical_admissibility_detection=False,
-    )
-
-    def __post_init__(self):
-        InterpolationScheme.__post_init__(self)
-        if self.p != 1:
-            raise ValueError("musclInterpolationScheme must have p=1")
-        if not isinstance(self.limiter_config, musclConfig):
-            raise ValueError("musclInterpolationScheme requires a musclConfig")
-
-    def key(self) -> str:
-        return self.limiter_config.key()
-
-    def to_dict(self) -> dict:
-        return dict(
-            p=self.p,
-            flux_recipe=self.flux_recipe,
-            limiter_config=(None if self.limiter_config is None else self.limiter_config.to_dict()),
-        )
 
 
 def compute_MUSCL_slopes(
