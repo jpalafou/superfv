@@ -47,7 +47,7 @@ from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .muscl_solver import update_fluxes_with_muscl_scheme
 from .riemann_solvers import hllc
-from .slope_limiting.MOOD_new import mood_loop
+from .slope_limiting.MOOD import mood_loop
 from .slope_limiting.shock_detection import detect_shocks
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
