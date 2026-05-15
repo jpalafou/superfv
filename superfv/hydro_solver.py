@@ -1,3 +1,4 @@
+import pickle
 import shutil
 import time
 import warnings
@@ -721,11 +722,25 @@ class HydroSolver:
 
         if snapshot.path is not None:
             with open(params.output_path / "output_times.txt", "a") as f:
-                f.write(f"{snapshot.path.name},{snapshot.data.t}\n")
+                f.write(f"{snapshot.path.name},{snapshot.t}\n")
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
 
         self.step_summary.timer.stop("take_snapshot", self.params.sync_timer)  # TIMER STOP
+
+    def _write_config_file(self):
+        output_path = self.params.output_path
+        if output_path is not None:
+            with open(output_path / "params.yaml", "w") as f:
+                f.write(yaml_dump(asdict(self.params)))
+
+    def _write_mesh(self):
+        output_path = self.params.output_path
+        mesh = self.mesh
+
+        if output_path is not None:
+            with open(output_path / "mesh.pkl", "wb") as f:
+                pickle.dump(mesh, f)
 
     def _prepare_output_directory(self, overwrite: bool):
         """
@@ -742,8 +757,9 @@ class HydroSolver:
             raise FileExistsError(f"Output path '{output_path}' already exists.")
 
         output_path.mkdir(parents=True, exist_ok=False)
-        with open(output_path / "params.yaml", "w") as f:
-            f.write(yaml_dump(asdict(self.params)))
+
+        self._write_config_file()
+        self._write_mesh()
 
     def _summarize_step(self, take_snapshot: bool = False):
         idx = self.params.variable_index_map

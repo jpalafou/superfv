@@ -32,7 +32,7 @@ class Snapshot:
         if self.data is None:
             with open(self.path, "rb") as f:
                 self.data = pickle.load(f)
-        print(f"Loaded snapshot at t={self.data.t} from {self.path}.")
+        print(f"Loaded snapshot at t={self.t} from {self.path}.")
 
     def dump(self, clear: bool = False):
         if self.path is None:
