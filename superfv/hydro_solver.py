@@ -95,8 +95,8 @@ class HydroSolver:
         from superfv import HydroSolver, ic
         sim = HydroSolver(ic=ic.square, ...)
 
-    Then call the `take_n_steps` or `run` methods to advance the simulation in time. e.g. to
-    take 10 steps:
+    Then call the `take_n_steps` or `run` methods to advance the simulation in time. For
+    example, to take 10 steps:
 
         sim.take_n_steps(n=10, ...)
 
@@ -104,10 +104,10 @@ class HydroSolver:
 
         sim.run(t=1.0, ...)
 
-    Reference the `step_history` to access the simulation history and the `snapshot_history`
-    to access the snapshots. e.g. to get the total energy across all steps:
+    Refer to the `step_history` to access the simulation history and the `snapshot_history`
+    to access the snapshots. For example, to get the total energy across all steps:
 
-        sim.step_history.get_get_history("E_total")
+        sim.step_history.get_history("E_total")
 
     or to get the density field from the 5th snapshot:
 
@@ -950,7 +950,7 @@ class HydroSolver:
 
     def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
         """
-        Write conservatives to `u` using primitives from `u`.
+        Write conservative variables into `u` using primitive variables from `w`.
         """
         params = self.params
         idx = params.variable_index_map
@@ -976,7 +976,7 @@ class HydroSolver:
 
     def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
         """
-        Write to primitives `w` from conservatives `u`.
+        Write primitive variables into `w` from conservative variables `u`.
         """
         params = self.params
         idx = params.variable_index_map
@@ -1010,7 +1010,7 @@ class HydroSolver:
 
     def compute_sound_speed(self, w: ArrayLike, c: ArrayLike):
         """
-        Write sound speed to `c` from primitives `w`.
+        Compute the sound speed from primitives `w` and write the result to `c`.
         """
         params = self.params
         idx = params.variable_index_map
@@ -1110,8 +1110,9 @@ class HydroSolver:
         self, t: float, u: ArrayLike, fv_scheme: FV_SchemeParameters
     ):
         """
-        Update the cell averaged / cell centered values "_u_", "_ucc_", "_wcc_", and/or "_w_"
-        based on time t, conservatives u, and the specified fv_scheme.
+        Update the ghost-cell-padded cell-averaged and cell-centered arrays
+        (_u_, _ucc_, _wcc_, and _w_) based on time `t`, the conservative variables `u`, and
+        the provided `fv_scheme`.
         """
         idx = self.params.variable_index_map
         active_dims = self.mesh.active_dims
@@ -1380,7 +1381,7 @@ class HydroSolver:
 
         _q_ = arrays["_w_"] if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else arrays["_u_"]
 
-        # Allocate tmemporary arrays
+        # Allocate temporary arrays
         tmp = {dim: self._prepare_interpolation_arrays(dim, fv_scheme) for dim in active_dims}
         _x_nodes_ = tmp["x"][0] if "x" in tmp else None
         _y_nodes_ = tmp["y"][0] if "y" in tmp else None
