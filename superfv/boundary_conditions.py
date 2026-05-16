@@ -128,12 +128,25 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     nghost = context.nghost
     axis = context.axis
     lower = context.lower
-    f = cast(MultivarField, context.f)
-    idx = cast(VariableIndexMap, context.variable_index_map)
-    mesh = cast(UniformFVMesh, context.mesh)
+    f = context.f
+    idx = context.variable_index_map
+    mesh = context.mesh
     t = context.t
-    p = cast(int, context.p)
-    xp = cast(ModuleType, context.xp)
+    p = context.p
+    xp = context.xp
+
+    if f is None:
+        raise ValueError("Dirichlet boundary condition requires a callable function.")
+    if idx is None:
+        raise ValueError("Dirichlet boundary condition requires a VariableIndexMap.")
+    if mesh is None:
+        raise ValueError("Dirichlet boundary condition requires a mesh.")
+    if t is None:
+        raise ValueError("Dirichlet boundary condition requires a time value.")
+    if p is None:
+        raise ValueError("Dirichlet boundary condition requires a quadrature order.")
+    if xp is None:
+        raise ValueError("Dirichlet boundary condition requires a module type (xp).")
 
     if lower:
         outer_slice = crop(axis, (None, nghost), ndim=4)
@@ -184,7 +197,10 @@ def apply_reflective_bc(_u_: ArrayLike, context: BCcontext):
     nghost = context.nghost
     axis = context.axis
     lower = context.lower
-    idx = cast(VariableIndexMap, context.variable_index_map)
+    idx = context.variable_index_map
+
+    if idx is None:
+        raise ValueError("Reflective boundary condition requires a VariableIndexMap.")
 
     outer_slice = crop(axis, (None, nghost) if lower else (-nghost, None))
     dim = AXIS_TO_DIM[axis]

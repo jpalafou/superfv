@@ -618,7 +618,7 @@ class HydroSolver:
             x: ArrayLike,
             y: ArrayLike,
             z: ArrayLike,
-            t: Optional[float] = None,
+            t: float,
             *,
             xp: ModuleType,
         ) -> ArrayLike:
@@ -639,7 +639,7 @@ class HydroSolver:
             x: ArrayLike,
             y: ArrayLike,
             z: ArrayLike,
-            t: Optional[float] = None,
+            t: float,
             *,
             xp: ModuleType,
         ) -> ArrayLike:
