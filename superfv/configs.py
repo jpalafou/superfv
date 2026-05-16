@@ -51,7 +51,6 @@ class ZhangShuParameters:
     adaptive_dt_tol: float = 1e-15
     theta_denom_tol: float = 1e-15
     include_corners: bool = True
-    log_limiter_scalars: bool = True
 
     def __post_init__(self):
         if not self.use_ZS:
@@ -101,7 +100,6 @@ class MOOD_Parameters:
     blend_troubles: bool
     skip_trouble_counts: bool = False
     detect_closing_troubles: bool = True
-    log_limiter_scalars: bool = True
 
     def __post_init__(self):
         if self.use_MOOD and self.blend_troubles and len(self.fallback_cascade) != 1:

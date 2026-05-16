@@ -189,7 +189,6 @@ class HydroSolver:
         detect_closing_troubles: bool = True,
         # Shared Zhang-Shu / MOOD params
         include_corners: bool = True,
-        log_limiter_scalars: bool = True,
         # Solver params
         cupy: bool = False,
         sync_timer: bool = True,
@@ -292,7 +291,6 @@ class HydroSolver:
         Slope limiting parameters (shared between Zhang-Shu and MOOD):
             include_corners: If True, include corner cells when computing the discrete maximum
                 principle.
-            log_limiter_scalars: If True, log limiter scalars for analysis.
 
         Solver parameters:
             cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
@@ -431,7 +429,6 @@ class HydroSolver:
                 adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=theta_denom_tol,
                 include_corners=include_corners,
-                log_limiter_scalars=log_limiter_scalars,
             ),
             mood_params=MOOD_Parameters(
                 use_MOOD=use_MOOD and p > 0,
@@ -454,7 +451,6 @@ class HydroSolver:
                 blend_troubles=blend_troubles,
                 skip_trouble_counts=skip_trouble_counts,
                 detect_closing_troubles=detect_closing_troubles,
-                log_limiter_scalars=log_limiter_scalars,
             ),
             shock_detection_params=ShockDetectionParameters(
                 lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE, eta_max
