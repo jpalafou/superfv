@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from superfv.axes import DIM_TO_AXIS
+
 from .configs import FluxRecipe, FV_SchemeParameters
 from .slope_limiting.muscl import (
     MUSCL_SlopeLimiter,
@@ -100,7 +102,7 @@ def update_fluxes_with_muscl_scheme(
         _nodes_[..., 0] = _predictor_q_ - 0.5 * _slopes_
         _nodes_[..., 1] = _predictor_q_ + 0.5 * _slopes_
 
-        axis = {"x": 1, "y": 2, "z": 3}[dim]
+        axis = DIM_TO_AXIS[dim]
         left_of_interface = replace_slice(crop(axis, (nghost - 1, -nghost), ndim=5), 4, 1)
         right_of_interface = replace_slice(crop(axis, (nghost, -nghost + 1), ndim=5), 4, 0)
 

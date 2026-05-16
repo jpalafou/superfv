@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BC, apply_bc
 from superfv.mesh import UniformFVMesh
 from superfv.tools.norms import linf_norm
@@ -100,7 +101,6 @@ def test_reflective_boundary_conditions(ref_slab):
     )
 
     ref_dim, ref_pos = ref_slab[0], ref_slab[1]
-    DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
 
     assert np.array_equal(_u_ref[idx("rho")], _u_sym[idx("rho")])
     assert np.array_equal(_u_ref[idx("P")], _u_sym[idx("P")])

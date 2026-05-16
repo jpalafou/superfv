@@ -303,10 +303,10 @@ if CUPY_AVAILABLE:
         alpha: cp.ndarray,
         slopes: cp.ndarray,
         dim: Literal["x", "y", "z"],
-        slope_type: Literal[None, "minmod", "moncen", "PP2D"],
+        slope_type: MUSCL_SlopeLimiter,
         SED: bool,
     ) -> Tuple[slice, ...]:
-        if slope_type == "PP2D":
+        if slope_type == MUSCL_SlopeLimiter.PP2D:
             raise ValueError(
                 "PP2D slopes should be computed with the compute_PP2D_slopes "
                 "function, not the MUSCL_slopes_kernel."
@@ -343,7 +343,11 @@ if CUPY_AVAILABLE:
                 alpha,
                 slopes,
                 DIM_TO_AXIS[dim],
-                {"minmod": 1, "moncen": 2, None: 0}[slope_type],
+                {
+                    MUSCL_SlopeLimiter.NONE: 0,
+                    MUSCL_SlopeLimiter.MINMOD: 1,
+                    MUSCL_SlopeLimiter.MONCEN: 2,
+                }[slope_type],
                 SED,
                 nvars,
                 nx,

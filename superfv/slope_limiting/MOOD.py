@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Literal, Tuple
 
 import numpy as np
 
+from superfv.axes import DIM_TO_AXIS
 from superfv.configs import (
     FluxRecipe,
     FV_SchemeParameters,
@@ -64,9 +65,8 @@ def numerical_admissibility_detection(
         _NAD_troubles_ &= _alpha_ < 1.0
 
     # Omit variables from detection
-    if params.omit_vars:
-        omit_indices = [idx(v) for v in params.omit_vars]
-        _NAD_troubles_[omit_indices] = False
+    if "omit_NAD" in idx.group_var_map:
+        _NAD_troubles_[idx("omit_NAD")] = False
 
     # Update troubled cells
     np.maximum(_troubles_, np.any(_NAD_troubles_, axis=0), out=_troubles_)
@@ -233,7 +233,7 @@ def map_cells_values_to_face_values(
 
 
 def blend_troubled_cells(
-    xp: ModuleType, _troubles_: ArrayLike, active_dims: Tuple[Literal["x", "y", "z"]]
+    xp: ModuleType, _troubles_: ArrayLike, active_dims: Tuple[Literal["x", "y", "z"], ...]
 ) -> ArrayLike:
     """
     Return an floating-point array of troubled cells blended with their neighbors.
@@ -244,7 +244,7 @@ def blend_troubled_cells(
     _blended_[...] = _troubles_
 
     if ndim == 1:
-        axis = {"x": 1, "y": 2, "z": 3}[active_dims[0]]
+        axis = DIM_TO_AXIS[active_dims[0]]
         lft_slc = crop(axis, (None, -1), ndim=4)
         rgt_slc = crop(axis, (1, None), ndim=4)
 
@@ -256,8 +256,8 @@ def blend_troubled_cells(
         _blended_[lft_slc] = xp.maximum(0.25 * (_blended_[rgt_slc] > 0), _blended_[lft_slc])
         _blended_[rgt_slc] = xp.maximum(0.25 * (_blended_[lft_slc] > 0), _blended_[rgt_slc])
     elif ndim == 2:
-        axis1 = {"x": 1, "y": 2, "z": 3}[active_dims[0]]
-        axis2 = {"x": 1, "y": 2, "z": 3}[active_dims[1]]
+        axis1 = DIM_TO_AXIS[active_dims[0]]
+        axis2 = DIM_TO_AXIS[active_dims[1]]
 
         lft_slc1 = crop(axis1, (None, -1), ndim=4)
         rgt_slc1 = crop(axis1, (1, None), ndim=4)
@@ -296,18 +296,18 @@ def get_face_mask(
     xp: ModuleType,
     _cv_mask_: ArrayLike,
     dim: Literal["x", "y", "z"],
-    active_dims: Tuple[Literal["x", "y", "z"]],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
     nghost: int,
 ) -> ArrayLike:
     """
     Slice a cell-centered mask with ghost cells to obtain a face-centered mask with
     no ghost cells.
     """
-    _fv_ = map_cells_values_to_face_values(xp, _cv_mask_, {"x": 1, "y": 2, "z": 3}[dim])
+    _fv_ = map_cells_values_to_face_values(xp, _cv_mask_, DIM_TO_AXIS[dim])
     interior = merge_slices(
         *[
             crop(
-                {"x": 1, "y": 2, "z": 3}[d],
+                DIM_TO_AXIS[d],
                 (nghost - 1, -nghost + 1) if d == dim else (nghost, -nghost),
                 ndim=4,
             )
@@ -384,7 +384,7 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
 
     # Initialize MOOD arrays
     init_mood(sim)
-    computed_fallback_fluxes = []
+    computed_fallback_fluxes: List[FV_SchemeParameters] = []
 
     for _ in range(mood_params.max_revs):
         n_troubles = detect_troubled_cells(sim, t, dt)

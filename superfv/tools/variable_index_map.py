@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Set, Union
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
@@ -8,6 +8,9 @@ import numpy as np
 class VariableIndexMap:
     var_idx_map: Dict[str, int]
     group_var_map: Dict[str, List[str]]
+    _cache: Dict[Tuple[str, bool], Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]] = field(
+        default_factory=dict
+    )
 
     @property
     def var_names(self) -> Set[str]:
@@ -40,7 +43,7 @@ class VariableIndexMap:
             _ = list(gen)
 
         # clear cache
-        object.__setattr__(self, "_cache", {})
+        self._cache.clear()
 
     def add_var(self, name: str, idx: int):
         if name in self.all_names:

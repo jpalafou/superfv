@@ -382,6 +382,8 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         double El = Pl / (gamma - 1.0) + Kl;
         double Er = Pr / (gamma - 1.0) + Kr;
 
+        double cl = isothermal ? iso_cs : sqrt(gamma * Pl / rhol);
+        double cr = isothermal ? iso_cs : sqrt(gamma * Pr / rhor);
         double cmax = fmax(cl, cr);
 
         double sl = fmin(vl, vr) - cmax;

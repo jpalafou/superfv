@@ -1,5 +1,6 @@
 import pickle
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -19,7 +20,7 @@ class SnapshotData:
 class Snapshot:
     t: float
     data: Optional[SnapshotData] = None
-    path: Optional[str] = None
+    path: Optional[Path] = None
 
     def __post_init__(self):
         if self.path is not None:
@@ -76,6 +77,9 @@ class SnapshotHistory:
 
     def __getitem__(self, i: int) -> Snapshot:
         return self.snapshots[i]
+
+    def __iter__(self):
+        return iter(self.snapshots)
 
     def __call__(self, t: float) -> Snapshot:
         closest_snapshot = min(self.snapshots, key=lambda s: abs(s.t - t))

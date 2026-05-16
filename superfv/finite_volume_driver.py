@@ -1,6 +1,6 @@
 from enum import Enum
 from functools import lru_cache
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple, cast
 
 import numpy as np
 
@@ -303,10 +303,13 @@ def apply_zhang_shu_limiter(
 ):
     cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
     na = cp.newaxis if cupy else np.newaxis
-    active_dims = tuple(
-        d
-        for d, nodes in zip(["x", "y", "z"], [_x_nodes_, _y_nodes_, _z_nodes_])
-        if nodes is not None
+    active_dims = cast(
+        Tuple[Literal["x", "y", "z"], ...],
+        tuple(
+            d
+            for d, nodes in zip(["x", "y", "z"], [_x_nodes_, _y_nodes_, _z_nodes_])
+            if nodes is not None
+        ),
     )
 
     if _w_.ndim != 4:
@@ -364,9 +367,8 @@ def apply_zhang_shu_limiter(
             np.maximum(_theta_, _alpha_, out=_theta_)
 
     # omit variables from limiting
-    if params.omit_vars:
-        omit_indices = [idx(v) for v in params.omit_vars]
-        _theta_[omit_indices] = 1.0
+    if "omit_ZS" in idx.group_var_map:
+        _theta_[idx("omit_ZS")] = 1.0
 
     # apply limiter to face nodes
     if _x_nodes_ is not None:

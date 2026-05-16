@@ -11,6 +11,7 @@ from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
+from .axes import DIM_TO_AXIS, XYZ_TUPLE
 from .boundary_conditions import BC, PatchBC, apply_bc
 from .configs import (
     BoundaryConditionParameters,
@@ -424,7 +425,7 @@ class HydroSolver:
                     use_SED and use_ZS and p > 0, clip_zero_tol
                 ),
                 PAD_params=PhysicalAdmissibilityParameters(
-                    updated_PAD_bounds and use_ZS and p > 0, updated_PAD_bounds
+                    bool(updated_PAD_bounds) and use_ZS and p > 0, updated_PAD_bounds
                 ),
                 omit_vars=omit_vars_from_ZS or [],
                 adaptive_dt_tol=adaptive_dt_tol,
@@ -446,7 +447,7 @@ class HydroSolver:
                     include_corners=include_corners,
                 ),
                 PAD_params=PhysicalAdmissibilityParameters(
-                    updated_PAD_bounds and use_MOOD and p > 0, updated_PAD_bounds
+                    bool(updated_PAD_bounds) and use_MOOD and p > 0, updated_PAD_bounds
                 ),
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,
@@ -480,7 +481,9 @@ class HydroSolver:
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
-            variable_index_map=self._define_complete_variable_index_map(ic_params),
+            variable_index_map=self._define_complete_variable_index_map(
+                ic_params, fv_scheme_params
+            ),
             cupy=cupy and CUPY_AVAILABLE,
             sync_timer=sync_timer and cupy and CUPY_AVAILABLE,
             output_path=Path(output_path) if output_path is not None else None,
@@ -565,8 +568,7 @@ class HydroSolver:
         return nghost
 
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
-        dims = ["x", "y", "z"]
-        return tuple(dim for dim, n in zip(dims, [nx, ny, nz]) if n > 1)
+        return tuple(dim for dim, n in zip(XYZ_TUPLE, [nx, ny, nz]) if n > 1)
 
     def _define_base_variable_index_map(self) -> VariableIndexMap:
         return VariableIndexMap(
@@ -580,7 +582,7 @@ class HydroSolver:
         )
 
     def _define_complete_variable_index_map(
-        self, ic_params: InitialConditionParameters
+        self, ic_params: InitialConditionParameters, fv_scheme_params: FV_SchemeParameters
     ) -> VariableIndexMap:
         idx = self._define_base_variable_index_map()
 
@@ -590,14 +592,23 @@ class HydroSolver:
                     idx.add_var(v, idx.nvars)
                 idx.add_var_to_group(v, "passives")
 
+        if fv_scheme_params.zhang_shu_params.omit_vars:
+            for v in fv_scheme_params.zhang_shu_params.omit_vars:
+                idx.add_var_to_group(v, "omit_ZS")
+
+        if fv_scheme_params.mood_params.NAD_params.omit_vars:
+            for v in fv_scheme_params.mood_params.NAD_params.omit_vars:
+                idx.add_var_to_group(v, "omit_NAD")
+
         return idx
 
     def _build_interior_slice(self):
         active_dims = self.params.mesh.active_dims
         nghost = self.params.mesh.nghost
-        self.interior = merge_slices(
-            *[crop({"x": 1, "y": 2, "z": 3}[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
+        interior = merge_slices(
+            *[crop(DIM_TO_AXIS[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
         )
+        self.interior = (interior[0], interior[1], interior[2], interior[3])
 
     def _primitive_ic_w0_func(self) -> MultivarField:
         ic_params = self.params.ic
@@ -813,18 +824,19 @@ class HydroSolver:
         self.step_summary.timer.start("take_snapshot", self.params.sync_timer)  # TIMER START
 
         params = self.params
+        output_path = params.output_path
 
         u = self.arrays["u"]
         w = self.xp.empty_like(u)
 
         self.conservatives_to_primitives(u, w)
 
-        if params.output_path is not None:
+        if output_path is None:
+            path = None
+        else:
             n = len(self.snapshot_history)
             ndigits = params.output_n_digits
-            path = params.output_path / f"output_{n:0{ndigits}d}.pkl"
-        else:
-            path = None
+            path = output_path / f"output_{n:0{ndigits}d}.pkl"
 
         snapshot = Snapshot(
             t=self.t,
@@ -859,7 +871,7 @@ class HydroSolver:
             if len(self.step_history) > 0:
                 print()  # for better separation of snapshot logs in the terminal
 
-            with open(params.output_path / "output_times.txt", "a") as f:
+            with open(snapshot.path.parent / "output_times.txt", "a") as f:
                 f.write(f"{snapshot.path.name},{snapshot.t}\n")
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
@@ -929,7 +941,7 @@ class HydroSolver:
         return make_cons_to_prim_elementwise_kernel(self.params.ic.npassives)
 
     @cached_property
-    def _riemann_solver_func(self):
+    def riemann_solver(self):
         params = self.params
         rs = params.hydro.riemann_solver
         npassives = params.ic.npassives
@@ -1257,61 +1269,6 @@ class HydroSolver:
             self.xp.maximum(_nodes_[idx("rho")], params.hydro.rho_min, out=_nodes_[idx("rho")])
             self.xp.maximum(_nodes_[idx("P")], params.hydro.P_min, out=_nodes_[idx("P")])
 
-    def riemann_solver(
-        self,
-        left_of_interface: ArrayLike,
-        right_of_interface: ArrayLike,
-        fluxes: ArrayLike,
-        dim: str,
-    ):
-        params = self.params
-        idx = params.variable_index_map
-
-        if params.cupy:
-            cl = self.xp.empty_like(left_of_interface[0, ...])
-            cr = self.xp.empty_like(right_of_interface[0, ...])
-
-            self.compute_sound_speed(left_of_interface, cl)
-            self.compute_sound_speed(right_of_interface, cr)
-
-            self._riemann_solver_func(
-                left_of_interface[idx("rho")],
-                right_of_interface[idx("rho")],
-                left_of_interface[idx("vx")],
-                right_of_interface[idx("vx")],
-                left_of_interface[idx("vy")],
-                right_of_interface[idx("vy")],
-                left_of_interface[idx("vz")],
-                right_of_interface[idx("vz")],
-                left_of_interface[idx("P")],
-                right_of_interface[idx("P")],
-                cl,
-                cr,
-                params.hydro.gamma,
-                {"x": 1, "y": 2, "z": 3}[dim],
-                *[
-                    x
-                    for v in idx.group_var_map.get("passives", [])
-                    for x in (left_of_interface[idx(v)], right_of_interface[idx(v)])
-                ],
-                fluxes[idx("rho")],
-                fluxes[idx("mx")],
-                fluxes[idx("my")],
-                fluxes[idx("mz")],
-                fluxes[idx("E")],
-                *[fluxes[idx(v)] for v in idx.group_var_map.get("passives", [])],
-            )
-        else:
-            fluxes[...] = self._riemann_solver_func(
-                idx,
-                left_of_interface,
-                right_of_interface,
-                dim,
-                params.hydro.gamma,
-                params.hydro.isothermal,
-                params.hydro.iso_cs,
-            )
-
     def _update_nodal_fluxes(
         self,
         _x_nodes_: ArrayLike,
@@ -1322,7 +1279,7 @@ class HydroSolver:
         params = self.params
         nghost = params.mesh.nghost
         nnodes = _f_nodes_.shape[4]
-        axis = {"x": 1, "y": 2, "z": 3}[dim]
+        axis = DIM_TO_AXIS[dim]
 
         left_of_interface = merge_slices(
             crop(4, (nnodes, 2 * nnodes), ndim=5), crop(axis, (nghost - 1, -nghost), ndim=5)
@@ -1331,8 +1288,14 @@ class HydroSolver:
             crop(4, (None, nnodes), ndim=5), crop(axis, (nghost, -nghost + 1), ndim=5)
         )
 
-        self.riemann_solver(
-            _x_nodes_[left_of_interface], _x_nodes_[right_of_interface], _f_nodes_, dim
+        _f_nodes_[...] = self.riemann_solver(
+            params.variable_index_map,
+            _x_nodes_[left_of_interface],
+            _x_nodes_[right_of_interface],
+            dim,
+            params.hydro.gamma,
+            params.hydro.isothermal,
+            params.hydro.iso_cs,
         )
 
     def _update_flux_arrays(
@@ -1342,13 +1305,12 @@ class HydroSolver:
         _H_integral_: Optional[ArrayLike],
     ):
         params = self.params
-        active_dims = params.mesh.active_dims
         nghost = self.params.mesh.nghost
         arrays = self.arrays
 
         for dim, _Fintegral_ in zip(["x", "y", "z"], [_F_integral_, _G_integral_, _H_integral_]):
-            if dim not in active_dims:
-                continue
+            if _Fintegral_ is None:
+                continue  # this dim is not active
             Fluxes = arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
 
             if params.mesh.ndim == 1:
