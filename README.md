@@ -34,7 +34,7 @@ Initialize a `HydroSolver` object with the desired parameters:
 
 ```python
 from superfv import HydroSolver, ics, BC
-sim = HydroSolver(ic=ics.square, nx=64, bcx=(BC.PERIODIC, BC.PERIODIC), ...)
+sim = HydroSolver(ic=ics.square, nx=64, bcx=(BC.PERIODIC, BC.PERIODIC))
 ```
 
 Documentation for `HydroSolver.__init__` includes a complete list of arguments and their purpose.
@@ -44,13 +44,13 @@ Documentation for `HydroSolver.__init__` includes a complete list of arguments a
 The simulation can be evolved for a fixed number of steps:
 
 ```python
-sim.take_n_steps(n=10, ...)
+sim.take_n_steps(n=10)
 ```
 
 Or, until a target time is reached:
 
 ```python
-sim.run(t=1.0, ...)
+sim.run(t=1.0)
 ```
 
 ## Post-processing
