@@ -4,7 +4,7 @@ import time
 import warnings
 from dataclasses import asdict
 from enum import Enum
-from functools import cached_property
+from functools import cached_property, partial
 from pathlib import Path
 from types import ModuleType
 from typing import Dict, List, Literal, Optional, Tuple, Union
@@ -134,7 +134,7 @@ class HydroSolver:
         isothermal: bool = False,
         iso_cs: float = 1.0,
         # IC params
-        ic: MultivarField = ics.square,
+        ic: MultivarField = partial(ics.square, vx=1),
         passive_ics: Optional[Dict[str, UnivarField]] = None,
         # BC params
         bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
