@@ -18,6 +18,7 @@ class RiemannSolver(Enum):
     UPWIND = 0
     LLF = 1
     HLLC = 2
+    HLLC_TEYSSIER = 3
 
 
 class RiemmannSolverBase(ABC):
@@ -455,3 +456,58 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         for i in range(npassives):
             body += f"\nFpass{i} = Frho * (vstar > 0 ? passl{i} : passr{i});"
         return body
+
+
+class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
+    def numpy_func(
+        self,
+        wl: np.ndarray,
+        wr: np.ndarray,
+        fluxes: np.ndarray,
+        dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ):
+        fluxes[...] = 0.0
+        uleft = prim_to_cons(idx, wl, gamma)
+        uright = prim_to_cons(idx, wr, gamma)
+        # left state
+        dl = wl[idx("rho")]
+        vl = wl[idx("v" + dim)]
+        pl = wl[idx("P")]
+        el = uleft[idx("E")]
+        # right state
+        dr = wr[idx("rho")]
+        vr = wr[idx("v" + dim)]
+        pr = wr[idx("P")]
+        er = uright[idx("E")]
+        # sound speed
+        cl = iso_cs if isothermal else np.sqrt(gamma * pl / dl)
+        cr = iso_cs if isothermal else np.sqrt(gamma * pr / dr)
+        # waves speed
+        sl = np.minimum(vl, vr) - np.maximum(cl, cr)
+        sr = np.maximum(vl, vr) + np.maximum(cl, cr)
+        dcl = dl * (vl - sl)
+        dcr = dr * (sr - vr)
+        # star state velocity and pressure
+        vstar = (dcl * vl + dcr * vr + pl - pr) / (dcl + dcr)
+        pstar = (dcl * pr + dcr * pl + dcl * dcr * (vl - vr)) / (dcl + dcr)
+        # left and right star states
+        dstarl = dl * (sl - vl) / (sl - vstar)
+        dstarr = dr * (sr - vr) / (sr - vstar)
+        estarl = ((sl - vl) * el - pl * vl + pstar * vstar) / (sl - vstar)
+        estarr = ((sr - vr) * er - pr * vr + pstar * vstar) / (sr - vstar)
+        # sample godunov state
+        dg = np.where(sl > 0, dl, np.where(vstar > 0, dstarl, np.where(sr > 0, dstarr, dr)))
+        vg = np.where(sl > 0, vl, np.where(vstar > 0, vstar, np.where(sr > 0, vstar, vr)))
+        pg = np.where(sl > 0, pl, np.where(vstar > 0, pstar, np.where(sr > 0, pstar, pr)))
+        eg = np.where(sl > 0, el, np.where(vstar > 0, estarl, np.where(sr > 0, estarr, er)))
+        # compute godunov flux
+        fluxes[idx("rho")] = dg * vg
+        fluxes[idx("m" + dim)] = dg * vg * vg + pg
+        fluxes[idx("E")] = (eg + pg) * vg
+
+    def cuda_elementwise_kernel_body(npassives: int) -> str:
+        raise NotImplementedError("HLLC Teyssier Riemann solver is not implemented yet.")

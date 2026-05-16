@@ -47,7 +47,12 @@ from .finite_volume_driver import (
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .mesh import UniformFVMesh
 from .muscl_solver import update_fluxes_with_muscl_scheme
-from .riemann_solvers import HLLC_RiemannSolver, LLF_RiemannSolver, UpwindRiemannSolver
+from .riemann_solvers import (
+    HLLC_RiemannSolver,
+    HLLC_Teyssier_RiemannSolver,
+    LLF_RiemannSolver,
+    UpwindRiemannSolver,
+)
 from .slope_limiting.MOOD import mood_loop
 from .slope_limiting.shock_detection import detect_shocks
 from .stencils import conservative_interpolation
@@ -949,6 +954,8 @@ class HydroSolver:
                 return LLF_RiemannSolver(npassives)
             case RiemannSolver.HLLC:
                 return HLLC_RiemannSolver(npassives)
+            case RiemannSolver.HLLC_TEYSSIER:
+                return HLLC_Teyssier_RiemannSolver(npassives)
             case _:
                 raise ValueError(f"Unknown Riemann solver: {rs}")
 
