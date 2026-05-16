@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import teyssier
-from superfv.hydro import cons_to_prim, fluxes, prim_to_cons
+from superfv.hydro import compute_fluxes, cons_to_prim, prim_to_cons
 from superfv.riemann_solvers import (
     HLLC_RiemannSolver,
     LLF_RiemannSolver,
@@ -230,7 +230,7 @@ def test_teyssier_compute_fluxes(euler_slicer):
     w[idx("P")] = 1e-6 * np.random.rand(N, N, N) + 1.0
 
     f1 = teyssier.prim_to_flux(w[idx("test")])
-    f2 = fluxes(idx, w, "x", gamma=1.4)
+    f2 = compute_fluxes(idx, w, "x", gamma=1.4)
 
     assert linf_norm(f1[0] - f2[idx("rho")]) < 1e-15
     assert linf_norm(f1[1] - f2[idx("mx")]) < 1e-15
@@ -268,9 +268,9 @@ def test_passive_scalars_are_density_weighted_and_advected(
     assert linf_norm(w2[idx("passive_scalar2")] - w[idx("passive_scalar2")]) == 0
     assert linf_norm(w2[idx("passive_scalar3")] - w[idx("passive_scalar3")]) == 0
 
-    solver = solver_cls(npassives=3)
-    flux = solver(idx, w, w, dim, gamma=1.4)
-    expected_flux = fluxes(idx, w, dim, gamma=1.4)
+    flux = np.empty_like(w)
+    solver_cls(npassives=3)(w, w, flux, dim, idx, gamma=1.4, isothermal=isothermal)
+    expected_flux = compute_fluxes(idx, w, dim, gamma=1.4)
 
     assert linf_norm(flux[idx("passive_scalar1")] - expected_flux[idx("passive_scalar1")]) == 0
     assert linf_norm(flux[idx("passive_scalar2")] - expected_flux[idx("passive_scalar2")]) == 0

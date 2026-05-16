@@ -106,7 +106,16 @@ def update_fluxes_with_muscl_scheme(
         left_of_interface = replace_slice(crop(axis, (nghost - 1, -nghost), ndim=5), 4, 1)
         right_of_interface = replace_slice(crop(axis, (nghost, -nghost + 1), ndim=5), 4, 0)
 
-        sim.riemann_solver(_nodes_[left_of_interface], _nodes_[right_of_interface], _fluxes_, dim)
+        sim.riemann_solver(
+            _nodes_[left_of_interface],
+            _nodes_[right_of_interface],
+            _fluxes_,
+            dim,
+            sim.params.variable_index_map,
+            sim.params.hydro.gamma,
+            sim.params.hydro.isothermal,
+            sim.params.hydro.iso_cs,
+        )
     sim._update_flux_arrays(
         _FGH_nodes_["x"] if "x" in active_dims else None,
         _FGH_nodes_["y"] if "y" in active_dims else None,

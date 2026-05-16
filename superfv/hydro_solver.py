@@ -1288,11 +1288,12 @@ class HydroSolver:
             crop(4, (None, nnodes), ndim=5), crop(axis, (nghost, -nghost + 1), ndim=5)
         )
 
-        _f_nodes_[...] = self.riemann_solver(
-            params.variable_index_map,
+        self.riemann_solver(
             _x_nodes_[left_of_interface],
             _x_nodes_[right_of_interface],
+            _f_nodes_,
             dim,
+            params.variable_index_map,
             params.hydro.gamma,
             params.hydro.isothermal,
             params.hydro.iso_cs,

@@ -109,3 +109,8 @@ class VariableIndexMap:
 
     def __contains__(self, name: str) -> bool:
         return name in self.all_names
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, VariableIndexMap):
+            return NotImplemented
+        return self.var_idx_map == other.var_idx_map and self.group_var_map == other.group_var_map

@@ -5,7 +5,7 @@ from typing import Literal
 
 import numpy as np
 
-from .hydro import fluxes, prim_to_cons, sound_speed
+from .hydro import compute_fluxes, prim_to_cons, sound_speed
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.stability import avoid0
 from .tools.variable_index_map import VariableIndexMap
@@ -27,14 +27,15 @@ class RiemmannSolverBase(ABC):
     @abstractmethod
     def numpy_func(
         self,
-        idx: VariableIndexMap,
         wl: np.ndarray,
         wr: np.ndarray,
+        fluxes: np.ndarray,
         dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> np.ndarray:
+    ):
         pass
 
     @abstractmethod
@@ -69,16 +70,16 @@ class RiemmannSolverBase(ABC):
 
     def __call__(
         self,
-        idx: VariableIndexMap,
         wl: ArrayLike,
         wr: ArrayLike,
+        fluxes: ArrayLike,
         dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> ArrayLike:
+    ):
         if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
-            Fluxes = np.empty_like(wl)
             self.cuda_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
@@ -99,45 +100,39 @@ class RiemmannSolverBase(ABC):
                     for v in idx.group_var_map.get("passives", [])
                     for x in (wl[idx(v)], wr[idx(v)])
                 ],
-                Fluxes[idx("rho")],
-                Fluxes[idx("mx")],
-                Fluxes[idx("my")],
-                Fluxes[idx("mz")],
-                Fluxes[idx("E")],
-                *[Fluxes[idx(v)] for v in idx.group_var_map.get("passives", [])],
+                fluxes[idx("rho")],
+                fluxes[idx("mx")],
+                fluxes[idx("my")],
+                fluxes[idx("mz")],
+                fluxes[idx("E")],
+                *[fluxes[idx(v)] for v in idx.group_var_map.get("passives", [])],
             )
         else:
-            Fluxes = np.empty_like(wl)
-            Fluxes[...] = self.numpy_func(idx, wl, wr, dim, gamma, isothermal, iso_cs)
-        return Fluxes
+            self.numpy_func(wl, wr, fluxes, dim, idx, gamma, isothermal, iso_cs)
 
 
 class UpwindRiemannSolver(RiemmannSolverBase):
     def numpy_func(
         self,
-        idx: VariableIndexMap,
         wl: np.ndarray,
         wr: np.ndarray,
+        fluxes: np.ndarray,
         dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> np.ndarray:
-        v = np.empty_like(wl[0, ...])
-        Fluxes = np.empty_like(wl)
-
+    ):
         vl = wl[idx("v" + dim)]
         vr = wr[idx("v" + dim)]
-        v[...] = np.where(np.abs(vl) > np.abs(vr), vl, vr)
+        v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
-        Fluxes[...] = 0.0
-        Fluxes[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
+        fluxes[...] = 0.0
+        fluxes[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
         if "passives" in idx.group_var_map:
-            Fluxes[idx("passives")] = Fluxes[idx("rho")] * np.where(
+            fluxes[idx("passives")] = fluxes[idx("rho")] * np.where(
                 v > 0, wl[idx("passives")], wr[idx("passives")]
             )
-
-        return Fluxes
 
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         body = """
@@ -169,14 +164,15 @@ class UpwindRiemannSolver(RiemmannSolverBase):
 class LLF_RiemannSolver(RiemmannSolverBase):
     def numpy_func(
         self,
-        idx: VariableIndexMap,
         wl: np.ndarray,
         wr: np.ndarray,
+        fluxes: np.ndarray,
         dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> np.ndarray:
+    ):
         ul = prim_to_cons(idx, wl, gamma)
         ur = prim_to_cons(idx, wr, gamma)
 
@@ -186,12 +182,10 @@ class LLF_RiemannSolver(RiemmannSolverBase):
         sr = csr + np.abs(wr[idx("v" + dim)])
         smax = np.maximum(sl, sr)
 
-        Fl = fluxes(idx, wl, dim, gamma)
-        Fr = fluxes(idx, wr, dim, gamma)
+        Fl = compute_fluxes(idx, wl, dim, gamma)
+        Fr = compute_fluxes(idx, wr, dim, gamma)
 
-        Fluxes = 0.5 * (Fl + Fr - smax * (ur - ul))
-
-        return Fluxes
+        fluxes[...] = 0.5 * (Fl + Fr - smax * (ur - ul))
 
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         body = """
@@ -295,14 +289,15 @@ def hllc_operator(
 class HLLC_RiemannSolver(RiemmannSolverBase):
     def numpy_func(
         self,
-        idx: VariableIndexMap,
         wl: np.ndarray,
         wr: np.ndarray,
+        fluxes: np.ndarray,
         dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
         gamma: float,
         isothermal: bool = False,
         iso_cs: float = 1.0,
-    ) -> np.ndarray:
+    ):
         d1 = dim
         d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
 
@@ -348,18 +343,15 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         Pgdv = hllc_operator(sl, sr, vstar, Pl, Pr, Pstar, Pstar)
         Egdv = hllc_operator(sl, sr, vstar, El, Er, Estarl, Estarr)
 
-        Fluxes = np.empty_like(wl)
-        Fluxes[idx("rho")] = rhogdv * v1gdv
-        Fluxes[idx("m" + d1)] = Fluxes[idx("rho")] * v1gdv + Pgdv
-        Fluxes[idx("E")] = v1gdv * (Egdv + Pgdv)
-        Fluxes[idx("m" + d2)] = Fluxes[idx("rho")] * np.where(vstar > 0, v2l, v2r)
-        Fluxes[idx("m" + d3)] = Fluxes[idx("rho")] * np.where(vstar > 0, v3l, v3r)
+        fluxes[idx("rho")] = rhogdv * v1gdv
+        fluxes[idx("m" + d1)] = fluxes[idx("rho")] * v1gdv + Pgdv
+        fluxes[idx("E")] = v1gdv * (Egdv + Pgdv)
+        fluxes[idx("m" + d2)] = fluxes[idx("rho")] * np.where(vstar > 0, v2l, v2r)
+        fluxes[idx("m" + d3)] = fluxes[idx("rho")] * np.where(vstar > 0, v3l, v3r)
         if "passives" in idx.group_var_map:
-            Fluxes[idx("passives")] = Fluxes[idx("rho")] * np.where(
+            fluxes[idx("passives")] = fluxes[idx("rho")] * np.where(
                 vstar > 0, wl[idx("passives")], wr[idx("passives")]
             )
-
-        return Fluxes
 
     def cuda_elementwise_kernel_body(self, npassives: int):
         body = """

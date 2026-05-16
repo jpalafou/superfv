@@ -109,7 +109,7 @@ def cons_to_prim(
     return w
 
 
-def fluxes(
+def compute_fluxes(
     idx: VariableIndexMap,
     w: np.ndarray,
     dim: Literal["x", "y", "z"],
