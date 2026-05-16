@@ -1,4 +1,4 @@
-from . import initial_conditions as ic
+from . import initial_conditions as ics
 from .boundary_conditions import BC
 from .configs import FallbackCascade, FluxQuadrature, FluxRecipe, LazyPrimitiveMode
 from .hydro import turbulent_power_specta
@@ -9,18 +9,23 @@ from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import CUPY_AVAILABLE
 
 __all__ = [
-    "ic",
+    # global variables
+    "CUPY_AVAILABLE",
+    # modules
+    "ics",
+    # classes
+    "HydroSolver",
+    "HydroSolverOutput",
+    # functions
+    "turbulent_power_specta",
+    # enums
     "BC",
     "FallbackCascade",
     "FluxQuadrature",
     "FluxRecipe",
     "LazyPrimitiveMode",
-    "turbulent_power_specta",
-    "HydroSolver",
-    "HydroSolverOutput",
     "SnapshotMode",
     "TimeIntegrator",
     "RiemannSolver",
     "MUSCL_SlopeLimiter",
-    "CUPY_AVAILABLE",
 ]

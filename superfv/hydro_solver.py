@@ -11,6 +11,7 @@ from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
+from . import initial_conditions as ics
 from .axes import DIM_TO_AXIS, XYZ_TUPLE
 from .boundary_conditions import BC, PatchBC, apply_bc
 from .configs import (
@@ -44,7 +45,6 @@ from .finite_volume_driver import (
     interpolate_face_nodes,
 )
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
-from .initial_conditions import square
 from .mesh import UniformFVMesh
 from .muscl_solver import update_fluxes_with_muscl_scheme
 from .riemann_solvers import HLLC_RiemannSolver, LLF_RiemannSolver, UpwindRiemannSolver
@@ -134,7 +134,7 @@ class HydroSolver:
         isothermal: bool = False,
         iso_cs: float = 1.0,
         # IC params
-        ic: MultivarField = square,
+        ic: MultivarField = ics.square,
         passive_ics: Optional[Dict[str, UnivarField]] = None,
         # BC params
         bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),

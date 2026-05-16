@@ -10,7 +10,7 @@ from superfv import (
     HydroSolver,
     LazyPrimitiveMode,
     TimeIntegrator,
-    ic,
+    ics,
 )
 from superfv.axes import DIM_TO_AXIS
 from superfv.tools.norms import linf_norm
@@ -28,7 +28,7 @@ from superfv.tools.norms import linf_norm
 )
 def test_sedov(scheme):
     sim = HydroSolver(
-        ic=partial(ic.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
+        ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
         bcx=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
         nx=100,
@@ -50,7 +50,7 @@ def test_sedov(scheme):
 )
 def test_sedov_with_passive_scalar(scheme):
     sim = HydroSolver(
-        ic=partial(ic.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
+        ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
         bcx=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
         nx=100,
@@ -58,7 +58,7 @@ def test_sedov_with_passive_scalar(scheme):
         **scheme,
     )
     sim_with_passive = HydroSolver(
-        ic=partial(ic.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
+        ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
         passive_ics={"passive1": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, 0)},
         bcx=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
@@ -111,7 +111,7 @@ def test_preservation_of_maximum_principle(scheme):
         match="PAD lower bound for 'rho' is 1, which is different from the hydro parameter rho_min=1e-12.",
     ):
         sim = HydroSolver(
-            ic=partial(ic.square, rho_min=1, rho_max=2, vx=1),
+            ic=partial(ics.square, rho_min=1, rho_max=2, vx=1),
             PAD_bounds={"rho": (1, 2)},
             nx=64,
             cupy=CUPY_AVAILABLE,
@@ -144,13 +144,13 @@ def test_forward_backwards_advection_symmetry(scheme, dim):
     mesh = dict(nx=1, ny=1, nz=1) | {f"n{dim}": 64}
 
     sim1 = HydroSolver(
-        ic=partial(ic.square, rho_min=1, rho_max=2, **left_vel),
+        ic=partial(ics.square, rho_min=1, rho_max=2, **left_vel),
         **mesh,
         cupy=CUPY_AVAILABLE,
         **scheme,
     )
     sim2 = HydroSolver(
-        ic=partial(ic.square, rho_min=1, rho_max=2, **right_vel),
+        ic=partial(ics.square, rho_min=1, rho_max=2, **right_vel),
         **mesh,
         cupy=CUPY_AVAILABLE,
         **scheme,

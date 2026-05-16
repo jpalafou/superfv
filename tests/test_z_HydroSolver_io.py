@@ -6,13 +6,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from superfv import HydroSolver, HydroSolverOutput, ic
+from superfv import HydroSolver, HydroSolverOutput, ics
 
 OUTPUT_PATH = Path("snapshot_test")
 
 
 def test_fail_when_output_exists():
-    f0 = partial(ic.square, vx=1)
+    f0 = partial(ics.square, vx=1)
     _ = HydroSolver(ic=f0, p=1, nx=64, use_MUSCL=True, output_path=OUTPUT_PATH)
     with pytest.raises(FileExistsError):
         _ = HydroSolver(ic=f0, p=1, nx=64, use_MUSCL=True, output_path=OUTPUT_PATH)
@@ -21,7 +21,7 @@ def test_fail_when_output_exists():
 
 
 def test_overwrite():
-    f0 = partial(ic.square, vx=1)
+    f0 = partial(ics.square, vx=1)
     _ = HydroSolver(ic=f0, p=1, nx=64, use_MUSCL=True, output_path=OUTPUT_PATH)
 
     # write a dummy file
@@ -41,7 +41,7 @@ def test_overwrite():
 
 @pytest.mark.parametrize("discard_after_writing", [True, False])
 def test_writing_and_reading_snapshot(discard_after_writing):
-    f0 = partial(ic.square, vx=1)
+    f0 = partial(ics.square, vx=1)
     sim = HydroSolver(
         ic=f0,
         p=1,
