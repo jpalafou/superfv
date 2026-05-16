@@ -123,7 +123,7 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ) -> np.ndarray:
-        v = np.empty_like(wl)
+        v = np.empty_like(wl[0, ...])
         Fluxes = np.empty_like(wl)
 
         vl = wl[idx("v" + dim)]
