@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["nox", "pre-commit"]
-typecheck = ["mypy", "types-PyYAML", "types-tqdm"]
+typecheck = ["mypy", "types-PyYAML"]
 test = ["pytest"]
 
 [tool.setuptools]
