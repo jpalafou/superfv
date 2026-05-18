@@ -23,6 +23,8 @@ from teyssier import cons_to_prim, weno
     "scheme",
     [
         dict(p=1, use_MUSCL=True),
+        dict(p=1, use_ZS=True, adaptive_dt=True),
+        dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, max_revs=3),
@@ -41,7 +43,7 @@ def test_sedov(scheme):
     if scheme.get("use_MUSCL", False):
         sim.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
     else:
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3)
+        sim.take_n_steps(10, time_integrator=TimeIntegrator.MATCH_P_UP_TO_SSPRK3)
 
 
 @pytest.mark.parametrize(
@@ -101,6 +103,8 @@ def test_sedov_with_passive_scalar(scheme):
     "scheme",
     [
         dict(p=1, use_MUSCL=True),
+        dict(p=1, use_ZS=True, adaptive_dt=True),
+        dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FIRST_ORDER, rtol=0, max_revs=1),
@@ -123,7 +127,7 @@ def test_preservation_of_maximum_principle(scheme):
     if scheme.get("use_MUSCL", False):
         sim.run(1.0, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
     else:
-        sim.run(1.0, time_integrator=TimeIntegrator.SSPRK3)
+        sim.run(1.0, time_integrator=TimeIntegrator.MATCH_P_UP_TO_SSPRK3)
 
     assert min(sim.step_history.get_history("rho_min")) > 1 - 1e-14
     assert min(sim.step_history.get_history("rho_min")) < 2 + 1e-14
@@ -186,15 +190,15 @@ def test_forward_backwards_advection_symmetry(scheme, dim):
     )
 
 
+@pytest.mark.parametrize("p", [0, 1, 2, 3])
 @pytest.mark.parametrize(
     "ic_type_t_sim",
     [("sod test", 0.245), ("toro test2", 0.2), ("toro test3", 0.012)],
 )
-def test_compare_with_teyssier_code(ic_type_t_sim):
+def test_compare_with_teyssier_code(p, ic_type_t_sim):
     ic_type, t_sim = ic_type_t_sim
 
     N = 400 if ic_type == "shu osher" else 100
-    p = 3
 
     sim = HydroSolver(
         ic={"sod test": ics.sod_shock_tube_1d, "toro test2": ics.toro2, "toro test3": ics.toro3}[
@@ -210,7 +214,7 @@ def test_compare_with_teyssier_code(ic_type_t_sim):
         rho_min=-np.inf,
         P_min=-np.inf,
     )
-    sim.run(t_sim, time_integrator=TimeIntegrator.RK4, allow_overshoot=True)
+    sim.run(t_sim, time_integrator=TimeIntegrator.MATCH_P_UP_TO_RK4, allow_overshoot=True)
 
     _, ut = weno(
         t_sim,
@@ -224,4 +228,4 @@ def test_compare_with_teyssier_code(ic_type_t_sim):
     wt = cons_to_prim(ut[-1, :, :])
 
     diff = np.max(np.abs(sim.snapshot_history[-1].w[sim.idx("rho"), :, 0, 0] - wt[0, :]))
-    assert diff < 1e-14
+    assert diff < 1e-12

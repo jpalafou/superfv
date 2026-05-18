@@ -32,7 +32,7 @@ from .configs import (
     RiemannSolver,
     ShockDetectionParameters,
     SmoothExtremaDetectionParameters,
-    SolverParams,
+    SolverParameters,
     ZhangShuParameters,
 )
 from .field import MultivarField, UnivarField
@@ -77,6 +77,8 @@ class TimeIntegrator(Enum):
     SSPRK2 = 2
     SSPRK3 = 3
     RK4 = 4
+    MATCH_P_UP_TO_SSPRK3 = 5
+    MATCH_P_UP_TO_RK4 = 6
 
 
 class SnapshotMode(Enum):
@@ -310,7 +312,7 @@ class HydroSolver:
         # Define the following attributes:
         self.arrays: ArrayManager
         self.mesh_arrays: ArrayManager
-        self.params: SolverParams
+        self.params: SolverParameters
         self.interior: Tuple[slice, slice, slice, slice]
         self.u0_func: MultivarField
         self.mesh: UniformFVMesh
@@ -480,7 +482,7 @@ class HydroSolver:
         )
 
         # At last, we can define self.params
-        self.params = SolverParams(
+        self.params = SolverParameters(
             hydro=hydro_params,
             ic=ic_params,
             mesh=mesh_params,
@@ -1263,6 +1265,7 @@ class HydroSolver:
             _qcc_,
             _theta_,
             _alpha_,
+            fv_scheme.p,
             self.params.variable_index_map,
             fv_scheme.zhang_shu_params,
             _x_nodes_,
@@ -1518,6 +1521,23 @@ class HydroSolver:
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
         params = self.params
         arrays = self.arrays
+
+        if time_integrator in (
+            TimeIntegrator.MATCH_P_UP_TO_SSPRK3,
+            TimeIntegrator.MATCH_P_UP_TO_RK4,
+        ):
+            time_integrator = {
+                0: TimeIntegrator.FORWARD_EULER,
+                1: TimeIntegrator.SSPRK2,
+                2: TimeIntegrator.SSPRK3,
+            }.get(
+                params.fv_scheme.p,
+                (
+                    TimeIntegrator.SSPRK3
+                    if time_integrator == TimeIntegrator.MATCH_P_UP_TO_SSPRK3
+                    else TimeIntegrator.RK4
+                ),
+            )
 
         unew = arrays["unew"]
 

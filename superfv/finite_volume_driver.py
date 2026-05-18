@@ -295,6 +295,7 @@ def apply_zhang_shu_limiter(
     _wcc_: ArrayLike,
     _theta_: ArrayLike,
     _alpha_: ArrayLike,
+    p: int,
     idx: VariableIndexMap,
     params: ZhangShuParameters,
     _x_nodes_: Optional[ArrayLike] = None,
@@ -323,7 +324,12 @@ def apply_zhang_shu_limiter(
 
     # allocate arrays
     _qj_shape_ = _w_.shape[:4] + (
-        1 + sum(nodes.shape[4] for nodes in [_x_nodes_, _y_nodes_, _z_nodes_] if nodes is not None),
+        (
+            (1 if p > 1 else 0)
+            + sum(
+                nodes.shape[4] for nodes in [_x_nodes_, _y_nodes_, _z_nodes_] if nodes is not None
+            )
+        ),
     )
     _qj_ = cp.empty(_qj_shape_) if cupy else np.empty(_qj_shape_)
     _M_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
@@ -332,12 +338,19 @@ def apply_zhang_shu_limiter(
     _mj_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
 
     # stack all nodes into into _qj_
-    _qj_[..., 0] = _wcc_
-    for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
-        n = nodes.shape[4]
-        idx1 = 1 + i * n
-        idx2 = 1 + (i + 1) * n
-        _qj_[..., slice(idx1, idx2)] = nodes
+    if p > 1:
+        _qj_[..., 0] = _wcc_  # include cell center
+        for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
+            n = nodes.shape[4]
+            idx1 = 1 + i * n
+            idx2 = 1 + (i + 1) * n
+            _qj_[..., slice(idx1, idx2)] = nodes
+    else:
+        for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
+            n = nodes.shape[4]
+            idx1 = i * n
+            idx2 = (i + 1) * n
+            _qj_[..., slice(idx1, idx2)] = nodes
 
     compute_dmp(_w_, _M_, _m_, active_dims, params.include_corners)  # update _M_ and _m_ with DMP
     compute_theta(

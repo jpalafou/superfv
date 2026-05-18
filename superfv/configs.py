@@ -289,7 +289,7 @@ class BoundaryConditionParameters:
 
 
 @dataclass(frozen=True, slots=True)
-class SolverParams:
+class SolverParameters:
     hydro: HydroParameters
     ic: InitialConditionParameters
     mesh: MeshParameters

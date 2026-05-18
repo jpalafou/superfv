@@ -2,7 +2,7 @@ import pickle
 from pathlib import Path
 from typing import Union
 
-from .configs import SolverParams
+from .configs import SolverParameters
 from .mesh import UniformFVMesh
 from .tools.snapshot import SnapshotHistory
 from .tools.step_history import StepHistory
@@ -11,7 +11,7 @@ from .tools.step_history import StepHistory
 class HydroSolverOutput:
     def __init__(self, output_path: Union[str, Path]):
         self.output_path: Path
-        self.params: SolverParams
+        self.params: SolverParameters
         self.mesh: UniformFVMesh
         self.step_history: StepHistory
         self.snapshot_history: SnapshotHistory
