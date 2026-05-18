@@ -270,8 +270,7 @@ def gauss_legendre_nodes(p: int) -> np.ndarray:
         weights = np.array([w0, w1, w2, w3])
     else:
         raise NotImplementedError(
-            "Conservative interpolation of Gauss-Legendre nodes not implemented for "
-            f"{p=}"
+            "Conservative interpolation of Gauss-Legendre nodes not implemented for " f"{p=}"
         )
 
     n_computed, _ = weights.shape
@@ -300,9 +299,7 @@ def gauss_legendre_weights(p: int, ndim: int = 1) -> np.ndarray:
     n = n_gauss_legendre_nodes(p)
 
     if n < 1:
-        raise ValueError(
-            f"Cannot return Gauss-Legendre weights for {p=} with {n} nodes."
-        )
+        raise ValueError(f"Cannot return Gauss-Legendre weights for {p=} with {n} nodes.")
     if ndim < 1:
         raise ValueError(f"Number of dimensions must be at least 1, but got {ndim}.")
 

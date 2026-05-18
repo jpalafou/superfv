@@ -51,9 +51,7 @@ def sedovana(gamma: float = 1.4, dim: int = 1, n1: int = 1000, n2: int = 1000):
 
     vmax = 4 / (n + 2) / (g + 1)
     vmin = 2 / (n + 2) / g
-    v = vmin + np.power(10, -10 * (1 - (np.arange(n1, dtype=np.float64) + 1) / n1)) * (
-        vmax - vmin
-    )
+    v = vmin + np.power(10, -10 * (1 - (np.arange(n1, dtype=np.float64) + 1) / n1)) * (vmax - vmin)
     a2 = (1 - g) / (2 * (g - 1) + n)
     a1 = (n + 2) * g / (2 + n * (g - 1)) * (2 * n * (2 - g) / g / (n + 2) ** 2 - a2)
     a3 = n / (2 * (g - 1) + n)

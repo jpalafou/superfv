@@ -5,12 +5,10 @@ import numpy as np
 
 from .mesh import xyz_tup
 from .tools.device_management import ArrayLike
-from .tools.slicing import VariableIndexMap
+from .tools.variable_index_map import VariableIndexMap
 
 
-def parse_xyz(
-    x: ArrayLike, y: ArrayLike, z: ArrayLike
-) -> Tuple[Literal["x", "y", "z"], ...]:
+def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Tuple[Literal["x", "y", "z"], ...]:
     """
     Returns a string with the dimensions of the input arrays.
 
@@ -33,7 +31,7 @@ def _uninitialized(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -48,14 +46,15 @@ def sinus(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,
+    t: float,
     *,
     xp: ModuleType,
-    bounds: Tuple[float, float] = (0, 1),
-    vx: float = 0,
-    vy: float = 0,
-    vz: float = 0,
-    P: float = 1,
+    rho_max: float = 2.0,
+    rho_min: float = 1.0,
+    vx: float = 0.0,
+    vy: float = 0.0,
+    vz: float = 0.0,
+    P: float = 1.0,
 ) -> ArrayLike:
     """
     Returns array for sinusoidal initial condition that is periodic on the interval
@@ -68,7 +67,8 @@ def sinus(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        bounds: Bounds of the density sinusoidal function.
+        rho_max: Maximum density of the sinusoidal function.
+        rho_min: Minimum density of the sinusoidal function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
@@ -90,9 +90,7 @@ def sinus(
             r += y - vy * t
         if "z" in dims:
             r += z - vz * t
-        out[idx("rho")] = (bounds[1] - bounds[0]) * (
-            0.5 * xp.sin(2 * np.pi * r) + 0.5
-        ) + bounds[0]
+        out[idx("rho")] = (rho_max - rho_min) * (0.5 * xp.sin(2 * np.pi * r) + 0.5) + rho_min
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz
@@ -111,14 +109,15 @@ def square(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,
+    t: float,
     *,
     xp: ModuleType,
-    bounds: Tuple[float, float] = (0, 1),
-    vx: float = 0,
-    vy: float = 0,
-    vz: float = 0,
-    P: float = 1,
+    rho_max: float = 2.0,
+    rho_min: float = 1.0,
+    vx: float = 0.0,
+    vy: float = 0.0,
+    vz: float = 0.0,
+    P: float = 1.0,
 ) -> ArrayLike:
     """
     Returns array for the square wave initial condition that is periodic on the
@@ -131,7 +130,8 @@ def square(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        bounds: Bounds of the density square function.
+        rho_max: Maximum density of the square function.
+        rho_min: Minimum density of the square function.
         vx: Uniform velocity in the x-direction.
         vy: Uniform velocity in the y-direction.
         vz: Uniform velocity in the z-direction.
@@ -157,7 +157,7 @@ def square(
             za = (z - vz * t) % 1
             r &= (za >= 0.25) & (za <= 0.75)
         r = r.astype(float)
-        out[idx("rho")] = (bounds[1] - bounds[0]) * r + bounds[0]
+        out[idx("rho")] = (rho_max - rho_min) * r + rho_min
         out[idx("vx")] = vx
         out[idx("vy")] = vy
         out[idx("vz")] = vz
@@ -176,7 +176,7 @@ def composite(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,
+    t: float,
     *,
     xp: ModuleType,
     vx: float = 0,
@@ -260,11 +260,12 @@ def slotted_disk(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,
+    t: float,
     *,
     xp: ModuleType,
-    rho_min_max: Tuple[float, float] = (0.0, 1.0),
-    P: float = 1,
+    rho_max: float = 2.0,
+    rho_min: float = 1.0,
+    P: float = 1.0,
     rotation: Literal["cw", "ccw"] = "ccw",
 ) -> ArrayLike:
     """
@@ -277,7 +278,8 @@ def slotted_disk(
         z: z-coordinate array. Has shape (nx, ny, nz).
         t: Time variable.
         xp: NumPy namespace module (e.g., `np` or `cupy`).
-        rho_min_max: Minimum and maximum values of the density.
+        rho_min: Minimum value of the density.
+        rho_max: Maximum value of the density.
         P: Pressure.
         rotation: Rotation direction of the disk: "cw" for clockwise, "ccw" for
             counter-clockwise.
@@ -285,6 +287,11 @@ def slotted_disk(
     Returns:
         ArrayLike: Array with the initial conditions for the given variables.
     """
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Slotted disk initial condition is only defined in 2D.")
+    dim1, dim2 = dims[0], dims[1]
+
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     if {"rho", "vx", "vy", "vz"} <= idx.var_names:
@@ -293,7 +300,7 @@ def slotted_disk(
         theta = -omega * t if rotation == "ccw" else omega * t
 
         # rotate coordinates backward in time
-        x0, y0 = x - 0.5, y - 0.5
+        x0, y0 = {"x": x, "y": y, "z": z}[dim1] - 0.5, {"x": x, "y": y, "z": z}[dim2] - 0.5
         x_rot = xp.cos(theta) * x0 - xp.sin(theta) * y0
         y_rot = xp.sin(theta) * x0 + xp.cos(theta) * y0
 
@@ -302,10 +309,10 @@ def slotted_disk(
         inside_disk = rsq < 0.15
         inside_disk &= ~((xp.abs(x_rot) < 0.025) & (y_rot < 0.35))
 
-        out[idx("rho")] = xp.where(inside_disk, rho_min_max[1], rho_min_max[0])
-        out[idx("vx")] = -y0 if rotation == "ccw" else y0
-        out[idx("vy")] = x0 if rotation == "ccw" else -x0
-        out[idx("vz")] = 0.0
+        out[idx("rho")] = xp.where(inside_disk, rho_max, rho_min)
+        out[idx("v")] = 0.0
+        out[idx(f"v{dim1}")] = -y0 if rotation == "ccw" else y0
+        out[idx(f"v{dim2}")] = x0 if rotation == "ccw" else -x0
     else:
         raise NotImplementedError(
             f"Initial condition not implemented for variables: {idx.var_names}. "
@@ -322,7 +329,7 @@ def sod_shock_tube_1d(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
     pos1: float = 0.5,
@@ -383,7 +390,7 @@ def velocity_ramp(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
     rho0: float = 1,
@@ -437,7 +444,7 @@ def sedov(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
     gamma: Optional[float] = None,
@@ -496,7 +503,7 @@ def toro1(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -541,7 +548,7 @@ def toro2(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -586,7 +593,7 @@ def toro3(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -630,7 +637,7 @@ def shu_osher(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -676,7 +683,7 @@ def interacting_blast_wave_1d(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -720,7 +727,7 @@ def kelvin_helmholtz_2d(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -739,9 +746,7 @@ def kelvin_helmholtz_2d(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Kelvin-Helmholtz initial condition requires all hydro variables."
-        )
+        raise ValueError("Kelvin-Helmholtz initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
     if len(dims) != 2:
@@ -784,7 +789,7 @@ def double_mach_reflection(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
 ) -> ArrayLike:
@@ -805,9 +810,7 @@ def double_mach_reflection(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Double Mach reflection initial condition requires all hydro variables."
-        )
+        raise ValueError("Double Mach reflection initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
     if set(dims) != {"x", "y"}:
@@ -837,7 +840,7 @@ def decaying_isotropic_turbulence(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,  # unused; API symmetry
+    t: float,  # unused; API symmetry
     *,
     xp: ModuleType,
     M: float = 10.0,
@@ -898,19 +901,13 @@ def decaying_isotropic_turbulence(
 
     def _generate_spectral_mesh(shape, spacings):
         kxs = (
-            xp.fft.fftfreq(shape[0], d=spacings[0])
-            if "x" in dims
-            else xp.array([0.0], dtype=float)
+            xp.fft.fftfreq(shape[0], d=spacings[0]) if "x" in dims else xp.array([0.0], dtype=float)
         )
         kys = (
-            xp.fft.fftfreq(shape[1], d=spacings[1])
-            if "y" in dims
-            else xp.array([0.0], dtype=float)
+            xp.fft.fftfreq(shape[1], d=spacings[1]) if "y" in dims else xp.array([0.0], dtype=float)
         )
         kzs = (
-            xp.fft.fftfreq(shape[2], d=spacings[2])
-            if "z" in dims
-            else xp.array([0.0], dtype=float)
+            xp.fft.fftfreq(shape[2], d=spacings[2]) if "z" in dims else xp.array([0.0], dtype=float)
         )
 
         KX = (
@@ -965,19 +962,11 @@ def decaying_isotropic_turbulence(
         seed_fine = seed_fine if seed_fine is not None else seed
 
         KX_c, KY_c, KZ_c = _generate_spectral_mesh(coarse_shape, (hx_c, hy_c, hz_c))
-        Vx_c, Vy_c, Vz_c = _generate_spectral_velocities(
-            coarse_shape, KX_c, KY_c, KZ_c, seed
-        )
+        Vx_c, Vy_c, Vz_c = _generate_spectral_velocities(coarse_shape, KX_c, KY_c, KZ_c, seed)
 
-        vx_c = (
-            xp.fft.ifftn(Vx_c, axes=axes).real if "x" in dims else xp.zeros_like(Vx_c)
-        )
-        vy_c = (
-            xp.fft.ifftn(Vy_c, axes=axes).real if "y" in dims else xp.zeros_like(Vy_c)
-        )
-        vz_c = (
-            xp.fft.ifftn(Vz_c, axes=axes).real if "z" in dims else xp.zeros_like(Vz_c)
-        )
+        vx_c = xp.fft.ifftn(Vx_c, axes=axes).real if "x" in dims else xp.zeros_like(Vx_c)
+        vy_c = xp.fft.ifftn(Vy_c, axes=axes).real if "y" in dims else xp.zeros_like(Vy_c)
+        vz_c = xp.fft.ifftn(Vz_c, axes=axes).real if "z" in dims else xp.zeros_like(Vz_c)
 
         ones = xp.ones(
             (
@@ -998,9 +987,7 @@ def decaying_isotropic_turbulence(
 
         KX_f, KY_f, KZ_f = _generate_spectral_mesh(full_shape, (hx, hy, hz))
         K_f = xp.sqrt(KX_f**2 + KY_f**2 + KZ_f**2)
-        Vx_f, Vy_f, Vz_f = _generate_spectral_velocities(
-            full_shape, KX_f, KY_f, KZ_f, seed_fine
-        )
+        Vx_f, Vy_f, Vz_f = _generate_spectral_velocities(full_shape, KX_f, KY_f, KZ_f, seed_fine)
 
         k_coarse_nyquist = 1 / (
             2 * max(h for h, d in zip((hx_c, hy_c, hz_c), ("x", "y", "z")) if d in dims)
@@ -1041,7 +1028,7 @@ def gresho_vortex(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: Optional[float] = None,
+    t: float,
     *,
     xp: ModuleType,
     gamma: float,
@@ -1068,9 +1055,7 @@ def gresho_vortex(
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
     if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
-        raise ValueError(
-            "Gresho vortex initial condition requires all hydro variables."
-        )
+        raise ValueError("Gresho vortex initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
     if len(dims) != 2:
@@ -1117,7 +1102,7 @@ def entropy_wave(
     x: ArrayLike,
     y: ArrayLike,
     z: ArrayLike,
-    t: float = 0.0,
+    t: float,
     *,
     xp: ModuleType,
     gamma: float,
@@ -1143,9 +1128,7 @@ def entropy_wave(
 
     unused_dims = set("xyz") - set(dims)
     if not unused_dims:
-        raise ValueError(
-            "Entropy wave initial condition requires at least one passive dimension."
-        )
+        raise ValueError("Entropy wave initial condition requires at least one passive dimension.")
 
     for dim in ["z", "y", "x"]:
         if dim in unused_dims:

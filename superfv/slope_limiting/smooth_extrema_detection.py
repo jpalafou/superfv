@@ -13,12 +13,10 @@ def central_difference(u: np.ndarray, out: np.ndarray, axis: int):
     """
     Compute the 1D central difference of `u` along `axis`, writing the result to `out`.
     """
-    out[crop(axis, (1, -1))] = 0.5 * (
-        u[crop(axis, (2, None))] - u[crop(axis, (None, -2))]
-    )
+    out[crop(axis, (1, -1))] = 0.5 * (u[crop(axis, (2, None))] - u[crop(axis, (None, -2))])
 
 
-def update_alpha_1d(
+def _update_alpha_1d(
     u: np.ndarray,
     alpha: np.ndarray,
     dim: Literal["x", "y", "z"],
@@ -92,8 +90,9 @@ def compute_alpha(
     eps: float = 1e-15,
 ) -> Tuple[slice, ...]:
     """
-    Compute the smooth extrema detector for array `u` along all `active_dims`,
-    writing the result to `alpha`.
+    Compute the smooth extrema detector for array `u` writing the result to `alpha`,
+    taking the minimum along all `active_dims`. Renders a single ghost cell layer
+    along each active dimension of the output array invalid.
 
     Args:
         u: Array of data used to compute the smooth extrema detector. Has shape
@@ -105,7 +104,7 @@ def compute_alpha(
         eps: Small tolerance used to avoid dividing by zero.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output array `alpha`.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
         return compute_alpha_kernel_helper(u, alpha, eps)
@@ -113,7 +112,7 @@ def compute_alpha(
     alpha[...] = 1.0
     valid_slices: List[Tuple[slice, ...]] = []
     for dim in active_dims:
-        valid = update_alpha_1d(u, alpha, dim, eps)
+        valid = _update_alpha_1d(u, alpha, dim, eps)
         valid_slices.append(valid)
     return merge_slices(*valid_slices)
 
@@ -252,17 +251,13 @@ if CUPY_AVAILABLE:
         if u.dtype != cp.float64 or alpha.dtype != cp.float64:
             raise ValueError("u and alpha must be of type float64 for the kernel.")
         if u.ndim != 4 or alpha.ndim != 4:
-            raise ValueError(
-                "u and alpha must be 4D arrays with shape (nvars, nx, ny, nz)."
-            )
+            raise ValueError("u and alpha must be 4D arrays with shape (nvars, nx, ny, nz).")
         if u.shape != alpha.shape:
             raise ValueError("u and alpha must have the same shape.")
 
         nvars, nx, ny, nz = u.shape
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (
-            nvars * nx * ny * nz + threads_per_block - 1
-        ) // threads_per_block
+        blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         compute_alpha_kernel(
             (blocks_per_grid,),

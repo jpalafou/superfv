@@ -57,7 +57,6 @@ run_multiple_simulations(
         f"{name}/N_{N}": (dict(nx=N, ny=N, **config, **init_params), run_params)
         for (name, config), N in product(configs.items(), N_values)
     },
-    "/scratch/gpfs/TEYSSIER/jp7427/out/timing-of-2d-sine-wave/"
-    + ("cupy/" if cupy else ""),
+    "/scratch/gpfs/TEYSSIER/jp7427/out/timing-of-2d-sine-wave/" + ("cupy/" if cupy else ""),
     overwrite=True,
 )

@@ -116,9 +116,7 @@ def makeplot(name, sim):
     rho_min = sim.snapshots[-1]["u"][idx("rho")].min().item()
     rho_max = sim.snapshots[-1]["u"][idx("rho")].max().item()
     levels = np.linspace(rho_min, rho_max, nlevels)
-    ax.set_title(
-        rf"$\rho \in [{rho_min:.2f}, {rho_max:.2f}]$ contoured with {nlevels} levels"
-    )
+    ax.set_title(rf"$\rho \in [{rho_min:.2f}, {rho_max:.2f}]$ contoured with {nlevels} levels")
 
     plot_2d_slice(
         sim,

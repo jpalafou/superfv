@@ -270,12 +270,8 @@ def muscl(
         wcen = wold[:, 1:-1]
         ds = 0.0 * dw
 
-        ds[0] = (
-            -wcen[1] * dw[0] - wcen[0] * dw[1]
-        )  # compute predictor source term for density
-        ds[1] = (
-            -wcen[1] * dw[1] - 1 / wcen[0] * dw[2]
-        )  # compute predictor source term for velocity
+        ds[0] = -wcen[1] * dw[0] - wcen[0] * dw[1]  # compute predictor source term for density
+        ds[1] = -wcen[1] * dw[1] - 1 / wcen[0] * dw[2]  # compute predictor source term for velocity
         ds[2] = (
             -wcen[1] * dw[2] - gamma * wcen[2] * dw[1]
         )  # compute predictor source term for pressure
@@ -298,9 +294,7 @@ def muscl(
         if riemann_solver == "exact":
             flux = riemann.exact(wleft, wright)
 
-        uold[:, 2:-2] = uold[:, 2:-2] - dt / h * (
-            flux[:, 1:] - flux[:, :-1]
-        )  # update solution
+        uold[:, 2:-2] = uold[:, 2:-2] - dt / h * (flux[:, 1:] - flux[:, :-1])  # update solution
         u[niter] = uold[:, 2:-2]  # store new solution
         t = t + dt  # update time
         #        print(niter,t,dt)

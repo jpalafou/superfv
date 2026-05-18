@@ -16,13 +16,13 @@ def uniform_3D_mesh(
     nx: int,
     ny: int,
     nz: int,
-    xlim: Tuple[float, float],
-    ylim: Tuple[float, float],
-    zlim: Tuple[float, float],
+    xlims: Tuple[float, float],
+    ylims: Tuple[float, float],
+    zlims: Tuple[float, float],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    x_interface = np.linspace(xlim[0], xlim[1], nx + 1)
-    y_interface = np.linspace(ylim[0], ylim[1], ny + 1)
-    z_interface = np.linspace(zlim[0], zlim[1], nz + 1)
+    x_interface = np.linspace(xlims[0], xlims[1], nx + 1)
+    y_interface = np.linspace(ylims[0], ylims[1], ny + 1)
+    z_interface = np.linspace(zlims[0], zlims[1], nz + 1)
     x_center = 0.5 * (x_interface[1:] + x_interface[:-1])
     y_center = 0.5 * (y_interface[1:] + y_interface[:-1])
     z_center = 0.5 * (z_interface[1:] + z_interface[:-1])
@@ -32,111 +32,68 @@ def uniform_3D_mesh(
 
 @dataclass
 class UniformFVMesh:
-    """
-    A uniform finite volume mesh in 3D space.
-
-    Args:
-        nx, ny, nz: Number of cells in the x, y, and z dimensions, respectively.
-        xlim, ylim, zlim: Limits of the mesh in the x, y, and z dimensions,
-            respectively, as tuples (min, max).
-        active_dims: A tuple of active dimensions containing "x", "y", and/or "z".
-            Active dimensions are those that get assigned a slab array. Inactive
-            dimensions must have a size of 1.
-        slab_depth: The depth of the slab in each active dimension, which are
-            defined as the dimensions with nx, ny, or nz greater than 1.
-        array_manager: An ArrayManager instance for managing arrays on the appropriate
-            device (CPU or GPU). This is used to store and manage the mesh arrays
-            efficiently, especially when using GPU acceleration.
-
-    Attributes:
-        shape: The shape of the core mesh as a tuple (nx, ny, nz).
-        size: The total number of cells in the core mesh (nx * ny * nz).
-        hx, hy, hz: The cell sizes in the x, y, and z dimensions, respectively.
-        ndim: The number of active dimensions in the mesh.
-        x_is_active, y_is_active, z_is_active: Boolean flags indicating whether the
-            x, y, and z dimensions are active (i.e., have more than one cell).
-        x_slab_depth, y_slab_depth, z_slab_depth: The slab depth for each active
-            dimension, which is equal to slab_depth if the dimension is active,
-            otherwise 0.
-        _nx_, _ny_, _nz_: The number of cells in the padded mesh, accounting for
-            slab_depth in each active dimension.
-        _shape_: The shape of the padded mesh as a tuple (_nx_, _ny_, _nz_).
-        _size_: The total number of cells in the padded mesh (_nx_ * _ny_ * _nz_).
-        x_centers, y_centers, z_centers: The coordinates of the cell centers in the
-            x, y, and z dimensions, respectively.
-        x_interfaces, y_interfaces, z_interfaces: The coordinates of the cell
-            interfaces in the x, y, and z dimensions, respectively.
-        X, Y, Z: 3D arrays representing the coordinates of the cell centers in
-            the x, y, and z dimensions, respectively.
-    """
-
-    nx: int = 1
-    ny: int = 1
-    nz: int = 1
-    xlim: Tuple[float, float] = (0, 1)
-    ylim: Tuple[float, float] = (0, 1)
-    zlim: Tuple[float, float] = (0, 1)
-    active_dims: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
-    slab_depth: int = 1
+    nx: int
+    ny: int
+    nz: int
+    nghost: int
+    xlims: Tuple[float, float]
+    ylims: Tuple[float, float]
+    zlims: Tuple[float, float]
+    active_dims: Tuple[Literal["x", "y", "z"], ...]
     array_manager: ArrayManager = field(default_factory=ArrayManager)
 
+    @property
+    def ndim(self) -> int:
+        return len(self.active_dims)
+
+    @property
+    def _nx_(self) -> int:
+        return self.nx + 2 * self.nghost if "x" in self.active_dims else self.nx
+
+    @property
+    def _ny_(self) -> int:
+        return self.ny + 2 * self.nghost if "y" in self.active_dims else self.ny
+
+    @property
+    def _nz_(self) -> int:
+        return self.nz + 2 * self.nghost if "z" in self.active_dims else self.nz
+
+    @property
+    def shape(self) -> Tuple[int, int, int]:
+        return (self.nx, self.ny, self.nz)
+
+    @property
+    def _shape_(self) -> Tuple[int, int, int]:
+        return (self._nx_, self._ny_, self._nz_)
+
+    @property
+    def hx(self) -> float:
+        return (self.xlims[1] - self.xlims[0]) / self.nx
+
+    @property
+    def hy(self) -> float:
+        return (self.ylims[1] - self.ylims[0]) / self.ny
+
+    @property
+    def hz(self) -> float:
+        return (self.zlims[1] - self.zlims[0]) / self.nz
+
     def __post_init__(self):
-        self._validate_args()
-        self._assign_scalar_attributes()
+        if len(self.active_dims) not in (1, 2, 3):
+            raise ValueError("active_dims must have length 1, 2, or 3.")
+        if len(set(self.active_dims)) != len(self.active_dims):
+            raise ValueError("active_dims must not contain duplicates.")
+
         self._set_interfaces_and_centers()
         self._init_core()
         self._init_slabs()
 
-    def _validate_args(self):
-        nx, ny, nz = self.nx, self.ny, self.nz
-        xlim, ylim, zlim = self.xlim, self.ylim, self.zlim
-        active_dims = self.active_dims
-        slab_depth = self.slab_depth
-
-        if any(x < 1 or not isinstance(x, int) for x in (nx, ny, nz)):
-            raise ValueError("Mesh dimensions (nx, ny, nz) must be positive integers.")
-        if any(
-            lower >= upper
-            or not (isinstance(lower, (int, float)) and isinstance(upper, (int, float)))
-            for lower, upper in (xlim, ylim, zlim)
-        ):
-            raise ValueError(
-                "Limits must be tuples of two values (min, max) with min < max."
-            )
-        if any(dim not in xyz_tup for dim in active_dims):
-            raise ValueError("Active dimensions must be 'x', 'y', and/or 'z'.")
-        if any(
-            n > 1 and dim not in active_dims for dim, n in zip(xyz_tup, (nx, ny, nz))
-        ):
-            raise ValueError("Inactive dimensions must have only one cell.")
-        if slab_depth < 0 or not isinstance(slab_depth, int):
-            raise ValueError("Slab depth must be a non-negative integer.")
-
-    def _assign_scalar_attributes(self):
-        self.shape: Tuple[int, int, int] = (self.nx, self.ny, self.nz)
-        self.size: int = self.nx * self.ny * self.nz
-        self.hx: float = (self.xlim[1] - self.xlim[0]) / self.nx
-        self.hy: float = (self.ylim[1] - self.ylim[0]) / self.ny
-        self.hz: float = (self.zlim[1] - self.zlim[0]) / self.nz
-        self.ndim = len(self.active_dims)
-        self.x_is_active: bool = "x" in self.active_dims
-        self.y_is_active: bool = "y" in self.active_dims
-        self.z_is_active: bool = "z" in self.active_dims
-        self.x_slab_depth: int = self.slab_depth if self.x_is_active else 0
-        self.y_slab_depth: int = self.slab_depth if self.y_is_active else 0
-        self.z_slab_depth: int = self.slab_depth if self.z_is_active else 0
-        self._nx_: int = self.nx + 2 * self.x_slab_depth
-        self._ny_: int = self.ny + 2 * self.y_slab_depth
-        self._nz_: int = self.nz + 2 * self.z_slab_depth
-        self._shape_: Tuple[int, int, int] = (self._nx_, self._ny_, self._nz_)
-        self._size_: int = self._nx_ * self._ny_ * self._nz_
-
     def _set_interfaces_and_centers(self):
         arrays = self.array_manager
 
-        x_interfaces = np.linspace(self.xlim[0], self.xlim[1], self.nx + 1)
-        y_interfaces = np.linspace(self.ylim[0], self.ylim[1], self.ny + 1)
-        z_interfaces = np.linspace(self.zlim[0], self.zlim[1], self.nz + 1)
+        x_interfaces = np.linspace(self.xlims[0], self.xlims[1], self.nx + 1)
+        y_interfaces = np.linspace(self.ylims[0], self.ylims[1], self.ny + 1)
+        z_interfaces = np.linspace(self.zlims[0], self.zlims[1], self.nz + 1)
         x_centers = 0.5 * (x_interfaces[:-1] + x_interfaces[1:])
         y_centers = 0.5 * (y_interfaces[:-1] + y_interfaces[1:])
         z_centers = 0.5 * (z_interfaces[:-1] + z_interfaces[1:])
@@ -159,9 +116,7 @@ class UniformFVMesh:
     def _init_core(self):
         arrays = self.array_manager
 
-        X, Y, Z = uniform_3D_mesh(
-            self.nx, self.ny, self.nz, self.xlim, self.ylim, self.zlim
-        )
+        X, Y, Z = uniform_3D_mesh(self.nx, self.ny, self.nz, self.xlims, self.ylims, self.zlims)
 
         arrays.add("core_X", X)
         arrays.add("core_Y", Y)
@@ -176,12 +131,12 @@ class UniformFVMesh:
         arrays = self.array_manager
 
         slab_depth = {
-            "x": self.slab_depth if self.x_is_active else 0,
-            "y": self.slab_depth if self.y_is_active else 0,
-            "z": self.slab_depth if self.z_is_active else 0,
+            "x": self.nghost if "x" in self.active_dims else 0,
+            "y": self.nghost if "y" in self.active_dims else 0,
+            "z": self.nghost if "z" in self.active_dims else 0,
         }
-        lim1 = {"x": self.xlim[0], "y": self.ylim[0], "z": self.zlim[0]}
-        lim2 = {"x": self.xlim[1], "y": self.ylim[1], "z": self.zlim[1]}
+        lim1 = {"x": self.xlims[0], "y": self.ylims[0], "z": self.zlims[0]}
+        lim2 = {"x": self.xlims[1], "y": self.ylims[1], "z": self.zlims[1]}
         h = {"x": self.hx, "y": self.hy, "z": self.hz}
         n = {"x": self.nx, "y": self.ny, "z": self.nz}
 
@@ -189,8 +144,7 @@ class UniformFVMesh:
             if dim not in self.active_dims:
                 continue
             shape = {
-                ax: (slab_depth[ax] if ax == dim else n[ax] + 2 * slab_depth[ax])
-                for ax in "xyz"
+                ax: (slab_depth[ax] if ax == dim else n[ax] + 2 * slab_depth[ax]) for ax in "xyz"
             }
             bounds = {
                 ax: (
@@ -340,7 +294,7 @@ class UniformFVMesh:
         reach = (stencil_size - 1) // 2
 
         # get limits and resolution for the specified mesh region
-        interior_lims = {"x": self.xlim, "y": self.ylim, "z": self.zlim}
+        interior_lims = {"x": self.xlims, "y": self.ylims, "z": self.zlims}
 
         if mesh_region == "core":
             region_lims = {dim: interior_lims[dim] for dim in "xyz"}
@@ -353,7 +307,7 @@ class UniformFVMesh:
             resolution = {}
             for dim in "xyz":
                 lim0, lim1 = interior_lims[dim]
-                n_slab = getattr(self, f"{dim}_slab_depth")
+                n_slab = self.nghost if dim in active_dims else 0
                 slab_range = n_slab * h[dim]
 
                 if dim == slab_dim:
@@ -409,9 +363,9 @@ class UniformFVMesh:
             in_arrays = out_arrays
 
         inner = (
-            slice(reach, -reach) if self.x_is_active and reach else slice(None),
-            slice(reach, -reach) if self.y_is_active and reach else slice(None),
-            slice(reach, -reach) if self.z_is_active and reach else slice(None),
+            slice(reach, -reach) if "x" in self.active_dims and reach else slice(None),
+            slice(reach, -reach) if "y" in self.active_dims and reach else slice(None),
+            slice(reach, -reach) if "z" in self.active_dims and reach else slice(None),
             slice(None),
         )
         Xgl = out_arrays["x"][0, *inner]
@@ -466,18 +420,6 @@ class UniformFVMesh:
         f_eval = f(X, Y, Z)
 
         perform_quadrature(f_eval, weights, out)
-
-    def to_dict(self) -> dict:
-        return dict(
-            nx=self.nx,
-            ny=self.ny,
-            nz=self.nz,
-            xlim=self.xlim,
-            ylim=self.ylim,
-            zlim=self.zlim,
-            active_dims=self.active_dims,
-            slab_depth=self.slab_depth,
-        )
 
     def __getstate__(self):
         return self.__dict__.copy()

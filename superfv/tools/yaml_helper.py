@@ -1,6 +1,8 @@
 # superfv/tools/yaml_helper.py
 from __future__ import annotations
 
+from enum import Enum
+from functools import partial
 from typing import IO, Any, List, Tuple, Union, cast
 
 import yaml
@@ -32,8 +34,37 @@ def _repr_tuple(dumper: TupleDumper, value: Tuple[Any, ...]) -> Node:
     return dumper.represent_sequence(TUP_TAG, list(value), flow_style=True)
 
 
+def _repr_enum(dumper: TupleDumper, data: Enum) -> Node:
+    return dumper.represent_str(data.name)
+
+
+def _repr_function(dumper: TupleDumper, data: Any) -> Node:
+    return dumper.represent_str(f"{data.__module__}.{data.__qualname__}")
+
+
+def _repr_partial(dumper: TupleDumper, data: Any) -> Node:
+    func_str = f"{data.func.__module__}.{data.func.__qualname__}"
+    args_str = ", ".join(repr(arg) for arg in data.args)
+    kwargs_str = ", ".join(f"{k}={v!r}" for k, v in data.keywords.items())
+    all_args = ", ".join(filter(None, [func_str, args_str, kwargs_str]))
+    return dumper.represent_str(f"partial({all_args})")
+
+
+def _repr_array(dumper: TupleDumper, data: Any) -> Node:
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data.tolist(), flow_style=True)
+
+
+def _repr_path(dumper: TupleDumper, data: Any) -> Node:
+    return dumper.represent_str(str(data))
+
+
 TupleDumper.add_representer(list, _repr_flow_list)
 TupleDumper.add_representer(tuple, _repr_tuple)
+TupleDumper.add_multi_representer(Enum, _repr_enum)
+TupleDumper.add_multi_representer(type(lambda: None), _repr_function)
+TupleDumper.add_multi_representer(type(partial(lambda: None)), _repr_partial)
+TupleDumper.add_multi_representer(object, _repr_array)
+TupleDumper.add_multi_representer(object, _repr_path)
 
 # --- Constructor for !tuple with precise node type ---
 

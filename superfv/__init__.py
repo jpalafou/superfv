@@ -1,18 +1,31 @@
-from . import initial_conditions
-from .advection_solver import AdvectionSolver
-from .euler_solver import EulerSolver
+from . import initial_conditions as ics
+from .boundary_conditions import BC
+from .configs import FallbackCascade, FluxQuadrature, FluxRecipe, LazyPrimitiveMode
 from .hydro import turbulent_power_specta
-from .tools.loader import OutputLoader
-from .visualization import plot_1d_slice, plot_2d_slice, plot_spacetime, plot_timeseries
+from .hydro_solver import HydroSolver, SnapshotMode, TimeIntegrator
+from .hydro_solver_output import HydroSolverOutput
+from .riemann_solvers import RiemannSolver
+from .slope_limiting.muscl import MUSCL_SlopeLimiter
+from .tools.device_management import CUPY_AVAILABLE
 
 __all__ = [
-    "AdvectionSolver",
-    "EulerSolver",
-    "OutputLoader",
-    "initial_conditions",
+    # global variables
+    "CUPY_AVAILABLE",
+    # modules
+    "ics",
+    # classes
+    "HydroSolver",
+    "HydroSolverOutput",
+    # functions
     "turbulent_power_specta",
-    "plot_1d_slice",
-    "plot_2d_slice",
-    "plot_spacetime",
-    "plot_timeseries",
+    # enums
+    "BC",
+    "FallbackCascade",
+    "FluxQuadrature",
+    "FluxRecipe",
+    "LazyPrimitiveMode",
+    "SnapshotMode",
+    "TimeIntegrator",
+    "RiemannSolver",
+    "MUSCL_SlopeLimiter",
 ]

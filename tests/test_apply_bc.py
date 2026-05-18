@@ -1,41 +1,45 @@
 import numpy as np
 import pytest
 
-from superfv.boundary_conditions import apply_bc
+from superfv.axes import DIM_TO_AXIS
+from superfv.boundary_conditions import BC, apply_bc
 from superfv.mesh import UniformFVMesh
 from superfv.tools.norms import linf_norm
-from superfv.tools.slicing import VariableIndexMap, crop
+from superfv.tools.slicing import crop
+from superfv.tools.variable_index_map import VariableIndexMap
 
 
-@pytest.mark.parametrize("bc_type", ["periodic", "free", "symmetric", "zeros", "ones"])
+@pytest.mark.parametrize("bc_type", [BC.PERIODIC, BC.FREE, BC.SYMMETRIC, BC.ZEROS, BC.ONES])
 def test_boundary_conditions_numpy_pad_equivalence(bc_type):
     """
     Test that the custom boundary condition application function produces the same
     result as the numpy pad function for various boundary condition types.
     """
     N = 32
-    n_pad = 16
+    nghost = 16
 
     u = np.random.rand(5, N, N, N)
-    _u_ = np.empty((5, N + 2 * n_pad, N + 2 * n_pad, N + 2 * n_pad))
-    _u_[:, n_pad:-n_pad, n_pad:-n_pad, n_pad:-n_pad] = u
+    _u_ = np.empty((5, N + 2 * nghost, N + 2 * nghost, N + 2 * nghost))
+    _u_[:, nghost:-nghost, nghost:-nghost, nghost:-nghost] = u
 
     # baseline case: apply boundary conditions with np pad
     pad_kwargs = {
-        "periodic": {"mode": "wrap"},
-        "free": {"mode": "edge"},
-        "symmetric": {"mode": "symmetric"},
-        "zeros": {"mode": "constant", "constant_values": 0},
-        "ones": {"mode": "constant", "constant_values": 1},
+        BC.PERIODIC: {"mode": "wrap"},
+        BC.FREE: {"mode": "edge"},
+        BC.SYMMETRIC: {"mode": "symmetric"},
+        BC.ZEROS: {"mode": "constant", "constant_values": 0},
+        BC.ONES: {"mode": "constant", "constant_values": 1},
     }
-    np_padded = np.pad(u, [(0,), (n_pad,), (n_pad,), (n_pad,)], **(pad_kwargs[bc_type]))
+    np_padded = np.pad(u, [(0,), (nghost,), (nghost,), (nghost,)], **(pad_kwargs[bc_type]))
 
     # test case: apply boundary conditions with custom function
     apply_bc(
         np,
         _u_,
-        (n_pad, n_pad, n_pad),
-        mode=((bc_type, bc_type), (bc_type, bc_type), (bc_type, bc_type)),
+        nghost,
+        bcx=(bc_type, bc_type),
+        bcy=(bc_type, bc_type),
+        bcz=(bc_type, bc_type),
     )
 
     assert np.array_equal(_u_, np_padded)
@@ -49,33 +53,31 @@ def test_reflective_boundary_conditions(ref_slab):
     negated, while the density and pressure remain unchanged.
     """
     N = 32
-    n_pad = 16
+    nghost = 16
 
-    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4})
+    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4}, {})
 
     u = np.random.rand(5, N, N, N)
-    _u_ref = np.empty((5, N + 2 * n_pad, N + 2 * n_pad, N + 2 * n_pad))
-    _u_ref[:, n_pad:-n_pad, n_pad:-n_pad, n_pad:-n_pad] = u
+    _u_ref = np.empty((5, N + 2 * nghost, N + 2 * nghost, N + 2 * nghost))
+    _u_ref[:, nghost:-nghost, nghost:-nghost, nghost:-nghost] = u
 
     _u_sym = _u_ref.copy()
 
     apply_bc(
         np,
         _u_ref,
-        (n_pad, n_pad, n_pad),
-        mode=(
-            (
-                "reflective" if ref_slab == "xl" else "free",
-                "reflective" if ref_slab == "xr" else "free",
-            ),
-            (
-                "reflective" if ref_slab == "yl" else "free",
-                "reflective" if ref_slab == "yr" else "free",
-            ),
-            (
-                "reflective" if ref_slab == "zl" else "free",
-                "reflective" if ref_slab == "zr" else "free",
-            ),
+        nghost,
+        bcx=(
+            BC.REFLECTIVE if ref_slab == "xl" else BC.FREE,
+            BC.REFLECTIVE if ref_slab == "xr" else BC.FREE,
+        ),
+        bcy=(
+            BC.REFLECTIVE if ref_slab == "yl" else BC.FREE,
+            BC.REFLECTIVE if ref_slab == "yr" else BC.FREE,
+        ),
+        bcz=(
+            BC.REFLECTIVE if ref_slab == "zl" else BC.FREE,
+            BC.REFLECTIVE if ref_slab == "zr" else BC.FREE,
         ),
         variable_index_map=idx,
     )
@@ -83,25 +85,22 @@ def test_reflective_boundary_conditions(ref_slab):
     apply_bc(
         np,
         _u_sym,
-        (n_pad, n_pad, n_pad),
-        mode=(
-            (
-                "symmetric" if ref_slab == "xl" else "free",
-                "symmetric" if ref_slab == "xr" else "free",
-            ),
-            (
-                "symmetric" if ref_slab == "yl" else "free",
-                "symmetric" if ref_slab == "yr" else "free",
-            ),
-            (
-                "symmetric" if ref_slab == "zl" else "free",
-                "symmetric" if ref_slab == "zr" else "free",
-            ),
+        nghost,
+        bcx=(
+            BC.SYMMETRIC if ref_slab == "xl" else BC.FREE,
+            BC.SYMMETRIC if ref_slab == "xr" else BC.FREE,
+        ),
+        bcy=(
+            BC.SYMMETRIC if ref_slab == "yl" else BC.FREE,
+            BC.SYMMETRIC if ref_slab == "yr" else BC.FREE,
+        ),
+        bcz=(
+            BC.SYMMETRIC if ref_slab == "zl" else BC.FREE,
+            BC.SYMMETRIC if ref_slab == "zr" else BC.FREE,
         ),
     )
 
     ref_dim, ref_pos = ref_slab[0], ref_slab[1]
-    DIM_TO_AXIS = {"x": 1, "y": 2, "z": 3}
 
     assert np.array_equal(_u_ref[idx("rho")], _u_sym[idx("rho")])
     assert np.array_equal(_u_ref[idx("P")], _u_sym[idx("P")])
@@ -109,13 +108,13 @@ def test_reflective_boundary_conditions(ref_slab):
         _u_ref[idx("v" + ref_dim, keepdims=True)][
             crop(
                 DIM_TO_AXIS[ref_dim],
-                (None, n_pad) if ref_pos == "l" else (-n_pad, None),
+                (None, nghost) if ref_pos == "l" else (-nghost, None),
             )
         ],
         -_u_sym[idx("v" + ref_dim, keepdims=True)][
             crop(
                 DIM_TO_AXIS[ref_dim],
-                (None, n_pad) if ref_pos == "l" else (-n_pad, None),
+                (None, nghost) if ref_pos == "l" else (-nghost, None),
             )
         ],
     )
@@ -129,9 +128,9 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
     method.
     """
     N = 32
-    n_pad = 16
+    nghost = 16
 
-    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4})
+    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4}, {})
     t = 0.1
 
     # define a sinusoidal function for the boundary condition
@@ -156,18 +155,21 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
         nx=N if "x" in dims else 1,
         ny=N if "y" in dims else 1,
         nz=N if "z" in dims else 1,
+        nghost=nghost,
+        xlims=(0, 1),
+        ylims=(0, 1),
+        zlims=(0, 1),
         active_dims=tuple(dims),
-        slab_depth=n_pad,
     )
     megamesh = UniformFVMesh(
-        nx=N + 2 * n_pad if "x" in dims else 1,
-        ny=N + 2 * n_pad if "y" in dims else 1,
-        nz=N + 2 * n_pad if "z" in dims else 1,
-        xlim=(-0.5, 1.5) if "x" in dims else (0, 1),
-        ylim=(-0.5, 1.5) if "y" in dims else (0, 1),
-        zlim=(-0.5, 1.5) if "z" in dims else (0, 1),
+        nx=N + 2 * nghost if "x" in dims else 1,
+        ny=N + 2 * nghost if "y" in dims else 1,
+        nz=N + 2 * nghost if "z" in dims else 1,
+        nghost=0,
+        xlims=(-0.5, 1.5) if "x" in dims else (0, 1),
+        ylims=(-0.5, 1.5) if "y" in dims else (0, 1),
+        zlims=(-0.5, 1.5) if "z" in dims else (0, 1),
         active_dims=tuple(dims),
-        slab_depth=0,
     )
     assert mesh._shape_ == megamesh.shape
 
@@ -193,31 +195,30 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
     _u_ = np.empty(
         (
             5,
-            N + 2 * n_pad if "x" in dims else 1,
-            N + 2 * n_pad if "y" in dims else 1,
-            N + 2 * n_pad if "z" in dims else 1,
+            N + 2 * nghost if "x" in dims else 1,
+            N + 2 * nghost if "y" in dims else 1,
+            N + 2 * nghost if "z" in dims else 1,
         )
     )
     _u_[
         :,
-        slice(n_pad, -n_pad) if "x" in dims else slice(1),
-        slice(n_pad, -n_pad) if "y" in dims else slice(1),
-        slice(n_pad, -n_pad) if "z" in dims else slice(1),
+        slice(nghost, -nghost) if "x" in dims else slice(1),
+        slice(nghost, -nghost) if "y" in dims else slice(1),
+        slice(nghost, -nghost) if "z" in dims else slice(1),
     ] = u
     apply_bc(
         np,
         _u_,
-        (
-            n_pad if "x" in dims else 0,
-            n_pad if "y" in dims else 0,
-            n_pad if "z" in dims else 0,
-        ),
-        mode=(
-            ("dirichlet", "dirichlet") if "x" in dims else ("none", "none"),
-            ("dirichlet", "dirichlet") if "y" in dims else ("none", "none"),
-            ("dirichlet", "dirichlet") if "z" in dims else ("none", "none"),
-        ),
-        f=((sinus, sinus), (sinus, sinus), (sinus, sinus)),
+        nghost,
+        bcx=(BC.DIRICHLET, BC.DIRICHLET) if "x" in dims else (BC.NONE, BC.NONE),
+        bcy=(BC.DIRICHLET, BC.DIRICHLET) if "y" in dims else (BC.NONE, BC.NONE),
+        bcz=(BC.DIRICHLET, BC.DIRICHLET) if "z" in dims else (BC.NONE, BC.NONE),
+        bcx_callable_lower=sinus if "x" in dims else None,
+        bcx_callable_upper=sinus if "x" in dims else None,
+        bcy_callable_lower=sinus if "y" in dims else None,
+        bcy_callable_upper=sinus if "y" in dims else None,
+        bcz_callable_lower=sinus if "z" in dims else None,
+        bcz_callable_upper=sinus if "z" in dims else None,
         mesh=mesh,
         variable_index_map=idx,
         t=t,

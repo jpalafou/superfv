@@ -53,9 +53,7 @@ class ArrayManager:
         """
         self.arrays: Dict[str, ArrayLike] = arrays if arrays else {}
         self.device: Literal["cpu", "gpu"] = "cpu"
-        self.transfer_array = (
-            self._transfer_array if CUPY_AVAILABLE else self._dummy_transfer_array
-        )
+        self.transfer_array = self._transfer_array if CUPY_AVAILABLE else self._dummy_transfer_array
 
     def __repr__(self) -> str:
         return f"ArrayManager({self.arrays.keys()})"
@@ -143,9 +141,7 @@ class ArrayManager:
             other.add(name, array.copy())
         other.device = self.device
 
-    def __getitem__(
-        self, name: str, copy: bool = False, asnumpy: bool = False
-    ) -> ArrayLike:
+    def __getitem__(self, name: str, copy: bool = False, asnumpy: bool = False) -> ArrayLike:
         """
         Get an array from the manager.
 

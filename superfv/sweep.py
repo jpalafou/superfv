@@ -16,7 +16,8 @@ def stencil_sweep(
 ) -> Tuple[slice, ...]:
     """
     Perform a sweep of stencils contained in `weights` along the specified dimension
-    `dim` on the input array `u`, storing the results in `out`.
+    `dim` on the input array `u`, storing the results in `out`. Renders a number of layers
+    of ghost cells on the boundaries of `out` invalid, as determined by the stencil size.
 
     Args:
         u: Input array with shape (nvars, nx, ny, nz, ninterps).
@@ -39,9 +40,7 @@ def stencil_sweep(
     reach = (stencil_size - 1) // 2
     modified = crop(axis, (reach, -reach), ndim=5)
 
-    u_windows = np.lib.stride_tricks.sliding_window_view(
-        u, window_shape=stencil_size, axis=axis
-    )
+    u_windows = np.lib.stride_tricks.sliding_window_view(u, window_shape=stencil_size, axis=axis)
     contracted = np.einsum("...ik,ok->...io", u_windows, weights, optimize=True)
     out[modified] = contracted.reshape(*contracted.shape[:-2], ninterps * nouterps)
 
@@ -133,9 +132,7 @@ if CUPY_AVAILABLE:
         if not u.flags.c_contiguous or u.ndim != 5:
             raise ValueError("Array `u` must be a C-contiguous, 5-dimensional array.")
         if not weights.flags.c_contiguous or weights.ndim != 2:
-            raise ValueError(
-                "Array `weights` must be a C-contiguous, 2-dimensional array."
-            )
+            raise ValueError("Array `weights` must be a C-contiguous, 2-dimensional array.")
 
         nvars, nx, ny, nz, ninterps = u.shape
         nouterps, nkernel = weights.shape
@@ -143,14 +140,8 @@ if CUPY_AVAILABLE:
         if not uj.flags.c_contiguous or uj.ndim != 5:
             raise ValueError("Array `uj` must be a C-contiguous, 5-dimensional array.")
         if uj.shape[:4] != u.shape[:4] or uj.shape[4] != ninterps * nouterps:
-            raise ValueError(
-                "Array `uj` must have shape (nvars, nx, ny, nz, ninterps * nouterps)"
-            )
-        if (
-            u.dtype != cp.float64
-            or weights.dtype != cp.float64
-            or uj.dtype != cp.float64
-        ):
+            raise ValueError("Array `uj` must have shape (nvars, nx, ny, nz, ninterps * nouterps)")
+        if u.dtype != cp.float64 or weights.dtype != cp.float64 or uj.dtype != cp.float64:
             raise ValueError("All input arrays must have dtype float64.")
 
         threads_per_block = DEFAULT_THREADS_PER_BLOCK

@@ -1,85 +1,20 @@
-from dataclasses import dataclass
-from typing import Literal, Optional, Tuple
+from enum import Enum
+from typing import Literal, Tuple
 
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.interpolation_schemes import InterpolationScheme, LimiterConfig
 from superfv.slope_limiting import gather_neighbor_slices
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
 
 
-@dataclass(frozen=True, slots=True)
-class musclConfig(LimiterConfig):
-    """
-    Configuration for the MUSCL slope limiter.
-
-    Attributes:
-        shock_detection: Whether to enable shock detection.
-        smooth_extrema_detection: Whether to enable smooth extrema detection.
-        physical_admissibility_detection: Whether to enable physical admissibility
-            detection (PAD).
-        eta_max: Eta threshold for shock detection if shock_detection is True.
-        PAD_bounds: Array with shape (nvars, 2) specifying the lower and upper bounds,
-            respectively, for each variable when physical_admissibility_detection is
-            True. Must be provided if physical_admissibility_detection is True.
-        limiter: Optional slope limiter specification of "minmod", "moncen", "PP2D".
-    """
-
-    limiter: Optional[Literal["minmod", "moncen", "PP2D"]] = None
-
-    def key(self) -> str:
-        return f"muscl-{self.limiter}"
-
-    def to_dict(self) -> dict:
-        out = LimiterConfig.to_dict(self)
-        out.update(dict(limiter=self.limiter))
-        return out
-
-
-@dataclass(frozen=True, slots=True)
-class musclInterpolationScheme(InterpolationScheme):
-    """
-    Configuration for MUSCL interpolation schemes.
-
-    Attributes:
-        p: The polynomial degree. Must be 1.
-        flux_recipe: The flux recipe to use. For MUSCL schemes, this simplifies to:
-            - 1: compute conservative slopes -> limit conservative slopes -> compute
-                primitive nodes -> compute fluxes
-            - 2: compute primitive cell averages -> compute primitive slopes -> limit
-                primitive slopes -> compute fluxes
-        limiter_config: The MUSCL limiter configuration to use.
-    """
-
-    p: int = 1
-    flux_recipe: Literal[1, 2] = 2
-    limiter_config: musclConfig = musclConfig(
-        shock_detection=False,
-        smooth_extrema_detection=False,
-        physical_admissibility_detection=False,
-    )
-
-    def __post_init__(self):
-        InterpolationScheme.__post_init__(self)
-        if self.p != 1:
-            raise ValueError("musclInterpolationScheme must have p=1")
-        if not isinstance(self.limiter_config, musclConfig):
-            raise ValueError("musclInterpolationScheme requires a musclConfig")
-
-    def key(self) -> str:
-        return self.limiter_config.key()
-
-    def to_dict(self) -> dict:
-        return dict(
-            p=self.p,
-            flux_recipe=self.flux_recipe,
-            limiter_config=(
-                None if self.limiter_config is None else self.limiter_config.to_dict()
-            ),
-        )
+class MUSCL_SlopeLimiter(Enum):
+    MINMOD = 0
+    MONCEN = 1
+    PP2D = 2
+    NONE = 3
 
 
 def compute_MUSCL_slopes(
@@ -87,11 +22,13 @@ def compute_MUSCL_slopes(
     alpha: ArrayLike,
     out: ArrayLike,
     face_dim: Literal["x", "y", "z"],
-    limiter: Optional[Literal["minmod", "moncen"]] = None,
+    limiter: MUSCL_SlopeLimiter,
     SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
-    Compute limited slopes and write them to the `out` array.
+    Compute limited MUSCL slopes from `u` and write them to the `out` array with optional
+    relaxation from the smooth extrema detector `alpha`. Renders a single ghost cell layer
+    along the `face_dim` dimension of the output array invalid.
 
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
@@ -101,14 +38,13 @@ def compute_MUSCL_slopes(
         out: Output array to which the limited slopes are written. Has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
-        limiter: The slope limiter to use. Can be "minmod", "moncen", or None for no
-            limiting.
+        limiter: The slope limiter to use.
         SED: Whether to apply smooth extrema detection (SED). If True, the limited
             slopes are relaxed to the unlimited centered difference slopes in smooth
             extrema regions where alpha >= 1.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output array.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
         return MUSCL_slopes_kernel_helper(u, alpha, out, face_dim, limiter, SED)
@@ -120,7 +56,7 @@ def compute_MUSCL_slopes(
 
     # write slopes to `out` array
     match limiter:
-        case "minmod":
+        case MUSCL_SlopeLimiter.MINMOD:
             dlft = u[inner] - u[left]
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
@@ -131,22 +67,20 @@ def compute_MUSCL_slopes(
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
-        case "moncen":
+        case MUSCL_SlopeLimiter.MONCEN:
             dlft = u[inner] - u[left]
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
             dsgn = np.sign(dcen)
-            dslp = dsgn * np.minimum(
-                np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen)
-            )
+            dslp = dsgn * np.minimum(np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen))
             out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
             if SED:
                 if alpha is None:
                     raise ValueError("alpha array must be provided when SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
-        case "PP2D":
+        case MUSCL_SlopeLimiter.PP2D:
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
-        case None:
+        case MUSCL_SlopeLimiter.NONE:
             out[inner] = 0.5 * (u[right] - u[left])
         case _:
             raise ValueError(f"Unknown limiter: {limiter}.")
@@ -164,7 +98,10 @@ def compute_PP2D_slopes(
     SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
-    Compute PP2D limited slopes and write them to the 'Sx' and 'Sy' arrays.
+    Compute PP2D limited slopes from `u` and write them to the `Sx` and `Sy`
+    arrays with optional relaxation from the smooth extrema detector `alpha`.
+    Renders a single ghost cell layer along each active dimension of the
+    output arrays invalid.
 
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
@@ -182,10 +119,7 @@ def compute_PP2D_slopes(
             extrema regions where alpha >= 1.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
-
-    Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output arrays `Sx` and `Sy`.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
         return PP2D_slopes_kernel_helper(
@@ -369,18 +303,16 @@ if CUPY_AVAILABLE:
         alpha: cp.ndarray,
         slopes: cp.ndarray,
         dim: Literal["x", "y", "z"],
-        slope_type: Literal[None, "minmod", "moncen", "PP2D"],
+        slope_type: MUSCL_SlopeLimiter,
         SED: bool,
     ) -> Tuple[slice, ...]:
-        if slope_type == "PP2D":
+        if slope_type == MUSCL_SlopeLimiter.PP2D:
             raise ValueError(
                 "PP2D slopes should be computed with the compute_PP2D_slopes "
                 "function, not the MUSCL_slopes_kernel."
             )
         if u.ndim != 4 or slopes.ndim != 4:
-            raise ValueError(
-                "u and slopes must be 4D arrays with shape (nvars, nx, ny, nz)"
-            )
+            raise ValueError("u and slopes must be 4D arrays with shape (nvars, nx, ny, nz)")
         if u.shape != slopes.shape:
             raise ValueError("u and slopes must have the same shape")
         if not u.flags.c_contiguous or not slopes.flags.c_contiguous:
@@ -392,8 +324,7 @@ if CUPY_AVAILABLE:
                 raise ValueError("alpha array must be provided when SED is True")
             if alpha.ndim != 4 or alpha.shape != u.shape:
                 raise ValueError(
-                    "alpha must be a 4D array with the same shape as u when SED is "
-                    "True"
+                    "alpha must be a 4D array with the same shape as u when SED is " "True"
                 )
             if not alpha.flags.c_contiguous:
                 raise ValueError("alpha must be a C-contiguous array when SED is True")
@@ -402,9 +333,7 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz = u.shape
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (
-            nvars * nx * ny * nz + threads_per_block - 1
-        ) // threads_per_block
+        blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         MUSCL_slopes_kernel(
             (blocks_per_grid,),
@@ -414,7 +343,11 @@ if CUPY_AVAILABLE:
                 alpha,
                 slopes,
                 DIM_TO_AXIS[dim],
-                {"minmod": 1, "moncen": 2, None: 0}[slope_type],
+                {
+                    MUSCL_SlopeLimiter.NONE: 0,
+                    MUSCL_SlopeLimiter.MINMOD: 1,
+                    MUSCL_SlopeLimiter.MONCEN: 2,
+                }[slope_type],
                 SED,
                 nvars,
                 nx,
@@ -597,8 +530,7 @@ if CUPY_AVAILABLE:
     ) -> Tuple[slice, ...]:
         if u.ndim != 4 or xslopes.ndim != 4 or yslopes.ndim != 4:
             raise ValueError(
-                "u, xslopes, and yslopes must be 4D arrays with shape "
-                "(nvars, nx, ny, nz)"
+                "u, xslopes, and yslopes must be 4D arrays with shape " "(nvars, nx, ny, nz)"
             )
         if u.shape != xslopes.shape or u.shape != yslopes.shape:
             raise ValueError("u, xslopes, and yslopes must have the same shape")
@@ -608,19 +540,14 @@ if CUPY_AVAILABLE:
             or not yslopes.flags.c_contiguous
         ):
             raise ValueError("u, xslopes, and yslopes must be C-contiguous arrays")
-        if (
-            u.dtype != cp.float64
-            or xslopes.dtype != cp.float64
-            or yslopes.dtype != cp.float64
-        ):
+        if u.dtype != cp.float64 or xslopes.dtype != cp.float64 or yslopes.dtype != cp.float64:
             raise ValueError("u, xslopes, and yslopes must be of dtype float64")
         if SED:
             if alpha is None:
                 raise ValueError("alpha array must be provided when SED is True")
             if alpha.ndim != 4 or alpha.shape != u.shape:
                 raise ValueError(
-                    "alpha must be a 4D array with the same shape as u when SED is "
-                    "True"
+                    "alpha must be a 4D array with the same shape as u when SED is " "True"
                 )
             if not alpha.flags.c_contiguous:
                 raise ValueError("alpha must be a C-contiguous array when SED is True")
@@ -629,9 +556,7 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz = u.shape
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (
-            nvars * nx * ny * nz + threads_per_block - 1
-        ) // threads_per_block
+        blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
 
         PP2D_slopes_kernel(
             (blocks_per_grid,),

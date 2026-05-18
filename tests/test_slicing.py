@@ -93,9 +93,7 @@ def test_merge_indices_ints():
 
 def test_merge_indices_slices():
     assert merge_indices(slice(0, 3), 3) == slice(0, 4)
-    assert np.array_equal(
-        merge_indices(slice(0, 2), 4, as_array=True), np.array([0, 1, 4])
-    )
+    assert np.array_equal(merge_indices(slice(0, 2), 4, as_array=True), np.array([0, 1, 4]))
 
 
 def test_merge_indices_sequences():

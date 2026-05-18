@@ -2,10 +2,15 @@ import numpy as np
 import pytest
 
 import teyssier
-from superfv.hydro import cons_to_prim, fluxes, prim_to_cons
+from superfv.hydro import compute_fluxes, cons_to_prim, prim_to_cons
+from superfv.riemann_solvers import (
+    HLLC_RiemannSolver,
+    LLF_RiemannSolver,
+    UpwindRiemannSolver,
+)
 from superfv.tools.device_management import CUPY_AVAILABLE, xp
 from superfv.tools.norms import l1_norm, linf_norm
-from superfv.tools.slicing import VariableIndexMap
+from superfv.tools.variable_index_map import VariableIndexMap
 
 if CUPY_AVAILABLE:
     from superfv.hydro import (
@@ -31,12 +36,11 @@ def euler_slicer():
             "passive_scalar2": 6,
             "passive_scalar3": 7,
         },
-    )
-    _euler_slicer.add_var_to_group("v", ("vx", "vy", "vz"))
-    _euler_slicer.add_var_to_group("m", ("mx", "my", "mz"))
-    _euler_slicer.add_var_to_group(
-        "passives",
-        ("passive_scalar1", "passive_scalar2", "passive_scalar3"),
+        {
+            "v": ["vx", "vy", "vz"],
+            "m": ["mx", "my", "mz"],
+            "passives": ["passive_scalar1", "passive_scalar2", "passive_scalar3"],
+        },
     )
     return _euler_slicer
 
@@ -169,7 +173,10 @@ def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
 
 def test_teyssier_prim_to_cons(euler_slicer):
     idx = euler_slicer
-    idx.add_var_to_group("test", ("rho", "vx", "P"))
+
+    idx.add_var_to_group("rho", "test")
+    idx.add_var_to_group("vx", "test")
+    idx.add_var_to_group("P", "test")
 
     N = 64
 
@@ -188,7 +195,10 @@ def test_teyssier_prim_to_cons(euler_slicer):
 
 def test_teyssier_cons_to_prim(euler_slicer):
     idx = euler_slicer
-    idx.add_var_to_group("test", ("rho", "mx", "E"))
+
+    idx.add_var_to_group("rho", "test")
+    idx.add_var_to_group("mx", "test")
+    idx.add_var_to_group("E", "test")
 
     N = 64
 
@@ -207,7 +217,10 @@ def test_teyssier_cons_to_prim(euler_slicer):
 
 def test_teyssier_compute_fluxes(euler_slicer):
     idx = euler_slicer
-    idx.add_var_to_group("test", ("rho", "vx", "P"))
+
+    idx.add_var_to_group("rho", "test")
+    idx.add_var_to_group("vx", "test")
+    idx.add_var_to_group("P", "test")
 
     N = 64
 
@@ -217,8 +230,48 @@ def test_teyssier_compute_fluxes(euler_slicer):
     w[idx("P")] = 1e-6 * np.random.rand(N, N, N) + 1.0
 
     f1 = teyssier.prim_to_flux(w[idx("test")])
-    f2 = fluxes(idx, w, "x", gamma=1.4)
+    f2 = compute_fluxes(idx, w, "x", gamma=1.4)
 
     assert linf_norm(f1[0] - f2[idx("rho")]) < 1e-15
     assert linf_norm(f1[1] - f2[idx("mx")]) < 1e-15
     assert linf_norm(f1[2] - f2[idx("E")]) < 1e-15
+
+
+@pytest.mark.parametrize(
+    "solver_cls",
+    [UpwindRiemannSolver, LLF_RiemannSolver, HLLC_RiemannSolver],
+)
+@pytest.mark.parametrize("dim", ["x", "y", "z"])
+@pytest.mark.parametrize("isothermal", [False, True])
+def test_passive_scalars_are_density_weighted_and_advected(
+    euler_slicer, solver_cls, dim, isothermal
+):
+    idx = euler_slicer
+
+    w = np.zeros((8, 1, 1, 1))
+    w[idx("rho")] = 2.0
+    w[idx("vx")] = 1.5
+    w[idx("vy")] = -0.25
+    w[idx("vz")] = 0.125
+    w[idx("P")] = 3.0
+    w[idx("passive_scalar1")] = 0.4
+    w[idx("passive_scalar2")] = 0.6
+    w[idx("passive_scalar3")] = 0.8
+
+    u = prim_to_cons(idx, w, gamma=1.4)
+    assert linf_norm(u[idx("passive_scalar1")] - w[idx("rho")] * w[idx("passive_scalar1")]) == 0
+    assert linf_norm(u[idx("passive_scalar2")] - w[idx("rho")] * w[idx("passive_scalar2")]) == 0
+    assert linf_norm(u[idx("passive_scalar3")] - w[idx("rho")] * w[idx("passive_scalar3")]) == 0
+
+    w2 = cons_to_prim(idx, u, gamma=1.4)
+    assert linf_norm(w2[idx("passive_scalar1")] - w[idx("passive_scalar1")]) == 0
+    assert linf_norm(w2[idx("passive_scalar2")] - w[idx("passive_scalar2")]) == 0
+    assert linf_norm(w2[idx("passive_scalar3")] - w[idx("passive_scalar3")]) == 0
+
+    flux = np.empty_like(w)
+    solver_cls(npassives=3)(w, w, flux, dim, idx, gamma=1.4, isothermal=isothermal)
+    expected_flux = compute_fluxes(idx, w, dim, gamma=1.4)
+
+    assert linf_norm(flux[idx("passive_scalar1")] - expected_flux[idx("passive_scalar1")]) == 0
+    assert linf_norm(flux[idx("passive_scalar2")] - expected_flux[idx("passive_scalar2")]) == 0
+    assert linf_norm(flux[idx("passive_scalar3")] - expected_flux[idx("passive_scalar3")]) == 0

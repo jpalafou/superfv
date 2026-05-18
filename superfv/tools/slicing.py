@@ -45,9 +45,7 @@ def _crop(
     out = [slice(None)] * rank
     for ax in axis:
         if ax < 0 or ax >= rank:
-            raise ValueError(
-                f"Axis {ax} is out of bounds for array with {len(out)} dimensions."
-            )
+            raise ValueError(f"Axis {ax} is out of bounds for array with {len(out)} dimensions.")
         out[ax] = slice(cut[0] or None, cut[1] or None, step)
     return tuple(out)
 
@@ -109,9 +107,7 @@ def _crop_to_center(
             margin = (dim_length - target_length) // 2
             out[i] = slice(margin or None, -margin or None)
         else:
-            raise ValueError(
-                f"Cannot evenly crop dimension from {dim_length} to {target_length}."
-            )
+            raise ValueError(f"Cannot evenly crop dimension from {dim_length} to {target_length}.")
     return tuple(out)
 
 
@@ -129,9 +125,7 @@ def intersection_shape(*args: Tuple[int, ...]) -> Tuple[int, ...]:
 
 
 def merge_indices(
-    *slices: Union[
-        int, slice, Tuple[int, ...], List[int], np.ndarray[Any, np.dtype[np.int_]]
-    ],
+    *slices: Union[int, slice, Tuple[int, ...], List[int], np.ndarray[Any, np.dtype[np.int_]]],
     as_array: bool = False,
 ) -> IndexLike:
     """
@@ -245,9 +239,7 @@ def _replace_slice(
     slc: Tuple[Union[int, slice], ...], axis: int, new_slice: slice
 ) -> Tuple[Union[int, slice], ...]:
     if axis < 0 or axis >= len(slc):
-        raise IndexError(
-            f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
-        )
+        raise IndexError(f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}.")
     return slc[:axis] + (new_slice,) + slc[axis + 1 :]
 
 
@@ -275,9 +267,7 @@ def _insert_slice(
     slc: Tuple[Union[int, slice], ...], axis: int, new_slice: Union[int, slice]
 ) -> Tuple[Union[int, slice], ...]:
     if axis < 0 or axis > len(slc):
-        raise IndexError(
-            f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}."
-        )
+        raise IndexError(f"Axis {axis} is out of bounds for slice tuple of length {len(slc)}.")
     return slc[:axis] + (new_slice,) + slc[axis:]
 
 
@@ -311,16 +301,12 @@ class VariableIndexMap:
 
     def _refresh_and_validate_mappings(self):
         self.var_names: Set[str] = set(self.var_idx_map.keys())
-        self.all_names: Set[str] = set(self.var_idx_map.keys()) | set(
-            self.group_var_map.keys()
-        )
+        self.all_names: Set[str] = set(self.var_idx_map.keys()) | set(self.group_var_map.keys())
         self.idxs: List[int] = sorted(set(self.var_idx_map.values()))
         self.nvars: int = len(self.idxs)
 
         # indices must be contiguous starting from 0
-        if len(self.idxs) > 0 and not np.array_equal(
-            np.array(self.idxs), np.arange(self.nvars)
-        ):
+        if len(self.idxs) > 0 and not np.array_equal(np.array(self.idxs), np.arange(self.nvars)):
             raise ValueError(
                 "Variable indices must be contiguous starting from 0. "
                 f"Current indices: {self.idxs}"

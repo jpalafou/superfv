@@ -19,9 +19,9 @@ T = 1.0
 def nonlinear_sound_wave(idx, x, y, z, t, *, xp):
 
     def vp(x, t):
-        return A * xp.sin(2 * np.pi * (x - t)) - A**2 * (
-            gamma + 1
-        ) / 4 * 2 * np.pi * t * xp.sin(4 * np.pi * (x - t))
+        return A * xp.sin(2 * np.pi * (x - t)) - A**2 * (gamma + 1) / 4 * 2 * np.pi * t * xp.sin(
+            4 * np.pi * (x - t)
+        )
 
     out = xp.zeros((idx.nvars, *x.shape))
     out[idx("rho")] = rho0 + rho0 * vp(x, 0)  # only valid for t=0

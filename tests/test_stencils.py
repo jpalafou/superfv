@@ -1,5 +1,6 @@
 import pytest
 
+from superfv.finite_volume_driver import FV_Stencil
 from superfv.stencils import transverse_integration
 from superfv.stencils.conservative_interpolation import (
     cell_center,
@@ -11,17 +12,19 @@ from superfv.tools.device_management import xp
 from superfv.tools.norms import linf_norm
 
 
-@pytest.mark.parametrize("interp_dim", ["x", "y", "z"])
 @pytest.mark.parametrize("active_dims", ["x", "y", "z", "xy", "yz", "xz", "xyz"])
 @pytest.mark.parametrize("p", [0, 1, 2, 3, 4, 5, 6, 7])
 @pytest.mark.parametrize(
-    "stencil", ["ci:center", "ci:left_right", "ci:gauss_legendre", "transverse"]
+    "stencil",
+    [
+        FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER,
+        FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT,
+        FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE,
+        FV_Stencil.TRANSVERSE_INTEGRATION,
+    ],
 )
 @pytest.mark.parametrize("ninterps", [1, 2])
-def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps):
-    if interp_dim not in active_dims:
-        pytest.skip("Interpolation dimension must be among active dimensions")
-
+def test_trivial_interpolation(active_dims, p, stencil, ninterps):
     N = 64
     shape = (
         1,
@@ -31,13 +34,13 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps):
     )
 
     match stencil:
-        case "ci:center":
+        case FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER:
             weights = cell_center(p)
-        case "ci:left_right":
+        case FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT:
             weights = left_right(p)
-        case "ci:gauss_legendre":
+        case FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE:
             weights = gauss_legendre_nodes(p)
-        case "transverse":
+        case FV_Stencil.TRANSVERSE_INTEGRATION:
             weights = transverse_integration(p)
         case _:
             raise ValueError(f"Unknown stencil: {stencil}")
@@ -47,6 +50,6 @@ def test_trivial_interpolation(interp_dim, active_dims, p, stencil, ninterps):
     u = xp.ones(shape + (ninterps,))
     uj = xp.empty(shape + (ninterps * nouterps,))
 
-    modified = stencil_sweep(u, weights, uj, interp_dim)
-
-    assert linf_norm(uj[modified] - 1.0) < 1e-15
+    for interp_dim in active_dims:
+        modified = stencil_sweep(u, weights, uj, interp_dim)
+        assert linf_norm(uj[modified] - 1.0) < 1e-15

@@ -43,10 +43,7 @@ def _gather_neighbor_slices(
                 continue
             all_slices.append(
                 merge_slices(
-                    *[
-                        crop(i, (1 + shift, -1 + shift), ndim=4)
-                        for i, shift in zip(axes, offset)
-                    ]
+                    *[crop(i, (1 + shift, -1 + shift), ndim=4) for i, shift in zip(axes, offset)]
                 )
             )
     else:
@@ -80,8 +77,9 @@ def compute_dmp(
     include_corners: bool = True,
 ) -> Tuple[slice, ...]:
     """
-    Compute the maximum and minimum values of each point and its neighbors along
-    specified dimensions, writing the results to `M` and `m`, respectively.
+    Compute the maximum and minimum values of each point `u` and its neighbors along
+    specified dimensions, writing the results to `M` and `m`, respectively. Renders
+    a single ghost cell layer along each active dimension of the output arrays invalid.
 
     Args:
         u: Input array with shape (nvars, nx, ny, nz).
@@ -91,7 +89,7 @@ def compute_dmp(
         include_corners: Whether to include corner neighbors in the computation.
 
     Returns:
-        Slice objects indicating the modified regions in the output array.
+        Slice objects indicating the valid region of the output arrays `M` and `m`.
     """
     all_slices = gather_neighbor_slices(active_dims, include_corners)
     inner_slice = all_slices[0]
@@ -206,9 +204,7 @@ if CUPY_AVAILABLE:
         if u.ndim != 4:
             raise ValueError("Input array must have 4 dimensions (nvars, nx, ny, nz)")
         if M.shape != u.shape or m.shape != u.shape:
-            raise ValueError(
-                "Output arrays M and m must have the same shape as input array u"
-            )
+            raise ValueError("Output arrays M and m must have the same shape as input array u")
 
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (u.size + threads_per_block - 1) // threads_per_block

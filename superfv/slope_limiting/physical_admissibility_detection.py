@@ -135,17 +135,13 @@ if CUPY_AVAILABLE:
         if not cell_violated.flags.c_contiguous:
             raise ValueError("cell_violated must be C-contiguous.")
         if wj.ndim != 4 or violation_amounts.ndim != 4 or cell_violated.ndim != 4:
-            raise ValueError(
-                "wj, violation_amounts, and cell_violated must be 4D arrays."
-            )
+            raise ValueError("wj, violation_amounts, and cell_violated must be 4D arrays.")
         if (
             physical_bounds.ndim != 2
             or physical_bounds.shape[0] != wj.shape[0]
             or physical_bounds.shape[1] != 2
         ):
-            raise ValueError(
-                "physical_bounds must be a 2D array with shape (nvars, 2)."
-            )
+            raise ValueError("physical_bounds must be a 2D array with shape (nvars, 2).")
         if not wj.dtype == cp.float64:
             raise ValueError("wj must be of dtype float64.")
         if not physical_bounds.dtype == cp.float64:
