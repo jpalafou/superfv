@@ -229,6 +229,7 @@ class MeshParameters:
 class InitialConditionParameters:
     ic: MultivarField
     passive_ics: Dict[str, UnivarField]
+    force_1st_order_ic_cell_averages: bool = False
 
     @property
     def npassives(self) -> int:

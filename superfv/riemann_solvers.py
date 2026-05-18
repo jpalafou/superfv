@@ -80,6 +80,8 @@ class RiemmannSolverBase(ABC):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ):
+        fluxes[...] = 0.0  # Initialize zero fluxes
+
         if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
             self.cuda_kernel(
                 wl[idx("rho")],
@@ -128,7 +130,6 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         vr = wr[idx("v" + dim)]
         v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
-        fluxes[...] = 0.0
         fluxes[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
         if "passives" in idx.group_var_map:
             fluxes[idx("passives")] = fluxes[idx("rho")] * np.where(
@@ -470,7 +471,10 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ):
-        fluxes[...] = 0.0
+        if sum(wl.shape[i] > 1 for i in [1, 2, 3]) > 1:
+            raise NotImplementedError("No support for 1D problems.")
+        if "passives" in idx.group_var_map:
+            raise NotImplementedError("No support for passive scalars.")
         uleft = prim_to_cons(idx, wl, gamma)
         uright = prim_to_cons(idx, wr, gamma)
         # left state

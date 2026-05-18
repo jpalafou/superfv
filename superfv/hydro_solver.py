@@ -141,6 +141,7 @@ class HydroSolver:
         # IC params
         ic: MultivarField = partial(ics.square, vx=1),
         passive_ics: Optional[Dict[str, UnivarField]] = None,
+        force_1st_order_ic_cell_averages: bool = False,
         # BC params
         bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
         bcy: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
@@ -220,6 +221,8 @@ class HydroSolver:
                 array of shape (nvars, nx, ny, nz).
             passive_ics: Optional dictionary with keys as variable names and values as functions
                 that take (x, y, z, t, xp=xp) and return an array of shape (nx, ny, nz).
+            force_1st_order_ic_cell_averages: If True, force the initial condition to be sampled
+                with first-order cell averages, even if the base scheme is higher-order.
 
         Boundary condition parameters:
             bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
@@ -327,6 +330,7 @@ class HydroSolver:
         ic_params = InitialConditionParameters(
             ic=ic,
             passive_ics={} if passive_ics is None else passive_ics,
+            force_1st_order_ic_cell_averages=force_1st_order_ic_cell_averages,
         )
 
         bc_params = BoundaryConditionParameters(
@@ -722,7 +726,7 @@ class HydroSolver:
         nx, ny, nz = mesh.shape
 
         u0 = self.xp.empty((nvars, nx, ny, nz))
-        if params.fv_scheme.p > 1:
+        if params.fv_scheme.p > 1 and not params.ic.force_1st_order_ic_cell_averages:
             mesh.perform_GaussLegendre_quadrature(
                 lambda x, y, z: self.u0_func(idx, x, y, z, 0.0, xp=self.xp),
                 u0,
@@ -869,7 +873,7 @@ class HydroSolver:
         )
 
         if snapshot.path is not None:
-            if len(self.step_history) > 0:
+            if len(self.step_history) > 1:
                 print()  # for better separation of snapshot logs in the terminal
 
             with open(snapshot.path.parent / "output_times.txt", "a") as f:
@@ -1240,10 +1244,19 @@ class HydroSolver:
         flux_recipe = fv_scheme.flux_recipe
         arrays = self.arrays
 
-        _q_ = arrays["_u_"] if flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
-        _qcc_ = arrays["_ucc_"] if flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_wcc_"]
         _theta_ = arrays["_theta_"]
         _alpha_ = arrays["_alpha_"]
+        _q_ = arrays["_u_"] if flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
+        match flux_recipe:
+            case FluxRecipe.CONS_LIM_PRIM:
+                _qcc_ = arrays["_ucc_"]
+            case FluxRecipe.CONS_PRIM_LIM:
+                _qcc_ = arrays["_wcc_"]  # "_wcc_" is interpolated from conservatives
+            case FluxRecipe.PRIM_PRIM_LIM:
+                _qcc_ = self.xp.empty_like(_q_)
+                interpolate_cell_centers(_q_, _qcc_, self.mesh.active_dims, fv_scheme.p)
+            case _:
+                raise ValueError(f"Unknown flux recipe: {flux_recipe}")
 
         apply_zhang_shu_limiter(
             _q_,
@@ -1760,7 +1773,7 @@ class HydroSolver:
                 target_times.pop(0)
             self._close_step(take_snapshot_this_step)
 
-            n = len(self.step_history)
+            n = len(self.step_history) - 1
             if print_update and n % print_frequency == 0:
                 self._print_message(
                     self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
@@ -1773,3 +1786,9 @@ class HydroSolver:
             )
 
         self._finish_run()
+
+    # Helpful user attributes and methods
+
+    @property
+    def idx(self) -> VariableIndexMap:
+        return self.params.variable_index_map

@@ -362,9 +362,9 @@ def apply_zhang_shu_limiter(
                     _physical_ &= _mj_[idx(v)] >= lb
             _alpha_ *= _physical_
         if cupy:
-            cp.maximum(_theta_, _alpha_, out=_theta_)
+            cp.maximum(_theta_, _alpha_ >= 1, out=_theta_)
         else:
-            np.maximum(_theta_, _alpha_, out=_theta_)
+            np.maximum(_theta_, _alpha_ >= 1, out=_theta_)
 
     # omit variables from limiting
     if "omit_ZS" in idx.group_var_map:

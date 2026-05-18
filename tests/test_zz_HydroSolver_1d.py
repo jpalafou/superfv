@@ -13,7 +13,10 @@ from superfv import (
     ics,
 )
 from superfv.axes import DIM_TO_AXIS
+from superfv.configs import FluxRecipe
+from superfv.riemann_solvers import RiemannSolver
 from superfv.tools.norms import linf_norm
+from teyssier import cons_to_prim, weno
 
 
 @pytest.mark.parametrize(
@@ -181,3 +184,44 @@ def test_forward_backwards_advection_symmetry(scheme, dim):
         )
         < 1e-14
     )
+
+
+@pytest.mark.parametrize(
+    "ic_type_t_sim",
+    [("sod test", 0.245), ("toro test2", 0.2), ("toro test3", 0.012)],
+)
+def test_compare_with_teyssier_code(ic_type_t_sim):
+    ic_type, t_sim = ic_type_t_sim
+
+    N = 400 if ic_type == "shu osher" else 100
+    p = 3
+
+    sim = HydroSolver(
+        ic={"sod test": ics.sod_shock_tube_1d, "toro test2": ics.toro2, "toro test3": ics.toro3}[
+            ic_type
+        ],
+        force_1st_order_ic_cell_averages=True,
+        bcx=(BC.FREE, BC.FREE),
+        nx=N,
+        p=p,
+        riemann_solver=RiemannSolver.HLLC_TEYSSIER,
+        flux_recipe=FluxRecipe.PRIM_PRIM_LIM,
+        use_ZS=True,
+        rho_min=-np.inf,
+        P_min=-np.inf,
+    )
+    sim.run(t_sim, time_integrator=TimeIntegrator.RK4, allow_overshoot=True)
+
+    _, ut = weno(
+        t_sim,
+        N,
+        ic_type=ic_type,
+        bc_type="free",
+        riemann_solver="hllc",
+        time=p + 1,
+        space=p + 1,
+    )
+    wt = cons_to_prim(ut[-1, :, :])
+
+    diff = np.max(np.abs(sim.snapshot_history[-1].w[sim.idx("rho"), :, 0, 0] - wt[0, :]))
+    assert diff < 1e-14
