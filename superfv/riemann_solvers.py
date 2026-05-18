@@ -513,5 +513,5 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
         fluxes[idx("m" + dim)] = dg * vg * vg + pg
         fluxes[idx("E")] = (eg + pg) * vg
 
-    def cuda_elementwise_kernel_body(npassives: int) -> str:
+    def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         raise NotImplementedError("HLLC Teyssier Riemann solver is not implemented yet.")
