@@ -16,14 +16,11 @@ dependencies = [
     "ipykernel",
     "matplotlib",
     "numpy",
-    "pandas",
-    "rationalpy",
-    "stencilpal @ git+https://github.com/jpalafou/stencilpal.git",
 ]
 
 [project.optional-dependencies]
 dev = ["nox", "pre-commit"]
-typecheck = ["mypy", "pandas-stubs", "types-PyYAML", "types-tqdm"]
+typecheck = ["mypy", "types-PyYAML", "types-tqdm"]
 test = ["pytest"]
 
 [tool.setuptools]
