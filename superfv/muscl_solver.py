@@ -1,20 +1,61 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 
-from .configs import FluxRecipe, FV_SchemeParameters
+from .configs import FluxRecipe, FV_SchemeParameters, HydroParameters
 from .slope_limiting.muscl import (
     MUSCL_SlopeLimiter,
     compute_MUSCL_slopes,
     compute_PP2D_slopes,
 )
 from .slope_limiting.smooth_extrema_detection import compute_alpha
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import crop, replace_slice
+from .tools.variable_index_map import VariableIndexMap
 
 if TYPE_CHECKING:
     from .hydro_solver import HydroSolver
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
+
+
+def compute_flux_jvp(
+    q: ArrayLike,
+    vec: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    idx: VariableIndexMap,
+    hydro_params: HydroParameters,
+    primitives: bool = True,
+) -> ArrayLike:
+    """
+    Compute the Jacobian-vector product for the flux function.
+    """
+    if not primitives:
+        raise NotImplementedError("JVP for conservative variable fluxes not implemented yet.")
+
+    jvp = cp.zeros_like(q) if CUPY_AVAILABLE and isinstance(q, cp.ndarray) else np.zeros_like(q)
+
+    iv = idx("v" + dim)
+
+    jvp[idx("rho")] = q[iv] * vec[idx("rho")] + q[idx("rho")] * vec[iv]
+    jvp[idx("vx")] = q[iv] * vec[idx("vx")]
+    jvp[idx("vy")] = q[iv] * vec[idx("vy")]
+    jvp[idx("vz")] = q[iv] * vec[idx("vz")]
+    jvp[iv] += (1 / q[idx("rho")]) * vec[idx("P")]
+    jvp[idx("P")] = (
+        hydro_params.iso_cs**2 * jvp[idx("rho")]
+        if hydro_params.isothermal
+        else hydro_params.gamma * q[idx("P")] * vec[iv] + q[iv] * vec[idx("P")]
+    )
+    if "passives" in idx.group_var_map:
+        jvp[idx("passives")] = q[iv] * vec[idx("passives")] + q[idx("passives")] * vec[iv]
+
+    return jvp
 
 
 def update_fluxes_with_muscl_scheme(
@@ -24,6 +65,8 @@ def update_fluxes_with_muscl_scheme(
         raise ValueError("update_fluxes_with_muscl_scheme should only be called for MUSCL schemes.")
 
     muscl_params = muscl_scheme.muscl_params
+    hydro_params = sim.params.hydro
+    idx = sim.params.variable_index_map
     active_dims = sim.params.mesh.active_dims
     nvars = sim.params.variable_index_map.nvars
     nx, ny, nz = sim.mesh.shape
@@ -85,10 +128,12 @@ def update_fluxes_with_muscl_scheme(
             h = {"x": hx, "y": hy, "z": hz}[dim]
             _slopes_ = _xyz_slopes_[dim]
 
-            _jvp_[...] = sim.compute_flux_jvp(
+            _jvp_[...] = compute_flux_jvp(
                 _q_,
                 _slopes_,
                 dim,
+                idx,
+                hydro_params,
                 primitives=muscl_scheme.flux_recipe != FluxRecipe.CONS_LIM_PRIM,
             )
             _predictor_q_[...] -= 0.5 * _jvp_ * hancock_dt / h

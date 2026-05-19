@@ -1410,41 +1410,6 @@ class HydroSolver:
             tmp["z"][2] if "z" in tmp else None,
         )
 
-    def compute_flux_jvp(
-        self,
-        q: ArrayLike,
-        vec: ArrayLike,
-        dim: Literal["x", "y", "z"],
-        primitives: bool = True,
-    ) -> ArrayLike:
-        """
-        Compute the Jacobian-vector product for the flux function.
-        """
-        if not primitives:
-            raise NotImplementedError("JVP for conservative variable fluxes not implemented yet.")
-
-        idx = self.params.variable_index_map
-        hydro_params = self.params.hydro
-
-        jvp = self.xp.zeros_like(q)
-
-        iv = idx("v" + dim)
-
-        jvp[idx("rho")] = q[iv] * vec[idx("rho")] + q[idx("rho")] * vec[iv]
-        jvp[idx("vx")] = q[iv] * vec[idx("vx")]
-        jvp[idx("vy")] = q[iv] * vec[idx("vy")]
-        jvp[idx("vz")] = q[iv] * vec[idx("vz")]
-        jvp[iv] += (1 / q[idx("rho")]) * vec[idx("P")]
-        jvp[idx("P")] = (
-            hydro_params.iso_cs**2 * jvp[idx("rho")]
-            if hydro_params.isothermal
-            else hydro_params.gamma * q[idx("P")] * vec[iv] + q[iv] * vec[idx("P")]
-        )
-        if "passives" in idx.group_var_map:
-            jvp[idx("passives")] = q[iv] * vec[idx("passives")] + q[idx("passives")] * vec[iv]
-
-        return jvp
-
     # ODE solver functions
 
     def compute_time_derivative(self) -> ArrayLike:

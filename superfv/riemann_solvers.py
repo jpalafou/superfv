@@ -118,6 +118,7 @@ class UpwindRiemannSolver(RiemmannSolverBase):
     """
     Advect density and passive scalars with the upwind scheme and set all other fluxes to zero.
     """
+
     def numpy_func(
         self,
         wl: np.ndarray,
@@ -463,6 +464,7 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
     """
     1D HLLC Riemann solver adapted from the teyssier/ library.
     """
+
     def numpy_func(
         self,
         wl: np.ndarray,
