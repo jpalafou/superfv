@@ -154,13 +154,24 @@ class FV_SchemeParameters:
     shock_detection_params: ShockDetectionParameters
 
     def __post_init__(self):
+        # Non-negative polynomial degree
         if self.p < 0:
             raise ValueError("Polynomial degree p must be non-negative.")
+
+        # Couple shock detection with LazyPrimitiveMode.ADAPTIVE
         if self.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE:
             if not self.shock_detection_params.use_shock_detection:
                 raise ValueError(
                     "Shock detection must be enabled when lazy_primitive_mode is ADAPTIVE."
                 )
+        elif self.shock_detection_params.use_shock_detection:
+            warnings.warn(
+                "Disabling shock detection since lazy_primitive_mode is not ADAPTIVE.",
+                UserWarning,
+            )
+            object.__setattr__(self, "shock_detection_params", ShockDetectionParameters(False, 0.0))
+
+        # Unique limiter choice
         if (
             sum(
                 [
@@ -174,26 +185,21 @@ class FV_SchemeParameters:
             raise ValueError(
                 "Only one of MUSCL, Zhang-Shu, or MOOD limiting can be enabled at a time."
             )
+
+        # MUSCL p != 1 warning
         if self.muscl_params.use_MUSCL and self.p != 1:
             warnings.warn(
                 f"Changing p from {self.p} to 1 since MUSCL limiting is enabled.", UserWarning
             )
             object.__setattr__(self, "p", 1)
+
+        # p <= 1 non lazy primitive warning
         if self.p <= 1 and self.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             warnings.warn(
                 "Changing lazy_primitive_mode to FULL since FV scheme is second-order or lower.",
                 UserWarning,
             )
             object.__setattr__(self, "lazy_primitive_mode", LazyPrimitiveMode.FULL)
-        if (
-            self.shock_detection_params.use_shock_detection
-            and self.lazy_primitive_mode != LazyPrimitiveMode.ADAPTIVE
-        ):
-            warnings.warn(
-                "Disabling shock detection since lazy_primitive_mode is not ADAPTIVE.",
-                UserWarning,
-            )
-            object.__setattr__(self, "shock_detection_params", ShockDetectionParameters(False, 0.0))
 
 
 @dataclass(frozen=True, slots=True)
