@@ -45,16 +45,16 @@ class RiemmannSolverBase(ABC):
 
     def cuda_elementwise_kernel_in_params(self, npassives: int) -> str:
         in_params = (
-            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, "
-            "float64 v2l, float64 v2r, float64 v3l, float64 v3r, "
-            "float64 gamma, bool isothermal, float64 iso_cs, int8 dim"
+            "float64 rhol, float64 rhor, float64 v1l, float64 v1r, float64 v2l, float64 v2r, "
+            "float64 v3l, float64 v3r, float64 Pl, float64 Pr, "
+            "float64 gamma, bool isothermal, float64 iso_cs, int32 dim"
         )
         for i in range(npassives):
             in_params += f", float64 passl{i}, float64 passr{i}"
         return in_params
 
     def cuda_elementwise_kernel_out_params(self, npassives: int) -> str:
-        out_params = "float64 Frho, float64 Fv1, float64 Fv2, float64 Fv3, float64 FE"
+        out_params = "float64 Frho, float64 Fm1, float64 Fm2, float64 Fm3, float64 FE"
         for i in range(npassives):
             out_params += f", float64 Fpass{i}"
         return out_params
@@ -154,9 +154,6 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         double v = fabs(vl) > fabs(vr) ? vl : vr;
 
         Frho = v * (v > 0 ? rhol : rhor);
-        Fv1 = 0.0;
-        Fv2 = 0.0;
-        Fv3 = 0.0;
         """
         for i in range(npassives):
             body += f"\nFpass{i} = Frho * (v > 0 ? passl{i} : passr{i});"
