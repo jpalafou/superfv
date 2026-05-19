@@ -447,10 +447,10 @@ def sedov(
     t: float,
     *,
     xp: ModuleType,
-    gamma: Optional[float] = None,
-    h: Optional[float] = None,
+    gamma: float,
+    h: float,
     rho0: float = 1,
-    P0: float = 0,
+    P0: float = 1e-5,
 ) -> ArrayLike:
     """
     Returns array for the Sedov blast wave initial condition.
@@ -470,9 +470,6 @@ def sedov(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if gamma is None or h is None:
-        raise ValueError("Sedov initial condition requires `gamma` and `h` to be set.")
-
     dims = parse_xyz(x, y, z)
     out = xp.zeros((len(idx.idxs), *x.shape))
 
