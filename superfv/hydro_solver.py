@@ -46,7 +46,7 @@ from .finite_volume_driver import (
 )
 from .hydro import cons_to_prim, prim_to_cons, sound_speed
 from .mesh import UniformFVMesh
-from .muscl_solver import update_fluxes_with_muscl_scheme
+from .muscl_driver import update_fluxes_with_muscl_scheme
 from .riemann_solvers import (
     HLLC_RiemannSolver,
     HLLC_Teyssier_RiemannSolver,
