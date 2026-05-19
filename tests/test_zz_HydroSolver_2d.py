@@ -42,7 +42,7 @@ from superfv.tools.norms import linf_norm
 )
 def test_sedov(scheme):
     sim = HydroSolver(
-        ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
+        ic=partial(ics.sedov, h=1 / 64, gamma=1.4, P0=1e-5),
         bcx=(BC.REFLECTIVE, BC.FREE),
         bcy=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
