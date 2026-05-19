@@ -115,6 +115,9 @@ class RiemmannSolverBase(ABC):
 
 
 class UpwindRiemannSolver(RiemmannSolverBase):
+    """
+    Advect density and passive scalars with the upwind scheme and set all other fluxes to zero.
+    """
     def numpy_func(
         self,
         wl: np.ndarray,
@@ -221,12 +224,12 @@ class LLF_RiemannSolver(RiemmannSolverBase):
         // Compute left and right fluxes
         double Flrho = rhol * vl;
         double Frrho = rhor * vr;
-        Fm1l = Flrho * v1l;
-        Fm1r = Frrho * v1r;
-        Fm2l = Flrho * v2l;
-        Fm2r = Frrho * v2r;
-        Fm3l = Flrho * v3l;
-        Fm3r = Frrho * v3r;
+        double Fm1l = Flrho * v1l;
+        double Fm1r = Frrho * v1r;
+        double Fm2l = Flrho * v2l;
+        double Fm2r = Frrho * v2r;
+        double Fm3l = Flrho * v3l;
+        double Fm3r = Frrho * v3r;
         if (dim == 1) {
             Fm1l += Pl;
             Fm1r += Pr;
@@ -457,6 +460,9 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
 
 
 class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
+    """
+    1D HLLC Riemann solver adapted from the teyssier/ library.
+    """
     def numpy_func(
         self,
         wl: np.ndarray,
