@@ -102,6 +102,9 @@ def update_fluxes_with_muscl_scheme(
         _nodes_[..., 0] = _predictor_q_ - 0.5 * _slopes_
         _nodes_[..., 1] = _predictor_q_ + 0.5 * _slopes_
 
+        if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+            sim.conservatives_to_primitives(_nodes_, _nodes_)
+
         axis = DIM_TO_AXIS[dim]
         left_of_interface = replace_slice(crop(axis, (nghost - 1, -nghost), ndim=5), 4, 1)
         right_of_interface = replace_slice(crop(axis, (nghost, -nghost + 1), ndim=5), 4, 0)
