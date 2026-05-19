@@ -1,89 +1,168 @@
-from typing import Literal, Tuple
+from functools import lru_cache
+from typing import Literal
 
 import numpy as np
 
-from .mesh import UniformFVMesh
-from .tools.device_management import CUPY_AVAILABLE
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.variable_index_map import VariableIndexMap
 
-
-def sound_speed(idx: VariableIndexMap, w: np.ndarray, gamma: float) -> np.ndarray:
-    """
-    Compute the sound speed from primitive variables.
-
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
-        gamma: Adiabatic index.
-
-    Returns:
-        cs: Sound speed array. Has shape (1, nx, ny, nz, ...).
-    """
-    rho = w[idx("rho", keepdims=True)]
-    P = w[idx("P", keepdims=True)]
-    cs2 = gamma * P / rho
-    cs = np.sqrt(np.maximum(cs2, 0.0))
-    return cs
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
 
 
-def prim_to_cons(
-    idx: VariableIndexMap,
+def _prim_to_cs_np(
     w: np.ndarray,
+    cs: np.ndarray,
+    idx: VariableIndexMap,
     gamma: float,
-) -> np.ndarray:
-    """
-    Convert primitive variables to conservative variables.
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
+):
+    rho = w[idx("rho")]
+    P = w[idx("P")]
+    if isothermal:
+        cs[...] = iso_cs
+    else:
+        np.sqrt(np.maximum(gamma * P / rho, 0.0), out=cs)
 
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
-        gamma: Adiabatic index.
 
-    Returns:
-        u: Array with conservative variables. Has shape (nvars, nx, ny, nz, ...).
+@lru_cache(maxsize=None)
+def _make_prim_to_cs_kernel():
+    in_params = "float64 rho, float64 P, float64 gamma, bool isothermal, float64 iso_cs"
+    out_params = "float64 cs"
+
+    body = """
+    if (isothermal) {
+        cs = iso_cs;
+    } else {
+        cs = sqrt(fmax(gamma * P / rho, 0.0));
+    }
     """
+
+    return cp.ElementwiseKernel(
+        in_params=in_params,
+        out_params=out_params,
+        operation=body,
+        name="prim_to_cs",
+        no_return=True,
+    )
+
+
+def prim_to_cs(
+    w: ArrayLike,
+    cs: ArrayLike,
+    idx: VariableIndexMap,
+    gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
+):
+    """
+    Compute the speed of sound from primitive variables and write it to `cs`
+    with support for both NumPy and CuPy arrays.
+    """
+    if cs.shape != w.shape[1:]:
+        raise ValueError("Shape of cs must match the shape of a single variable in w")
+    if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
+        kernel = _make_prim_to_cs_kernel()
+        kernel(
+            w[idx("rho", keepdims=True)],
+            w[idx("P", keepdims=True)],
+            gamma,
+            isothermal,
+            iso_cs,
+            cs,
+        )
+    else:
+        _prim_to_cs_np(w, cs, idx, gamma, isothermal, iso_cs)
+
+
+def _prim_to_cons_np(w: np.ndarray, u: np.ndarray, idx: VariableIndexMap, gamma: float):
     rho = w[idx("rho")]
     vx = w[idx("vx")]
     vy = w[idx("vy")]
     vz = w[idx("vz")]
     P = w[idx("P")]
 
-    K = 0.5 * rho * (vx**2 + vy**2 + vz**2)
-
-    u = np.empty_like(w)
+    KE = 0.5 * rho * (vx**2 + vy**2 + vz**2)
 
     u[idx("rho")] = rho
     u[idx("mx")] = rho * vx
     u[idx("my")] = rho * vy
     u[idx("mz")] = rho * vz
-    u[idx("E")] = K + P / (gamma - 1)
+    u[idx("E")] = KE + P / (gamma - 1)
 
     if "passives" in idx:
         u[idx("passives")] = rho * w[idx("passives")]
 
-    return u
+
+@lru_cache(maxsize=None)
+def _make_prim_to_cons_elementwise_kernel(npassives: int):
+    in_params = "float64 rho, float64 vx, float64 vy, float64 vz, float64 P, float64 gamma"
+    out_params = "float64 rho_out, float64 mx, float64 my, float64 mz, float64 E"
+
+    body = """
+    rho_out = rho;
+    mx = rho * vx;
+    my = rho * vy;
+    mz = rho * vz;
+    double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
+    E = K + P / (gamma - 1.0);
+    """
+
+    for i in range(npassives):
+        in_params += f", float64 pass{i}"
+        out_params += f", float64 upass{i}"
+        body += f"\nupass{i} = rho * pass{i};"
+
+    return cp.ElementwiseKernel(
+        in_params=in_params,
+        out_params=out_params,
+        operation=body,
+        name=f"prim_to_cons_npass_{npassives}",
+        no_return=True,
+    )
 
 
-def cons_to_prim(
+def prim_to_cons(
+    w: ArrayLike,
+    u: ArrayLike,
     idx: VariableIndexMap,
+    gamma: float,
+):
+    """
+    Compute the conservative variables from primitive variables and write them to `u`
+    with support for both NumPy and CuPy arrays.
+    """
+    if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
+        passives = idx.group_var_map.get("passives", [])
+        kernel = _make_prim_to_cons_elementwise_kernel(len(passives))
+        kernel(
+            w[idx("rho")],
+            w[idx("vx")],
+            w[idx("vy")],
+            w[idx("vz")],
+            w[idx("P")],
+            gamma,
+            *(w[idx(v)] for v in passives),
+            u[idx("rho")],
+            u[idx("mx")],
+            u[idx("my")],
+            u[idx("mz")],
+            u[idx("E")],
+            *(u[idx(v)] for v in passives),
+        )
+    else:
+        _prim_to_cons_np(w, u, idx, gamma)
+
+
+def _cons_to_prim_np(
     u: np.ndarray,
+    w: np.ndarray,
+    idx: VariableIndexMap,
     gamma: float,
     isothermal: bool = False,
     iso_cs: float = 1.0,
-) -> np.ndarray:
-    """
-    Convert conservative variables to primitive variables.
-
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        u: Array of conservative variables. Has shape (nvars, nx, ny, nz, ...).
-        gamma: Adiabatic index.
-        isothermal: Whether the equation of state is isothermal.
-        iso_cs: Isothermal sound speed (used if isothermal is True).
-
-    Returns:
-        w: Array with primitive variables. Has shape (nvars, nx, ny, nz, ...).
-    """
+):
     rho = u[idx("rho")]
     mx = u[idx("mx")]
     my = u[idx("my")]
@@ -93,15 +172,13 @@ def cons_to_prim(
     vx = mx / rho
     vy = my / rho
     vz = mz / rho
-    K = 0.5 * rho * (vx**2 + vy**2 + vz**2)
-
-    w = np.empty_like(u)
+    KE = 0.5 * rho * (vx**2 + vy**2 + vz**2)
 
     w[idx("rho")] = rho
     w[idx("vx")] = vx
     w[idx("vy")] = vy
     w[idx("vz")] = vz
-    w[idx("P")] = rho * iso_cs**2 if isothermal else (gamma - 1) * (E - K)
+    w[idx("P")] = rho * iso_cs**2 if isothermal else (gamma - 1) * (E - KE)
 
     if "passives" in idx:
         w[idx("passives")] = u[idx("passives")] / rho
@@ -109,23 +186,82 @@ def cons_to_prim(
     return w
 
 
-def compute_fluxes(
+@lru_cache(maxsize=None)
+def _make_cons_to_prim_elementwise_kernel(npassives: int):
+    in_params = (
+        "float64 rho, float64 mx, float64 my, float64 mz, float64 E, "
+        "float64 gamma, bool isothermal, float64 iso_cs"
+    )
+    out_params = "float64 rho_out, float64 vx, float64 vy, float64 vz, float64 P"
+
+    body = """
+    rho_out = rho;
+    vx = mx / rho;
+    vy = my / rho;
+    vz = mz / rho;
+    double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
+    P = isothermal ? rho * iso_cs * iso_cs : (gamma - 1.0) * (E - K);
+    """
+
+    for i in range(npassives):
+        in_params += f", float64 upass{i}"
+        out_params += f", float64 pass{i}"
+        body += f"\npass{i} = upass{i} / rho;"
+
+    return cp.ElementwiseKernel(
+        in_params=in_params,
+        out_params=out_params,
+        operation=body,
+        name=f"cons_to_prim_npass_{npassives}",
+        no_return=True,
+    )
+
+
+def cons_to_prim(
+    u: ArrayLike,
+    w: ArrayLike,
     idx: VariableIndexMap,
+    gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
+):
+    """
+    Compute the primitive variables from conservative variables and write them to `w`
+    with support for both NumPy and CuPy arrays.
+    """
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        passives = idx.group_var_map.get("passives", [])
+        kernel = _make_cons_to_prim_elementwise_kernel(len(passives))
+        kernel(
+            u[idx("rho")],
+            u[idx("mx")],
+            u[idx("my")],
+            u[idx("mz")],
+            u[idx("E")],
+            gamma,
+            isothermal,
+            iso_cs,
+            w[idx("rho")],
+            w[idx("vx")],
+            w[idx("vy")],
+            w[idx("vz")],
+            w[idx("P")],
+            *(w[idx(v)] for v in passives),
+        )
+        return w
+    else:
+        return _cons_to_prim_np(u, w, idx, gamma, isothermal, iso_cs)
+
+
+def prim_to_flux(
     w: np.ndarray,
+    f: np.ndarray,
+    idx: VariableIndexMap,
     dim: Literal["x", "y", "z"],
     gamma: float,
-) -> np.ndarray:
+):
     """
-    Compute the fluxes for the Euler equations in the specified dimension.
-
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
-        dim: Dimension in which to compute the flux. Can be "x", "y", or "z".
-        gamma: Adiabatic index.
-
-    Returns:
-        F: Flux array. Has shape (nvars, nx, ny, nz, ...).
+    Compute the fluxes from primitive variables and write them to `f`.
     """
     d1 = dim
     d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
@@ -136,161 +272,13 @@ def compute_fluxes(
     v3 = w[idx("v" + d3)]
     P = w[idx("P")]
 
-    K = 0.5 * rho * (v1**2 + v2**2 + v3**2)
+    KE = 0.5 * rho * (v1**2 + v2**2 + v3**2)
 
-    F = np.empty_like(w)
-
-    F[idx("rho")] = rho * v1
-    F[idx("m" + d1)] = rho * v1**2 + P
-    F[idx("m" + d2)] = rho * v1 * v2
-    F[idx("m" + d3)] = rho * v1 * v3
-    F[idx("E")] = (K + P / (gamma - 1) + P) * v1
+    f[idx("rho")] = rho * v1
+    f[idx("m" + d1)] = rho * v1**2 + P
+    f[idx("m" + d2)] = rho * v1 * v2
+    f[idx("m" + d3)] = rho * v1 * v3
+    f[idx("E")] = (KE + P / (gamma - 1) + P) * v1
 
     if "passives" in idx:
-        F[idx("passives")] = rho * v1 * w[idx("passives")]
-
-    return F
-
-
-def turbulent_power_specta(
-    idx: VariableIndexMap,
-    w: np.ndarray,
-    mesh: UniformFVMesh,
-    nbins: int,
-    binmode: Literal["linear", "log"] = "linear",
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Compute the turbulent kinetic energy power spectrum from the velocity field.
-
-    Args:
-        idx: VariableIndexMap object with indices for hydro variables.
-        w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
-        mesh: UniformFVMesh object defining the computational mesh.
-        nbins: Number of bins for the power spectrum.
-        binmode: Bin spacing mode, either "linear" or "log".
-
-    Returns:
-        k_centers: Array of shape (nbins,) with the center of each wavenumber bin.
-        E_k: Array of shape (nbins,) with the energy in each wavenumber bin.
-    """
-    nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
-    dx, dy, dz = mesh.hx, mesh.hy, mesh.hz
-    active_dims = mesh.active_dims
-
-    N = nx * ny * nz
-    active_axes = tuple({"x": 0, "y": 1, "z": 2}[d] for d in active_dims)
-
-    vx = w[idx("vx")] - w[idx("vx")].mean()
-    vy = w[idx("vy")] - w[idx("vy")].mean()
-    vz = w[idx("vz")] - w[idx("vz")].mean()
-
-    Vx = np.fft.fftn(vx, axes=active_axes, norm="ortho")
-    Vy = np.fft.fftn(vy, axes=active_axes, norm="ortho")
-    Vz = np.fft.fftn(vz, axes=active_axes, norm="ortho")
-
-    # Per-mode kinetic energy (per *sum* convention). We'll rescale for "mean" below.
-    P = 0.5 * (np.abs(Vx) ** 2 + np.abs(Vy) ** 2 + np.abs(Vz) ** 2)
-    P = P / N  # rescale to get mean(|v|^2) = sum P
-
-    # Angular wavenumbers (rad/length)
-    kx = 2.0 * np.pi * np.fft.fftfreq(nx, d=dx) if "x" in active_dims else np.array([0.0])
-    ky = 2.0 * np.pi * np.fft.fftfreq(ny, d=dy) if "y" in active_dims else np.array([0.0])
-    kz = 2.0 * np.pi * np.fft.fftfreq(nz, d=dz) if "z" in active_dims else np.array([0.0])
-    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing="ij")
-    Kmag = np.sqrt(KX**2 + KY**2 + KZ**2)
-
-    k = Kmag.ravel()
-    p = P.ravel()
-
-    mask = k > 0
-    k = k[mask]
-    p = p[mask]
-
-    if binmode == "linear":
-        edges = np.linspace(k.min(), k.max(), nbins + 1)
-        k_centers = 0.5 * (edges[:-1] + edges[1:])
-    elif binmode == "log":
-        edges = np.logspace(np.log10(k.min()), np.log10(k.max()), nbins + 1)
-        k_centers = np.sqrt(edges[:-1] * edges[1:])
-    else:
-        raise ValueError("binmode must be 'linear' or 'log'")
-
-    bin_idx = np.digitize(k, edges) - 1
-    valid = (bin_idx >= 0) & (bin_idx < nbins)
-    bin_idx = bin_idx[valid]
-    p = p[valid]
-
-    E_shell = np.bincount(bin_idx, weights=p, minlength=nbins)
-    widths = edges[1:] - edges[:-1]
-    E_k = E_shell / widths
-
-    return k_centers, E_k
-
-
-if CUPY_AVAILABLE:
-    import cupy as cp  # type: ignore
-
-    sound_speed_cp = cp.ElementwiseKernel(
-        in_params="float64 rho, float64 P, float64 gamma",
-        out_params="float64 cs",
-        operation="""
-            double val = gamma * P / rho;
-            cs = sqrt(fmax(val, 0.0));
-        """,
-        name="sound_speed_ew",
-    )
-
-    def make_prim_to_cons_elementwise_kernel(npassives: int):
-        in_params = "float64 rho, float64 vx, float64 vy, float64 vz, float64 P, float64 gamma"
-        out_params = "float64 rho_out, float64 mx, float64 my, float64 mz, float64 E"
-
-        body = """
-        rho_out = rho;
-        mx = rho * vx;
-        my = rho * vy;
-        mz = rho * vz;
-        double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
-        E = K + P / (gamma - 1.0);
-        """
-
-        for i in range(npassives):
-            in_params += f", float64 pass{i}"
-            out_params += f", float64 upass{i}"
-            body += f"\nupass{i} = rho * pass{i};"
-
-        return cp.ElementwiseKernel(
-            in_params=in_params,
-            out_params=out_params,
-            operation=body,
-            name=f"prim_to_cons_npass_{npassives}",
-            no_return=True,
-        )
-
-    def make_cons_to_prim_elementwise_kernel(npassives: int):
-        in_params = (
-            "float64 rho, float64 mx, float64 my, float64 mz, float64 E, "
-            "float64 gamma, bool isothermal, float64 iso_cs"
-        )
-        out_params = "float64 rho_out, float64 vx, float64 vy, float64 vz, float64 P"
-
-        body = """
-        rho_out = rho;
-        vx = mx / rho;
-        vy = my / rho;
-        vz = mz / rho;
-        double K = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
-        P = isothermal ? rho * iso_cs * iso_cs : (gamma - 1.0) * (E - K);
-        """
-
-        for i in range(npassives):
-            in_params += f", float64 upass{i}"
-            out_params += f", float64 pass{i}"
-            body += f"\npass{i} = upass{i} / rho;"
-
-        return cp.ElementwiseKernel(
-            in_params=in_params,
-            out_params=out_params,
-            operation=body,
-            name=f"cons_to_prim_npass_{npassives}",
-            no_return=True,
-        )
+        f[idx("passives")] = rho * v1 * w[idx("passives")]

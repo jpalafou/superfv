@@ -44,7 +44,7 @@ from .finite_volume_driver import (
     interpolate_cell_centers,
     interpolate_face_nodes,
 )
-from .hydro import cons_to_prim, prim_to_cons, sound_speed
+from .hydro import cons_to_prim, prim_to_cons, prim_to_cs
 from .mesh import UniformFVMesh
 from .muscl_driver import update_fluxes_with_muscl_scheme
 from .riemann_solvers import (
@@ -62,13 +62,6 @@ from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
 from .tools.step_history import MultiTimer, StepHistory, StepSummary, SubstepSummary
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
-
-if CUPY_AVAILABLE:
-    from .hydro import (
-        make_cons_to_prim_elementwise_kernel,
-        make_prim_to_cons_elementwise_kernel,
-        sound_speed_cp,
-    )
 
 
 class TimeIntegrator(Enum):
@@ -638,7 +631,6 @@ class HydroSolver:
         return w0_func
 
     def _build_conservative_ic_u0_func(self):
-
         w0_func = self._primitive_ic_w0_func()
 
         def u0_func(
@@ -937,15 +929,26 @@ class HydroSolver:
         self.step_history.append(step_summary)
         self._reset_step_summary(step_summary.step + 1)
 
-    # Helper functions
+    # Hydro solver functions
 
-    @cached_property
-    def _prim_to_cons_cp(self):
-        return make_prim_to_cons_elementwise_kernel(self.params.ic.npassives)
+    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
+        idx = self.params.variable_index_map
+        gamma = self.params.hydro.gamma
+        prim_to_cons(w, u, idx, gamma=gamma)
 
-    @cached_property
-    def _cons_to_prim_cp(self):
-        return make_cons_to_prim_elementwise_kernel(self.params.ic.npassives)
+    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
+        idx = self.params.variable_index_map
+        gamma = self.params.hydro.gamma
+        isothermal = self.params.hydro.isothermal
+        iso_cs = self.params.hydro.iso_cs
+        cons_to_prim(u, w, idx, gamma, isothermal, iso_cs)
+
+    def primitives_to_sound_speed(self, w: ArrayLike, cs: ArrayLike):
+        idx = self.params.variable_index_map
+        gamma = self.params.hydro.gamma
+        isothermal = self.params.hydro.isothermal
+        iso_cs = self.params.hydro.iso_cs
+        prim_to_cs(w, cs, idx, gamma, isothermal, iso_cs)
 
     @cached_property
     def riemann_solver(self):
@@ -965,98 +968,22 @@ class HydroSolver:
             case _:
                 raise ValueError(f"Unknown Riemann solver: {rs}")
 
-    # Hydro solver functions
-
-    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
-        """
-        Write conservative variables into `u` using primitive variables from `w`.
-        """
-        params = self.params
-        idx = params.variable_index_map
-
-        if params.cupy:
-            self._prim_to_cons_cp(
-                w[idx("rho")],
-                w[idx("vx")],
-                w[idx("vy")],
-                w[idx("vz")],
-                w[idx("P")],
-                params.hydro.gamma,
-                *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
-                u[idx("rho")],
-                u[idx("mx")],
-                u[idx("my")],
-                u[idx("mz")],
-                u[idx("E")],
-                *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
-            )
-        else:
-            u[...] = prim_to_cons(idx, w, params.hydro.gamma)
-
-    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
-        """
-        Write primitive variables into `w` from conservative variables `u`.
-        """
-        params = self.params
-        idx = params.variable_index_map
-
-        if params.cupy:
-            self._cons_to_prim_cp(
-                u[idx("rho")],
-                u[idx("mx")],
-                u[idx("my")],
-                u[idx("mz")],
-                u[idx("E")],
-                params.hydro.gamma,
-                params.hydro.isothermal,
-                params.hydro.iso_cs,
-                *(u[idx(v)] for v in idx.group_var_map.get("passives", [])),
-                w[idx("rho")],
-                w[idx("vx")],
-                w[idx("vy")],
-                w[idx("vz")],
-                w[idx("P")],
-                *(w[idx(v)] for v in idx.group_var_map.get("passives", [])),
-            )
-        else:
-            w[...] = cons_to_prim(
-                idx,
-                u,
-                params.hydro.gamma,
-                params.hydro.isothermal,
-                params.hydro.iso_cs,
-            )
-
-    def compute_sound_speed(self, w: ArrayLike, c: ArrayLike):
-        """
-        Compute the sound speed from primitives `w` and write the result to `c`.
-        """
-        params = self.params
-        idx = params.variable_index_map
-
-        if params.hydro.isothermal:
-            c[...] = params.hydro.iso_cs
-        elif params.cupy:
-            c[...] = sound_speed_cp(w[idx("rho")], w[idx("P")], params.hydro.gamma)
-        else:
-            c[...] = sound_speed(idx, w, params.hydro.gamma)
-
     def compute_dt(self, t: float, u: ArrayLike) -> float:
         params = self.params
         idx = params.variable_index_map
         mesh = self.mesh
 
         w = self.xp.empty_like(u)
-        c = self.xp.empty_like(u[0, ...])
+        cs = self.xp.empty_like(u[0, ...])
         sum_of_s_over_h = self.xp.zeros_like(u[0, ...])
 
         self.conservatives_to_primitives(u, w)
-        self.compute_sound_speed(w, c)
+        self.primitives_to_sound_speed(w, cs)
 
         for dim, h in zip(["x", "y", "z"], [mesh.hx, mesh.hy, mesh.hz]):
             if dim not in params.mesh.active_dims:
                 continue
-            s = self.xp.abs(w[idx("v" + dim)]) + c
+            s = self.xp.abs(w[idx("v" + dim)]) + cs
             sum_of_s_over_h += s / h
 
         max_speed = self.xp.max(sum_of_s_over_h).item()
@@ -1106,23 +1033,23 @@ class HydroSolver:
         _w_ = arrays["_w_"]
         _has_shock_ = arrays["_has_shock_"]
         _q_ref_ = self.xp.empty_like(_u_)
-        _c_ = self.xp.empty_like(_u_[:1, ...])
+        _cs_ = self.xp.empty_like(_u_[0, ...])
         _eta_ = self.xp.empty_like(_u_)
 
-        self.compute_sound_speed(_w_, _c_)
+        self.primitives_to_sound_speed(_w_, _cs_)
 
         if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             # Detect shocks using conservatives
             _q_ref_[...] = _u_
-            _c_ *= _u_[idx("rho", keepdims=True)]
+            _cs_ *= _u_[idx("rho", keepdims=True)]
             for dim in active_dims:
-                _q_ref_[idx("v" + dim)] = _c_
+                _q_ref_[idx("v" + dim)] = _cs_
             detect_shocks(_u_, _q_ref_, _eta_, _has_shock_, active_dims, eta_max)
         else:
             # Detect shocks using primitives
             _q_ref_[...] = _w_
             for dim in active_dims:
-                _q_ref_[idx("v" + dim)] = _c_
+                _q_ref_[idx("v" + dim)] = _cs_
             detect_shocks(_w_, _q_ref_, _eta_, _has_shock_, active_dims, eta_max)
 
     def update_cell_centers_and_primitive_cell_averages(

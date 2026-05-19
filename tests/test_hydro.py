@@ -2,21 +2,15 @@ import numpy as np
 import pytest
 
 import teyssier
-from superfv.hydro import compute_fluxes, cons_to_prim, prim_to_cons
+from superfv.hydro import cons_to_prim, prim_to_cons, prim_to_flux
 from superfv.riemann_solvers import (
     HLLC_RiemannSolver,
     LLF_RiemannSolver,
     UpwindRiemannSolver,
 )
-from superfv.tools.device_management import CUPY_AVAILABLE, xp
+from superfv.tools.device_management import xp
 from superfv.tools.norms import l1_norm, linf_norm
 from superfv.tools.variable_index_map import VariableIndexMap
-
-if CUPY_AVAILABLE:
-    from superfv.hydro import (
-        make_cons_to_prim_elementwise_kernel,
-        make_prim_to_cons_elementwise_kernel,
-    )
 
 
 @pytest.fixture
@@ -56,53 +50,16 @@ def test_primitive_to_conservative_invertability(trial, gamma, euler_slicer):
     N = 64
 
     W = xp.empty((8, N, N, N))
+    U = xp.empty((8, N, N, N))
+    W2 = xp.empty((8, N, N, N))
+
     W[...] = xp.random.rand(*W.shape)
     W[idx("rho")] += 1.0
     W[idx("P")] += 1.0
 
     # convert to conservative and back to primitive
-    if CUPY_AVAILABLE:
-        prim_to_cons_elementwise_kernel = make_prim_to_cons_elementwise_kernel(3)
-        cons_to_prim_elementwise_kernel = make_cons_to_prim_elementwise_kernel(3)
-
-        U = xp.empty_like(W)
-        prim_to_cons_elementwise_kernel(
-            W[idx("rho")],
-            W[idx("vx")],
-            W[idx("vy")],
-            W[idx("vz")],
-            W[idx("P")],
-            gamma,
-            *(W[idx(v)] for v in idx.group_var_map.get("passives", [])),
-            U[idx("rho")],
-            U[idx("mx")],
-            U[idx("my")],
-            U[idx("mz")],
-            U[idx("E")],
-            *(U[idx(v)] for v in idx.group_var_map.get("passives", [])),
-        )
-
-        W2 = xp.empty_like(W)
-        cons_to_prim_elementwise_kernel(
-            U[idx("rho")],
-            U[idx("mx")],
-            U[idx("my")],
-            U[idx("mz")],
-            U[idx("E")],
-            gamma,
-            False,
-            0.0,
-            *(U[idx(v)] for v in idx.group_var_map.get("passives", [])),
-            W2[idx("rho")],
-            W2[idx("vx")],
-            W2[idx("vy")],
-            W2[idx("vz")],
-            W2[idx("P")],
-            *(W2[idx(v)] for v in idx.group_var_map.get("passives", [])),
-        )
-    else:
-        U = prim_to_cons(idx, W, gamma=gamma)
-        W2 = cons_to_prim(idx, U, gamma=gamma, isothermal=False)
+    prim_to_cons(W, U, idx, gamma)
+    cons_to_prim(U, W2, idx, gamma)
 
     # check that the primitive values are the same
     assert l1_norm(W - W2) < 1e-15
@@ -119,53 +76,16 @@ def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
     N = 64
 
     U = xp.empty((8, N, N, N))
+    W = xp.empty((8, N, N, N))
+    U2 = xp.empty((8, N, N, N))
+
     U[...] = xp.random.rand(*U.shape)
     U[idx("rho")] += 1.0
     U[idx("E")] += 1.0
 
     # convert to conservative and back to primitive
-    if CUPY_AVAILABLE:
-        cons_to_prim_elementwise_kernel = make_cons_to_prim_elementwise_kernel(3)
-        prim_to_cons_elementwise_kernel = make_prim_to_cons_elementwise_kernel(3)
-
-        W = xp.empty_like(U)
-        cons_to_prim_elementwise_kernel(
-            U[idx("rho")],
-            U[idx("mx")],
-            U[idx("my")],
-            U[idx("mz")],
-            U[idx("E")],
-            gamma,
-            False,
-            0.0,
-            *(U[idx(v)] for v in idx.group_var_map.get("passives", [])),
-            W[idx("rho")],
-            W[idx("vx")],
-            W[idx("vy")],
-            W[idx("vz")],
-            W[idx("P")],
-            *(W[idx(v)] for v in idx.group_var_map.get("passives", [])),
-        )
-
-        U2 = xp.empty_like(U)
-        prim_to_cons_elementwise_kernel(
-            W[idx("rho")],
-            W[idx("vx")],
-            W[idx("vy")],
-            W[idx("vz")],
-            W[idx("P")],
-            gamma,
-            *(W[idx(v)] for v in idx.group_var_map.get("passives", [])),
-            U2[idx("rho")],
-            U2[idx("mx")],
-            U2[idx("my")],
-            U2[idx("mz")],
-            U2[idx("E")],
-            *(U2[idx(v)] for v in idx.group_var_map.get("passives", [])),
-        )
-    else:
-        W = cons_to_prim(idx, U, gamma=gamma)
-        U2 = prim_to_cons(idx, W, gamma=gamma)
+    cons_to_prim(U, W, idx, gamma)
+    prim_to_cons(W, U2, idx, gamma)
 
     # check that the primitive values are the same
     assert l1_norm(U - U2) < 1e-15
@@ -181,12 +101,15 @@ def test_teyssier_prim_to_cons(euler_slicer):
     N = 64
 
     w = np.zeros((5, N, N, N))
+    u1 = np.zeros((5, N, N, N))
+    u2 = np.zeros((3, N, N, N))
+
     w[idx("rho")] = 1e-6 * np.random.rand(N, N, N)
     w[idx("vx")] = 2.0 * np.random.rand(N, N, N) - 1.0
     w[idx("P")] = 1e-6 * np.random.rand(N, N, N)
 
-    u1 = prim_to_cons(idx, w, gamma=1.4)
-    u2 = teyssier.prim_to_cons(w[idx("test")])
+    prim_to_cons(w, u1, idx, gamma=1.4)
+    u2[...] = teyssier.prim_to_cons(w[idx("test")])
 
     assert linf_norm(u1[idx("rho")] - u2[0]) == 0
     assert linf_norm(u1[idx("mx")] - u2[1]) == 0
@@ -203,12 +126,15 @@ def test_teyssier_cons_to_prim(euler_slicer):
     N = 64
 
     u = np.zeros((5, N, N, N))
+    w1 = np.zeros((5, N, N, N))
+    w2 = np.zeros((3, N, N, N))
+
     u[idx("rho")] = 1e-6 * np.random.rand(N, N, N) + 1.0
     u[idx("mx")] = 2.0 * np.random.rand(N, N, N) - 1.0
     u[idx("E")] = 1e-6 * np.random.rand(N, N, N) + 1.0
 
-    w1 = cons_to_prim(idx, u, gamma=1.4)
-    w2 = teyssier.cons_to_prim(u[idx("test")])
+    cons_to_prim(u, w1, idx, gamma=1.4)
+    w2[...] = teyssier.cons_to_prim(u[idx("test")])
 
     assert linf_norm(w1[idx("rho")] - w2[0]) == 0
     assert linf_norm(w1[idx("vx")] - w2[1]) == 0
@@ -224,17 +150,20 @@ def test_teyssier_compute_fluxes(euler_slicer):
 
     N = 64
 
-    w = np.empty((5, N, N, N))
+    w = np.zeros((5, N, N, N))
+    f1 = np.zeros((5, N, N, N))
+    f2 = np.zeros((3, N, N, N))
+
     w[idx("rho")] = 1e-6 * np.random.rand(N, N, N) + 1.0
     w[idx("vx")] = 2.0 * np.random.rand(N, N, N) - 1.0
     w[idx("P")] = 1e-6 * np.random.rand(N, N, N) + 1.0
 
-    f1 = teyssier.prim_to_flux(w[idx("test")])
-    f2 = compute_fluxes(idx, w, "x", gamma=1.4)
+    prim_to_flux(w, f1, idx, "x", gamma=1.4)
+    f2[...] = teyssier.prim_to_flux(w[idx("test")])
 
-    assert linf_norm(f1[0] - f2[idx("rho")]) < 1e-15
-    assert linf_norm(f1[1] - f2[idx("mx")]) < 1e-15
-    assert linf_norm(f1[2] - f2[idx("E")]) < 1e-15
+    assert linf_norm(f1[idx("rho")] - f2[0]) < 1e-15
+    assert linf_norm(f1[idx("mx")] - f2[1]) < 1e-15
+    assert linf_norm(f1[idx("E")] - f2[2]) < 1e-15
 
 
 @pytest.mark.parametrize(
@@ -249,6 +178,9 @@ def test_passive_scalars_are_density_weighted_and_advected(
     idx = euler_slicer
 
     w = np.zeros((8, 1, 1, 1))
+    u = np.zeros((8, 1, 1, 1))
+    w2 = np.zeros((8, 1, 1, 1))
+
     w[idx("rho")] = 2.0
     w[idx("vx")] = 1.5
     w[idx("vy")] = -0.25
@@ -258,19 +190,21 @@ def test_passive_scalars_are_density_weighted_and_advected(
     w[idx("passive_scalar2")] = 0.6
     w[idx("passive_scalar3")] = 0.8
 
-    u = prim_to_cons(idx, w, gamma=1.4)
+    prim_to_cons(w, u, idx, gamma=1.4)
     assert linf_norm(u[idx("passive_scalar1")] - w[idx("rho")] * w[idx("passive_scalar1")]) == 0
     assert linf_norm(u[idx("passive_scalar2")] - w[idx("rho")] * w[idx("passive_scalar2")]) == 0
     assert linf_norm(u[idx("passive_scalar3")] - w[idx("rho")] * w[idx("passive_scalar3")]) == 0
 
-    w2 = cons_to_prim(idx, u, gamma=1.4)
+    cons_to_prim(u, w2, idx, gamma=1.4, isothermal=isothermal)
     assert linf_norm(w2[idx("passive_scalar1")] - w[idx("passive_scalar1")]) == 0
     assert linf_norm(w2[idx("passive_scalar2")] - w[idx("passive_scalar2")]) == 0
     assert linf_norm(w2[idx("passive_scalar3")] - w[idx("passive_scalar3")]) == 0
 
     flux = np.empty_like(w)
+    expected_flux = np.empty_like(w)
+
     solver_cls(npassives=3)(w, w, flux, dim, idx, gamma=1.4, isothermal=isothermal)
-    expected_flux = compute_fluxes(idx, w, dim, gamma=1.4)
+    prim_to_flux(w, expected_flux, idx, dim, gamma=1.4)
 
     assert linf_norm(flux[idx("passive_scalar1")] - expected_flux[idx("passive_scalar1")]) == 0
     assert linf_norm(flux[idx("passive_scalar2")] - expected_flux[idx("passive_scalar2")]) == 0

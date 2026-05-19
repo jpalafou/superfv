@@ -5,7 +5,7 @@ from typing import Literal
 
 import numpy as np
 
-from .hydro import compute_fluxes, prim_to_cons, sound_speed
+from .hydro import prim_to_cons, prim_to_cs, prim_to_flux
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.stability import avoid0
 from .tools.variable_index_map import VariableIndexMap
@@ -176,17 +176,23 @@ class LLF_RiemannSolver(RiemmannSolverBase):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ):
-        ul = prim_to_cons(idx, wl, gamma)
-        ur = prim_to_cons(idx, wr, gamma)
+        ul = np.empty_like(wl)
+        ur = np.empty_like(wr)
+        Fl = np.empty_like(wl)
+        Fr = np.empty_like(wr)
+        csl = np.empty_like(wl[idx("rho")])
+        csr = np.empty_like(wr[idx("rho")])
 
-        csl = iso_cs if isothermal else np.sqrt(gamma * wl[idx("P")] / wl[idx("rho")])
-        csr = iso_cs if isothermal else np.sqrt(gamma * wr[idx("P")] / wr[idx("rho")])
+        prim_to_cons(wl, ul, idx, gamma)
+        prim_to_cons(wr, ur, idx, gamma)
+        prim_to_flux(wl, Fl, idx, dim, gamma)
+        prim_to_flux(wr, Fr, idx, dim, gamma)
+        prim_to_cs(wl, csl, idx, gamma, isothermal, iso_cs)
+        prim_to_cs(wr, csr, idx, gamma, isothermal, iso_cs)
+
         sl = csl + np.abs(wl[idx("v" + dim)])
         sr = csr + np.abs(wr[idx("v" + dim)])
         smax = np.maximum(sl, sr)
-
-        Fl = compute_fluxes(idx, wl, dim, gamma)
-        Fr = compute_fluxes(idx, wr, dim, gamma)
 
         fluxes[...] = 0.5 * (Fl + Fr - smax * (ur - ul))
 
@@ -204,8 +210,8 @@ class LLF_RiemannSolver(RiemmannSolverBase):
             vl = v3l;
             vr = v3r;
         }
-        double csl = isothermal ? iso_cs : sqrt(gamma * Pl / rhol);
-        double csr = isothermal ? iso_cs : sqrt(gamma * Pr / rhor);
+        double csl = isothermal ? iso_cs : sqrt(max(gamma * Pl / rhol, 0.0));
+        double csr = isothermal ? iso_cs : sqrt(max(gamma * Pr / rhor, 0.0));
         double sl = csl + fabs(vl);
         double sr = csr + fabs(vr);
         double smax = fmax(sl, sr);
@@ -304,8 +310,15 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         d1 = dim
         d2, d3 = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[dim]
 
-        ul = prim_to_cons(idx, wl, gamma)
-        ur = prim_to_cons(idx, wr, gamma)
+        ul = np.empty_like(wl)
+        ur = np.empty_like(wr)
+        csl = np.empty_like(wl[idx("rho")])
+        csr = np.empty_like(wr[idx("rho")])
+
+        prim_to_cons(wl, ul, idx, gamma)
+        prim_to_cons(wr, ur, idx, gamma)
+        prim_to_cs(wl, csl, idx, gamma, isothermal, iso_cs)
+        prim_to_cs(wr, csr, idx, gamma, isothermal, iso_cs)
 
         rhol = wl[idx("rho")]
         v1l = wl[idx("v" + d1)]
@@ -320,9 +333,7 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         Pr = wr[idx("P")]
         Er = ur[idx("E")]
 
-        cl = iso_cs if isothermal else sound_speed(idx, wl, gamma)
-        cr = iso_cs if isothermal else sound_speed(idx, wr, gamma)
-        cmax = np.maximum(cl, cr)
+        cmax = np.maximum(csl, csr)
 
         sl = np.minimum(v1l, v1r) - cmax
         sr = np.maximum(v1l, v1r) + cmax
@@ -377,8 +388,8 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         double El = Pl / (gamma - 1.0) + Kl;
         double Er = Pr / (gamma - 1.0) + Kr;
 
-        double cl = isothermal ? iso_cs : sqrt(gamma * Pl / rhol);
-        double cr = isothermal ? iso_cs : sqrt(gamma * Pr / rhor);
+        double cl = isothermal ? iso_cs : sqrt(max(gamma * Pl / rhol, 0.0));
+        double cr = isothermal ? iso_cs : sqrt(max(gamma * Pr / rhor, 0.0));
         double cmax = fmax(cl, cr);
 
         double sl = fmin(vl, vr) - cmax;
@@ -480,8 +491,11 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
             raise NotImplementedError("No support for 1D problems.")
         if "passives" in idx.group_var_map:
             raise NotImplementedError("No support for passive scalars.")
-        uleft = prim_to_cons(idx, wl, gamma)
-        uright = prim_to_cons(idx, wr, gamma)
+
+        uleft = np.empty_like(wl)
+        uright = np.empty_like(wr)
+        prim_to_cons(wl, uleft, idx, gamma)
+        prim_to_cons(wr, uright, idx, gamma)
         # left state
         dl = wl[idx("rho")]
         vl = wl[idx("v" + dim)]
