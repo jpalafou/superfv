@@ -80,8 +80,6 @@ class RiemmannSolverBase(ABC):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ):
-        fluxes[...] = 0.0  # Initialize zero fluxes
-
         if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
             self.cuda_kernel(
                 wl[idx("rho")],
@@ -135,6 +133,10 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
         fluxes[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
+        fluxes[idx("mx")] = 0.0
+        fluxes[idx("my")] = 0.0
+        fluxes[idx("mz")] = 0.0
+        fluxes[idx("E")] = 0.0
         if "passives" in idx.group_var_map:
             fluxes[idx("passives")] = fluxes[idx("rho")] * np.where(
                 v > 0, wl[idx("passives")], wr[idx("passives")]
@@ -158,6 +160,10 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         double v = fabs(vl) > fabs(vr) ? vl : vr;
 
         Frho = v * (v > 0 ? rhol : rhor);
+        Fm1 = 0.0;
+        Fm2 = 0.0;
+        Fm3 = 0.0;
+        FE = 0.0;
         """
         for i in range(npassives):
             body += f"\nFpass{i} = Frho * (v > 0 ? passl{i} : passr{i});"
@@ -529,7 +535,18 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
         eg = np.where(sl > 0, el, np.where(vstar > 0, estarl, np.where(sr > 0, estarr, er)))
         # compute godunov flux
         fluxes[idx("rho")] = dg * vg
-        fluxes[idx("m" + dim)] = dg * vg * vg + pg
+        if dim == "x":
+            fluxes[idx("mx")] = dg * vg * vg + pg
+            fluxes[idx("my")] = 0.0
+            fluxes[idx("mz")] = 0.0
+        elif dim == "y":
+            fluxes[idx("mx")] = 0.0
+            fluxes[idx("my")] = dg * vg * vg + pg
+            fluxes[idx("mz")] = 0.0
+        elif dim == "z":
+            fluxes[idx("mx")] = 0.0
+            fluxes[idx("my")] = 0.0
+            fluxes[idx("mz")] = dg * vg * vg + pg
         fluxes[idx("E")] = (eg + pg) * vg
 
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
