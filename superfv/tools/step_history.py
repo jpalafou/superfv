@@ -98,6 +98,7 @@ class SubstepSummary:
 @dataclass
 class StepSummary:
     step: int
+    dt: float
     t_sim: float
     t_wall: float
     n_dt_revisions: int

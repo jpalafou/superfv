@@ -811,6 +811,7 @@ class HydroSolver:
     def _reset_step_summary(self, n: int = 0):
         self.step_summary = StepSummary(
             step=n,
+            dt=np.nan,
             t_sim=np.nan,
             t_wall=np.nan,
             n_dt_revisions=0,
@@ -930,7 +931,6 @@ class HydroSolver:
 
         u = self.arrays["u"]
 
-        step_summary.t_sim = self.t
         step_summary.t_wall = time.time() - self.t_wall_start
         step_summary.rho_min = self.xp.min(u[idx("rho")]).item()
         step_summary.E_total = self.xp.sum(u[idx("E")]).item()
@@ -1632,6 +1632,10 @@ class HydroSolver:
         # Update the state
         u[...] = unew
         self.t += dt
+
+        # Update some step summary entries
+        self.step_summary.dt = dt
+        self.step_summary.t_sim = self.t
 
     def _finish_run(self):
         output_path = self.params.output_path
