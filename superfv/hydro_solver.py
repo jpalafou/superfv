@@ -1414,23 +1414,6 @@ class HydroSolver:
         params = self.params
         arrays = self.arrays
 
-        if time_integrator in (
-            TimeIntegrator.MATCH_P_UP_TO_SSPRK3,
-            TimeIntegrator.MATCH_P_UP_TO_RK4,
-        ):
-            time_integrator = {
-                0: TimeIntegrator.FORWARD_EULER,
-                1: TimeIntegrator.SSPRK2,
-                2: TimeIntegrator.SSPRK3,
-            }.get(
-                params.fv_scheme.p,
-                (
-                    TimeIntegrator.SSPRK3
-                    if time_integrator == TimeIntegrator.MATCH_P_UP_TO_SSPRK3
-                    else TimeIntegrator.RK4
-                ),
-            )
-
         unew = arrays["unew"]
 
         match time_integrator:
@@ -1511,6 +1494,21 @@ class HydroSolver:
     def _start_wall_timer(self):
         self.t_wall_start = time.time()
         self._progress_line_len = 0
+
+    def _select_time_integrator(self, time_integrator: TimeIntegrator):
+        p = self.params.fv_scheme.p
+        if time_integrator == TimeIntegrator.MATCH_P_UP_TO_SSPRK3:
+            return {0: TimeIntegrator.FORWARD_EULER, 1: TimeIntegrator.SSPRK2}.get(
+                p, TimeIntegrator.SSPRK3
+            )
+        elif time_integrator == TimeIntegrator.MATCH_P_UP_TO_RK4:
+            return {
+                0: TimeIntegrator.FORWARD_EULER,
+                1: TimeIntegrator.SSPRK2,
+                2: TimeIntegrator.SSPRK3,
+            }.get(p, TimeIntegrator.RK4)
+        else:
+            return time_integrator
 
     def _build_message(
         self,
@@ -1631,7 +1629,9 @@ class HydroSolver:
     ):
         self._start_wall_timer()
 
+        time_integrator = self._select_time_integrator(time_integrator)
         print_frequency = max(1, print_frequency)
+
         for i in range(1, n + 1):
             take_snapshot_this_step = (
                 snapshot_mode == SnapshotMode.TARGET and i == n
@@ -1659,6 +1659,8 @@ class HydroSolver:
         print_frequency: int = 100,
     ):
         self._start_wall_timer()
+
+        time_integrator = self._select_time_integrator(time_integrator)
         print_frequency = max(1, print_frequency)
 
         if not isinstance(t, list):
