@@ -65,8 +65,8 @@ def prim_to_cs(
     if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
         kernel = _make_prim_to_cs_kernel()
         kernel(
-            w[idx("rho", keepdims=True)],
-            w[idx("P", keepdims=True)],
+            w[idx("rho")],
+            w[idx("P")],
             gamma,
             isothermal,
             iso_cs,
