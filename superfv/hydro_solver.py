@@ -744,55 +744,55 @@ class HydroSolver:
 
         # define cell-centered/cell-averaged arrays
         arrays.add("u", self._compute_ic_array())
-        arrays.add("unew", np.empty((nvars, nx, ny, nz)))
-        arrays.add("_u_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_ucc_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_wcc_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_w_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_w1_", np.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("unew", self.xp.empty((nvars, nx, ny, nz)))
+        arrays.add("_u_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_ucc_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_wcc_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_w_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_w1_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
 
         # define arrays associated faces along the x-direction
         if "x" in active_dims:
-            arrays.add("_F_", np.empty((nvars, nx + 1, _ny_, _nz_)))
-            arrays.add("F", np.empty((nvars, nx + 1, ny, nz)))
+            arrays.add("_F_", self.xp.empty((nvars, nx + 1, _ny_, _nz_)))
+            arrays.add("F", self.xp.empty((nvars, nx + 1, ny, nz)))
 
         # define arrays associated with faces along the y-direction
         if "y" in active_dims:
-            arrays.add("_G_", np.empty((nvars, _nx_, ny + 1, _nz_)))
-            arrays.add("G", np.empty((nvars, nx, ny + 1, nz)))
+            arrays.add("_G_", self.xp.empty((nvars, _nx_, ny + 1, _nz_)))
+            arrays.add("G", self.xp.empty((nvars, nx, ny + 1, nz)))
 
         # define arrays associated with faces along the z-direction
         if "z" in active_dims:
-            arrays.add("_H_", np.empty((nvars, _nx_, _ny_, nz + 1)))
-            arrays.add("H", np.empty((nvars, nx, ny, nz + 1)))
+            arrays.add("_H_", self.xp.empty((nvars, _nx_, _ny_, nz + 1)))
+            arrays.add("H", self.xp.empty((nvars, nx, ny, nz + 1)))
 
         # define slope-limiting arrays
-        arrays.add("_alpha_", np.ones((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_has_shock_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("_alpha_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_has_shock_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
 
         # define Zhang-Shu limiter arrays
-        arrays.add("_theta_", np.ones((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_theta_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
 
         # define MOOD arrays
         for scheme in [fv_scheme] + fv_scheme.mood_params.fallback_cascade:
             if "x" in active_dims:
-                arrays.add("F_" + scheme.name, np.empty((nvars, nx + 1, ny, nz)))
+                arrays.add("F_" + scheme.name, self.xp.empty((nvars, nx + 1, ny, nz)))
             if "y" in active_dims:
-                arrays.add("G_" + scheme.name, np.empty((nvars, nx, ny + 1, nz)))
+                arrays.add("G_" + scheme.name, self.xp.empty((nvars, nx, ny + 1, nz)))
             if "z" in active_dims:
-                arrays.add("H_" + scheme.name, np.empty((nvars, nx, ny, nz + 1)))
+                arrays.add("H_" + scheme.name, self.xp.empty((nvars, nx, ny, nz + 1)))
 
-        arrays.add("_qold_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_qnew_", np.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_troubles_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-        arrays.add("revisable_troubles", np.zeros((1, nx, ny, nz), dtype=np.int32))
-        arrays.add("_cascade_idx_", np.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("_qold_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_qnew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_troubles_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+        arrays.add("revisable_troubles", self.xp.zeros((1, nx, ny, nz), dtype=np.int32))
+        arrays.add("_cascade_idx_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
 
         # define snapshot arrays
-        arrays.add("has_shock_log", np.zeros((1, nx, ny, nz)))
-        arrays.add("theta_log", np.ones((nvars, nx, ny, nz)))
-        arrays.add("troubles_log", np.zeros((1, nx, ny, nz)))
-        arrays.add("cascade_idx_log", np.zeros((1, nx, ny, nz)))
+        arrays.add("has_shock_log", self.xp.zeros((1, nx, ny, nz)))
+        arrays.add("theta_log", self.xp.ones((nvars, nx, ny, nz)))
+        arrays.add("troubles_log", self.xp.zeros((1, nx, ny, nz)))
+        arrays.add("cascade_idx_log", self.xp.zeros((1, nx, ny, nz)))
 
     def _init_time(self):
         self.t = 0.0
