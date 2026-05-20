@@ -816,7 +816,16 @@ class HydroSolver:
             rho_min=np.nan,
             E_total=np.nan,
             substeps=[],
-            timer=MultiTimer(["take_snapshot", "take_step", "compute_dt"]),
+            timer=MultiTimer(
+                [
+                    "take_snapshot",
+                    "take_step",
+                    "compute_dt",
+                    "update_W",
+                    "update_fluxes",
+                    "riemann_solver",
+                ]
+            ),
         )
 
     def _take_snapshot(self):
@@ -1060,6 +1069,8 @@ class HydroSolver:
         (_u_, _ucc_, _wcc_, and _w_) based on time `t`, the conservative variables `u`, and
         the provided `fv_scheme`.
         """
+        self.step_summary.timer.start("update_W", self.params.sync_timer)  # TIMER START
+
         idx = self.params.variable_index_map
         active_dims = self.mesh.active_dims
         arrays = self.arrays
@@ -1109,6 +1120,8 @@ class HydroSolver:
         # ensure density is always transformed in the lazy way
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
+
+        self.step_summary.timer.stop("update_W", self.params.sync_timer)  # TIMER STOP
 
     def _compute_nnodes_per_face(self, fv_scheme: FV_SchemeParameters) -> int:
         ndim = self.mesh.ndim
@@ -1222,6 +1235,8 @@ class HydroSolver:
         fv_scheme: FV_SchemeParameters,
         dim: Literal["x", "y", "z"],
     ):
+        self.step_summary.timer.start("riemann_solver", self.params.sync_timer)  # TIMER START
+
         params = self.params
         nghost = params.mesh.nghost
         nnodes = _f_nodes_.shape[4]
@@ -1244,6 +1259,8 @@ class HydroSolver:
             params.hydro.isothermal,
             params.hydro.iso_cs,
         )
+
+        self.step_summary.timer.stop("riemann_solver", self.params.sync_timer)  # TIMER STOP
 
     def _update_flux_arrays(
         self,
@@ -1281,6 +1298,8 @@ class HydroSolver:
         if fv_scheme.muscl_params.use_MUSCL:
             update_fluxes_with_muscl_scheme(self, fv_scheme, 0.0)
             return
+
+        self.step_summary.timer.start("update_fluxes", self.params.sync_timer)  # TIMER START
 
         params = self.params
         active_dims = params.mesh.active_dims
@@ -1336,6 +1355,8 @@ class HydroSolver:
             tmp["y"][2] if "y" in tmp else None,
             tmp["z"][2] if "z" in tmp else None,
         )
+
+        self.step_summary.timer.stop("update_fluxes", self.params.sync_timer)  # TIMER STOP
 
     # ODE solver functions
 
@@ -1421,11 +1442,13 @@ class HydroSolver:
                 if not params.fv_scheme.muscl_params.use_MUSCL:
                     raise ValueError("MUSCL-Hancock time integrator requires a MUSCL FV scheme.")
 
+                k0 = self.xp.empty_like(u)
+
                 with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
                     self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
                     update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
-                k0 = self.compute_time_derivative()
 
+                k0[...] = self.compute_time_derivative()
                 unew[...] = u + dt * k0
                 return
             case TimeIntegrator.FORWARD_EULER:

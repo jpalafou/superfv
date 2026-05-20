@@ -124,6 +124,9 @@ class StepHistory:
                 raise ValueError(f"Field '{name}' not found in StepSummary or SubstepSummary.")
         return out
 
+    def get_total_time(self, cat: str) -> float:
+        return sum(step.timer[cat].cum_time for step in self.steps)
+
     def __getitem__(self, i: int) -> StepSummary:
         return self.steps[i]
 
