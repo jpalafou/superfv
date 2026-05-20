@@ -113,17 +113,11 @@ class StepHistory:
     steps: List[StepSummary]
 
     def get_history(self, name: str) -> List[Any]:
-        out = []
-        for step in self.steps:
-            if name in step.__dataclass_fields__:
-                out.append(getattr(step, name))
-                continue
-            for substep in step.substeps:
-                if name in substep.__dataclass_fields__:
-                    out.append(getattr(substep, name))
-                    continue
-                raise ValueError(f"Field '{name}' not found in StepSummary or SubstepSummary.")
-        return out
+        if name in StepSummary.__dataclass_fields__:
+            return [getattr(step, name) for step in self.steps]
+        if name in SubstepSummary.__dataclass_fields__:
+            return [getattr(substep, name) for step in self.steps for substep in step.substeps]
+        raise ValueError(f"Field '{name}' not found in StepSummary or SubstepSummary.")
 
     def get_total_time(self, cat: str) -> float:
         return sum(step.timer[cat].cum_time for step in self.steps)
