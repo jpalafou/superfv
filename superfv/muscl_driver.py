@@ -24,6 +24,24 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
 
+def _allocate_MUSCL_arrays(sim: HydroSolver):
+    active_dims = sim.params.mesh.active_dims
+    nvars = sim.params.variable_index_map.nvars
+    _nx_, _ny_, _nz_ = sim.mesh._shape_
+    arrays = sim.arrays
+
+    if "_flux_jvp_" not in sim.arrays:
+        arrays.add("_predictor_q_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_flux_jvp_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        arrays.add("_nodes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_, 2)))
+        if "x" in active_dims:
+            arrays.add("_x_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        if "y" in active_dims:
+            arrays.add("_y_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
+        if "z" in active_dims:
+            arrays.add("_z_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
+
+
 def compute_flux_jvp(
     q: ArrayLike,
     vec: ArrayLike,
@@ -70,30 +88,19 @@ def update_fluxes_with_muscl_scheme(
     hydro_params = sim.params.hydro
     idx = sim.params.variable_index_map
     active_dims = sim.params.mesh.active_dims
-    nvars = sim.params.variable_index_map.nvars
-    nx, ny, nz = sim.mesh.shape
-    _nx_, _ny_, _nz_ = sim.mesh._shape_
     hx, hy, hz = sim.mesh.hx, sim.mesh.hy, sim.mesh.hz
     nghost = sim.params.mesh.nghost
     arrays = sim.arrays
 
-    _alpha_ = arrays["_alpha_"]
+    _allocate_MUSCL_arrays(sim)
+
     _q_ = arrays["_u_"] if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
-    _predictor_q_ = sim.xp.empty_like(_q_)
-    _jvp_ = sim.xp.empty_like(_q_)
-    _xyz_nodes_ = {dim: sim.xp.empty(_q_.shape + (2,)) for dim in active_dims}
-    _xyz_slopes_ = {dim: sim.xp.empty_like(_q_) for dim in active_dims}
-    _FGH_nodes_ = {
-        dim: sim.xp.empty(
-            (
-                nvars,
-                nx + 1 if dim == "x" else _nx_,
-                ny + 1 if dim == "y" else _ny_,
-                nz + 1 if dim == "z" else _nz_,
-            )
-        )
-        for dim in active_dims
-    }
+    _alpha_ = arrays["_alpha_"]
+    _xyz_slopes_ = {dim: arrays[f"_{dim}_slopes_"] for dim in active_dims}
+    _predictor_q_ = arrays["_predictor_q_"]
+    _jvp_ = arrays["_flux_jvp_"]
+    _nodes_ = arrays["_nodes_"]
+    _FGH_nodes_ = {dim: arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]] for dim in active_dims}
 
     # compute smooth extrema
     if muscl_params.SED_params.use_SED:
@@ -143,7 +150,6 @@ def update_fluxes_with_muscl_scheme(
     # Corrector step
     for dim in active_dims:
         _slopes_ = _xyz_slopes_[dim]
-        _nodes_ = _xyz_nodes_[dim]
         _fluxes_ = _FGH_nodes_[dim]
 
         _nodes_[..., 0] = _predictor_q_ - 0.5 * _slopes_
