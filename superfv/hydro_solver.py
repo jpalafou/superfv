@@ -1542,22 +1542,24 @@ class HydroSolver:
             return time_integrator
 
     def _build_message(
-        self,
-        current_time: Optional[float] = None,
-        stopping_time: Optional[float] = None,
-        current_steps: Optional[int] = None,
-        total_steps: Optional[int] = None,
+        self, stopping_t_sim: Optional[float] = None, total_steps: Optional[int] = None
     ) -> str:
         step_summary = self.step_history[-1]
+        current_time = step_summary.t_sim
+        current_dt = step_summary.dt
+        current_steps = len(self.step_history) - 1
         energy_conservation = abs(step_summary.E_total - self.step_history[0].E_total)
 
         parts = ["SuperFV: "]
-        if current_steps is not None and total_steps is not None:
+
+        if total_steps is not None:
             parts.append(f"step {current_steps}/{total_steps}")
-        elif current_steps is not None:
+        else:
             parts.append("1 step" if current_steps == 1 else f"{current_steps} steps")
-        if current_time is not None and stopping_time is not None:
-            parts.append(f"[t={current_time:.2e}/{stopping_time:.2e}]")
+        if stopping_t_sim is not None:
+            parts.append(f"t={current_time:.2e}/{stopping_t_sim:.2e}, dt={current_dt:.2e}")
+        else:
+            parts.append(f"dt={current_dt:.2e}")
         parts.append(f"rho_min={step_summary.rho_min:.2e}")
         parts.append(f"E_cons={energy_conservation:.2e}")
         parts.append(f"wall={step_summary.t_wall:.2e}s")
@@ -1677,10 +1679,10 @@ class HydroSolver:
             self._close_step(take_snapshot_this_step)
 
             if print_update and (i % print_frequency == 0 or i == n):
-                self._print_message(self._build_message(current_steps=i, total_steps=n))
+                self._print_message(self._build_message(total_steps=n))
 
         if print_update:
-            self._print_message(self._build_message(current_steps=n, total_steps=n) + " (done)\n")
+            self._print_message(self._build_message(total_steps=n) + " (done)\n")
 
         self._finish_run()
 
@@ -1724,15 +1726,10 @@ class HydroSolver:
 
             n = len(self.step_history) - 1
             if print_update and n % print_frequency == 0:
-                self._print_message(
-                    self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
-                )
+                self._print_message(self._build_message(stopping_t_sim=tstop))
 
         if print_update:
-            self._print_message(
-                self._build_message(current_steps=n, current_time=self.t, stopping_time=tstop)
-                + " (done)\n"
-            )
+            self._print_message(self._build_message(stopping_t_sim=tstop) + " (done)\n")
 
         self._finish_run()
 
