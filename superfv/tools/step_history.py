@@ -52,6 +52,9 @@ class MultiTimer:
     def __init__(self, cats: List[str]):
         self.timers = {cat: Timer() for cat in cats}
 
+    def __getitem__(self, cat: str) -> Timer:
+        return self.timers[cat]
+
     def __str__(self) -> str:
         return (
             "MultiTimer("
