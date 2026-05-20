@@ -821,9 +821,11 @@ class HydroSolver:
                     "take_snapshot",
                     "take_step",
                     "compute_dt",
+                    "update_unew",
                     "update_W",
                     "update_fluxes",
                     "riemann_solver",
+                    "compute_dudt",
                 ]
             ),
         )
@@ -1360,12 +1362,13 @@ class HydroSolver:
 
     # ODE solver functions
 
-    def compute_time_derivative(self) -> ArrayLike:
+    def compute_time_derivative(self, dudt: ArrayLike):
+        self.step_summary.timer.start("compute_dudt", self.params.sync_timer)  # TIMER START
+
         active_dims = self.params.mesh.active_dims
         hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
 
-        dudt = self.xp.zeros_like(self.arrays["u"])
-
+        dudt[...] = 0.0
         if "x" in active_dims:
             F_fluxes = self.arrays["F"]
             dudt -= (F_fluxes[:, 1:, :, :] - F_fluxes[:, :-1, :, :]) / hx
@@ -1378,10 +1381,12 @@ class HydroSolver:
             H_fluxes = self.arrays["H"]
             dudt -= (H_fluxes[:, :, :, 1:] - H_fluxes[:, :, :, :-1]) / hz
 
-        return dudt
+        self.step_summary.timer.stop("compute_dudt", self.params.sync_timer)  # TIMER STOP
 
     def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         base_scheme = self.params.fv_scheme
+
+        dudt = self.xp.empty_like(u)
 
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
@@ -1390,7 +1395,8 @@ class HydroSolver:
             if base_scheme.mood_params.use_MOOD:
                 mood_loop(self, t, dt)
 
-        return self.compute_time_derivative()
+        self.compute_time_derivative(dudt)
+        return dudt
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
@@ -1432,6 +1438,8 @@ class HydroSolver:
         self._update_log_arrays(LogArrayAction.SUBSTEP_ADD)
 
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
+        self.step_summary.timer.start("update_unew", self.params.sync_timer)  # TIMER START
+
         params = self.params
         arrays = self.arrays
 
@@ -1448,13 +1456,11 @@ class HydroSolver:
                     self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
                     update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
 
-                k0[...] = self.compute_time_derivative()
+                self.compute_time_derivative(k0)
                 unew[...] = u + dt * k0
-                return
             case TimeIntegrator.FORWARD_EULER:
                 unew[...] = u + self.f(t, u, dt) * dt
                 self._close_substep()
-                return
             case TimeIntegrator.SSPRK2:
                 k0 = self.xp.empty_like(u)
                 k1 = self.xp.empty_like(u)
@@ -1466,7 +1472,6 @@ class HydroSolver:
                 k1[...] = self.f(t + dt, unew, dt)
                 unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
                 self._close_substep()
-                return
             case TimeIntegrator.SSPRK3:
                 k0 = self.xp.empty_like(u)
                 k1 = self.xp.empty_like(u)
@@ -1482,7 +1487,6 @@ class HydroSolver:
                 k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)
                 unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
                 self._close_substep()
-                return
             case TimeIntegrator.RK4:
                 k0 = self.xp.empty_like(u)
                 k1 = self.xp.empty_like(u)
@@ -1501,9 +1505,10 @@ class HydroSolver:
                 k3[...] = self.f(t + dt, u + dt * k2, dt)
                 unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
                 self._close_substep()
-                return
             case _:
                 raise ValueError(f"Unsupported time integrator: {time_integrator}")
+
+        self.step_summary.timer.stop("update_unew", self.params.sync_timer)  # TIMER STOP
 
     def _open_step(self):
         self._update_log_arrays(LogArrayAction.RESET)
