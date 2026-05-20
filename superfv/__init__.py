@@ -1,4 +1,5 @@
 from . import initial_conditions as ics
+from . import visualization as vis
 from .boundary_conditions import BC
 from .configs import FallbackCascade, FluxQuadrature, FluxRecipe, LazyPrimitiveMode
 from .hydro_solver import HydroSolver, SnapshotMode, TimeIntegrator
@@ -13,6 +14,7 @@ __all__ = [
     "CUPY_AVAILABLE",
     # modules
     "ics",
+    "vis",
     # classes
     "HydroSolver",
     "HydroSolverOutput",
