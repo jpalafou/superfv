@@ -744,6 +744,7 @@ class HydroSolver:
 
         # define cell-centered/cell-averaged arrays
         arrays.add("u", self._compute_ic_array())
+        arrays.add("dudt", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("unew", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("_u_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_ucc_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
@@ -825,7 +826,7 @@ class HydroSolver:
                     "update_W",
                     "update_fluxes",
                     "riemann_solver",
-                    "compute_dudt",
+                    "update_dudt",
                 ]
             ),
         )
@@ -1362,11 +1363,15 @@ class HydroSolver:
 
     # ODE solver functions
 
-    def compute_time_derivative(self, dudt: ArrayLike):
-        self.step_summary.timer.start("compute_dudt", self.params.sync_timer)  # TIMER START
+    def update_dudt(self):
+        """
+        Update the time derivative array "dudt" based on the current flux arrays.
+        """
+        self.step_summary.timer.start("update_dudt", self.params.sync_timer)  # TIMER START
 
         active_dims = self.params.mesh.active_dims
         hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
+        dudt = self.arrays["dudt"]
 
         dudt[...] = 0.0
         if "x" in active_dims:
@@ -1381,12 +1386,11 @@ class HydroSolver:
             H_fluxes = self.arrays["H"]
             dudt -= (H_fluxes[:, :, :, 1:] - H_fluxes[:, :, :, :-1]) / hz
 
-        self.step_summary.timer.stop("compute_dudt", self.params.sync_timer)  # TIMER STOP
+        self.step_summary.timer.stop("update_dudt", self.params.sync_timer)  # TIMER STOP
 
     def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         base_scheme = self.params.fv_scheme
-
-        dudt = self.xp.empty_like(u)
+        dudt = self.arrays["dudt"]
 
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
@@ -1395,7 +1399,7 @@ class HydroSolver:
             if base_scheme.mood_params.use_MOOD:
                 mood_loop(self, t, dt)
 
-        self.compute_time_derivative(dudt)
+        self.update_dudt()
         return dudt
 
     def _summarize_substep(self):
@@ -1443,6 +1447,7 @@ class HydroSolver:
         params = self.params
         arrays = self.arrays
 
+        dudt = arrays["dudt"]
         unew = arrays["unew"]
 
         match time_integrator:
@@ -1450,14 +1455,12 @@ class HydroSolver:
                 if not params.fv_scheme.muscl_params.use_MUSCL:
                     raise ValueError("MUSCL-Hancock time integrator requires a MUSCL FV scheme.")
 
-                k0 = self.xp.empty_like(u)
-
                 with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
                     self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
                     update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
+                self.update_dudt()
 
-                self.compute_time_derivative(k0)
-                unew[...] = u + dt * k0
+                unew[...] = u + dt * dudt
             case TimeIntegrator.FORWARD_EULER:
                 unew[...] = u + self.f(t, u, dt) * dt
                 self._close_substep()

@@ -89,6 +89,7 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
     rev_troubles = arrays["revisable_troubles"]
     _alpha_ = arrays["_alpha_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
+    dudt = arrays["dudt"]
     _qold_ = sim.xp.empty_like(_uold_)
     _qnew_ = sim.xp.empty_like(_uold_)
     _wnew_ = sim.xp.empty_like(_uold_)
@@ -97,7 +98,8 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
     _troubles_[...] = 0.0
 
     # Compute candidate solution qnew
-    _qnew_[interior] = _uold_[interior] + dt * sim.compute_time_derivative()
+    sim.update_dudt()
+    _qnew_[interior] = _uold_[interior] + dt * dudt
     sim.apply_bc(_qnew_, t, params.fv_scheme.p)
     sim.conservatives_to_primitives(_qnew_, _wnew_)
 
