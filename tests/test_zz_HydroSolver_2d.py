@@ -21,6 +21,7 @@ from superfv.tools.norms import linf_norm
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(
             p=3,
@@ -60,7 +61,15 @@ def test_sedov(scheme):
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True, MUSCL_limiter=MUSCL_SlopeLimiter.PP2D),
+        dict(
+            p=3,
+            use_ZS=True,
+            adaptive_dt=True,
+            lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE,
+            flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+        ),
         dict(
             p=7,
             use_ZS=True,
@@ -96,6 +105,7 @@ def test_preservation_of_maximum_principle(scheme):
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=3),
         dict(p=7),
@@ -157,6 +167,7 @@ def test_forward_backwards_advection_symmetry(scheme, dim1_dim2):
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=3),
         dict(p=7),

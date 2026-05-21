@@ -17,6 +17,7 @@ from superfv import (
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(
             p=3,

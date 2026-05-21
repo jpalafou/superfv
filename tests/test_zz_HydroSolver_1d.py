@@ -22,6 +22,7 @@ from teyssier import cons_to_prim, weno
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=1, use_ZS=True, adaptive_dt=True),
         dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
@@ -49,6 +50,7 @@ def test_sedov(scheme):
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
     ],
@@ -102,6 +104,7 @@ def test_sedov_with_passive_scalar(scheme):
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=1, use_ZS=True, adaptive_dt=True),
         dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
@@ -136,6 +139,7 @@ def test_preservation_of_maximum_principle(scheme):
 @pytest.mark.parametrize(
     "scheme",
     [
+        dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=3),
         dict(p=7),
