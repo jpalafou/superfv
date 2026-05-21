@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Dict, Literal
 
 import numpy as np
 
@@ -15,7 +15,7 @@ from .slope_limiting.muscl import (
 )
 from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
-from .tools.slicing import crop, replace_slice
+from .tools.slicing import crop
 from .tools.variable_index_map import VariableIndexMap
 
 if TYPE_CHECKING:
@@ -23,24 +23,6 @@ if TYPE_CHECKING:
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
-
-
-def _allocate_MUSCL_arrays(sim: HydroSolver):
-    active_dims = sim.params.mesh.active_dims
-    nvars = sim.params.variable_index_map.nvars
-    _nx_, _ny_, _nz_ = sim.mesh._shape_
-    arrays = sim.arrays
-
-    if "_flux_jvp_" not in sim.arrays:
-        arrays.add("_predictor_q_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_flux_jvp_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_nodes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_, 2)))
-        if "x" in active_dims:
-            arrays.add("_x_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        if "y" in active_dims:
-            arrays.add("_y_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        if "z" in active_dims:
-            arrays.add("_z_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
 
 
 def _compute_flux_jvp_np(
@@ -127,57 +109,72 @@ def _make_compute_flux_jvp_kernel(npassives: int):
 def compute_flux_jvp(
     w: ArrayLike,
     vec: ArrayLike,
-    jvp: ArrayLike,
     idx: VariableIndexMap,
     dim: Literal["x", "y", "z"],
     gamma: float,
     isothermal: bool = False,
     iso_cs: float = 1.0,
     primitives: bool = True,
-):
+) -> ArrayLike:
     if not primitives:
         raise NotImplementedError("JVP for conservative variable fluxes not implemented yet.")
 
+    use_cupy = CUPY_AVAILABLE and isinstance(w, cp.ndarray)
+
     iv = idx("v" + dim)
 
-    jvp[idx("rho")] = w[iv] * vec[idx("rho")] + w[idx("rho")] * vec[iv]
-    jvp[idx("vx")] = w[iv] * vec[idx("vx")]
-    jvp[idx("vy")] = w[iv] * vec[idx("vy")]
-    jvp[idx("vz")] = w[iv] * vec[idx("vz")]
-    jvp[iv] += (1 / w[idx("rho")]) * vec[idx("P")]
-    jvp[idx("P")] = (
-        iso_cs**2 * jvp[idx("rho")]
-        if isothermal
-        else gamma * w[idx("P")] * vec[iv] + w[iv] * vec[idx("P")]
+    jvp_rho = w[iv] * vec[idx("rho")] + w[idx("rho")] * vec[iv]
+
+    jvp_vx = w[iv] * vec[idx("vx")]
+    if dim == "x":
+        jvp_vx += (1 / w[idx("rho")]) * vec[idx("P")]
+
+    jvp_vy = w[iv] * vec[idx("vy")]
+    if dim == "y":
+        jvp_vy += (1 / w[idx("rho")]) * vec[idx("P")]
+
+    jvp_vz = w[iv] * vec[idx("vz")]
+    if dim == "z":
+        jvp_vz += (1 / w[idx("rho")]) * vec[idx("P")]
+
+    jvp_P = (
+        iso_cs**2 * jvp_rho if isothermal else gamma * w[idx("P")] * vec[iv] + w[iv] * vec[idx("P")]
     )
-    if "passives" in idx.group_var_map:
-        jvp[idx("passives")] = w[iv] * vec[idx("passives")] + w[idx("passives")] * vec[iv]
 
-    return
+    body = [jvp_rho, jvp_vx, jvp_vy, jvp_vz, jvp_P]
 
-    if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
-        npassives = len(idx.group_var_map.get("passives", []))
-        kernel = _make_compute_flux_jvp_kernel(npassives)
-        kernel(
-            w[idx("rho")],
-            w[idx("vx")],
-            w[idx("vy")],
-            w[idx("vz")],
-            w[idx("P")],
-            vec[idx("rho")],
-            vec[idx("vx")],
-            vec[idx("vy")],
-            vec[idx("vz")],
-            vec[idx("P")],
-            gamma,
-            isothermal,
-            iso_cs,
-            {"x": 1, "y": 2, "z": 3}[dim],
-            *[w[idx(v)] for v in idx.group_var_map.get("passives", [])],
-            *[vec[idx(v)] for v in idx.group_var_map.get("passives", [])],
-        )
+    for pv in idx.group_var_map.get("passives", []):
+        jvp_passive = w[iv] * vec[idx(pv)] + w[idx(pv)] * vec[iv]
+        body.append(jvp_passive)
+
+    if use_cupy:
+        return cp.stack(body)
     else:
-        return _compute_flux_jvp_np(w, vec, jvp, idx, dim, gamma, isothermal, iso_cs)
+        return np.stack(body)
+
+    # if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
+    #     npassives = len(idx.group_var_map.get("passives", []))
+    #     kernel = _make_compute_flux_jvp_kernel(npassives)
+    #     kernel(
+    #         w[idx("rho")],
+    #         w[idx("vx")],
+    #         w[idx("vy")],
+    #         w[idx("vz")],
+    #         w[idx("P")],
+    #         vec[idx("rho")],
+    #         vec[idx("vx")],
+    #         vec[idx("vy")],
+    #         vec[idx("vz")],
+    #         vec[idx("P")],
+    #         gamma,
+    #         isothermal,
+    #         iso_cs,
+    #         {"x": 1, "y": 2, "z": 3}[dim],
+    #         *[w[idx(v)] for v in idx.group_var_map.get("passives", [])],
+    #         *[vec[idx(v)] for v in idx.group_var_map.get("passives", [])],
+    #     )
+    # else:
+    #     return _compute_flux_jvp_np(w, vec, jvp, idx, dim, gamma, isothermal, iso_cs)
 
 
 def update_fluxes_with_muscl_scheme(
@@ -196,15 +193,10 @@ def update_fluxes_with_muscl_scheme(
     nghost = sim.params.mesh.nghost
     arrays = sim.arrays
 
-    _allocate_MUSCL_arrays(sim)
-
     _q_ = arrays["_u_"] if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
     _alpha_ = arrays["_alpha_"]
-    _xyz_slopes_ = {dim: arrays[f"_{dim}_slopes_"] for dim in active_dims}
-    _predictor_q_ = arrays["_predictor_q_"]
-    _jvp_ = arrays["_flux_jvp_"]
-    _nodes_ = arrays["_nodes_"]
     _FGH_nodes_ = {dim: arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]] for dim in active_dims}
+    _slopes_dict_: Dict[Literal["x", "y", "z"], ArrayLike] = {}
 
     # compute smooth extrema
     if muscl_params.SED_params.use_SED:
@@ -214,37 +206,37 @@ def update_fluxes_with_muscl_scheme(
     if muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D:
         if len(active_dims) != 2:
             raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
-        _slopes1_ = _xyz_slopes_[active_dims[0]]
-        _slopes2_ = _xyz_slopes_[active_dims[1]]
 
+        _slopes1_ = sim.xp.empty_like(_q_)
+        _slopes2_ = sim.xp.empty_like(_q_)
         compute_PP2D_slopes(
             _q_, _alpha_, _slopes1_, _slopes2_, active_dims, 1e-20, muscl_params.SED_params.use_SED
         )
+        _slopes_dict_[active_dims[0]] = _slopes1_
+        _slopes_dict_[active_dims[1]] = _slopes2_
     else:
         for dim in active_dims:
-            _slopes_ = _xyz_slopes_[dim]
-
+            _dim_slopes_ = sim.xp.empty_like(_q_)
             compute_MUSCL_slopes(
                 _q_,
                 _alpha_,
-                _slopes_,
+                _dim_slopes_,
                 dim,
                 muscl_params.MUSCL_limiter,
                 muscl_params.SED_params.use_SED,
             )
+            _slopes_dict_[dim] = _dim_slopes_  # save for later
 
     # Compute predictor step
-    _predictor_q_[...] = _q_
+    _predictor_q_ = _q_.copy()
 
     if hancock_dt > 0:
         for dim in active_dims:
             h = {"x": hx, "y": hy, "z": hz}[dim]
-            _slopes_ = _xyz_slopes_[dim]
 
-            compute_flux_jvp(
+            _jvp_ = compute_flux_jvp(
                 _q_,
-                _slopes_,
-                _jvp_,
+                _slopes_dict_[dim],
                 idx,
                 dim,
                 gamma=hydro_params.gamma,
@@ -252,27 +244,25 @@ def update_fluxes_with_muscl_scheme(
                 iso_cs=hydro_params.iso_cs,
                 primitives=muscl_scheme.flux_recipe != FluxRecipe.CONS_LIM_PRIM,
             )
-            _predictor_q_[...] -= 0.5 * _jvp_ * hancock_dt / h
+            _predictor_q_ -= 0.5 * _jvp_ * hancock_dt / h
 
     # Corrector step
     for dim in active_dims:
-        _slopes_ = _xyz_slopes_[dim]
         _fluxes_ = _FGH_nodes_[dim]
 
-        _nodes_[..., 0] = _predictor_q_ - 0.5 * _slopes_
-        _nodes_[..., 1] = _predictor_q_ + 0.5 * _slopes_
+        _left_node_ = _predictor_q_ - 0.5 * _slopes_dict_[dim]
+        _right_node_ = _predictor_q_ + 0.5 * _slopes_dict_[dim]
 
         if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
-            sim.conservatives_to_primitives(_nodes_, _nodes_)
+            sim.conservatives_to_primitives(_left_node_, _left_node_)
+            sim.conservatives_to_primitives(_right_node_, _right_node_)
 
         sim._start_timer("riemann_solver")  # TIMER START
         axis = DIM_TO_AXIS[dim]
-        left_of_interface = replace_slice(crop(axis, (nghost - 1, -nghost), ndim=5), 4, 1)
-        right_of_interface = replace_slice(crop(axis, (nghost, -nghost + 1), ndim=5), 4, 0)
 
         sim.riemann_solver(
-            _nodes_[left_of_interface],
-            _nodes_[right_of_interface],
+            _right_node_[crop(axis, (nghost - 1, -nghost), ndim=4)],
+            _left_node_[crop(axis, (nghost, -nghost + 1), ndim=4)],
             _fluxes_,
             dim,
             sim.params.variable_index_map,
