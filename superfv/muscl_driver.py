@@ -138,8 +138,24 @@ def compute_flux_jvp(
     if not primitives:
         raise NotImplementedError("JVP for conservative variable fluxes not implemented yet.")
 
+    iv = idx("v" + dim)
+
+    jvp[idx("rho")] = w[iv] * vec[idx("rho")] + w[idx("rho")] * vec[iv]
+    jvp[idx("vx")] = w[iv] * vec[idx("vx")]
+    jvp[idx("vy")] = w[iv] * vec[idx("vy")]
+    jvp[idx("vz")] = w[iv] * vec[idx("vz")]
+    jvp[iv] += (1 / w[idx("rho")]) * vec[idx("P")]
+    jvp[idx("P")] = (
+        iso_cs**2 * jvp[idx("rho")]
+        if isothermal
+        else gamma * w[idx("P")] * vec[iv] + w[iv] * vec[idx("P")]
+    )
+    if "passives" in idx.group_var_map:
+        jvp[idx("passives")] = w[iv] * vec[idx("passives")] + w[idx("passives")] * vec[iv]
+
+    return
+
     if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
-        raise NotImplementedError("JVP kernel generation not implemented yet.")
         npassives = len(idx.group_var_map.get("passives", []))
         kernel = _make_compute_flux_jvp_kernel(npassives)
         kernel(
