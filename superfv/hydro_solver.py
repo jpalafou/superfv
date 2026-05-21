@@ -755,7 +755,7 @@ class HydroSolver:
 
         # define arrays for computing time-step size
         arrays.add("cs", self.xp.empty((nx, ny, nz)))
-        arrays.add("sum_of_s_over_h", self.xp.empty((nvars, nx, ny, nz)))
+        arrays.add("sum_of_s_over_h", self.xp.empty((nx, ny, nz)))
 
         # define arrays associated faces along the x-direction
         if "x" in active_dims:
