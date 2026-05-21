@@ -742,8 +742,9 @@ class HydroSolver:
         active_dims = mesh.active_dims
         arrays = self.arrays
 
-        # define cell-centered/cell-averaged arrays
+        # define basic conservative/primitive state arrays
         arrays.add("u", self._compute_ic_array())
+        arrays.add("w", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("dudt", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("unew", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("_u_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
@@ -751,6 +752,10 @@ class HydroSolver:
         arrays.add("_wcc_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_w_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
         arrays.add("_w1_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+
+        # define arrays for computing time-step size
+        arrays.add("cs", self.xp.empty((nx, ny, nz)))
+        arrays.add("sum_of_s_over_h", self.xp.empty((nvars, nx, ny, nz)))
 
         # define arrays associated faces along the x-direction
         if "x" in active_dims:
@@ -839,7 +844,7 @@ class HydroSolver:
         output_path = params.output_path
 
         u = self.arrays["u"]
-        w = self.xp.empty_like(u)
+        w = self.arrays["w"]
 
         self.conservatives_to_primitives(u, w)
 
@@ -984,14 +989,16 @@ class HydroSolver:
         params = self.params
         idx = params.variable_index_map
         mesh = self.mesh
+        arrays = self.arrays
 
-        w = self.xp.empty_like(u)
-        cs = self.xp.empty_like(u[0, ...])
-        sum_of_s_over_h = self.xp.zeros_like(u[0, ...])
+        w = arrays["w"]
+        cs = arrays["cs"]
+        sum_of_s_over_h = arrays["sum_of_s_over_h"]
 
         self.conservatives_to_primitives(u, w)
         self.primitives_to_sound_speed(w, cs)
 
+        sum_of_s_over_h[...] = 0.0
         for dim, h in zip(["x", "y", "z"], [mesh.hx, mesh.hy, mesh.hz]):
             if dim not in params.mesh.active_dims:
                 continue
@@ -1589,7 +1596,7 @@ class HydroSolver:
             )
 
         unew = self.arrays["unew"]
-        wnew = self.xp.empty_like(unew)
+        wnew = self.arrays["w"]
 
         self.conservatives_to_primitives(unew, wnew)
 
