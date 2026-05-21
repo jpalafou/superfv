@@ -303,7 +303,7 @@ class SolverParameters:
     fv_scheme: FV_SchemeParameters
     variable_index_map: VariableIndexMap
     cupy: bool = False
-    sync_timer: bool = True
+    profile: bool = False
     output_path: Optional[Path] = None
     discard_after_writing: bool = True
     output_n_digits: int = 6
@@ -311,9 +311,6 @@ class SolverParameters:
     def __post_init__(self):
         if self.cupy and not CUPY_AVAILABLE:
             raise ValueError("CuPy is not available but cupy is set to True.")
-
-        if self.sync_timer and not self.cupy:
-            raise ValueError("sync_timer cannot be True if cupy is False.")
 
         # PAD bound dicts cannot contain variables not in the variable index map
         if (

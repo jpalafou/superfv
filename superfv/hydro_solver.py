@@ -192,7 +192,7 @@ class HydroSolver:
         include_corners: bool = True,
         # Solver params
         cupy: bool = False,
-        sync_timer: bool = True,
+        profile: bool = False,
         output_path: Optional[Union[str, Path]] = None,
         discard_after_writing: bool = True,
         overwrite: bool = False,
@@ -297,7 +297,7 @@ class HydroSolver:
 
         Solver parameters:
             cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
-            sync_timer: If True, synchronize timers when using CuPy.
+            profile: If True, many timers are added to the solver.
             output_path: Optional path to save simulation outputs. If None, no outputs are saved.
             discard_after_writing: If True, discard arrays after writing to disk to save memory.
             overwrite: If True, overwrite existing output directory if it exists.
@@ -485,7 +485,7 @@ class HydroSolver:
                 ic_params, fv_scheme_params
             ),
             cupy=cupy and CUPY_AVAILABLE,
-            sync_timer=sync_timer and cupy and CUPY_AVAILABLE,
+            profile=profile,
             output_path=Path(output_path) if output_path is not None else None,
             discard_after_writing=discard_after_writing,
         )
@@ -837,8 +837,16 @@ class HydroSolver:
             ),
         )
 
+    def _start_timer(self, cat: str, force: bool = False):
+        if self.params.profile or force:
+            self.step_summary.timer.start(cat, self.params.cupy)
+
+    def _stop_timer(self, cat: str):
+        if self.step_summary.timer.is_timing(cat):
+            self.step_summary.timer.stop(cat, self.params.cupy)
+
     def _take_snapshot(self):
-        self.step_summary.timer.start("take_snapshot", self.params.sync_timer)  # TIMER START
+        self._start_timer("take_snapshot")  # TIMER START
 
         params = self.params
         output_path = params.output_path
@@ -893,7 +901,7 @@ class HydroSolver:
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
 
-        self.step_summary.timer.stop("take_snapshot", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("take_snapshot")  # TIMER STOP
 
     def _write_params_files(self):
         output_path = self.params.output_path
@@ -1079,7 +1087,7 @@ class HydroSolver:
         (_u_, _ucc_, _wcc_, and _w_) based on time `t`, the conservative variables `u`, and
         the provided `fv_scheme`.
         """
-        self.step_summary.timer.start("update_W", self.params.sync_timer)  # TIMER START
+        self._start_timer("update_W")  # TIMER START
 
         idx = self.params.variable_index_map
         active_dims = self.mesh.active_dims
@@ -1131,7 +1139,7 @@ class HydroSolver:
         if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
 
-        self.step_summary.timer.stop("update_W", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("update_W")  # TIMER STOP
 
     def _compute_nnodes_per_face(self, fv_scheme: FV_SchemeParameters) -> int:
         ndim = self.mesh.ndim
@@ -1245,7 +1253,7 @@ class HydroSolver:
         fv_scheme: FV_SchemeParameters,
         dim: Literal["x", "y", "z"],
     ):
-        self.step_summary.timer.start("riemann_solver", self.params.sync_timer)  # TIMER START
+        self._start_timer("riemann_solver")  # TIMER START
 
         params = self.params
         nghost = params.mesh.nghost
@@ -1270,7 +1278,7 @@ class HydroSolver:
             params.hydro.iso_cs,
         )
 
-        self.step_summary.timer.stop("riemann_solver", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("riemann_solver")  # TIMER STOP
 
     def _update_flux_arrays(
         self,
@@ -1309,7 +1317,7 @@ class HydroSolver:
             update_fluxes_with_muscl_scheme(self, fv_scheme, 0.0)
             return
 
-        self.step_summary.timer.start("update_fluxes", self.params.sync_timer)  # TIMER START
+        self._start_timer("update_fluxes")  # TIMER START
 
         params = self.params
         active_dims = params.mesh.active_dims
@@ -1366,7 +1374,7 @@ class HydroSolver:
             tmp["z"][2] if "z" in tmp else None,
         )
 
-        self.step_summary.timer.stop("update_fluxes", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("update_fluxes")  # TIMER STOP
 
     # ODE solver functions
 
@@ -1374,7 +1382,7 @@ class HydroSolver:
         """
         Update the time derivative array "dudt" based on the current flux arrays.
         """
-        self.step_summary.timer.start("update_dudt", self.params.sync_timer)  # TIMER START
+        self._start_timer("update_dudt")  # TIMER START
 
         active_dims = self.params.mesh.active_dims
         hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
@@ -1393,7 +1401,7 @@ class HydroSolver:
             H_fluxes = self.arrays["H"]
             dudt -= (H_fluxes[:, :, :, 1:] - H_fluxes[:, :, :, :-1]) / hz
 
-        self.step_summary.timer.stop("update_dudt", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("update_dudt")  # TIMER STOP
 
     def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
         base_scheme = self.params.fv_scheme
@@ -1449,7 +1457,7 @@ class HydroSolver:
         self._update_log_arrays(LogArrayAction.SUBSTEP_ADD)
 
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
-        self.step_summary.timer.start("update_unew", self.params.sync_timer)  # TIMER START
+        self._start_timer("update_unew")  # TIMER START
 
         params = self.params
         arrays = self.arrays
@@ -1518,14 +1526,14 @@ class HydroSolver:
             case _:
                 raise ValueError(f"Unsupported time integrator: {time_integrator}")
 
-        self.step_summary.timer.stop("update_unew", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("update_unew")  # TIMER STOP
 
     def _open_step(self):
         self._update_log_arrays(LogArrayAction.RESET)
-        self.step_summary.timer.start("take_step", self.params.sync_timer)  # TIMER START
+        self._start_timer("take_step", force=True)  # TIMER START
 
     def _close_step(self, take_snapshot: bool):
-        self.step_summary.timer.stop("take_step", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("take_step")  # TIMER STOP
         self._update_log_arrays(LogArrayAction.SUBSTEP_AVERAGE)
         self._summarize_step(take_snapshot)
 
@@ -1620,12 +1628,12 @@ class HydroSolver:
         unew = arrays["unew"]
 
         # Compute dt which may need to be clipped
-        self.step_summary.timer.start("compute_dt", self.params.sync_timer)  # TIMER START
+        self._start_timer("compute_dt")  # TIMER START
         dt = self.compute_dt(t, u)
         self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
-        self.step_summary.timer.stop("compute_dt", self.params.sync_timer)  # TIMER STOP
+        self._stop_timer("compute_dt")  # TIMER STOP
 
         # Compute new state
         self._update_unew(t, u, dt, time_integrator)

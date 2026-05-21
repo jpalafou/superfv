@@ -183,7 +183,7 @@ def compute_flux_jvp(
 def update_fluxes_with_muscl_scheme(
     sim: HydroSolver, muscl_scheme: FV_SchemeParameters, hancock_dt: float = 0.0
 ):
-    sim.step_summary.timer.start("update_fluxes", sim.params.sync_timer)  # TIMER START
+    sim._start_timer("update_fluxes")  # TIMER START
 
     if not muscl_scheme.muscl_params.use_MUSCL:
         raise ValueError("update_fluxes_with_muscl_scheme should only be called for MUSCL schemes.")
@@ -265,7 +265,7 @@ def update_fluxes_with_muscl_scheme(
         if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             sim.conservatives_to_primitives(_nodes_, _nodes_)
 
-        sim.step_summary.timer.start("riemann_solver", sim.params.sync_timer)  # TIMER START
+        sim._start_timer("riemann_solver")  # TIMER START
         axis = DIM_TO_AXIS[dim]
         left_of_interface = replace_slice(crop(axis, (nghost - 1, -nghost), ndim=5), 4, 1)
         right_of_interface = replace_slice(crop(axis, (nghost, -nghost + 1), ndim=5), 4, 0)
@@ -280,7 +280,7 @@ def update_fluxes_with_muscl_scheme(
             sim.params.hydro.isothermal,
             sim.params.hydro.iso_cs,
         )
-        sim.step_summary.timer.stop("riemann_solver", sim.params.sync_timer)  # TIMER STOP
+        sim._stop_timer("riemann_solver")  # TIMER STOP
 
     sim._update_flux_arrays(
         _FGH_nodes_["x"] if "x" in active_dims else None,
@@ -288,4 +288,4 @@ def update_fluxes_with_muscl_scheme(
         _FGH_nodes_["z"] if "z" in active_dims else None,
     )
 
-    sim.step_summary.timer.stop("update_fluxes", sim.params.sync_timer)  # TIMER STOP
+    sim._stop_timer("update_fluxes")  # TIMER STOP

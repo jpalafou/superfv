@@ -80,6 +80,11 @@ class MultiTimer:
             raise ValueError(f"Could not find timer category '{cat}'")
         self.timers[cat].stop(cuda_sync)
 
+    def is_timing(self, cat: str):
+        if cat not in self.timers:
+            raise ValueError(f"Could not find timer category '{cat}'")
+        return self.timers[cat].is_timing
+
     def copy(self) -> "MultiTimer":
         out = MultiTimer(list(self.timers.keys()))
         for cat in self.timers:
