@@ -73,6 +73,10 @@ def interpolate_cell_centers(
     if _q_.shape != _qcc_.shape:
         raise ValueError("_q_ and _qcc_ must have the same shape.")
 
+    if p < 2:
+        _qcc_[...] = _q_
+        return
+
     if ndim == 1:
         stencil_sweep(_q_[..., na], weights, _qcc_[..., na], active_dims[0])
         return
@@ -112,6 +116,10 @@ def integrate_cell_averages(
         raise ValueError("_qcc_ must be 4D.")
     if _qcc_.shape != _q_.shape:
         raise ValueError("_qcc_ and _q_ must have the same shape.")
+
+    if p < 2:
+        _q_[...] = _qcc_
+        return
 
     if ndim == 1:
         stencil_sweep(_qcc_[..., na], weights, _q_[..., na], active_dims[0])
@@ -153,6 +161,11 @@ def interpolate_face_nodes(
         raise ValueError("_q_ must be 4D.")
     if _q_.shape[:4] != _qj_.shape[:4]:
         raise ValueError("The first 4 dimensions of _q_ and _qj_ must match.")
+
+    if p < 1:
+        if _qj_.shape[4] != 2:
+            raise ValueError("The 5th dimension of _qj_ must be 2 for 1D interpolation.")
+        _qj_[...] = _q_[..., na]
 
     base_shape = _q_.shape
 
@@ -270,6 +283,9 @@ def integrate_transverse_nodes(
         raise ValueError("_qj_ must be 5D with the 5th dimension equal to 1.")
     if _qF_.shape != _qj_.shape[:4]:
         raise ValueError("The shape of _qF_ must match the first 4 dimensions of _qj_.")
+
+    if p < 2:
+        _qF_[...] = _qj_[..., 0]
 
     if ndim == 1:
         raise ValueError("Cannot integrate transverse face nodes in 1D.")
