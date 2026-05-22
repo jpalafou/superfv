@@ -399,10 +399,20 @@ def apply_zhang_shu_limiter(
     if "omit_ZS" in idx.group_var_map:
         _theta_[idx("omit_ZS")] = 1.0
 
+    def apply_limiter(nodes):
+        if cupy:
+            cp.subtract(nodes, _w_[..., na], out=nodes)  # wj - w
+            cp.multiply(nodes, _theta_[..., na], out=nodes)  # theta * (wj - w)
+            cp.add(nodes, _w_[..., na], out=nodes)  # theta * (wj - w) + w
+        else:
+            np.subtract(nodes, _w_[..., na], out=nodes)  # wj - w
+            np.multiply(nodes, _theta_[..., na], out=nodes)  # theta * (wj - w)
+            np.add(nodes, _w_[..., na], out=nodes)  # theta * (wj - w) + w
+
     # apply limiter to face nodes
     if _x_nodes_ is not None:
-        _x_nodes_[...] = _theta_[..., na] * (_x_nodes_ - _w_[..., na]) + _w_[..., na]
+        apply_limiter(_x_nodes_)
     if _y_nodes_ is not None:
-        _y_nodes_[...] = _theta_[..., na] * (_y_nodes_ - _w_[..., na]) + _w_[..., na]
+        apply_limiter(_y_nodes_)
     if _z_nodes_ is not None:
-        _z_nodes_[...] = _theta_[..., na] * (_z_nodes_ - _w_[..., na]) + _w_[..., na]
+        apply_limiter(_z_nodes_)

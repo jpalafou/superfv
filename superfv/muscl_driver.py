@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Dict, Literal
 
 import numpy as np
 
@@ -23,24 +23,6 @@ if TYPE_CHECKING:
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
-
-
-def _allocate_MUSCL_arrays(sim: HydroSolver):
-    active_dims = sim.params.mesh.active_dims
-    nvars = sim.params.variable_index_map.nvars
-    _nx_, _ny_, _nz_ = sim.mesh._shape_
-    arrays = sim.arrays
-
-    if "_flux_jvp_" not in sim.arrays:
-        arrays.add("_predictor_q_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_flux_jvp_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_nodes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_, 2)))
-        if "x" in active_dims:
-            arrays.add("_x_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        if "y" in active_dims:
-            arrays.add("_y_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        if "z" in active_dims:
-            arrays.add("_z_slopes_", sim.xp.empty((nvars, _nx_, _ny_, _nz_)))
 
 
 def _compute_flux_jvp_np(
@@ -196,17 +178,11 @@ def update_fluxes_with_muscl_scheme(
     nghost = sim.params.mesh.nghost
     arrays = sim.arrays
 
-    _allocate_MUSCL_arrays(sim)
-
     _q_ = arrays["_u_"] if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
     _alpha_ = arrays["_alpha_"]
-    _xyz_slopes_ = {dim: arrays[f"_{dim}_slopes_"] for dim in active_dims}
-    _predictor_q_ = arrays["_predictor_q_"]
-    _jvp_ = arrays["_flux_jvp_"]
-    _nodes_ = arrays["_nodes_"]
-    FGH_fluxes = {dim: arrays[{"x": "F", "y": "G", "z": "H"}[dim]] for dim in active_dims}
+    xyz_slope_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
 
-    # compute smooth extrema
+    # Detect smooth extrema
     if muscl_params.SED_params.use_SED:
         compute_alpha(_q_, _alpha_, active_dims, muscl_params.SED_params.clip_zero_tol)
 
@@ -214,16 +190,17 @@ def update_fluxes_with_muscl_scheme(
     if muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D:
         if len(active_dims) != 2:
             raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
-        _slopes1_ = _xyz_slopes_[active_dims[0]]
-        _slopes2_ = _xyz_slopes_[active_dims[1]]
 
+        _slopes1_ = sim.xp.empty_like(_q_)  # TEMP ARRAY
+        _slopes2_ = sim.xp.empty_like(_q_)  # TEMP ARRAY
         compute_PP2D_slopes(
             _q_, _alpha_, _slopes1_, _slopes2_, active_dims, 1e-20, muscl_params.SED_params.use_SED
         )
+        xyz_slope_dict[active_dims[0]] = _slopes1_
+        xyz_slope_dict[active_dims[1]] = _slopes2_
     else:
         for dim in active_dims:
-            _slopes_ = _xyz_slopes_[dim]
-
+            _slopes_ = sim.xp.empty_like(_q_)  # TEMP ARRAY
             compute_MUSCL_slopes(
                 _q_,
                 _alpha_,
@@ -232,18 +209,20 @@ def update_fluxes_with_muscl_scheme(
                 muscl_params.MUSCL_limiter,
                 muscl_params.SED_params.use_SED,
             )
+            xyz_slope_dict[dim] = _slopes_
 
     # Compute predictor step
-    _predictor_q_[...] = _q_
+    _predictor_q_ = _q_.copy()
 
     if hancock_dt > 0:
+        _jvp_ = sim.xp.empty_like(_q_)  # TEMP ARRAY
+
         for dim in active_dims:
             h = {"x": hx, "y": hy, "z": hz}[dim]
-            _slopes_ = _xyz_slopes_[dim]
 
             compute_flux_jvp(
                 _q_,
-                _slopes_,
+                xyz_slope_dict[dim],
                 _jvp_,
                 idx,
                 dim,
@@ -256,22 +235,31 @@ def update_fluxes_with_muscl_scheme(
 
     # Corrector step
     for dim in active_dims:
-        _slopes_ = _xyz_slopes_[dim]
-        Fluxes = FGH_fluxes[dim]
+        Fluxes = arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
 
-        _left_node_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
-        _right_node_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
+        # Compute cell faces
+        _slopes_ = xyz_slope_dict[dim]
+        _left_face_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
+        _right_face_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
 
+        # Ensure faces are positive and primitive
         if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
-            sim.conservatives_to_primitives(_nodes_, _nodes_)
+            sim.conservatives_to_primitives(_left_face_, _left_face_)
+            sim.conservatives_to_primitives(_right_face_, _right_face_)
 
-        sim._start_timer("riemann_solver")  # TIMER START
+        sim._ensure_positive_nodes(_left_face_)
+        sim._ensure_positive_nodes(_right_face_)
+
+        # Gather slices
         axis = DIM_TO_AXIS[dim]
         left_of_interface = replace_slice(sim.interior, axis, slice(nghost - 1, -nghost))
         right_of_interface = replace_slice(sim.interior, axis, slice(nghost, -nghost + 1))
+
+        # Perform Riemann solve
+        sim._start_timer("riemann_solver")  # TIMER START
         sim.riemann_solver(
-            _right_node_[left_of_interface],
-            _left_node_[right_of_interface],
+            _right_face_[left_of_interface],
+            _left_face_[right_of_interface],
             Fluxes,
             dim,
             sim.params.variable_index_map,
