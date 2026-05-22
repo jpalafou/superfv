@@ -915,9 +915,17 @@ class HydroSolver:
         output_path = self.params.output_path
         mesh = self.mesh
 
-        if output_path is not None:
-            with open(output_path / "mesh.pkl", "wb") as f:
-                pickle.dump(mesh, f)
+        if output_path is None:
+            return
+
+        if self.params.cupy:
+            mesh.array_manager.transfer_to("cpu")
+
+        with open(output_path / "mesh.pkl", "wb") as f:
+            pickle.dump(mesh, f)
+
+        if self.params.cupy:
+            mesh.array_manager.transfer_to("gpu")
 
     def _prepare_output_directory(self, overwrite: bool):
         """

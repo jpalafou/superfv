@@ -7,12 +7,12 @@ import pandas
 from superfv import HydroSolver, TimeIntegrator, ics, run_multiple_simulations
 from superfv.tools.norms import linf_norm
 
-base_path = "/Users/jonathan/Desktop/out"
+base_path = "/scratch/gpfs/jp7427/superfv/sinus2d-convergence"
 overwrite = True
 
-N_list = [16, 32, 64]
+N_list = [16, 32, 64, 128, 256]
 schemes = {"FV1": dict(p=0), "FV2": dict(p=1), "FV3": dict(p=2), "FV4": dict(p=3)}
-init_params = dict(ic=partial(ics.sinus, vx=2.0, vy=1.0))
+init_params = dict(ic=partial(ics.sinus, vx=2.0, vy=1.0), cupy=True)
 run_params = dict(t=1.0, time_integrator=TimeIntegrator.MATCH_P_UP_TO_RK4)
 
 
