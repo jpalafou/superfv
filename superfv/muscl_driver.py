@@ -15,7 +15,7 @@ from .slope_limiting.muscl import (
 )
 from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
-from .tools.slicing import crop, replace_slice
+from .tools.slicing import replace_slice
 from .tools.variable_index_map import VariableIndexMap
 
 if TYPE_CHECKING:
@@ -204,7 +204,7 @@ def update_fluxes_with_muscl_scheme(
     _predictor_q_ = arrays["_predictor_q_"]
     _jvp_ = arrays["_flux_jvp_"]
     _nodes_ = arrays["_nodes_"]
-    _FGH_nodes_ = {dim: arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]] for dim in active_dims}
+    FGH_fluxes = {dim: arrays[{"x": "F", "y": "G", "z": "H"}[dim]] for dim in active_dims}
 
     # compute smooth extrema
     if muscl_params.SED_params.use_SED:
@@ -252,28 +252,27 @@ def update_fluxes_with_muscl_scheme(
                 iso_cs=hydro_params.iso_cs,
                 primitives=muscl_scheme.flux_recipe != FluxRecipe.CONS_LIM_PRIM,
             )
-            _predictor_q_[...] -= 0.5 * _jvp_ * hancock_dt / h
+            _predictor_q_ -= 0.5 * _jvp_ * hancock_dt / h
 
     # Corrector step
     for dim in active_dims:
         _slopes_ = _xyz_slopes_[dim]
-        _fluxes_ = _FGH_nodes_[dim]
+        Fluxes = FGH_fluxes[dim]
 
-        _nodes_[..., 0] = _predictor_q_ - 0.5 * _slopes_
-        _nodes_[..., 1] = _predictor_q_ + 0.5 * _slopes_
+        _left_node_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
+        _right_node_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
 
         if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             sim.conservatives_to_primitives(_nodes_, _nodes_)
 
         sim._start_timer("riemann_solver")  # TIMER START
         axis = DIM_TO_AXIS[dim]
-        left_of_interface = replace_slice(crop(axis, (nghost - 1, -nghost), ndim=5), 4, 1)
-        right_of_interface = replace_slice(crop(axis, (nghost, -nghost + 1), ndim=5), 4, 0)
-
+        left_of_interface = replace_slice(sim.interior, axis, slice(nghost - 1, -nghost))
+        right_of_interface = replace_slice(sim.interior, axis, slice(nghost, -nghost + 1))
         sim.riemann_solver(
-            _nodes_[left_of_interface],
-            _nodes_[right_of_interface],
-            _fluxes_,
+            _right_node_[left_of_interface],
+            _left_node_[right_of_interface],
+            Fluxes,
             dim,
             sim.params.variable_index_map,
             sim.params.hydro.gamma,
@@ -281,11 +280,5 @@ def update_fluxes_with_muscl_scheme(
             sim.params.hydro.iso_cs,
         )
         sim._stop_timer("riemann_solver")  # TIMER STOP
-
-    sim._update_flux_arrays(
-        _FGH_nodes_["x"] if "x" in active_dims else None,
-        _FGH_nodes_["y"] if "y" in active_dims else None,
-        _FGH_nodes_["z"] if "z" in active_dims else None,
-    )
 
     sim._stop_timer("update_fluxes")  # TIMER STOP
