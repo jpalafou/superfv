@@ -7,6 +7,7 @@ from .hydro_solver_output import HydroSolverOutput
 from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import CUPY_AVAILABLE
+from .tools.run_helper import run_multiple_simulations
 from .tools.turbulent_power_spectra import turbulent_power_specta
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "HydroSolver",
     "HydroSolverOutput",
     # functions
+    "run_multiple_simulations",
     "turbulent_power_specta",
     # enums
     "BC",
