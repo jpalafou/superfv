@@ -1093,17 +1093,22 @@ class HydroSolver:
         active_dims = self.mesh.active_dims
         arrays = self.arrays
 
-        # allocate arrays
+        # Allocate cell-averaged and cell-centered arrays
         _u_ = arrays["_u_"]
+        _w_ = arrays["_w_"]
         _ucc_ = arrays["_ucc_"]
         _wcc_ = arrays["_wcc_"]
-        _w_ = arrays["_w_"]
         _w1_ = arrays["_w1_"]
         _has_shock_ = arrays["_has_shock_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
         self.apply_bc(_u_, t, fv_scheme.p)
+
+        # Early escape for low-order scheme. The rest of the arrays are useless.
+        if fv_scheme.p < 2:
+            self.conservatives_to_primitives(_u_, _w_)
+            return
 
         # 1) conservative and primitive centroids
         interpolate_cell_centers(_u_, _ucc_, active_dims, fv_scheme.p)

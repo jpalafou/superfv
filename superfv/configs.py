@@ -193,8 +193,8 @@ class FV_SchemeParameters:
             )
             object.__setattr__(self, "p", 1)
 
-        # p <= 1 non lazy primitive warning
-        if self.p <= 1 and self.lazy_primitive_mode != LazyPrimitiveMode.FULL:
+        # p < 2 non lazy primitive warning
+        if self.p < 2 and self.lazy_primitive_mode != LazyPrimitiveMode.FULL:
             warnings.warn(
                 "Changing lazy_primitive_mode to FULL since FV scheme is second-order or lower.",
                 UserWarning,
