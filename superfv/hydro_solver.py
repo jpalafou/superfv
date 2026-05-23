@@ -734,7 +734,7 @@ class HydroSolver:
 
     def _allocate_arrays(self):
         nvars = self.params.variable_index_map.nvars
-        fv_scheme = self.params.fv_scheme
+        base_scheme = self.params.fv_scheme
         mesh = self.mesh
         nx, ny, nz = mesh.shape
         _nx_, _ny_, _nz_ = mesh._shape_
@@ -771,33 +771,36 @@ class HydroSolver:
             arrays.add("_H_", self.xp.empty((nvars, _nx_, _ny_, nz + 1)))
             arrays.add("H", self.xp.empty((nvars, nx, ny, nz + 1)))
 
-        # define slope-limiting arrays
+        # define smooth extrema detection array
         arrays.add("_alpha_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_has_shock_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+
+        # define shock detection arrays
+        if base_scheme.shock_detection_params.use_shock_detection:
+            arrays.add("_has_shock_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+            arrays.add("has_shock_log", self.xp.zeros((1, nx, ny, nz)))
 
         # define Zhang-Shu limiter arrays
-        arrays.add("_theta_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
+        if base_scheme.zhang_shu_params.use_ZS:
+            arrays.add("_theta_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
+            arrays.add("theta_log", self.xp.ones((nvars, nx, ny, nz)))
 
         # define MOOD arrays
-        for scheme in [fv_scheme] + fv_scheme.mood_params.fallback_cascade:
-            if "x" in active_dims:
-                arrays.add("F_" + scheme.name, self.xp.empty((nvars, nx + 1, ny, nz)))
-            if "y" in active_dims:
-                arrays.add("G_" + scheme.name, self.xp.empty((nvars, nx, ny + 1, nz)))
-            if "z" in active_dims:
-                arrays.add("H_" + scheme.name, self.xp.empty((nvars, nx, ny, nz + 1)))
+        if base_scheme.mood_params.use_MOOD:
+            for scheme in [base_scheme] + base_scheme.mood_params.fallback_cascade:
+                if "x" in active_dims:
+                    arrays.add("F_" + scheme.name, self.xp.empty((nvars, nx + 1, ny, nz)))
+                if "y" in active_dims:
+                    arrays.add("G_" + scheme.name, self.xp.empty((nvars, nx, ny + 1, nz)))
+                if "z" in active_dims:
+                    arrays.add("H_" + scheme.name, self.xp.empty((nvars, nx, ny, nz + 1)))
 
-        arrays.add("_qold_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_qnew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
-        arrays.add("_troubles_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-        arrays.add("revisable_troubles", self.xp.zeros((1, nx, ny, nz), dtype=np.int32))
-        arrays.add("_cascade_idx_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
-
-        # define snapshot arrays
-        arrays.add("has_shock_log", self.xp.zeros((1, nx, ny, nz)))
-        arrays.add("theta_log", self.xp.ones((nvars, nx, ny, nz)))
-        arrays.add("troubles_log", self.xp.zeros((1, nx, ny, nz)))
-        arrays.add("cascade_idx_log", self.xp.zeros((1, nx, ny, nz)))
+            arrays.add("_qold_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+            arrays.add("_qnew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+            arrays.add("_troubles_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+            arrays.add("revisable_troubles", self.xp.zeros((1, nx, ny, nz), dtype=np.int32))
+            arrays.add("_cascade_idx_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
+            arrays.add("troubles_log", self.xp.zeros((1, nx, ny, nz)))
+            arrays.add("cascade_idx_log", self.xp.zeros((1, nx, ny, nz)))
 
     def _init_time(self):
         self.t = 0.0
@@ -1106,7 +1109,6 @@ class HydroSolver:
         _ucc_ = arrays["_ucc_"]
         _wcc_ = arrays["_wcc_"]
         _w1_ = arrays["_w1_"]
-        _has_shock_ = arrays["_has_shock_"]
 
         # 0) conservatives FV averages + BC
         _u_[self.interior] = u
@@ -1130,6 +1132,8 @@ class HydroSolver:
             case LazyPrimitiveMode.FULL:
                 _w_[...] = _w1_
             case LazyPrimitiveMode.ADAPTIVE:
+                _has_shock_ = arrays["_has_shock_"]
+
                 integrate_cell_averages(_wcc_, _w_, active_dims, fv_scheme.p)
                 self.detect_shocks(fv_scheme)  # updates "_has_shock_"
 
@@ -1411,27 +1415,37 @@ class HydroSolver:
         self._reset_substep_summary()
 
     def _update_log_arrays(self, action: LogArrayAction):
+        base_scheme = self.params.fv_scheme
         interior = self.interior
         arrays = self.arrays
 
         match action:
             case LogArrayAction.SUBSTEP_ADD:
-                arrays["has_shock_log"] += arrays["_has_shock_"][interior]
-                arrays["theta_log"] += arrays["_theta_"][interior]
-                arrays["troubles_log"] += arrays["_troubles_"][interior]
-                arrays["cascade_idx_log"] += arrays["_cascade_idx_"][interior]
+                if base_scheme.shock_detection_params.use_shock_detection:
+                    arrays["has_shock_log"] += arrays["_has_shock_"][interior]
+                if base_scheme.zhang_shu_params.use_ZS:
+                    arrays["theta_log"] += arrays["_theta_"][interior]
+                if base_scheme.mood_params.use_MOOD:
+                    arrays["troubles_log"] += arrays["_troubles_"][interior]
+                    arrays["cascade_idx_log"] += arrays["_cascade_idx_"][interior]
             case LogArrayAction.SUBSTEP_AVERAGE:
                 n_substeps = max(1, len(self.step_summary.substeps))
 
-                arrays["has_shock_log"] /= n_substeps
-                arrays["theta_log"] /= n_substeps
-                arrays["troubles_log"] /= n_substeps
-                arrays["cascade_idx_log"] /= n_substeps
+                if base_scheme.shock_detection_params.use_shock_detection:
+                    arrays["has_shock_log"] /= n_substeps
+                if base_scheme.zhang_shu_params.use_ZS:
+                    arrays["theta_log"] /= n_substeps
+                if base_scheme.mood_params.use_MOOD:
+                    arrays["troubles_log"] /= n_substeps
+                    arrays["cascade_idx_log"] /= n_substeps
             case LogArrayAction.RESET:
-                arrays["has_shock_log"][...] = 0.0
-                arrays["theta_log"][...] = 0.0
-                arrays["troubles_log"][...] = 0.0
-                arrays["cascade_idx_log"][...] = 0.0
+                if base_scheme.shock_detection_params.use_shock_detection:
+                    arrays["has_shock_log"][...] = 0.0
+                if base_scheme.zhang_shu_params.use_ZS:
+                    arrays["theta_log"][...] = 0.0
+                if base_scheme.mood_params.use_MOOD:
+                    arrays["troubles_log"][...] = 0.0
+                    arrays["cascade_idx_log"][...] = 0.0
 
     def _close_substep(self):
         self._summarize_substep()
