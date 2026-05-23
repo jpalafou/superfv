@@ -90,8 +90,7 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
     _alpha_ = arrays["_alpha_"]
     _cascade_idx_ = arrays["_cascade_idx_"]
     dudt = arrays["dudt"]
-    _qold_ = sim.xp.empty_like(_uold_)
-    _qnew_ = sim.xp.empty_like(_uold_)
+    _unew_ = sim.xp.empty_like(_uold_)
     _wnew_ = sim.xp.empty_like(_uold_)
 
     # Reset troubled cells
@@ -99,19 +98,20 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
 
     # Compute candidate solution qnew
     sim.update_dudt()
-    _qnew_[interior] = _uold_[interior] + dt * dudt
-    sim.apply_bc(_qnew_, t, params.fv_scheme.p)
-    sim.conservatives_to_primitives(_qnew_, _wnew_)
+    _unew_[interior] = _uold_[interior] + dt * dudt
+    sim.apply_bc(_unew_, t, params.fv_scheme.p)
+    sim.conservatives_to_primitives(_unew_, _wnew_)
 
     # Assign _qold_ and _qnew_, the NAD arrays
     if params.fv_scheme.flux_recipe != FluxRecipe.CONS_LIM_PRIM:
         # NAD is applied to primitives
-        sim.conservatives_to_primitives(_uold_, _qold_)
-        _qnew_[...] = _wnew_
+        _qold_ = _uold_.copy()
+        sim.conservatives_to_primitives(_qold_, _qold_)
+        _qnew_ = _wnew_
     else:
         # NAD is applied to conservatives
-        _qold_[...] = _uold_[...]
-        # _qnew_ is already conservative
+        _qold_ = _uold_
+        _qnew_ = _unew_
 
     # Update smooth extrema
     if mood_params.NAD_params.use_NAD and mood_params.NAD_params.SED_params.use_SED:
