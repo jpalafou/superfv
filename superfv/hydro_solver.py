@@ -2,7 +2,6 @@ import pickle
 import shutil
 import time
 import warnings
-from dataclasses import asdict
 from enum import Enum
 from functools import cached_property, partial
 from pathlib import Path
@@ -907,7 +906,7 @@ class HydroSolver:
         output_path = self.params.output_path
         if output_path is not None:
             with open(output_path / "params.yaml", "w") as f:
-                f.write(yaml_dump(asdict(self.params)))
+                f.write(yaml_dump(self.params))
             with open(output_path / "params.pkl", "wb") as f:
                 pickle.dump(self.params, f)
 

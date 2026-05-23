@@ -67,7 +67,7 @@ def test_writing_and_reading_snapshot(discard_after_writing):
         snapshot_from_sim = sim.snapshot_history[i]
         snapshot_from_output = output.snapshot_history[i]
 
-        snapshot_from_sim.t == snapshot_from_output.t
+        assert snapshot_from_sim.t == snapshot_from_output.t
         assert np.array_equal(snapshot_from_sim.u, snapshot_from_output.u)
 
     shutil.rmtree(OUTPUT_PATH)
