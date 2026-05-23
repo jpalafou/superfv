@@ -166,6 +166,7 @@ def interpolate_face_nodes(
         if _qj_.shape[4] != 2:
             raise ValueError("The 5th dimension of _qj_ must be 2 for 1D interpolation.")
         _qj_[...] = _q_[..., na]
+        return
 
     base_shape = _q_.shape
 
@@ -286,6 +287,7 @@ def integrate_transverse_nodes(
 
     if p < 2:
         _qF_[...] = _qj_[..., 0]
+        return
 
     if ndim == 1:
         raise ValueError("Cannot integrate transverse face nodes in 1D.")
