@@ -176,9 +176,12 @@ def update_fluxes_with_muscl_scheme(
     active_dims = sim.params.mesh.active_dims
     hx, hy, hz = sim.mesh.hx, sim.mesh.hy, sim.mesh.hz
     nghost = sim.params.mesh.nghost
+    na = sim.xp.newaxis
     arrays = sim.arrays
 
-    _q_ = arrays["_u_"] if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
+    _u_ = arrays["_u_"]
+    _w_ = arrays["_w_"]
+    _q_ = _u_ if muscl_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_
     _alpha_ = arrays["_alpha_"]
     xyz_slope_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
 
@@ -247,8 +250,8 @@ def update_fluxes_with_muscl_scheme(
             sim.conservatives_to_primitives(_left_face_, _left_face_)
             sim.conservatives_to_primitives(_right_face_, _right_face_)
 
-        sim._ensure_positive_nodes(_left_face_)
-        sim._ensure_positive_nodes(_right_face_)
+        sim._ensure_positive_nodes(_left_face_[..., na], _w_)
+        sim._ensure_positive_nodes(_right_face_[..., na], _w_)
 
         # Gather slices
         axis = DIM_TO_AXIS[dim]

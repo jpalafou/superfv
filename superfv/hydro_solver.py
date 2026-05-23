@@ -1234,14 +1234,26 @@ class HydroSolver:
             node_dict["z"] if "z" in active_dims else None,
         )
 
-    def _ensure_positive_nodes(self, nodes: ArrayLike):
+    def _ensure_positive_nodes(self, nodes: ArrayLike, w: ArrayLike):
         idx = self.params.variable_index_map
-        self.xp.maximum(nodes[idx("rho")], self.params.hydro.rho_min, out=nodes[idx("rho")])
-        self.xp.maximum(nodes[idx("P")], self.params.hydro.P_min, out=nodes[idx("P")])
+        na = self.xp.newaxis
 
-    def _ensure_positive_node_dict(self, node_dict: Dict[Literal["x", "y", "z"], ArrayLike]):
+        nodes[idx("rho")] = self.xp.where(
+            nodes[idx("rho")] < self.params.hydro.rho_min,
+            w[idx("rho"), ..., na],
+            nodes[idx("rho")],
+        )
+        nodes[idx("P")] = self.xp.where(
+            nodes[idx("P")] < self.params.hydro.P_min,
+            w[idx("P"), ..., na],
+            nodes[idx("P")],
+        )
+
+    def _ensure_positive_node_dict(
+        self, node_dict: Dict[Literal["x", "y", "z"], ArrayLike], w: ArrayLike
+    ):
         for dim in self.params.mesh.active_dims:
-            self._ensure_positive_nodes(node_dict[dim])
+            self._ensure_positive_nodes(node_dict[dim], w)
 
     def _riemann_solver_slices(
         self, axis: int, n_nodes: int
@@ -1275,7 +1287,9 @@ class HydroSolver:
         active_dims = params.mesh.active_dims
         arrays = self.arrays
 
-        _q_ = arrays["_w_"] if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else arrays["_u_"]
+        _u_ = arrays["_u_"]
+        _w_ = arrays["_w_"]
+        _q_ = _w_ if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_
         xyz_node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
 
         n_nodes = self._compute_nodes_per_face(fv_scheme)
@@ -1302,7 +1316,7 @@ class HydroSolver:
 
         if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             self._convert_nodes_to_primitives(xyz_node_dict)
-        self._ensure_positive_node_dict(xyz_node_dict)
+        self._ensure_positive_node_dict(xyz_node_dict, _w_)
 
         # Perform Riemann solve and compute flux integrals
         for dim in active_dims:
