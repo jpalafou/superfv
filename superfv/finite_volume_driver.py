@@ -1,19 +1,34 @@
 from enum import Enum
 from functools import lru_cache
-from typing import Literal, Optional, Tuple, cast
+from typing import Dict, Literal, Tuple
 
 import numpy as np
 
-from superfv.tools.variable_index_map import VariableIndexMap
+from superfv.axes import DIM_TO_AXIS
+from superfv.boundary_conditions import apply_bc
+from superfv.tools.slicing import crop, merge_slices
 
-from .configs import ZhangShuParameters
+from .configs import (
+    BoundaryConditionParameters,
+    FluxQuadrature,
+    FluxRecipe,
+    FV_SchemeParameters,
+    HydroParameters,
+    LazyPrimitiveMode,
+    ZhangShuParameters,
+)
+from .hydro import cons_to_prim, prim_to_cs
+from .mesh import UniformFVMesh
 from .quadrature import perform_quadrature
+from .riemann_solvers import RiemannSolver, solve_riemann_problem
 from .slope_limiting import compute_dmp
+from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .slope_limiting.zhang_and_shu import compute_theta
 from .stencils import conservative_interpolation, transverse_integration
 from .sweep import stencil_sweep
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
+from .tools.variable_index_map import VariableIndexMap
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
@@ -308,113 +323,400 @@ def integrate_transverse_nodes(
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
 
 
-def apply_zhang_shu_limiter(
+def _apply_fv_bc(
+    _u_: ArrayLike,
+    idx: VariableIndexMap,
+    mesh: UniformFVMesh,
+    t: float,
+    p: int,
+    bc_params: BoundaryConditionParameters,
+):
+    """
+    Update the ghost-cell-padded array of conservative cell averages `_u_` in-place with the
+    specified boundary conditions.
+    """
+    apply_bc(
+        cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np,
+        _u_,
+        mesh.nghost,
+        bc_params.bcx,
+        bc_params.bcy,
+        bc_params.bcz,
+        bc_params.bcx_callable_lower,
+        bc_params.bcx_callable_upper,
+        bc_params.bcy_callable_lower,
+        bc_params.bcy_callable_upper,
+        bc_params.bcz_callable_lower,
+        bc_params.bcz_callable_upper,
+        idx,
+        mesh,
+        t,
+        p,
+    )
+
+
+@lru_cache(maxsize=None)
+def _get_interior_view(
+    nghost: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
+) -> Tuple[slice, ...]:
+    """
+    Return interior view for a ghost-cell-padded array with shape (nvars, _nx_, _ny_, _nz_).
+    """
+    return merge_slices(*[crop(DIM_TO_AXIS[dim], (nghost, -nghost)) for dim in active_dims])
+
+
+def _fv_detect_shocks(
+    _q_: ArrayLike,
+    _cs_: ArrayLike,
+    _eta_: ArrayLike,
+    _has_shock_: ArrayLike,
+    primitives: bool,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    fv_params: FV_SchemeParameters,
+):
+    """
+    Detect shocks in `_q_` and write the result to `_eta_` and `_has_shock_`.
+    """
+    if not fv_params.shock_detection_params.use_shock_detection:
+        raise ValueError("Shock detection is not enabled in the provided FV scheme.")
+
+    # Allocate temporary array
+    _q_ref_ = _q_.copy()
+
+    # Update `_q_ref_` with cs if detecting shocks from primitives or rho * cs otherwise
+    for dim in active_dims:
+        _q_ref_[idx("v" + dim)] = _cs_ if primitives else _q_[idx("rho")] * _cs_
+
+    detect_shocks(
+        _q_, _q_ref_, _eta_, _has_shock_, active_dims, fv_params.shock_detection_params.eta_max
+    )
+
+
+def update_fv_workspace(
+    u: ArrayLike,
+    _u_: ArrayLike,
     _w_: ArrayLike,
-    _wcc_: ArrayLike,
+    _eta_: ArrayLike,
+    _has_shock_: ArrayLike,
+    t: float,
+    idx: VariableIndexMap,
+    mesh: UniformFVMesh,
+    fv_params: FV_SchemeParameters,
+    bc_params: BoundaryConditionParameters,
+    hydro_params: HydroParameters,
+):
+    """
+    Update the `_u_` and `_w_` arrays with ghost-cell-padded conservative and primitive finite
+    volume averages, respectively. Update the `_eta_` and `_has_shock_` arrays with shock
+    detection results if enabled in the FV scheme.
+    """
+    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
+    hp = hydro_params
+    fv = fv_params
+    active_dims = mesh.active_dims
+    interior = _get_interior_view(mesh.nghost, active_dims)
+
+    # 0) Update interior conservative FV averages and apply BC
+    _u_[interior] = u
+    _apply_fv_bc(_u_, idx, mesh, t, fv.p, bc_params)
+
+    # Early escape for low-order scheme. The rest of the arrays are useless.
+    if fv.p < 2:
+        cons_to_prim(_u_, _w_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        return
+
+    # Allocate some temp arrays
+    _qcc_ = xp.empty_like(_u_)
+
+    # 1) Compute primitive cell-cenetered values
+    interpolate_cell_centers(_u_, _qcc_, active_dims, fv.p)
+    cons_to_prim(_qcc_, _qcc_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+
+    # 2) Compute primitive finite-volume averages
+    if fv.lazy_primitive_mode == LazyPrimitiveMode.FULL:
+        cons_to_prim(_u_, _w_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        return
+
+    if fv.lazy_primitive_mode == LazyPrimitiveMode.NONE:
+        integrate_cell_averages(_qcc_, _w_, active_dims, fv.p)
+
+        # Ensure density is always transformed in the lazy way
+        _w_[idx("rho"), ...] = _u_[idx("rho"), ...]
+        return
+
+    if fv.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE:
+        integrate_cell_averages(_qcc_, _w_, active_dims, fv.p)
+
+        # Allocate some more temp arrays
+        _w1_ = xp.empty_like(_u_)
+        _cs_ = xp.empty_like(_u_[idx("rho")])
+
+        # Get lazy primitives
+        cons_to_prim(_u_, _w1_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+
+        # Detect shocks and flag them in _has_shock_
+        prim_to_cs(_w1_, _cs_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        _fv_detect_shocks(
+            _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_,
+            _cs_,
+            _eta_,
+            _has_shock_,
+            False if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else True,
+            idx,
+            active_dims,
+            fv,
+        )
+
+        # Flag PAD violations as shocks
+        if fv.mood_params.PAD_params.use_PAD:
+            raise NotImplementedError(
+                "Adaptive primitive mode with MOOD PAD is not implemented yet."
+            )
+        if fv.zhang_shu_params.PAD_params.use_PAD:
+            for v, (lb, ub) in fv.zhang_shu_params.PAD_params.bounds.items():
+                if lb is not None:
+                    xp.maximum(_has_shock_, _w_[idx(v)] < lb, out=_has_shock_)
+                if ub is not None:
+                    xp.maximum(_has_shock_, _w_[idx(v)] > ub, out=_has_shock_)
+
+        _w_[...] = xp.where(_has_shock_, _w_, _w1_)
+
+        # Ensure density is always transformed in the lazy way
+        _w_[idx("rho"), ...] = _u_[idx("rho"), ...]
+        return
+
+
+def _apply_zhang_shu_limiter_to_node_array(nodes: ArrayLike, fallback: ArrayLike, theta: ArrayLike):
+    xp = cp if CUPY_AVAILABLE and isinstance(nodes, cp.ndarray) else np
+    na = xp.newaxis
+
+    xp.subtract(nodes, fallback[..., na], out=nodes)  # wj - w
+    xp.multiply(nodes, theta[..., na], out=nodes)  # theta * (wj - w)
+    xp.add(nodes, fallback[..., na], out=nodes)  # theta * (wj - w) + w
+
+
+def apply_zhang_shu_limiter(
+    _q_: ArrayLike,
+    _x_nodes_: ArrayLike,
+    _y_nodes_: ArrayLike,
+    _z_nodes_: ArrayLike,
+    _qcc_: ArrayLike,
     _theta_: ArrayLike,
     _alpha_: ArrayLike,
-    p: int,
     idx: VariableIndexMap,
+    primitives: bool,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
     params: ZhangShuParameters,
-    _x_nodes_: Optional[ArrayLike] = None,
-    _y_nodes_: Optional[ArrayLike] = None,
-    _z_nodes_: Optional[ArrayLike] = None,
 ):
-    cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
-    na = cp.newaxis if cupy else np.newaxis
-    active_dims = cast(
-        Tuple[Literal["x", "y", "z"], ...],
-        tuple(
-            d
-            for d, nodes in zip(["x", "y", "z"], [_x_nodes_, _y_nodes_, _z_nodes_])
-            if nodes is not None
-        ),
-    )
+    xp = cp if CUPY_AVAILABLE and isinstance(_q_, cp.ndarray) else np
+    na = xp.newaxis
 
-    if _w_.ndim != 4:
-        raise ValueError("_w_ must be 4D.")
-    if _w_.shape != _wcc_.shape:
-        raise ValueError("_w_ and _wcc_ must have the same shape.")
-    if _theta_.shape != _w_.shape:
-        raise ValueError("_theta_ must have the same shape as _w_.")
-    if _alpha_.shape != _w_.shape:
-        raise ValueError("_alpha_ must have the same shape as _w_.")
+    # Validate input
+    if _q_.ndim != 4:
+        raise ValueError("_q_ must be 4D.")
+    if _q_.shape != _qcc_.shape:
+        raise ValueError("_q_ and _qcc_ must have the same shape.")
+    if _theta_.shape != _q_.shape:
+        raise ValueError("_theta_ must have the same shape as _q_.")
+    if _alpha_.shape != _q_.shape:
+        raise ValueError("_alpha_ must have the same shape as _q_.")
 
-    # allocate arrays
-    _qj_shape_ = _w_.shape[:4] + (
-        (
-            (1 if p > 1 else 0)
-            + sum(
-                nodes.shape[4] for nodes in [_x_nodes_, _y_nodes_, _z_nodes_] if nodes is not None
-            )
-        ),
-    )
-    _qj_ = cp.empty(_qj_shape_) if cupy else np.empty(_qj_shape_)
-    _M_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
-    _m_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
-    _Mj_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
-    _mj_ = cp.empty_like(_w_) if cupy else np.empty_like(_w_)
+    # Allocate temporary arrays
+    _M_ = xp.empty_like(_q_)
+    _m_ = xp.empty_like(_q_)
+    _Mj_ = xp.empty_like(_q_)
+    _mj_ = xp.empty_like(_q_)
 
-    # stack all nodes into into _qj_
+    # Gather node arrays into dict
+    node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {
+        dim: nodes
+        for dim, nodes in zip(("x", "y", "z"), (_x_nodes_, _y_nodes_, _z_nodes_))
+        if dim in active_dims
+    }
+
+    # 1) Gather all node arrays to get nodal minima and maxima
     if p > 1:
-        _qj_[..., 0] = _wcc_  # include cell center
-        for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
-            n = nodes.shape[4]
-            idx1 = 1 + i * n
-            idx2 = 1 + (i + 1) * n
-            _qj_[..., slice(idx1, idx2)] = nodes
+        interpolate_cell_centers(_q_, _qcc_, active_dims, p)
+        _qj_ = xp.concatenate([_qcc_[..., na]] + [node_dict[dim] for dim in active_dims], axis=4)
     else:
-        for i, nodes in enumerate([x for x in [_x_nodes_, _y_nodes_, _z_nodes_] if x is not None]):
-            n = nodes.shape[4]
-            idx1 = i * n
-            idx2 = (i + 1) * n
-            _qj_[..., slice(idx1, idx2)] = nodes
+        _qj_ = xp.concatenate([node_dict[dim] for dim in active_dims], axis=4)
 
-    compute_dmp(_w_, _M_, _m_, active_dims, params.include_corners)  # update _M_ and _m_ with DMP
+    # 2) Update _M_ and _m_ with discrete maximum principle
+    compute_dmp(_q_, _M_, _m_, active_dims, params.include_corners)
+
+    # 3) Update _Mj_ and _mj_ with nodal maxima and minima and _theta_ with the Zhang-Shu limiter
     compute_theta(
-        _w_, _qj_, _M_, _m_, _Mj_, _mj_, _theta_, params.theta_denom_tol
+        _q_, _qj_, _M_, _m_, _Mj_, _mj_, _theta_, params.theta_denom_tol
     )  # update _Mj_, _mj_, and _theta_
 
+    # 4) Relax _theta_ with smooth extrema detection and omit variables from limiting
     if params.SED_params.use_SED:
         if _alpha_ is None:
             raise ValueError("_alpha_ must be provided if detect_smooth_extrema is True")
-        compute_alpha(_w_, _alpha_, active_dims)
+        compute_alpha(_q_, _alpha_, active_dims)
 
-        if params.PAD_params.use_PAD:
-            _physical_ = (
-                cp.ones_like(_alpha_[0], dtype=bool)
-                if cupy
-                else np.ones_like(_alpha_[0], dtype=bool)
-            )
+        if params.PAD_params.use_PAD and primitives:
+            _physical_ = xp.ones_like(_alpha_[0], dtype=bool)  # TEMP ARRAY
             for v, (lb, ub) in params.PAD_params.bounds.items():
                 if ub is not None:
                     _physical_ &= _Mj_[idx(v)] <= ub
                 if lb is not None:
                     _physical_ &= _mj_[idx(v)] >= lb
             _alpha_ *= _physical_
-        if cupy:
-            cp.maximum(_theta_, _alpha_ >= 1, out=_theta_)
-        else:
-            np.maximum(_theta_, _alpha_ >= 1, out=_theta_)
+        xp.maximum(_theta_, _alpha_ >= 1, out=_theta_)
 
-    # omit variables from limiting
     if "omit_ZS" in idx.group_var_map:
         _theta_[idx("omit_ZS")] = 1.0
 
-    def apply_limiter(nodes):
-        if cupy:
-            cp.subtract(nodes, _w_[..., na], out=nodes)  # wj - w
-            cp.multiply(nodes, _theta_[..., na], out=nodes)  # theta * (wj - w)
-            cp.add(nodes, _w_[..., na], out=nodes)  # theta * (wj - w) + w
-        else:
-            np.subtract(nodes, _w_[..., na], out=nodes)  # wj - w
-            np.multiply(nodes, _theta_[..., na], out=nodes)  # theta * (wj - w)
-            np.add(nodes, _w_[..., na], out=nodes)  # theta * (wj - w) + w
+    # Apply limiter to node arrays
+    if "x" in active_dims:
+        _apply_zhang_shu_limiter_to_node_array(_x_nodes_, _q_, _theta_)
+    if "y" in active_dims:
+        _apply_zhang_shu_limiter_to_node_array(_y_nodes_, _q_, _theta_)
+    if "z" in active_dims:
+        _apply_zhang_shu_limiter_to_node_array(_z_nodes_, _q_, _theta_)
 
-    # apply limiter to face nodes
-    if _x_nodes_ is not None:
-        apply_limiter(_x_nodes_)
-    if _y_nodes_ is not None:
-        apply_limiter(_y_nodes_)
-    if _z_nodes_ is not None:
-        apply_limiter(_z_nodes_)
+
+def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
+    if fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_params.p)
+        return n_gauss_legendre ** (ndim - 1)
+    else:
+        return 1
+
+
+@lru_cache(maxsize=None)
+def _get_riemann_solver_slices(
+    axis: int, n_nodes: int, n_ghost: int
+) -> Tuple[Tuple[slice, ...], Tuple[slice, ...]]:
+    # Get slice left of interface
+    minus = crop(4, (n_nodes, 2 * n_nodes), ndim=5)  # Cell right face state
+    minus = merge_slices(minus, crop(axis, (n_ghost - 1, -n_ghost), ndim=5))
+
+    # Get slice right of interface
+    plus = crop(4, (None, n_nodes), ndim=5)  # Cell left face state
+    plus = merge_slices(plus, crop(axis, (n_ghost, -n_ghost + 1), ndim=5))
+
+    return minus, plus
+
+
+def update_fv_fluxes(
+    u: ArrayLike,
+    _u_: ArrayLike,
+    _w_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    _eta_: ArrayLike,
+    _has_shock_: ArrayLike,
+    _theta_: ArrayLike,
+    _qcc_: ArrayLike,
+    _alpha_: ArrayLike,
+    t: float,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    mesh: UniformFVMesh,
+    fv_params: FV_SchemeParameters,
+    hydro_params: HydroParameters,
+    bc_params: BoundaryConditionParameters,
+    riemann_solver: RiemannSolver,
+):
+    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    na = xp.newaxis
+    fv = fv_params
+    bc = bc_params
+    hp = hydro_params
+    nvars, nx, ny, nz = u.shape
+    nghost = mesh.nghost
+
+    # 0) Update `_u_`  and `_w_`
+    update_fv_workspace(u, _u_, _w_, _eta_, _has_shock_, t, idx, mesh, fv, bc, hp)
+
+    # 1) Interpolate nodes at each face from either primitives or conservatives
+    _q_ = _w_ if fv.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_
+
+    node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
+    n_nodes = _get_n_nodes_per_face(len(active_dims), fv)
+
+    for dim in active_dims:
+        _nodes_ = xp.empty(_w_.shape + (2 * n_nodes,))  # TEMP ARRAY
+        interpolate_face_nodes(
+            _q_,
+            _nodes_,
+            dim,
+            active_dims,
+            fv.p,
+            fv.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
+        )
+        node_dict[dim] = _nodes_
+
+    # 2) Ensure nodes are primitive and apply a priori limiting. Apply negative guard.
+    if fv.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+        # Convert conservative nodal values to primitives before slope limiting
+        for dim in active_dims:
+            cons_to_prim(node_dict[dim], node_dict[dim], idx, hp.gamma, hp.isothermal, hp.iso_cs)
+
+    if fv.zhang_shu_params.use_ZS:
+        # a priori slope limiting
+        apply_zhang_shu_limiter(
+            _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_,
+            node_dict["x"] if "x" in active_dims else np.array([]),
+            node_dict["y"] if "y" in active_dims else np.array([]),
+            node_dict["z"] if "z" in active_dims else np.array([]),
+            _qcc_,
+            _theta_,
+            _alpha_,
+            idx,
+            False if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else True,
+            active_dims,
+            fv.p,
+            fv.zhang_shu_params,
+        )
+
+    if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+        # Convert conservative nodal values to primitives after slope limiting
+        for dim in active_dims:
+            cons_to_prim(node_dict[dim], node_dict[dim], idx, hp.gamma, hp.isothermal, hp.iso_cs)
+
+    # Fall back to first-order where nodes are negative
+    for dim in active_dims:
+        density = node_dict[dim][idx("rho")]
+        pressure = node_dict[dim][idx("P")]
+
+        density[...] = xp.where(density < hp.rho_min, _w_[idx("rho"), ..., na], density)
+        pressure[...] = xp.where(pressure < hp.P_min, _w_[idx("P"), ..., na], pressure)
+
+    # 3) Solve Riemann problem at each face node and integrate to get fluxes
+    for dim in active_dims:
+        axis = DIM_TO_AXIS[dim]
+        minus, plus = _get_riemann_solver_slices(axis, n_nodes, nghost)
+
+        _left_nodes_ = node_dict[dim][minus]
+        _right_nodes_ = node_dict[dim][plus]
+        _F_out_ = {"x": _F_, "y": _G_, "z": _H_}[dim]
+        if len(active_dims) == 1:
+            _fnodes_ = _F_out_[..., na]
+        else:
+            _fnodes_ = xp.empty_like(_left_nodes_)  # TEMP ARRAY
+
+        solve_riemann_problem(
+            _left_nodes_,
+            _right_nodes_,
+            _fnodes_,
+            riemann_solver,
+            dim,
+            idx,
+            hp.gamma,
+            hp.isothermal,
+            hp.iso_cs,
+        )
+
+        if len(active_dims) == 1:
+            break
+
+        if fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+            integrate_gauss_legendre_face_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
+        else:
+            integrate_transverse_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)

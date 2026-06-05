@@ -738,6 +738,7 @@ class HydroSolver:
         mesh = self.mesh
         nx, ny, nz = mesh.shape
         _nx_, _ny_, _nz_ = mesh._shape_
+        interior = self.interior
         active_dims = self.params.mesh.active_dims
         arrays = self.arrays
 
@@ -759,17 +760,17 @@ class HydroSolver:
         # define arrays associated faces along the x-direction
         if "x" in active_dims:
             arrays.add("_F_", self.xp.empty((nvars, nx + 1, _ny_, _nz_)))
-            arrays.add("F", self.xp.empty((nvars, nx + 1, ny, nz)))
+            arrays.add("F", arrays["_F_"][replace_slice(interior, DIM_TO_AXIS["x"], slice(None))])
 
         # define arrays associated with faces along the y-direction
         if "y" in active_dims:
             arrays.add("_G_", self.xp.empty((nvars, _nx_, ny + 1, _nz_)))
-            arrays.add("G", self.xp.empty((nvars, nx, ny + 1, nz)))
+            arrays.add("G", arrays["_G_"][replace_slice(interior, DIM_TO_AXIS["y"], slice(None))])
 
         # define arrays associated with faces along the z-direction
         if "z" in active_dims:
             arrays.add("_H_", self.xp.empty((nvars, _nx_, _ny_, nz + 1)))
-            arrays.add("H", self.xp.empty((nvars, nx, ny, nz + 1)))
+            arrays.add("H", arrays["_H_"][replace_slice(interior, DIM_TO_AXIS["z"], slice(None))])
 
         # define smooth extrema detection array
         arrays.add("_alpha_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
@@ -1166,40 +1167,6 @@ class HydroSolver:
         else:
             return 1
 
-    def _prepare_interpolation_arrays(
-        self, dim: Literal["x", "y", "z"], fv_scheme: FV_SchemeParameters
-    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
-        params = self.params
-        active_dims = params.mesh.active_dims
-        nvars = params.variable_index_map.nvars
-        nx, ny, nz = self.mesh.shape
-        _nx_, _ny_, _nz_ = self.mesh._shape_
-        nnodes = self._compute_nodes_per_face(fv_scheme)
-
-        if dim not in active_dims:
-            raise ValueError(f"Dimension '{dim}' is not active.")
-
-        if dim == "x":
-            _x_nodes_ = self.xp.empty((nvars, _nx_, _ny_, _nz_, 2 * nnodes))
-            _f_nodes_ = self.xp.empty((nvars, nx + 1, _ny_, _nz_, nnodes))
-            _F_integral_ = self.xp.empty((nvars, nx + 1, _ny_, _nz_))
-
-            return _x_nodes_, _f_nodes_, _F_integral_
-
-        if dim == "y":
-            _y_nodes_ = self.xp.empty((nvars, _nx_, _ny_, _nz_, 2 * nnodes))
-            _g_nodes_ = self.xp.empty((nvars, _nx_, ny + 1, _nz_, nnodes))
-            _G_integral_ = self.xp.empty((nvars, _nx_, ny + 1, _nz_))
-
-            return _y_nodes_, _g_nodes_, _G_integral_
-
-        if dim == "z":
-            _z_nodes_ = self.xp.empty((nvars, _nx_, _ny_, _nz_, 2 * nnodes))
-            _h_nodes_ = self.xp.empty((nvars, _nx_, _ny_, nz + 1, nnodes))
-            _H_integral_ = self.xp.empty((nvars, _nx_, _ny_, nz + 1))
-
-            return _z_nodes_, _h_nodes_, _H_integral_
-
     def _convert_nodes_to_primitives(self, node_dict: Dict[Literal["x", "y", "z"], ArrayLike]):
         for dim in self.params.mesh.active_dims:
             self.conservatives_to_primitives(node_dict[dim], node_dict[dim])
@@ -1227,15 +1194,17 @@ class HydroSolver:
 
         apply_zhang_shu_limiter(
             _q_,
+            node_dict["x"] if "x" in active_dims else np.array([]),
+            node_dict["y"] if "y" in active_dims else np.array([]),
+            node_dict["z"] if "z" in active_dims else np.array([]),
             _qcc_,
             _theta_,
             _alpha_,
-            fv_scheme.p,
             self.params.variable_index_map,
+            False if flux_recipe == FluxRecipe.CONS_LIM_PRIM else True,
+            active_dims,
+            fv_scheme.p,
             fv_scheme.zhang_shu_params,
-            node_dict["x"] if "x" in active_dims else None,
-            node_dict["y"] if "y" in active_dims else None,
-            node_dict["z"] if "z" in active_dims else None,
         )
 
     def _ensure_positive_nodes(self, nodes: ArrayLike, w: ArrayLike):
@@ -1278,7 +1247,7 @@ class HydroSolver:
 
     def update_fluxes(self, fv_scheme: FV_SchemeParameters):
         """
-        Update the flux arrays "F", "G", and/or "H" with the specified fv_scheme based on the
+        Update the flux arrays "_F_", "_G_", and/or "_H_" with the specified fv_scheme based on the
         current cell averaged / cell centered values "_u_", "_ucc_", "_wcc_", and/or "_w_".
         """
         if fv_scheme.muscl_params.use_MUSCL:
@@ -1327,10 +1296,10 @@ class HydroSolver:
             axis = DIM_TO_AXIS[dim]
             left_of_interface, right_of_interface = self._riemann_solver_slices(axis, n_nodes)
 
-            Fluxes = arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
             _left_nodes_ = xyz_node_dict[dim][right_of_interface]
             _right_nodes_ = xyz_node_dict[dim][left_of_interface]
             _fnodes_ = self.xp.empty_like(_left_nodes_)  # TEMP ARRAY
+            _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
 
             self._start_timer("riemann_solver")  # TIMER START
             self.riemann_solver(
@@ -1346,18 +1315,15 @@ class HydroSolver:
             self._stop_timer("riemann_solver")  # TIMER STOP
 
             if params.mesh.ndim == 1:
-                Fluxes[...] = _fnodes_[..., 0]  # No need for flux integral
+                _Fluxes_[...] = _fnodes_[..., 0]  # No need for flux integral
                 continue
 
-            _Fluxes_ = self.xp.empty(_fnodes_.shape[:4])  # TEMP ARRAY
             if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
                 integrate_gauss_legendre_face_nodes(
                     _fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p
                 )
             else:
                 integrate_transverse_nodes(_fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p)
-
-            Fluxes[...] = _Fluxes_[replace_slice(self.interior, axis, slice(None))]
 
         self._stop_timer("update_fluxes")  # TIMER STOP
 

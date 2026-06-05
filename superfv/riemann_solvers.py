@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import Literal
 
 import numpy as np
@@ -551,3 +551,34 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
 
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         raise NotImplementedError("HLLC Teyssier Riemann solver is not implemented yet.")
+
+
+@lru_cache(maxsize=None)
+def get_riemann_solver(solver_type: RiemannSolver, npassives: int) -> RiemmannSolverBase:
+    match solver_type:
+        case RiemannSolver.UPWIND:
+            return UpwindRiemannSolver(npassives)
+        case RiemannSolver.LLF:
+            return LLF_RiemannSolver(npassives)
+        case RiemannSolver.HLLC:
+            return HLLC_RiemannSolver(npassives)
+        case RiemannSolver.HLLC_TEYSSIER:
+            return HLLC_Teyssier_RiemannSolver(npassives)
+        case _:
+            raise ValueError(f"Unknown Riemann solver type: {solver_type}")
+
+
+def solve_riemann_problem(
+    wl: ArrayLike,
+    wr: ArrayLike,
+    fluxes: ArrayLike,
+    riemann_solver: RiemannSolver,
+    dim: Literal["x", "y", "z"],
+    idx: VariableIndexMap,
+    gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
+):
+    npassives = len(idx.group_var_map.get("passives", []))
+    solver = get_riemann_solver(riemann_solver, npassives)
+    solver(wl, wr, fluxes, dim, idx, gamma, isothermal, iso_cs)

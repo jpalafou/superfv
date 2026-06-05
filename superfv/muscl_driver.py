@@ -15,7 +15,7 @@ from .slope_limiting.muscl import (
 )
 from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
-from .tools.slicing import replace_slice
+from .tools.slicing import crop
 from .tools.variable_index_map import VariableIndexMap
 
 if TYPE_CHECKING:
@@ -238,7 +238,7 @@ def update_fluxes_with_muscl_scheme(
 
     # Corrector step
     for dim in active_dims:
-        Fluxes = arrays[{"x": "F", "y": "G", "z": "H"}[dim]]
+        _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
 
         # Compute cell faces
         _slopes_ = xyz_slope_dict[dim]
@@ -255,15 +255,15 @@ def update_fluxes_with_muscl_scheme(
 
         # Gather slices
         axis = DIM_TO_AXIS[dim]
-        left_of_interface = replace_slice(sim.interior, axis, slice(nghost - 1, -nghost))
-        right_of_interface = replace_slice(sim.interior, axis, slice(nghost, -nghost + 1))
+        left_of_interface = crop(axis, (nghost - 1, -nghost), ndim=4)
+        right_of_interface = crop(axis, (nghost, -nghost + 1), ndim=4)
 
         # Perform Riemann solve
         sim._start_timer("riemann_solver")  # TIMER START
         sim.riemann_solver(
             _right_face_[left_of_interface],
             _left_face_[right_of_interface],
-            Fluxes,
+            _Fluxes_,
             dim,
             sim.params.variable_index_map,
             sim.params.hydro.gamma,
