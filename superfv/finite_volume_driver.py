@@ -587,16 +587,27 @@ def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
         return 1
 
 
+def _positivity_guard(wj: ArrayLike, w1: ArrayLike, idx: VariableIndexMap, hp: HydroParameters):
+    xp = cp if CUPY_AVAILABLE and isinstance(wj, cp.ndarray) else np
+    na = xp.newaxis
+
+    density = wj[idx("rho")]
+    pressure = wj[idx("P")]
+
+    density[...] = xp.where(density < hp.rho_min, w1[idx("rho"), ..., na], density)
+    pressure[...] = xp.where(pressure < hp.P_min, w1[idx("P"), ..., na], pressure)
+
+
 @lru_cache(maxsize=None)
 def _get_riemann_solver_slices(
-    axis: int, n_nodes: int, n_ghost: int
+    axis: int, n_nodes_per_face: int, n_ghost: int
 ) -> Tuple[Tuple[slice, ...], Tuple[slice, ...]]:
     # Get slice left of interface
-    minus = crop(4, (n_nodes, 2 * n_nodes), ndim=5)  # Cell right face state
+    minus = crop(4, (n_nodes_per_face, 2 * n_nodes_per_face), ndim=5)  # Cell right face state
     minus = merge_slices(minus, crop(axis, (n_ghost - 1, -n_ghost), ndim=5))
 
     # Get slice right of interface
-    plus = crop(4, (None, n_nodes), ndim=5)  # Cell left face state
+    plus = crop(4, (None, n_nodes_per_face), ndim=5)  # Cell left face state
     plus = merge_slices(plus, crop(axis, (n_ghost, -n_ghost + 1), ndim=5))
 
     return minus, plus
@@ -682,11 +693,7 @@ def update_fv_fluxes(
 
     # Fall back to first-order where nodes are negative
     for dim in active_dims:
-        density = node_dict[dim][idx("rho")]
-        pressure = node_dict[dim][idx("P")]
-
-        density[...] = xp.where(density < hp.rho_min, _w_[idx("rho"), ..., na], density)
-        pressure[...] = xp.where(pressure < hp.P_min, _w_[idx("P"), ..., na], pressure)
+        _positivity_guard(node_dict[dim], _w_, idx, hp)
 
     # 3) Solve Riemann problem at each face node and integrate to get fluxes
     for dim in active_dims:

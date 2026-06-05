@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING, Dict, Literal
+from typing import TYPE_CHECKING, Dict, Literal, Tuple
 
 import numpy as np
 
-from superfv.axes import DIM_TO_AXIS
-
-from .configs import FluxRecipe, FV_SchemeParameters
+from .axes import DIM_TO_AXIS
+from .configs import (
+    BoundaryConditionParameters,
+    FluxRecipe,
+    FV_SchemeParameters,
+    HydroParameters,
+)
+from .finite_volume_driver import (
+    _get_riemann_solver_slices,
+    _positivity_guard,
+    update_fv_workspace,
+)
+from .hydro import cons_to_prim
+from .mesh import UniformFVMesh
+from .riemann_solvers import RiemannSolver, solve_riemann_problem
 from .slope_limiting.muscl import (
     MUSCL_SlopeLimiter,
     compute_MUSCL_slopes,
@@ -273,3 +285,127 @@ def update_fluxes_with_muscl_scheme(
         sim._stop_timer("riemann_solver")  # TIMER STOP
 
     sim._stop_timer("update_fluxes")  # TIMER STOP
+
+
+def update_MUSCL_fluxes(
+    u: ArrayLike,
+    _u_: ArrayLike,
+    _w_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    _alpha_: ArrayLike,
+    t: float,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    mesh: UniformFVMesh,
+    fv_params: FV_SchemeParameters,
+    hydro_params: HydroParameters,
+    bc_params: BoundaryConditionParameters,
+    riemann_solver: RiemannSolver,
+    hancock_dt: float = 0.0,
+):
+    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    na = xp.newaxis
+    fv = fv_params
+    bc = bc_params
+    hp = hydro_params
+    nvars, nx, ny, nz = u.shape
+    nghost = mesh.nghost
+
+    if not fv.muscl_params.use_MUSCL:
+        raise ValueError("update_fluxes_with_muscl_scheme should only be called for MUSCL schemes.")
+
+    # 0) Update `_w_`
+    update_fv_workspace(u, _u_, _w_, np.array([]), np.array([]), t, idx, mesh, fv, bc, hp)
+
+    # 1) Compute slopes from either conservatives or primitives
+    _q_ = _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_
+
+    slope_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
+
+    if fv.muscl_params.SED_params.use_SED:
+        compute_alpha(_q_, _alpha_, active_dims, fv.muscl_params.SED_params.clip_zero_tol)
+
+    if fv.muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D:
+        if len(active_dims) != 2:
+            raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
+
+        _slopes1_ = xp.empty_like(_q_)  # TEMP ARRAY
+        _slopes2_ = xp.empty_like(_q_)  # TEMP ARRAY
+        compute_PP2D_slopes(
+            _q_,
+            _alpha_,
+            _slopes1_,
+            _slopes2_,
+            active_dims,
+            1e-20,
+            fv.muscl_params.SED_params.use_SED,
+        )
+        slope_dict[active_dims[0]] = _slopes1_
+        slope_dict[active_dims[1]] = _slopes2_
+    else:
+        for dim in active_dims:
+            _slopes_ = xp.empty_like(_q_)  # TEMP ARRAY
+            compute_MUSCL_slopes(
+                _q_,
+                _alpha_,
+                _slopes_,
+                dim,
+                fv.muscl_params.MUSCL_limiter,
+                fv.muscl_params.SED_params.use_SED,
+            )
+            slope_dict[dim] = _slopes_
+
+    # 2) Compute predictor step
+    _predictor_q_ = _q_.copy()  # TEMP ARRAY
+
+    if hancock_dt > 0:
+        _jvp_ = xp.empty_like(_q_)  # TEMP ARRAY
+
+        for dim in active_dims:
+            h = getattr(mesh, "h" + dim)
+
+            compute_flux_jvp(
+                _q_,
+                slope_dict[dim],
+                _jvp_,
+                idx,
+                dim,
+                gamma=hydro_params.gamma,
+                isothermal=hydro_params.isothermal,
+                iso_cs=hydro_params.iso_cs,
+                primitives=fv.flux_recipe != FluxRecipe.CONS_LIM_PRIM,
+            )
+            _predictor_q_ -= 0.5 * _jvp_ * hancock_dt / h
+
+    # 3) # Corrector step
+    for dim in active_dims:
+        _F_out_ = {"x": _F_, "y": _G_, "z": _H_}[dim][..., na]
+
+        # Allocate some temp arrays
+        _slopes_ = slope_dict[dim]
+        _left_face_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
+        _right_face_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
+        _faces_ = xp.concatenate(
+            [_left_face_[..., na], _right_face_[..., na]], axis=4
+        )  # TEMP ARRAY
+
+        # Ensure faces are positive and primitive
+        if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+            cons_to_prim(_faces_, _faces_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        _positivity_guard(_faces_, _w_, idx, hp)
+
+        # Solve Riemann problem at faces
+        minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
+        solve_riemann_problem(
+            _faces_[minus],
+            _faces_[plus],
+            _F_out_,
+            riemann_solver,
+            dim,
+            idx,
+            hp.gamma,
+            hp.isothermal,
+            hp.iso_cs,
+        )
