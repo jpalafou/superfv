@@ -413,8 +413,23 @@ def update_fv_workspace(
 ):
     """
     Update the `_u_` and `_w_` arrays with ghost-cell-padded conservative and primitive finite
-    volume averages, respectively. Update the `_eta_` and `_has_shock_` arrays with shock
-    detection results if enabled in the FV scheme.
+    volume averages, respectively.
+
+    u: shape (nvars, nx, ny, nz) - Input array of conservative cell averages without ghost cells.
+        Is not modified.
+    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Array to which u is written
+        with boundary conditions applied to ghost cells.
+    _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells.
+    _eta_: _u_.shape - Array to which shock sensor values are written if shock detection and
+        adaptive primitive mode are enabled. Otherwise, can be an empty array.
+    _has_shock_: _u_[:1, ...].shape - Array to which shock detection results are written if shock
+        detection and adaptive primitive mode are enabled. Otherwise, can be an empty array.
+    t: Current simulation time, used for time-dependent boundary conditions.
+    idx: VariableIndexMap for indexing into the variable dimension of the arrays.
+    mesh: UniformFVMesh for accessing mesh information needed for applying boundary conditions.
+    fv_params: Parameters for the finite volume scheme.
+    bc_params: Parameters for the boundary conditions.
+    hydro_params: Hydrodynamic parameters.
     """
     xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
     hp = hydro_params
@@ -619,7 +634,6 @@ def _get_riemann_solver_slices(
 
 
 def update_fv_fluxes(
-    u: ArrayLike,
     _u_: ArrayLike,
     _w_: ArrayLike,
     _F_: ArrayLike,
@@ -635,7 +649,34 @@ def update_fv_fluxes(
     hydro_params: HydroParameters,
     riemann_solver: RiemannSolver,
 ):
-    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    """
+    Update the finite volume fluxes with a high-order scheme.
+
+    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Input array of
+        conservative cell averages with ghost cells. Is not modified.
+    _w_: _u_.shape - Input array of primitive cell averages with ghost cells.
+        Should represent the same physical state as _u_. Is not modified.
+    _F_: shape (nvars, nx + 1, ny + 2*nghost, nz + 2*nghost) - Array to which the x-fluxes are
+        written if "x" is in active_dims.
+    _G_: shape (nvars, nx + 2*nghost, ny + 1, nz + 2*nghost) - Array to which the y-fluxes are
+        written if "y" is in active_dims.
+    _H_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 1) - Array to which the z-fluxes are
+        written if "z" is in active_dims.
+    _theta_: _u_.shape - Array to which the Zhang-Shu limiter values are written if enabled in
+        the FV scheme. Otherwise, can be an empty array.
+    _qcc_: _u_.shape - Array to which the cell-centered primitive values are written if the
+        Zhang-Shu limiter is enabled in the FV scheme and the spatial polynomial degree exceeds 1.
+        Otherwise, can be an empty array.
+    _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
+        in the FV scheme. Otherwise, can be an empty array.
+    idx: Variable index map for the conserved and primitive variables.
+    active_dims: Tuple of active spatial dimensions.
+    mesh: Mesh object containing information about the mesh and its dimensions.
+    fv_params: Parameters for the finite volume scheme.
+    hydro_params: Hydrodynamic parameters.
+    riemann_solver: Riemann solver to use for flux computation.
+    """
+    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
     na = xp.newaxis
     fv = fv_params
     hp = hydro_params
@@ -758,7 +799,6 @@ def compute_flux_jvp(
 
 
 def update_MUSCL_fluxes(
-    u: ArrayLike,
     _u_: ArrayLike,
     _w_: ArrayLike,
     _F_: ArrayLike,
@@ -773,7 +813,31 @@ def update_MUSCL_fluxes(
     riemann_solver: RiemannSolver,
     hancock_dt: float = 0.0,
 ):
-    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    """
+    Update the finite volume fluxes with a MUSCL scheme.
+
+    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Input array of
+        conservative cell averages with ghost cells. Is not modified.
+    _w_: _u_.shape - Input array of primitive cell averages with ghost cells.
+        Should represent the same physical state as _u_. Is not modified.
+    _F_: shape (nvars, nx + 1, ny + 2*nghost, nz + 2*nghost) - Array to which the x-fluxes are
+        written if "x" is in active_dims.
+    _G_: shape (nvars, nx + 2*nghost, ny + 1, nz + 2*nghost) - Array to which the y-fluxes are
+        written if "y" is in active_dims.
+    _H_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 1) - Array to which the z-fluxes are
+        written if "z" is in active_dims.
+    _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
+        in the FV scheme. Otherwise, can be an empty array.
+    idx: Variable index map for the conserved and primitive variables.
+    active_dims: Tuple of active spatial dimensions.
+    mesh: Mesh object containing information about the mesh and its dimensions.
+    fv_params: Parameters for the finite volume scheme.
+    hydro_params: Hydrodynamic parameters.
+    riemann_solver: Riemann solver to use for flux computation.
+    hancock_dt: Time step to use for MUSCL-Hancock predictor step. If 0, the predictor step is
+        skipped.
+    """
+    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
     na = xp.newaxis
     fv = fv_params
     hp = hydro_params
@@ -902,6 +966,43 @@ def compute_fv_dudt(
     riemann_solver: RiemannSolver,
     hancock_dt: float = 0.0,
 ) -> ArrayLike:
+    """
+    Compute the finite volume time derivative of the conserved variables.
+
+
+    u: shape (nvars, nx, ny, nz) - Input array of conservative cell averages without ghost cells.
+        Is not modified.
+    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Array to which u is written
+        with boundary conditions applied to ghost cells.
+    _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells.
+    _F_: shape (nvars, nx + 1, ny + 2*nghost, nz + 2*nghost) - Array to which the x-fluxes are
+        written if "x" is in active_dims.
+    _G_: shape (nvars, nx + 2*nghost, ny + 1, nz + 2*nghost) - Array to which the y-fluxes are
+        written if "y" is in active_dims.
+    _H_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 1) - Array to which the z-fluxes are
+        written if "z" is in active_dims.
+    _eta_: _u_.shape - Array to which shock sensor values are written if shock detection and
+        adaptive primitive mode are enabled. Otherwise, can be an empty array.
+    _has_shock_: _u_[:1, ...].shape - Array to which shock detection results are written if shock
+        detection and adaptive primitive mode are enabled. Otherwise, can be an empty array.
+    _theta_: _u_.shape - Array to which the Zhang-Shu limiter values are written if enabled in
+        the FV scheme. Otherwise, can be an empty array.
+    _qcc_: _u_.shape - Array to which the cell-centered primitive values are written if the
+        Zhang-Shu limiter is enabled in the FV scheme and the spatial polynomial degree exceeds 1.
+        Otherwise, can be an empty array.
+    _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
+        in the FV scheme. Otherwise, can be an empty array.
+    t: Current simulation time, used for time-dependent boundary conditions.
+    idx: VariableIndexMap for indexing into the variable dimension of the arrays.
+    active_dims: Tuple of active spatial dimensions.
+    mesh: UniformFVMesh for accessing mesh information needed for applying boundary conditions.
+    fv_params: Parameters for the finite volume scheme.
+    hydro_params: Hydrodynamic parameters.
+    bc_params: Parameters for the boundary conditions.
+    riemann_solver: Riemann solver to use for flux computation.
+    hancock_dt: Time step to use for MUSCL-Hancock predictor step. If 0, the predictor step is
+        skipped. Is ignored if the FV scheme is not a MUSCL scheme.
+    """
     xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
     interior = _get_interior_slice(active_dims, mesh.nghost)
 
@@ -911,7 +1012,6 @@ def compute_fv_dudt(
 
     if fv_params.muscl_params.use_MUSCL:
         update_MUSCL_fluxes(
-            u,
             _u_,
             _w_,
             _F_,
@@ -928,7 +1028,6 @@ def compute_fv_dudt(
         )
     else:
         update_fv_fluxes(
-            u,
             _u_,
             _w_,
             _F_,
