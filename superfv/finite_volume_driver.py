@@ -727,3 +727,28 @@ def update_fv_fluxes(
             integrate_gauss_legendre_face_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
         else:
             integrate_transverse_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
+
+
+def compute_dt(
+    u: ArrayLike, idx: VariableIndexMap, mesh: UniformFVMesh, hydro_params: HydroParameters
+) -> float:
+    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    hp = hydro_params
+
+    w = xp.empty_like(u)  # TEMP ARRAY
+    cs = xp.empty_like(u[idx("rho")])  # TEMP ARRAY
+    sum_of_s_over_h = xp.zeros_like(cs)  # TEMP ARRAY
+
+    cons_to_prim(u, w, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+    prim_to_cs(w, cs, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+
+    for dim, h in zip(["x", "y", "z"], [mesh.hx, mesh.hy, mesh.hz]):
+        if dim not in mesh.active_dims:
+            continue
+        s = xp.abs(w[idx("v" + dim)]) + cs
+        sum_of_s_over_h += s / h
+
+    max_speed = xp.max(sum_of_s_over_h).item()
+    dt = hp.CFL / max_speed
+
+    return dt
