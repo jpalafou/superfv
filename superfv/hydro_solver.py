@@ -3,7 +3,7 @@ import shutil
 import time
 import warnings
 from enum import Enum
-from functools import cached_property, partial
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 from typing import Dict, List, Literal, Optional, Tuple, Union
@@ -12,7 +12,7 @@ import numpy as np
 
 from . import initial_conditions as ics
 from .axes import DIM_TO_AXIS, XYZ_TUPLE
-from .boundary_conditions import BC, PatchBC, apply_bc
+from .boundary_conditions import BC, PatchBC
 from .configs import (
     BoundaryConditionParameters,
     FallbackCascade,
@@ -36,24 +36,14 @@ from .configs import (
 )
 from .field import MultivarField, UnivarField
 from .finite_volume_driver import (
-    apply_zhang_shu_limiter,
-    integrate_cell_averages,
-    integrate_gauss_legendre_face_nodes,
-    integrate_transverse_nodes,
-    interpolate_cell_centers,
-    interpolate_face_nodes,
+    compute_fv_dt,
+    compute_fv_dudt,
+    update_fv_fluxes,
+    update_fv_workspace,
 )
-from .hydro import cons_to_prim, prim_to_cons, prim_to_cs
+from .hydro import cons_to_prim, prim_to_cons
 from .mesh import UniformFVMesh
-from .muscl_driver import update_fluxes_with_muscl_scheme
-from .riemann_solvers import (
-    HLLC_RiemannSolver,
-    HLLC_Teyssier_RiemannSolver,
-    LLF_RiemannSolver,
-    UpwindRiemannSolver,
-)
 from .slope_limiting.MOOD import mood_loop
-from .slope_limiting.shock_detection import detect_shocks
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import crop, merge_slices, replace_slice
@@ -643,7 +633,7 @@ class HydroSolver:
         ) -> ArrayLike:
             w0_arr = w0_func(idx, x, y, z, t, xp=xp)
             u0_arr = xp.empty_like(w0_arr)
-            self.primitives_to_conservatives(w0_arr, u0_arr)
+            prim_to_cons(w0_arr, u0_arr, idx, self.params.hydro.gamma)
             return u0_arr
 
         self.u0_func = u0_func
@@ -783,6 +773,7 @@ class HydroSolver:
         # define Zhang-Shu limiter arrays
         if base_scheme.zhang_shu_params.use_ZS:
             arrays.add("_theta_", self.xp.ones((nvars, _nx_, _ny_, _nz_)))
+            arrays.add("_qcc_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
             arrays.add("theta_log", self.xp.ones((nvars, nx, ny, nz)))
 
         # define MOOD arrays
@@ -852,12 +843,14 @@ class HydroSolver:
         self._start_timer("take_snapshot")  # TIMER START
 
         params = self.params
+        idx = params.variable_index_map
+        hp = params.hydro
         output_path = params.output_path
 
         u = self.arrays["u"]
         w = self.arrays["w"]
 
-        self.conservatives_to_primitives(u, w)
+        cons_to_prim(u, w, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
         if output_path is None:
             path = None
@@ -965,408 +958,61 @@ class HydroSolver:
         self.step_history.append(step_summary)
         self._reset_step_summary(step_summary.step + 1)
 
-    # Hydro solver functions
-
-    def primitives_to_conservatives(self, w: ArrayLike, u: ArrayLike):
-        idx = self.params.variable_index_map
-        gamma = self.params.hydro.gamma
-        prim_to_cons(w, u, idx, gamma=gamma)
-
-    def conservatives_to_primitives(self, u: ArrayLike, w: ArrayLike):
-        idx = self.params.variable_index_map
-        gamma = self.params.hydro.gamma
-        isothermal = self.params.hydro.isothermal
-        iso_cs = self.params.hydro.iso_cs
-        cons_to_prim(u, w, idx, gamma, isothermal, iso_cs)
-
-    def primitives_to_sound_speed(self, w: ArrayLike, cs: ArrayLike):
-        idx = self.params.variable_index_map
-        gamma = self.params.hydro.gamma
-        isothermal = self.params.hydro.isothermal
-        iso_cs = self.params.hydro.iso_cs
-        prim_to_cs(w, cs, idx, gamma, isothermal, iso_cs)
-
-    @cached_property
-    def riemann_solver(self):
-        params = self.params
-        rs = params.hydro.riemann_solver
-        npassives = params.ic.npassives
-
-        match rs:
-            case RiemannSolver.UPWIND:
-                return UpwindRiemannSolver(npassives)
-            case RiemannSolver.LLF:
-                return LLF_RiemannSolver(npassives)
-            case RiemannSolver.HLLC:
-                return HLLC_RiemannSolver(npassives)
-            case RiemannSolver.HLLC_TEYSSIER:
-                return HLLC_Teyssier_RiemannSolver(npassives)
-            case _:
-                raise ValueError(f"Unknown Riemann solver: {rs}")
-
-    def compute_dt(self, t: float, u: ArrayLike) -> float:
-        params = self.params
-        idx = params.variable_index_map
-        mesh = self.mesh
-        arrays = self.arrays
-
-        w = arrays["w"]
-        cs = arrays["cs"]
-        sum_of_s_over_h = arrays["sum_of_s_over_h"]
-
-        self.conservatives_to_primitives(u, w)
-        self.primitives_to_sound_speed(w, cs)
-
-        sum_of_s_over_h[...] = 0.0
-        for dim, h in zip(["x", "y", "z"], [mesh.hx, mesh.hy, mesh.hz]):
-            if dim not in params.mesh.active_dims:
-                continue
-            s = self.xp.abs(w[idx("v" + dim)]) + cs
-            sum_of_s_over_h += s / h
-
-        max_speed = self.xp.max(sum_of_s_over_h).item()
-        dt = params.hydro.CFL / max_speed
-
-        return dt
-
-    def apply_bc(self, _u_: ArrayLike, t: float, p: int):
-        bc_params = self.params.bc
-        mesh_params = self.params.mesh
-        idx = self.params.variable_index_map
-        mesh = self.mesh
-
-        apply_bc(
-            self.xp,
-            _u_,
-            mesh_params.nghost,
-            bc_params.bcx,
-            bc_params.bcy,
-            bc_params.bcz,
-            bc_params.bcx_callable_lower,
-            bc_params.bcx_callable_upper,
-            bc_params.bcy_callable_lower,
-            bc_params.bcy_callable_upper,
-            bc_params.bcz_callable_lower,
-            bc_params.bcz_callable_upper,
-            idx,
-            mesh,
-            t,
-            p,
-        )
-
-    def detect_shocks(self, fv_scheme: FV_SchemeParameters):
-        """
-        Detect shocks in "_u_" or "_w_" and write the result to "_has_shock_".
-        """
-        if not fv_scheme.shock_detection_params.use_shock_detection:
-            raise ValueError("Shock detection is not enabled in the provided FV scheme.")
-
-        params = self.params
-        idx = params.variable_index_map
-        active_dims = params.mesh.active_dims
-        eta_max = fv_scheme.shock_detection_params.eta_max
-        arrays = self.arrays
-
-        _u_ = arrays["_u_"]
-        _w_ = arrays["_w_"]
-        _has_shock_ = arrays["_has_shock_"]
-        _q_ref_ = self.xp.empty_like(_u_)
-        _cs_ = self.xp.empty_like(_u_[0, ...])
-        _eta_ = self.xp.empty_like(_u_)
-
-        self.primitives_to_sound_speed(_w_, _cs_)
-
-        if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
-            # Detect shocks using conservatives
-            _q_ref_[...] = _u_
-            _cs_ *= _u_[idx("rho", keepdims=True)]
-            for dim in active_dims:
-                _q_ref_[idx("v" + dim)] = _cs_
-            detect_shocks(_u_, _q_ref_, _eta_, _has_shock_, active_dims, eta_max)
-        else:
-            # Detect shocks using primitives
-            _q_ref_[...] = _w_
-            for dim in active_dims:
-                _q_ref_[idx("v" + dim)] = _cs_
-            detect_shocks(_w_, _q_ref_, _eta_, _has_shock_, active_dims, eta_max)
-
-    def update_cell_centers_and_primitive_cell_averages(
-        self, t: float, u: ArrayLike, fv_scheme: FV_SchemeParameters
-    ):
-        """
-        Update the ghost-cell-padded cell-averaged and cell-centered arrays
-        (_u_, _ucc_, _wcc_, and _w_) based on time `t`, the conservative variables `u`, and
-        the provided `fv_scheme`.
-        """
-        self._start_timer("update_W")  # TIMER START
-
-        idx = self.params.variable_index_map
-        active_dims = self.params.mesh.active_dims
-        arrays = self.arrays
-
-        # Allocate cell-averaged and cell-centered arrays
-        _u_ = arrays["_u_"]
-        _w_ = arrays["_w_"]
-        _ucc_ = arrays["_ucc_"]
-        _wcc_ = arrays["_wcc_"]
-        _w1_ = arrays["_w1_"]
-
-        # 0) conservatives FV averages + BC
-        _u_[self.interior] = u
-        self.apply_bc(_u_, t, fv_scheme.p)
-
-        # Early escape for low-order scheme. The rest of the arrays are useless.
-        if fv_scheme.p < 2:
-            self.conservatives_to_primitives(_u_, _w_)
-            return
-
-        # 1) conservative and primitive centroids
-        interpolate_cell_centers(_u_, _ucc_, active_dims, fv_scheme.p)
-        self.conservatives_to_primitives(_ucc_, _wcc_)
-
-        # 2) primitive FV averages
-        self.conservatives_to_primitives(_u_, _w1_)
-
-        match fv_scheme.lazy_primitive_mode:
-            case LazyPrimitiveMode.NONE:
-                integrate_cell_averages(_wcc_, _w_, active_dims, fv_scheme.p)
-            case LazyPrimitiveMode.FULL:
-                _w_[...] = _w1_
-            case LazyPrimitiveMode.ADAPTIVE:
-                _has_shock_ = arrays["_has_shock_"]
-
-                integrate_cell_averages(_wcc_, _w_, active_dims, fv_scheme.p)
-                self.detect_shocks(fv_scheme)  # updates "_has_shock_"
-
-                # Flag PAD violations as shocks
-                if fv_scheme.mood_params.PAD_params.use_PAD:
-                    raise NotImplementedError(
-                        "Adaptive primitive mode with MOOD PAD is not implemented yet."
-                    )
-                if fv_scheme.zhang_shu_params.PAD_params.use_PAD:
-                    for v, (lb, ub) in fv_scheme.zhang_shu_params.PAD_params.bounds.items():
-                        if lb is not None:
-                            self.xp.maximum(_has_shock_, _w_[idx(v)] < lb, out=_has_shock_)
-                        if ub is not None:
-                            self.xp.maximum(_has_shock_, _w_[idx(v)] > ub, out=_has_shock_)
-
-                _w_[...] = self.xp.where(_has_shock_, _w_, _w1_)
-
-        # ensure density is always transformed in the lazy way
-        if fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL:
-            _w_[idx("rho"), ...] = _w1_[idx("rho"), ...]
-
-        self._stop_timer("update_W")  # TIMER STOP
-
-    def _compute_nodes_per_face(self, fv_scheme: FV_SchemeParameters) -> int:
-        ndim = self.mesh.ndim
-        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_scheme.p)
-
-        if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-            return n_gauss_legendre ** (ndim - 1)
-        else:
-            return 1
-
-    def _convert_nodes_to_primitives(self, node_dict: Dict[Literal["x", "y", "z"], ArrayLike]):
-        for dim in self.params.mesh.active_dims:
-            self.conservatives_to_primitives(node_dict[dim], node_dict[dim])
-
-    def zhang_shu_limiter(
-        self, fv_scheme: FV_SchemeParameters, node_dict: Dict[Literal["x", "y", "z"], ArrayLike]
-    ):
-        flux_recipe = fv_scheme.flux_recipe
-        active_dims = self.params.mesh.active_dims
-        arrays = self.arrays
-
-        _theta_ = arrays["_theta_"]
-        _alpha_ = arrays["_alpha_"]
-        _q_ = arrays["_u_"] if flux_recipe == FluxRecipe.CONS_LIM_PRIM else arrays["_w_"]
-        match flux_recipe:
-            case FluxRecipe.CONS_LIM_PRIM:
-                _qcc_ = arrays["_ucc_"]
-            case FluxRecipe.CONS_PRIM_LIM:
-                _qcc_ = arrays["_wcc_"]  # "_wcc_" is interpolated from conservatives
-            case FluxRecipe.PRIM_PRIM_LIM:
-                _qcc_ = self.xp.empty_like(_q_)
-                interpolate_cell_centers(_q_, _qcc_, active_dims, fv_scheme.p)
-            case _:
-                raise ValueError(f"Unknown flux recipe: {flux_recipe}")
-
-        apply_zhang_shu_limiter(
-            _q_,
-            node_dict["x"] if "x" in active_dims else np.array([]),
-            node_dict["y"] if "y" in active_dims else np.array([]),
-            node_dict["z"] if "z" in active_dims else np.array([]),
-            _qcc_,
-            _theta_,
-            _alpha_,
-            self.params.variable_index_map,
-            False if flux_recipe == FluxRecipe.CONS_LIM_PRIM else True,
-            active_dims,
-            fv_scheme.p,
-            fv_scheme.zhang_shu_params,
-        )
-
-    def _ensure_positive_nodes(self, nodes: ArrayLike, w: ArrayLike):
-        idx = self.params.variable_index_map
-        na = self.xp.newaxis
-
-        nodes[idx("rho")] = self.xp.where(
-            nodes[idx("rho")] < self.params.hydro.rho_min,
-            w[idx("rho"), ..., na],
-            nodes[idx("rho")],
-        )
-        nodes[idx("P")] = self.xp.where(
-            nodes[idx("P")] < self.params.hydro.P_min,
-            w[idx("P"), ..., na],
-            nodes[idx("P")],
-        )
-
-    def _ensure_positive_node_dict(
-        self, node_dict: Dict[Literal["x", "y", "z"], ArrayLike], w: ArrayLike
-    ):
-        for dim in self.params.mesh.active_dims:
-            self._ensure_positive_nodes(node_dict[dim], w)
-
-    def _riemann_solver_slices(
-        self, axis: int, n_nodes: int
-    ) -> Tuple[Tuple[slice, ...], Tuple[slice, ...]]:
-        nghost = self.params.mesh.nghost
-
-        left_of_interface = crop(4, (n_nodes, 2 * n_nodes), ndim=5)
-        left_of_interface = merge_slices(
-            left_of_interface, crop(axis, (nghost - 1, -nghost), ndim=5)
-        )
-
-        right_of_interface = crop(4, (None, n_nodes), ndim=5)
-        right_of_interface = merge_slices(
-            right_of_interface, crop(axis, (nghost, -nghost + 1), ndim=5)
-        )
-
-        return left_of_interface, right_of_interface
-
-    def update_fluxes(self, fv_scheme: FV_SchemeParameters):
-        """
-        Update the flux arrays "_F_", "_G_", and/or "_H_" with the specified fv_scheme based on the
-        current cell averaged / cell centered values "_u_", "_ucc_", "_wcc_", and/or "_w_".
-        """
-        if fv_scheme.muscl_params.use_MUSCL:
-            update_fluxes_with_muscl_scheme(self, fv_scheme, 0.0)
-            return
-
-        self._start_timer("update_fluxes")  # TIMER START
-
-        params = self.params
-        active_dims = params.mesh.active_dims
-        arrays = self.arrays
-
-        _u_ = arrays["_u_"]
-        _w_ = arrays["_w_"]
-        _q_ = _w_ if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_
-        xyz_node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
-
-        n_nodes = self._compute_nodes_per_face(fv_scheme)
-
-        # Interpolate nodes at cell faces
-        for dim in active_dims:
-            _nodes_ = self.xp.empty(_q_.shape + (2 * n_nodes,))  # TEMP ARRAY
-            interpolate_face_nodes(
-                _q_,
-                _nodes_,
-                dim,
-                active_dims,
-                fv_scheme.p,
-                fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
-            )
-            xyz_node_dict[dim] = _nodes_
-
-        # Convert nodes to primitives if needed, apply a priori limiting, and ensure positivity
-        if fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
-            self._convert_nodes_to_primitives(xyz_node_dict)
-
-        if fv_scheme.zhang_shu_params.use_ZS:
-            self.zhang_shu_limiter(fv_scheme, xyz_node_dict)
-
-        if fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
-            self._convert_nodes_to_primitives(xyz_node_dict)
-        self._ensure_positive_node_dict(xyz_node_dict, _w_)
-
-        # Perform Riemann solve and compute flux integrals
-        for dim in active_dims:
-            axis = DIM_TO_AXIS[dim]
-            left_of_interface, right_of_interface = self._riemann_solver_slices(axis, n_nodes)
-
-            _left_nodes_ = xyz_node_dict[dim][right_of_interface]
-            _right_nodes_ = xyz_node_dict[dim][left_of_interface]
-            _fnodes_ = self.xp.empty_like(_left_nodes_)  # TEMP ARRAY
-            _Fluxes_ = arrays[{"x": "_F_", "y": "_G_", "z": "_H_"}[dim]]
-
-            self._start_timer("riemann_solver")  # TIMER START
-            self.riemann_solver(
-                _right_nodes_,
-                _left_nodes_,
-                _fnodes_,
-                dim,
-                params.variable_index_map,
-                params.hydro.gamma,
-                params.hydro.isothermal,
-                params.hydro.iso_cs,
-            )
-            self._stop_timer("riemann_solver")  # TIMER STOP
-
-            if params.mesh.ndim == 1:
-                _Fluxes_[...] = _fnodes_[..., 0]  # No need for flux integral
-                continue
-
-            if fv_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
-                integrate_gauss_legendre_face_nodes(
-                    _fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p
-                )
-            else:
-                integrate_transverse_nodes(_fnodes_, _Fluxes_, dim, active_dims, fv_scheme.p)
-
-        self._stop_timer("update_fluxes")  # TIMER STOP
-
     # ODE solver functions
 
-    def update_dudt(self):
-        """
-        Update the time derivative array "dudt" based on the current flux arrays.
-        """
-        self._start_timer("update_dudt")  # TIMER START
-
-        active_dims = self.params.mesh.active_dims
-        hx, hy, hz = self.mesh.hx, self.mesh.hy, self.mesh.hz
-        dudt = self.arrays["dudt"]
-
-        dudt[...] = 0.0
-        if "x" in active_dims:
-            F_fluxes = self.arrays["F"]
-            dudt -= (F_fluxes[:, 1:, :, :] - F_fluxes[:, :-1, :, :]) / hx
-
-        if "y" in active_dims:
-            G_fluxes = self.arrays["G"]
-            dudt -= (G_fluxes[:, :, 1:, :] - G_fluxes[:, :, :-1, :]) / hy
-
-        if "z" in active_dims:
-            H_fluxes = self.arrays["H"]
-            dudt -= (H_fluxes[:, :, :, 1:] - H_fluxes[:, :, :, :-1]) / hz
-
-        self._stop_timer("update_dudt")  # TIMER STOP
-
-    def f(self, t: float, u: ArrayLike, dt: float) -> ArrayLike:
-        base_scheme = self.params.fv_scheme
-        dudt = self.arrays["dudt"]
+    def f(self, t: float, u: ArrayLike, dt: float, hancock: bool = False) -> ArrayLike:
+        params = self.params
+        idx = params.variable_index_map
+        base_scheme = params.fv_scheme
+        use_shock_detection = base_scheme.shock_detection_params.use_shock_detection
+        bc_params = params.bc
+        hydro_params = params.hydro
+        mesh = self.mesh
+        active_dims = params.mesh.active_dims
+        arrays = self.arrays
 
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-            self.update_cell_centers_and_primitive_cell_averages(t, u, base_scheme)
-            self.update_fluxes(base_scheme)
+            update_fv_workspace(
+                u,
+                arrays["_u_"],
+                arrays["_w_"],
+                arrays["_has_shock_"] if use_shock_detection else np.array([]),
+                t,
+                idx,
+                mesh,
+                base_scheme,
+                bc_params,
+                hydro_params,
+            )
+
+            update_fv_fluxes(
+                arrays["_u_"],
+                arrays["_w_"],
+                arrays["_F_"] if "x" in active_dims else np.array([]),
+                arrays["_G_"] if "y" in active_dims else np.array([]),
+                arrays["_H_"] if "z" in active_dims else np.array([]),
+                arrays["_theta_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
+                arrays["_qcc_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
+                arrays["_alpha_"],
+                idx,
+                active_dims,
+                mesh,
+                base_scheme,
+                hydro_params,
+                dt if hancock else 0.0,
+            )
 
             if base_scheme.mood_params.use_MOOD:
+                raise NotImplementedError("MOOD is not yet implemented in this version.")
                 mood_loop(self, t, dt)
 
-        self.update_dudt()
-        return dudt
+        return compute_fv_dudt(
+            u,
+            arrays["_F_"] if "x" in active_dims else np.array([]),
+            arrays["_G_"] if "y" in active_dims else np.array([]),
+            arrays["_H_"] if "z" in active_dims else np.array([]),
+            mesh,
+        )
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
@@ -1421,67 +1067,48 @@ class HydroSolver:
         self._start_timer("update_unew")  # TIMER START
 
         params = self.params
-        arrays = self.arrays
-
-        dudt = arrays["dudt"]
-        unew = arrays["unew"]
+        unew = self.arrays["unew"]
 
         match time_integrator:
             case TimeIntegrator.MUSCL_HANCOCK:
                 if not params.fv_scheme.muscl_params.use_MUSCL:
                     raise ValueError("MUSCL-Hancock time integrator requires a MUSCL FV scheme.")
 
-                with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-                    self.update_cell_centers_and_primitive_cell_averages(t, u, params.fv_scheme)
-                    update_fluxes_with_muscl_scheme(self, params.fv_scheme, dt)
-                self.update_dudt()
-
-                unew[...] = u + dt * dudt
+                unew[...] = u + self.f(t, u, dt, hancock=True) * dt
+                self._close_substep()
             case TimeIntegrator.FORWARD_EULER:
                 unew[...] = u + self.f(t, u, dt) * dt
                 self._close_substep()
             case TimeIntegrator.SSPRK2:
-                k0 = self.xp.empty_like(u)
-                k1 = self.xp.empty_like(u)
-
-                k0[...] = self.f(t, u, dt)
+                k0 = self.f(t, u, dt)  # TEMP ARRAY
                 unew[...] = u + dt * k0
                 self._close_substep()
 
-                k1[...] = self.f(t + dt, unew, dt)
+                k1 = self.f(t + dt, unew, dt)  # TEMP ARRAY
                 unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
                 self._close_substep()
             case TimeIntegrator.SSPRK3:
-                k0 = self.xp.empty_like(u)
-                k1 = self.xp.empty_like(u)
-                k2 = self.xp.empty_like(u)
-
-                k0[...] = self.f(t, u, dt)
+                k0 = self.f(t, u, dt)  # TEMP ARRAY
                 unew[...] = u + dt * k0
                 self._close_substep()
 
-                k1[...] = self.f(t + dt, unew, dt)
+                k1 = self.f(t + dt, unew, dt)  # TEMP ARRAY
                 self._close_substep()
 
-                k2[...] = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)
+                k2 = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)  # TEMP ARRAY
                 unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
                 self._close_substep()
             case TimeIntegrator.RK4:
-                k0 = self.xp.empty_like(u)
-                k1 = self.xp.empty_like(u)
-                k2 = self.xp.empty_like(u)
-                k3 = self.xp.empty_like(u)
-
-                k0[...] = self.f(t, u, dt)
+                k0 = self.f(t, u, dt)  # TEMP ARRAY
                 self._close_substep()
 
-                k1[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)
+                k1 = self.f(t + 0.5 * dt, u + 0.5 * dt * k0, dt)  # TEMP ARRAY
                 self._close_substep()
 
-                k2[...] = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)
+                k2 = self.f(t + 0.5 * dt, u + 0.5 * dt * k1, dt)  # TEMP ARRAY
                 self._close_substep()
 
-                k3[...] = self.f(t + dt, u + dt * k2, dt)
+                k3 = self.f(t + dt, u + dt * k2, dt)  # TEMP ARRAY
                 unew[...] = u + (1 / 6) * dt * (k0 + 2 * k1 + 2 * k2 + k3)
                 self._close_substep()
             case _:
@@ -1558,6 +1185,7 @@ class HydroSolver:
         params = self.params
         tol = params.fv_scheme.zhang_shu_params.adaptive_dt_tol
         idx = params.variable_index_map
+        hp = params.hydro
 
         if not params.fv_scheme.zhang_shu_params.adaptive_dt:
             raise RuntimeError(
@@ -1567,7 +1195,7 @@ class HydroSolver:
         unew = self.arrays["unew"]
         wnew = self.arrays["w"]
 
-        self.conservatives_to_primitives(unew, wnew)
+        cons_to_prim(unew, wnew, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
         for v, (lb, ub) in params.fv_scheme.zhang_shu_params.PAD_params.bounds.items():
             if lb is not None and self.xp.any(wnew[idx(v)] < lb - tol):
@@ -1582,6 +1210,9 @@ class HydroSolver:
         Update "u" and self.t by taking a single step in time with the specified time integrator
         and optional minimum dt constraint.
         """
+        params = self.params
+        idx = params.variable_index_map
+        mesh = self.mesh
         arrays = self.arrays
         t = self.t
 
@@ -1589,12 +1220,10 @@ class HydroSolver:
         unew = arrays["unew"]
 
         # Compute dt which may need to be clipped
-        self._start_timer("compute_dt")  # TIMER START
-        dt = self.compute_dt(t, u)
+        dt = compute_fv_dt(u, idx, mesh, params.hydro)
         self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
-        self._stop_timer("compute_dt")  # TIMER STOP
 
         # Compute new state
         self._update_unew(t, u, dt, time_integrator)
