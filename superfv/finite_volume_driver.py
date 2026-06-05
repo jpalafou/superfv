@@ -6,7 +6,12 @@ import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import apply_bc
-from superfv.tools.slicing import crop, merge_slices
+from superfv.slope_limiting.muscl import (
+    MUSCL_SlopeLimiter,
+    compute_MUSCL_slopes,
+    compute_PP2D_slopes,
+)
+from superfv.tools.slicing import crop, merge_slices, replace_slice
 
 from .configs import (
     BoundaryConditionParameters,
@@ -718,6 +723,238 @@ def update_fv_fluxes(
             integrate_gauss_legendre_face_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
         else:
             integrate_transverse_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
+
+
+def compute_flux_jvp(
+    w: ArrayLike,
+    vec: ArrayLike,
+    jvp: ArrayLike,
+    idx: VariableIndexMap,
+    dim: Literal["x", "y", "z"],
+    gamma: float,
+    isothermal: bool = False,
+    iso_cs: float = 1.0,
+    primitives: bool = True,
+):
+    if not primitives:
+        raise NotImplementedError("JVP for conservative variable fluxes not implemented yet.")
+
+    iv = idx("v" + dim)
+
+    jvp[idx("rho")] = w[iv] * vec[idx("rho")] + w[idx("rho")] * vec[iv]
+    jvp[idx("vx")] = w[iv] * vec[idx("vx")]
+    jvp[idx("vy")] = w[iv] * vec[idx("vy")]
+    jvp[idx("vz")] = w[iv] * vec[idx("vz")]
+    jvp[iv] += (1 / w[idx("rho")]) * vec[idx("P")]
+    jvp[idx("P")] = (
+        iso_cs**2 * jvp[idx("rho")]
+        if isothermal
+        else gamma * w[idx("P")] * vec[iv] + w[iv] * vec[idx("P")]
+    )
+    if "passives" in idx.group_var_map:
+        jvp[idx("passives")] = w[iv] * vec[idx("passives")] + w[idx("passives")] * vec[iv]
+
+    return
+
+
+def update_MUSCL_fluxes(
+    u: ArrayLike,
+    _u_: ArrayLike,
+    _w_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    _alpha_: ArrayLike,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    mesh: UniformFVMesh,
+    fv_params: FV_SchemeParameters,
+    hydro_params: HydroParameters,
+    riemann_solver: RiemannSolver,
+    hancock_dt: float = 0.0,
+):
+    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    na = xp.newaxis
+    fv = fv_params
+    hp = hydro_params
+    nghost = mesh.nghost
+
+    if not fv.muscl_params.use_MUSCL:
+        raise ValueError("update_fluxes_with_muscl_scheme should only be called for MUSCL schemes.")
+
+    # 1) Compute slopes from either conservatives or primitives
+    _q_ = _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_
+
+    slope_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
+
+    if fv.muscl_params.SED_params.use_SED:
+        compute_alpha(_q_, _alpha_, active_dims, fv.muscl_params.SED_params.clip_zero_tol)
+
+    if fv.muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D:
+        if len(active_dims) != 2:
+            raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
+
+        _slopes1_ = xp.empty_like(_q_)  # TEMP ARRAY
+        _slopes2_ = xp.empty_like(_q_)  # TEMP ARRAY
+        compute_PP2D_slopes(
+            _q_,
+            _alpha_,
+            _slopes1_,
+            _slopes2_,
+            active_dims,
+            1e-20,
+            fv.muscl_params.SED_params.use_SED,
+        )
+        slope_dict[active_dims[0]] = _slopes1_
+        slope_dict[active_dims[1]] = _slopes2_
+    else:
+        for dim in active_dims:
+            _slopes_ = xp.empty_like(_q_)  # TEMP ARRAY
+            compute_MUSCL_slopes(
+                _q_,
+                _alpha_,
+                _slopes_,
+                dim,
+                fv.muscl_params.MUSCL_limiter,
+                fv.muscl_params.SED_params.use_SED,
+            )
+            slope_dict[dim] = _slopes_
+
+    # 2) Compute predictor step
+    _predictor_q_ = _q_.copy()  # TEMP ARRAY
+
+    if hancock_dt > 0:
+        _jvp_ = xp.empty_like(_q_)  # TEMP ARRAY
+
+        for dim in active_dims:
+            h = getattr(mesh, "h" + dim)
+
+            compute_flux_jvp(
+                _q_,
+                slope_dict[dim],
+                _jvp_,
+                idx,
+                dim,
+                gamma=hydro_params.gamma,
+                isothermal=hydro_params.isothermal,
+                iso_cs=hydro_params.iso_cs,
+                primitives=fv.flux_recipe != FluxRecipe.CONS_LIM_PRIM,
+            )
+            _predictor_q_ -= 0.5 * _jvp_ * hancock_dt / h
+
+    # 3) # Corrector step
+    for dim in active_dims:
+        _F_out_ = {"x": _F_, "y": _G_, "z": _H_}[dim][..., na]
+
+        # Allocate some temp arrays
+        _slopes_ = slope_dict[dim]
+        _left_face_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
+        _right_face_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
+        _faces_ = xp.concatenate(
+            [_left_face_[..., na], _right_face_[..., na]], axis=4
+        )  # TEMP ARRAY
+
+        # Ensure faces are positive and primitive
+        if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+            cons_to_prim(_faces_, _faces_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        _positivity_guard(_faces_, _w_, idx, hp)
+
+        # Solve Riemann problem at faces
+        minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
+        solve_riemann_problem(
+            _faces_[minus],
+            _faces_[plus],
+            _F_out_,
+            riemann_solver,
+            dim,
+            idx,
+            hp.gamma,
+            hp.isothermal,
+            hp.iso_cs,
+        )
+
+
+def _get_interior_slice(
+    active_dims: Tuple[Literal["x", "y", "z"], ...], nghost: int
+) -> Tuple[slice, ...]:
+    return merge_slices(*[crop(DIM_TO_AXIS[dim], (nghost, -nghost)) for dim in active_dims])
+
+
+def compute_fv_dudt(
+    u: ArrayLike,
+    _u_: ArrayLike,
+    _w_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    _eta_: ArrayLike,
+    _has_shock_: ArrayLike,
+    _theta_: ArrayLike,
+    _qcc_: ArrayLike,
+    _alpha_: ArrayLike,
+    t: float,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    mesh: UniformFVMesh,
+    fv_params: FV_SchemeParameters,
+    hydro_params: HydroParameters,
+    bc_params: BoundaryConditionParameters,
+    riemann_solver: RiemannSolver,
+    hancock_dt: float = 0.0,
+) -> ArrayLike:
+    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
+    interior = _get_interior_slice(active_dims, mesh.nghost)
+
+    update_fv_workspace(
+        u, _u_, _w_, _eta_, _has_shock_, t, idx, mesh, fv_params, bc_params, hydro_params
+    )
+
+    if fv_params.muscl_params.use_MUSCL:
+        update_MUSCL_fluxes(
+            u,
+            _u_,
+            _w_,
+            _F_,
+            _G_,
+            _H_,
+            _alpha_,
+            idx,
+            active_dims,
+            mesh,
+            fv_params,
+            hydro_params,
+            riemann_solver,
+            hancock_dt,
+        )
+    else:
+        update_fv_fluxes(
+            u,
+            _u_,
+            _w_,
+            _F_,
+            _G_,
+            _H_,
+            _theta_,
+            _qcc_,
+            _alpha_,
+            idx,
+            active_dims,
+            mesh,
+            fv_params,
+            hydro_params,
+            riemann_solver,
+        )
+
+    dudt = xp.zeros_like(u)
+    for dim in active_dims:
+        left = replace_slice(interior, DIM_TO_AXIS[dim], slice(None, -1))
+        right = replace_slice(interior, DIM_TO_AXIS[dim], slice(1, None))
+        fluxes = {"x": _F_, "y": _G_, "z": _H_}[dim]
+        h = getattr(mesh, "h" + dim)
+
+        dudt -= (fluxes[right] - fluxes[left]) / h
+
+    return dudt
 
 
 def compute_dt(
