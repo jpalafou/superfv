@@ -417,8 +417,8 @@ def update_fv_workspace(
 
     u: shape (nvars, nx, ny, nz) - Input array of conservative cell averages without ghost cells.
         Is not modified.
-    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Array to which u is written
-        with boundary conditions applied to ghost cells.
+    _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Array to which u is written with boundary
+        conditions applied to ghost cells along active dimensions.
     _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells.
     _eta_: _u_.shape - Array to which shock sensor values are written if shock detection and
         adaptive primitive mode are enabled. Otherwise, can be an empty array.
@@ -650,25 +650,25 @@ def update_fv_fluxes(
     riemann_solver: RiemannSolver,
 ):
     """
-    Update the finite volume fluxes with a high-order scheme.
+    Update the finite volume fluxes with a non-MUSCL scheme.
 
-    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Input array of
-        conservative cell averages with ghost cells. Is not modified.
+    _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Input array of conservative cell averages
+        with ghost cells along active dimensions. Is not modified.
     _w_: _u_.shape - Input array of primitive cell averages with ghost cells.
         Should represent the same physical state as _u_. Is not modified.
-    _F_: shape (nvars, nx + 1, ny + 2*nghost, nz + 2*nghost) - Array to which the x-fluxes are
-        written if "x" is in active_dims.
-    _G_: shape (nvars, nx + 2*nghost, ny + 1, nz + 2*nghost) - Array to which the y-fluxes are
-        written if "y" is in active_dims.
-    _H_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 1) - Array to which the z-fluxes are
-        written if "z" is in active_dims.
+    _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
+        "x" is in active_dims.
+    _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
+        "y" is in active_dims.
+    _H_: shape (nvars, mesh._nx_, mesh._ny_, nz + 1) - Array to which the z-fluxes are written if
+        "z" is in active_dims.
     _theta_: _u_.shape - Array to which the Zhang-Shu limiter values are written if enabled in
         the FV scheme. Otherwise, can be an empty array.
-    _qcc_: _u_.shape - Array to which the cell-centered primitive values are written if the
-        Zhang-Shu limiter is enabled in the FV scheme and the spatial polynomial degree exceeds 1.
-        Otherwise, can be an empty array.
+    _qcc_: _u_.shape - Scratch array for cell-centered values required if the Zhang-Shu limiter is
+        enabled in the FV scheme. Otherwise, can be an empty array.
     _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
-        in the FV scheme. Otherwise, can be an empty array.
+        in the FV scheme. Must match _u_.shape if the Zhang-Shu limiter is enabled. Otherwise, can
+        be an empty array.
     idx: Variable index map for the conserved and primitive variables.
     active_dims: Tuple of active spatial dimensions.
     mesh: Mesh object containing information about the mesh and its dimensions.
@@ -816,16 +816,16 @@ def update_MUSCL_fluxes(
     """
     Update the finite volume fluxes with a MUSCL scheme.
 
-    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Input array of
-        conservative cell averages with ghost cells. Is not modified.
+    _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Input array of conservative cell averages
+        with ghost cells along active dimensions. Is not modified.
     _w_: _u_.shape - Input array of primitive cell averages with ghost cells.
         Should represent the same physical state as _u_. Is not modified.
-    _F_: shape (nvars, nx + 1, ny + 2*nghost, nz + 2*nghost) - Array to which the x-fluxes are
-        written if "x" is in active_dims.
-    _G_: shape (nvars, nx + 2*nghost, ny + 1, nz + 2*nghost) - Array to which the y-fluxes are
-        written if "y" is in active_dims.
-    _H_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 1) - Array to which the z-fluxes are
-        written if "z" is in active_dims.
+    _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
+        "x" is in active_dims.
+    _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
+        "y" is in active_dims.
+    _H_: shape (nvars, mesh._nx_, mesh._ny_, nz + 1) - Array to which the z-fluxes are written if
+        "z" is in active_dims.
     _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
         in the FV scheme. Otherwise, can be an empty array.
     idx: Variable index map for the conserved and primitive variables.
@@ -972,26 +972,26 @@ def compute_fv_dudt(
 
     u: shape (nvars, nx, ny, nz) - Input array of conservative cell averages without ghost cells.
         Is not modified.
-    _u_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 2*nghost) - Array to which u is written
-        with boundary conditions applied to ghost cells.
+    _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Array to which u is written with boundary
+        conditions applied to ghost cells along active dimensions.
     _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells.
-    _F_: shape (nvars, nx + 1, ny + 2*nghost, nz + 2*nghost) - Array to which the x-fluxes are
-        written if "x" is in active_dims.
-    _G_: shape (nvars, nx + 2*nghost, ny + 1, nz + 2*nghost) - Array to which the y-fluxes are
-        written if "y" is in active_dims.
-    _H_: shape (nvars, nx + 2*nghost, ny + 2*nghost, nz + 1) - Array to which the z-fluxes are
-        written if "z" is in active_dims.
+    _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
+        "x" is in active_dims.
+    _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
+        "y" is in active_dims.
+    _H_: shape (nvars, mesh._nx_, mesh._ny_, nz + 1) - Array to which the z-fluxes are written if
+        "z" is in active_dims.
     _eta_: _u_.shape - Array to which shock sensor values are written if shock detection and
         adaptive primitive mode are enabled. Otherwise, can be an empty array.
     _has_shock_: _u_[:1, ...].shape - Array to which shock detection results are written if shock
         detection and adaptive primitive mode are enabled. Otherwise, can be an empty array.
     _theta_: _u_.shape - Array to which the Zhang-Shu limiter values are written if enabled in
         the FV scheme. Otherwise, can be an empty array.
-    _qcc_: _u_.shape - Array to which the cell-centered primitive values are written if the
-        Zhang-Shu limiter is enabled in the FV scheme and the spatial polynomial degree exceeds 1.
-        Otherwise, can be an empty array.
+    _qcc_: _u_.shape - Scratch array for cell-centered values required if the Zhang-Shu limiter is
+        enabled in the FV scheme. Otherwise, can be an empty array.
     _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
-        in the FV scheme. Otherwise, can be an empty array.
+        in the FV scheme. Must match _u_.shape if the Zhang-Shu limiter is enabled. Otherwise, can
+        be an empty array.
     t: Current simulation time, used for time-dependent boundary conditions.
     idx: VariableIndexMap for indexing into the variable dimension of the arrays.
     active_dims: Tuple of active spatial dimensions.
