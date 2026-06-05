@@ -620,30 +620,21 @@ def update_fv_fluxes(
     _F_: ArrayLike,
     _G_: ArrayLike,
     _H_: ArrayLike,
-    _eta_: ArrayLike,
-    _has_shock_: ArrayLike,
     _theta_: ArrayLike,
     _qcc_: ArrayLike,
     _alpha_: ArrayLike,
-    t: float,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     mesh: UniformFVMesh,
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
-    bc_params: BoundaryConditionParameters,
     riemann_solver: RiemannSolver,
 ):
     xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
     na = xp.newaxis
     fv = fv_params
-    bc = bc_params
     hp = hydro_params
-    nvars, nx, ny, nz = u.shape
     nghost = mesh.nghost
-
-    # 0) Update `_u_`  and `_w_`
-    update_fv_workspace(u, _u_, _w_, _eta_, _has_shock_, t, idx, mesh, fv, bc, hp)
 
     # 1) Interpolate nodes at each face from either primitives or conservatives
     _q_ = _w_ if fv.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_

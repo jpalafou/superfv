@@ -295,29 +295,22 @@ def update_MUSCL_fluxes(
     _G_: ArrayLike,
     _H_: ArrayLike,
     _alpha_: ArrayLike,
-    t: float,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     mesh: UniformFVMesh,
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
-    bc_params: BoundaryConditionParameters,
     riemann_solver: RiemannSolver,
     hancock_dt: float = 0.0,
 ):
     xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
     na = xp.newaxis
     fv = fv_params
-    bc = bc_params
     hp = hydro_params
-    nvars, nx, ny, nz = u.shape
     nghost = mesh.nghost
 
     if not fv.muscl_params.use_MUSCL:
         raise ValueError("update_fluxes_with_muscl_scheme should only be called for MUSCL schemes.")
-
-    # 0) Update `_w_`
-    update_fv_workspace(u, _u_, _w_, np.array([]), np.array([]), t, idx, mesh, fv, bc, hp)
 
     # 1) Compute slopes from either conservatives or primitives
     _q_ = _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_
