@@ -38,6 +38,7 @@ from .field import MultivarField, UnivarField
 from .finite_volume_driver import (
     compute_fv_dt,
     compute_fv_dudt,
+    get_interior_view,
     update_fv_fluxes,
     update_fv_workspace,
 )
@@ -46,7 +47,7 @@ from .mesh import UniformFVMesh
 from .slope_limiting.MOOD import mood_loop
 from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
-from .tools.slicing import crop, merge_slices, replace_slice
+from .tools.slicing import replace_slice
 from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
 from .tools.step_history import MultiTimer, StepHistory, StepSummary, SubstepSummary
 from .tools.variable_index_map import VariableIndexMap
@@ -295,7 +296,6 @@ class HydroSolver:
         self.arrays: ArrayManager
         self.mesh_arrays: ArrayManager
         self.params: SolverParameters
-        self.interior: Tuple[slice, slice, slice, slice]
         self.u0_func: MultivarField
         self.mesh: UniformFVMesh
         self.xp: ModuleType
@@ -479,7 +479,6 @@ class HydroSolver:
             discard_after_writing=discard_after_writing,
         )
 
-        self._build_interior_slice()  # defines self.interior
         self._build_conservative_ic_u0_func()  # defines self.u0_func
         self._enable_ic_bc_or_none_if_inactive()
         self._build_mesh()  # defines self.mesh
@@ -590,14 +589,6 @@ class HydroSolver:
                 idx.add_var_to_group(v, "omit_NAD")
 
         return idx
-
-    def _build_interior_slice(self):
-        active_dims = self.params.mesh.active_dims
-        nghost = self.params.mesh.nghost
-        interior = merge_slices(
-            *[crop(DIM_TO_AXIS[dim], (nghost, -nghost), ndim=4) for dim in active_dims]
-        )
-        self.interior = (interior[0], interior[1], interior[2], interior[3])
 
     def _primitive_ic_w0_func(self) -> MultivarField:
         ic_params = self.params.ic
@@ -723,14 +714,17 @@ class HydroSolver:
         return u0
 
     def _allocate_arrays(self):
-        nvars = self.params.variable_index_map.nvars
-        base_scheme = self.params.fv_scheme
+        params = self.params
+        nvars = params.variable_index_map.nvars
+        base_scheme = params.fv_scheme
+        nghost = params.mesh.nghost
+        active_dims = params.mesh.active_dims
         mesh = self.mesh
         nx, ny, nz = mesh.shape
         _nx_, _ny_, _nz_ = mesh._shape_
-        interior = self.interior
-        active_dims = self.params.mesh.active_dims
         arrays = self.arrays
+
+        interior = get_interior_view(active_dims, nghost)
 
         # define basic conservative/primitive state arrays
         arrays.add("u", self._compute_ic_array())
@@ -778,16 +772,16 @@ class HydroSolver:
 
         # define MOOD arrays
         if base_scheme.mood_params.use_MOOD:
-            for scheme in [base_scheme] + base_scheme.mood_params.fallback_cascade:
-                if "x" in active_dims:
-                    arrays.add("F_" + scheme.name, self.xp.empty((nvars, nx + 1, ny, nz)))
-                if "y" in active_dims:
-                    arrays.add("G_" + scheme.name, self.xp.empty((nvars, nx, ny + 1, nz)))
-                if "z" in active_dims:
-                    arrays.add("H_" + scheme.name, self.xp.empty((nvars, nx, ny, nz + 1)))
+            nfluxes = 1 + len(base_scheme.mood_params.fallback_cascade)
+            if "x" in active_dims:
+                arrays.add("_F_fallback_", self.xp.empty((nvars, nx + 1, _ny_, _nz_, nfluxes)))
+            if "y" in active_dims:
+                arrays.add("_G_fallback_", self.xp.empty((nvars, _nx_, ny + 1, _nz_, nfluxes)))
+            if "z" in active_dims:
+                arrays.add("_H_fallback_", self.xp.empty((nvars, _nx_, _ny_, nz + 1, nfluxes)))
 
-            arrays.add("_qold_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
-            arrays.add("_qnew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+            arrays.add("_unew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
+            arrays.add("_wnew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
             arrays.add("_troubles_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
             arrays.add("revisable_troubles", self.xp.zeros((1, nx, ny, nz), dtype=np.int32))
             arrays.add("_cascade_idx_", self.xp.zeros((1, _nx_, _ny_, _nz_), dtype=np.int32))
@@ -1003,14 +997,38 @@ class HydroSolver:
             )
 
             if base_scheme.mood_params.use_MOOD:
-                raise NotImplementedError("MOOD is not yet implemented in this version.")
-                mood_loop(self, t, dt)
+                mood_loop(
+                    arrays["_u_"],
+                    arrays["_w_"],
+                    arrays["_unew_"],
+                    arrays["_wnew_"],
+                    arrays["_alpha_"],
+                    np.array([]),  # fallback schemes could in principle use ZS
+                    np.array([]),  # fallback schemes could in principle use ZS
+                    arrays["_troubles_"],
+                    arrays["revisable_troubles"],
+                    arrays["_cascade_idx_"],
+                    arrays["_F_"] if "x" in active_dims else np.array([]),
+                    arrays["_G_"] if "y" in active_dims else np.array([]),
+                    arrays["_H_"] if "z" in active_dims else np.array([]),
+                    arrays["_F_fallback_"] if "x" in active_dims else np.array([]),
+                    arrays["_G_fallback_"] if "y" in active_dims else np.array([]),
+                    arrays["_H_fallback_"] if "z" in active_dims else np.array([]),
+                    idx,
+                    t,
+                    dt,
+                    mesh,
+                    base_scheme,
+                    bc_params,
+                    hydro_params,
+                    self.substep_summary,
+                )
 
         return compute_fv_dudt(
-            u,
-            arrays["_F_"] if "x" in active_dims else np.array([]),
-            arrays["_G_"] if "y" in active_dims else np.array([]),
-            arrays["_H_"] if "z" in active_dims else np.array([]),
+            arrays["F"] if "x" in active_dims else np.array([]),
+            arrays["G"] if "y" in active_dims else np.array([]),
+            arrays["H"] if "z" in active_dims else np.array([]),
+            idx,
             mesh,
         )
 
@@ -1027,9 +1045,13 @@ class HydroSolver:
         self._reset_substep_summary()
 
     def _update_log_arrays(self, action: LogArrayAction):
-        base_scheme = self.params.fv_scheme
-        interior = self.interior
+        params = self.params
+        base_scheme = params.fv_scheme
+        active_dims = params.mesh.active_dims
+        nghost = params.mesh.nghost
         arrays = self.arrays
+
+        interior = get_interior_view(active_dims, nghost)
 
         match action:
             case LogArrayAction.SUBSTEP_ADD:

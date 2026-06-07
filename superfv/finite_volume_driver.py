@@ -11,7 +11,7 @@ from superfv.slope_limiting.muscl import (
     compute_MUSCL_slopes,
     compute_PP2D_slopes,
 )
-from superfv.tools.slicing import crop, merge_slices, replace_slice
+from superfv.tools.slicing import crop, merge_slices
 
 from .configs import (
     BoundaryConditionParameters,
@@ -328,7 +328,7 @@ def integrate_transverse_nodes(
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
 
 
-def _apply_fv_bc(
+def apply_fv_bc(
     _u_: ArrayLike,
     idx: VariableIndexMap,
     mesh: UniformFVMesh,
@@ -362,12 +362,21 @@ def _apply_fv_bc(
 
 @lru_cache(maxsize=None)
 def _get_interior_view(
-    nghost: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
+    active_dims: Tuple[Literal["x", "y", "z"], ...], nghost: int, ndim: int = 4
+) -> Tuple[slice, ...]:
+    return merge_slices(
+        *[crop(DIM_TO_AXIS[dim], (nghost, -nghost), ndim=ndim) for dim in active_dims]
+    )
+
+
+def get_interior_view(
+    active_dims: Tuple[Literal["x", "y", "z"], ...], nghost: int, ndim: int = 4
 ) -> Tuple[slice, ...]:
     """
-    Return interior view for a ghost-cell-padded array with shape (nvars, _nx_, _ny_, _nz_).
+    Get a view of the interior, excluding ghost cells, for an array of shape
+    (nvars, _nx_, _ny_, _nz_) or (nvars, _nx_, _ny_, _nz_, ninterps).
     """
-    return merge_slices(*[crop(DIM_TO_AXIS[dim], (nghost, -nghost)) for dim in active_dims])
+    return _get_interior_view(active_dims, nghost, ndim)
 
 
 def _fv_detect_shocks(
@@ -435,11 +444,11 @@ def update_fv_workspace(
     hp = hydro_params
     fv = fv_params
     active_dims = mesh.active_dims
-    interior = _get_interior_view(mesh.nghost, active_dims)
+    interior = get_interior_view(active_dims, mesh.nghost)
 
     # 0) Update interior conservative FV averages and apply BC
     _u_[interior] = u
-    _apply_fv_bc(_u_, idx, mesh, t, fv.p, bc_params)
+    apply_fv_bc(_u_, idx, mesh, t, fv.p, bc_params)
 
     # Early escape for low-order scheme. The rest of the arrays are useless.
     if fv.p < 2:
@@ -1009,40 +1018,37 @@ def update_fv_fluxes(
         )
 
 
-def _get_interior_slice(
-    active_dims: Tuple[Literal["x", "y", "z"], ...], nghost: int
-) -> Tuple[slice, ...]:
-    return merge_slices(*[crop(DIM_TO_AXIS[dim], (nghost, -nghost)) for dim in active_dims])
-
-
 def compute_fv_dudt(
-    u: ArrayLike,
-    _F_: ArrayLike,
-    _G_: ArrayLike,
-    _H_: ArrayLike,
+    F: ArrayLike,
+    G: ArrayLike,
+    H: ArrayLike,
+    idx: VariableIndexMap,
     mesh: UniformFVMesh,
 ) -> ArrayLike:
     """
     Compute the finite volume time derivative of the conserved variables.
 
-    u: shape (nvars, mesh.nx, mesh.ny, mesh.nz) - Input array of conservative cell averages
-        without ghost cells. Is not modified.
-    _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
+    F: shape (nvars, nx + 1, mesh.ny, mesh.nz) - Array to which the x-fluxes are written if
         "x" is in active_dims.
-    _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
+    G: shape (nvars, mesh.nx, ny + 1, mesh.nz) - Array to which the y-fluxes are written if
         "y" is in active_dims.
-    _H_: shape (nvars, mesh._nx_, mesh._ny_, nz + 1) - Array to which the z-fluxes are written if
+    H: shape (nvars, mesh.nx, mesh.ny, nz + 1) - Array to which the z-fluxes are written if
         "z" is in active_dims.
     mesh: Mesh object containing information about the mesh and its dimensions.
     """
-    xp = cp if CUPY_AVAILABLE and isinstance(u, cp.ndarray) else np
-    interior = _get_interior_slice(mesh.active_dims, mesh.nghost)
+    active_dims = mesh.active_dims
 
-    dudt = xp.zeros_like(u)
-    for dim in mesh.active_dims:
-        left = replace_slice(interior, DIM_TO_AXIS[dim], slice(None, -1))
-        right = replace_slice(interior, DIM_TO_AXIS[dim], slice(1, None))
-        fluxes = {"x": _F_, "y": _G_, "z": _H_}[dim]
+    xp = (
+        cp
+        if CUPY_AVAILABLE and isinstance({"x": F, "y": G, "z": H}[active_dims[0]], cp.ndarray)
+        else np
+    )
+
+    dudt = xp.zeros((idx.nvars, mesh.nx, mesh.ny, mesh.nz))  # TEMP ARRAY
+    for dim in active_dims:
+        left = crop(DIM_TO_AXIS[dim], (None, -1), ndim=4)
+        right = crop(DIM_TO_AXIS[dim], (1, None), ndim=4)
+        fluxes = {"x": F, "y": G, "z": H}[dim]
         h = getattr(mesh, "h" + dim)
 
         dudt -= (fluxes[right] - fluxes[left]) / h

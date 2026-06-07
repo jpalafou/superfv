@@ -1,25 +1,32 @@
 from __future__ import annotations
 
-from types import ModuleType
-from typing import TYPE_CHECKING, List, Literal, Tuple
+from typing import List, Literal, Tuple
 
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.configs import (
+    BoundaryConditionParameters,
     FluxRecipe,
     FV_SchemeParameters,
+    HydroParameters,
     NumericalAdmissibilityParameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
+from superfv.finite_volume_driver import (
+    apply_fv_bc,
+    compute_fv_dudt,
+    get_interior_view,
+    update_fv_fluxes,
+)
+from superfv.hydro import cons_to_prim
+from superfv.mesh import UniformFVMesh
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
-from superfv.tools.slicing import crop, merge_slices
+from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
+from superfv.tools.step_history import SubstepSummary
 from superfv.tools.variable_index_map import VariableIndexMap
-
-if TYPE_CHECKING:
-    from superfv.hydro_solver import HydroSolver
 
 
 def numerical_admissibility_detection(
@@ -72,75 +79,76 @@ def numerical_admissibility_detection(
     np.maximum(_troubles_, np.any(_NAD_troubles_, axis=0), out=_troubles_)
 
 
-def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
+def detect_troubled_cells(
+    _uold_: ArrayLike,
+    _wold_: ArrayLike,
+    F: ArrayLike,
+    G: ArrayLike,
+    H: ArrayLike,
+    _cascade_idx_: ArrayLike,
+    _unew_: ArrayLike,
+    _wnew_: ArrayLike,
+    _troubles_: ArrayLike,
+    revisable_troubles: ArrayLike,
+    _alpha_: ArrayLike,
+    idx: VariableIndexMap,
+    t: float,
+    dt: float,
+    mesh: UniformFVMesh,
+    base_scheme: FV_SchemeParameters,
+    bc_params: BoundaryConditionParameters,
+    hydro_params: HydroParameters,
+) -> int:
     """
     Update "_troubles_" and return the number of revisable troubled cells.
     """
-    interior = sim.interior
-    params = sim.params
-    mood_params = params.fv_scheme.mood_params
-    n_cascade = len(mood_params.fallback_cascade)
-    active_dims = params.mesh.active_dims
-    idx = params.variable_index_map
-    arrays = sim.arrays
+    xp = cp if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray) else np
 
-    _uold_ = arrays["_u_"]
-    _troubles_ = arrays["_troubles_"]
-    rev_troubles = arrays["revisable_troubles"]
-    _alpha_ = arrays["_alpha_"]
-    _cascade_idx_ = arrays["_cascade_idx_"]
-    dudt = arrays["dudt"]
-    _unew_ = sim.xp.empty_like(_uold_)
-    _wnew_ = sim.xp.empty_like(_uold_)
+    hp = hydro_params
+    bc = bc_params
+    mood_params = base_scheme.mood_params
+    n_cascade = len(mood_params.fallback_cascade)
+    active_dims = mesh.active_dims
+    interior = get_interior_view(active_dims, mesh.nghost)
 
     # Reset troubled cells
     _troubles_[...] = 0.0
 
-    # Compute candidate solution qnew
-    sim.update_dudt()
+    # Compute candidate solution _unew_, _wnew_
+    dudt = compute_fv_dudt(F, G, H, idx, mesh)
     _unew_[interior] = _uold_[interior] + dt * dudt
-    sim.apply_bc(_unew_, t, params.fv_scheme.p)
-    sim.conservatives_to_primitives(_unew_, _wnew_)
+
+    apply_fv_bc(_unew_, idx, mesh, t, base_scheme.p, bc)
+    cons_to_prim(_unew_, _wnew_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
     # Assign _qold_ and _qnew_, the NAD arrays
-    if params.fv_scheme.flux_recipe != FluxRecipe.CONS_LIM_PRIM:
-        # NAD is applied to primitives
-        _qold_ = _uold_.copy()
-        sim.conservatives_to_primitives(_qold_, _qold_)
-        _qnew_ = _wnew_
-    else:
-        # NAD is applied to conservatives
-        _qold_ = _uold_
-        _qnew_ = _unew_
+    _qold_ = _uold_ if base_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _wold_
+    _qnew_ = _unew_ if base_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _wnew_
 
     # Update smooth extrema
     if mood_params.NAD_params.use_NAD and mood_params.NAD_params.SED_params.use_SED:
         compute_alpha(_qold_, _alpha_, active_dims)
 
-    if params.cupy:
+    if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray):
         # Detect troubled cells with CuPy using a custom kernel
         _M_ = cp.empty_like(_qold_)
         _m_ = cp.empty_like(_qold_)
 
-        if "NAD_mask" not in arrays:
-            omit_vars_idxs = [idx(v) for v in mood_params.NAD_params.omit_vars]
-            NAD_mask = cp.array(
-                [int(i not in omit_vars_idxs) for i in range(idx.nvars)], dtype=np.int32
-            )
-            arrays["NAD_mask"] = NAD_mask
+        # NAD mask
+        omit_vars_idxs = [idx(v) for v in mood_params.NAD_params.omit_vars]
+        NAD_mask = cp.array(
+            [int(i not in omit_vars_idxs) for i in range(idx.nvars)], dtype=np.int32
+        )
 
-        if "PAD_bounds" not in arrays:
-            physical_bounds = cp.empty((idx.nvars, 2), dtype=np.float64)
-            idx_bound_map = {
-                idx(v): (lb, ub) for v, (lb, ub) in mood_params.PAD_params.bounds.items()
-            }
-            for i in range(idx.nvars):
-                lb = idx_bound_map[i][0] if i in idx_bound_map else None
-                ub = idx_bound_map[i][1] if i in idx_bound_map else None
+        # PAD bounds
+        physical_bounds = cp.empty((idx.nvars, 2), dtype=np.float64)
+        idx_bound_map = {idx(v): (lb, ub) for v, (lb, ub) in mood_params.PAD_params.bounds.items()}
+        for i in range(idx.nvars):
+            lb = idx_bound_map[i][0] if i in idx_bound_map else None
+            ub = idx_bound_map[i][1] if i in idx_bound_map else None
 
-                physical_bounds[i, 0] = lb if lb is not None else -cp.inf
-                physical_bounds[i, 1] = ub if ub is not None else cp.inf
-            arrays["PAD_bounds"] = physical_bounds
+            physical_bounds[i, 0] = lb if lb is not None else -cp.inf
+            physical_bounds[i, 1] = ub if ub is not None else cp.inf
 
         compute_dmp(_qold_, _M_, _m_, active_dims, mood_params.NAD_params.include_corners)
 
@@ -148,10 +156,10 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
             _qnew_,
             _M_,
             _m_,
-            arrays["NAD_mask"],
+            NAD_mask,
             _alpha_,
             _wnew_,
-            arrays["PAD_bounds"],
+            physical_bounds,
             _troubles_,
             mood_params.NAD_params.use_NAD,
             mood_params.NAD_params.SED_params.use_SED,
@@ -175,53 +183,41 @@ def detect_troubled_cells(sim: HydroSolver, t: float, dt: float) -> int:
                     np.maximum(_troubles_, _wnew_[idx(v)] > ub, out=_troubles_)
 
     # Return number of revisable troubled cells
-    sim.xp.minimum(_troubles_[interior], _cascade_idx_[interior] < n_cascade, out=rev_troubles)
-    return sim.xp.sum(rev_troubles).item()
+    xp.minimum(_troubles_[interior], _cascade_idx_[interior] < n_cascade, out=revisable_troubles)
+    return xp.sum(revisable_troubles).item()
 
 
-def init_mood(sim: HydroSolver):
+def init_mood(
+    _F_base_: ArrayLike,
+    _G_base_: ArrayLike,
+    _H_base_: ArrayLike,
+    _F_fallback_: ArrayLike,
+    _G_fallback_: ArrayLike,
+    _H_fallback_: ArrayLike,
+    _cascade_idx_: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+):
     """
-    Reset _cascade_idx_ and assign the base fluxes "F_[sim.params.fv_scheme.name]", ...
+    Reset _cascade_idx_ and assign the base fluxes, ...
     """
-    params = sim.params
-    active_dims = params.mesh.active_dims
-    arrays = sim.arrays
-
-    arrays["_cascade_idx_"][...] = 0
+    _cascade_idx_[...] = 0
 
     # Copy initial fluxes
     if "x" in active_dims:
-        arrays["F_" + params.fv_scheme.name] = arrays["F"].copy()
+        _F_fallback_[..., 0] = _F_base_.copy()
     if "y" in active_dims:
-        arrays["G_" + params.fv_scheme.name] = arrays["G"].copy()
+        _G_fallback_[..., 0] = _G_base_.copy()
     if "z" in active_dims:
-        arrays["H_" + params.fv_scheme.name] = arrays["H"].copy()
+        _H_fallback_[..., 0] = _H_base_.copy()
 
 
-def compute_fallback_fluxes(sim: HydroSolver, fallback_scheme: FV_SchemeParameters):
-    """
-    Update the flux arrays "F_[fallback_scheme.name]", ... with a specified fallback scheme.
-    """
-    active_dims = sim.params.mesh.active_dims
-    arrays = sim.arrays
-
-    sim.update_fluxes(fallback_scheme)
-
-    if "x" in active_dims:
-        arrays["F_" + fallback_scheme.name][...] = arrays["F"].copy()
-    if "y" in active_dims:
-        arrays["G_" + fallback_scheme.name][...] = arrays["G"].copy()
-    if "z" in active_dims:
-        arrays["H_" + fallback_scheme.name][...] = arrays["H"].copy()
-
-
-def map_cells_values_to_face_values(
-    xp: ModuleType, _cell_values_: ArrayLike, axis: int
-) -> ArrayLike:
+def map_cells_values_to_face_values(_cell_values_: ArrayLike, axis: int) -> ArrayLike:
     """
     Return an array of face values obtained by taking the maximum of the adjacent
     cell values along the specified axis.
     """
+    xp = cp if CUPY_AVAILABLE and isinstance(_cell_values_, cp.ndarray) else np
+
     fv_shape = list(_cell_values_.shape)
     fv_shape[axis] -= 1
     _face_values_ = xp.empty(fv_shape, dtype=_cell_values_.dtype)
@@ -235,11 +231,13 @@ def map_cells_values_to_face_values(
 
 
 def blend_troubled_cells(
-    xp: ModuleType, _troubles_: ArrayLike, active_dims: Tuple[Literal["x", "y", "z"], ...]
+    _troubles_: ArrayLike, active_dims: Tuple[Literal["x", "y", "z"], ...]
 ) -> ArrayLike:
     """
     Return an floating-point array of troubled cells blended with their neighbors.
     """
+    xp = cp if CUPY_AVAILABLE and isinstance(_troubles_, cp.ndarray) else np
+
     ndim = len(active_dims)
 
     _blended_ = xp.empty_like(_troubles_, dtype=xp.float64)
@@ -295,7 +293,6 @@ def blend_troubled_cells(
 
 
 def get_face_mask(
-    xp: ModuleType,
     _cv_mask_: ArrayLike,
     dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
@@ -305,7 +302,7 @@ def get_face_mask(
     Slice a cell-centered mask with ghost cells to obtain a face-centered mask with
     no ghost cells.
     """
-    _fv_ = map_cells_values_to_face_values(xp, _cv_mask_, DIM_TO_AXIS[dim])
+    _fv_ = map_cells_values_to_face_values(_cv_mask_, DIM_TO_AXIS[dim])
     interior = merge_slices(
         *[
             crop(
@@ -319,77 +316,169 @@ def get_face_mask(
     return _fv_[interior]
 
 
-def assign_blended_fluxes(sim: HydroSolver):
+def assign_blended_fluxes(
+    _cascade_idx_: ArrayLike,
+    _F_fallback_: ArrayLike,
+    _G_fallback_: ArrayLike,
+    _H_fallback_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    nghost: int,
+):
     """
     Update the flux arrays "F", ... by blending the high-order and fallback fluxes based on
     a blended troubled cell mask.
     """
-    params = sim.params
-    fv_scheme = params.fv_scheme
-    fallback_scheme = fv_scheme.mood_params.fallback_cascade[0]
-    active_dims = params.mesh.active_dims
-    nghost = params.mesh.nghost
-    arrays = sim.arrays
+    interior = get_interior_view(active_dims, nghost)
 
-    _troubles_ = arrays["_cascade_idx_"]
-    _blended_troubles_ = blend_troubled_cells(sim.xp, _troubles_, active_dims)
+    _blended_troubles_ = blend_troubled_cells(_cascade_idx_, active_dims)
 
     for dim in active_dims:
-        name = {"x": "F", "y": "G", "z": "H"}[dim]
-        theta_fv = get_face_mask(sim.xp, _blended_troubles_, dim, active_dims, nghost)
+        axis = DIM_TO_AXIS[dim]
+        finterior = replace_slice(interior, axis, slice(None))
 
-        F_high_order = arrays[name + "_" + fv_scheme.name]
-        F_fallback = arrays[name + "_" + fallback_scheme.name]
+        F_in = {"x": _F_fallback_, "y": _G_fallback_, "z": _H_fallback_}[dim]
+        F_out = {"x": _F_, "y": _G_, "z": _H_}[dim]
 
-        arrays[name] = (1 - theta_fv) * F_high_order + theta_fv * F_fallback
+        theta_fv = get_face_mask(_blended_troubles_, dim, active_dims, nghost)
+
+        F_high_order = F_in[insert_slice(finterior, 4, 0)]
+        F_fallback = F_in[insert_slice(finterior, 4, 1)]
+
+        F_out[finterior] = (1 - theta_fv) * F_high_order + theta_fv * F_fallback
 
 
-def assign_fluxes(sim: HydroSolver, computed_fallback_fluxes: List[FV_SchemeParameters]):
+def assign_fluxes(
+    _cascade_idx_: ArrayLike,
+    _F_fallback_: ArrayLike,
+    _G_fallback_: ArrayLike,
+    _H_fallback_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    nghost: int,
+    base_scheme: FV_SchemeParameters,
+    computed_fallback_fluxes: List[FV_SchemeParameters],
+):
     """
     Update the flux arrays "F", ... based on the current "_cascade_idx_"
     """
-    params = sim.params
-    fv_scheme = params.fv_scheme
-    active_dims = params.mesh.active_dims
-    nghost = params.mesh.nghost
-    arrays = sim.arrays
-
-    if fv_scheme.mood_params.blend_troubles:
-        assign_blended_fluxes(sim)
+    if base_scheme.mood_params.blend_troubles:
+        assign_blended_fluxes(
+            _cascade_idx_,
+            _F_fallback_,
+            _G_fallback_,
+            _H_fallback_,
+            _F_,
+            _G_,
+            _H_,
+            active_dims,
+            nghost,
+        )
         return
 
-    _cascade_idx_ = arrays["_cascade_idx_"]
+    interior = get_interior_view(active_dims, nghost)
 
     # Assign fluxes based on cascade index
     for dim in active_dims:
-        name = {"x": "F", "y": "G", "z": "H"}[dim]
-        arrays[name][...] = 0.0
-        cascade_face_mask = get_face_mask(sim.xp, _cascade_idx_, dim, active_dims, nghost)
-        for i, scheme in enumerate([fv_scheme] + computed_fallback_fluxes):
+        axis = DIM_TO_AXIS[dim]
+        finterior = replace_slice(interior, axis, slice(None))
+
+        F_in = {"x": _F_fallback_, "y": _G_fallback_, "z": _H_fallback_}[dim]
+        F_out = {"x": _F_, "y": _G_, "z": _H_}[dim]
+
+        F_out[finterior] = 0.0
+
+        cascade_face_mask = get_face_mask(_cascade_idx_, dim, active_dims, nghost)
+        for i in range(1 + len(computed_fallback_fluxes)):
+            F_fallback = F_in[insert_slice(finterior, 4, i)]
+
             in_mask = cascade_face_mask == i
-            arrays[name] += arrays[name + "_" + scheme.name] * in_mask
+            F_out[finterior] += F_fallback * in_mask
 
 
-def mood_loop(sim: HydroSolver, t: float, dt: float):
+def mood_loop(
+    _uold_: ArrayLike,
+    _wold_: ArrayLike,
+    _unew_: ArrayLike,
+    _wnew_: ArrayLike,
+    _alpha_: ArrayLike,
+    _theta_,
+    _qcc_,
+    _troubles_: ArrayLike,
+    revisable_troubles: ArrayLike,
+    _cascade_idx_: ArrayLike,
+    _F_: ArrayLike,
+    _G_: ArrayLike,
+    _H_: ArrayLike,
+    _F_fallback_: ArrayLike,
+    _G_fallback_: ArrayLike,
+    _H_fallback_: ArrayLike,
+    idx: VariableIndexMap,
+    t: float,
+    dt: float,
+    mesh: UniformFVMesh,
+    base_scheme: FV_SchemeParameters,
+    bc_params: BoundaryConditionParameters,
+    hydro_params: HydroParameters,
+    substep_summary: SubstepSummary,
+):
     """
     Revise flux arrays "F", .. until no more revisable troubled cells are detected or the maximum
     number of revisions is reached. Update substep summary.
     """
-    params = sim.params
-    mood_params = params.fv_scheme.mood_params
-    n_cascade = len(mood_params.fallback_cascade)
-    substep_summary = sim.substep_summary
-    arrays = sim.arrays
+    xp = cp if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray) else np
 
-    _cascade_idx_ = arrays["_cascade_idx_"]
-    _troubles_ = arrays["_troubles_"]
+    mood_params = base_scheme.mood_params
+    n_cascade = len(mood_params.fallback_cascade)
+    active_dims = mesh.active_dims
+    interior = get_interior_view(active_dims, mesh.nghost)
+
+    # Assign flux interior
+    F = (
+        _F_[replace_slice(interior, DIM_TO_AXIS["x"], slice(None))]
+        if "x" in active_dims
+        else np.array([])
+    )
+    G = (
+        _G_[replace_slice(interior, DIM_TO_AXIS["y"], slice(None))]
+        if "y" in active_dims
+        else np.array([])
+    )
+    H = (
+        _H_[replace_slice(interior, DIM_TO_AXIS["z"], slice(None))]
+        if "z" in active_dims
+        else np.array([])
+    )
 
     # Initialize MOOD arrays
-    init_mood(sim)
+    init_mood(_F_, _G_, _H_, _F_fallback_, _G_fallback_, _H_fallback_, _cascade_idx_, active_dims)
     computed_fallback_fluxes: List[FV_SchemeParameters] = []
 
     for _ in range(mood_params.max_revs):
-        n_troubles = detect_troubled_cells(sim, t, dt)
+        n_troubles = detect_troubled_cells(
+            _uold_,
+            _wold_,
+            F,
+            G,
+            H,
+            _cascade_idx_,
+            _unew_,
+            _wnew_,
+            _troubles_,
+            revisable_troubles,
+            _alpha_,
+            idx,
+            t,
+            dt,
+            mesh,
+            base_scheme,
+            bc_params,
+            hydro_params,
+        )
         substep_summary.n_troubles_hist.append(n_troubles)
 
         # Do not revise if no revisable troubled cells
@@ -397,12 +486,32 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
             return
 
         # Update cascade index and compute new fluxes
-        sim.xp.minimum(_cascade_idx_ + _troubles_, n_cascade, out=_cascade_idx_)
+        xp.minimum(_cascade_idx_ + _troubles_, n_cascade, out=_cascade_idx_)
 
-        i_max = sim.xp.max(_cascade_idx_).item()
+        i_max = xp.max(_cascade_idx_).item()
         if i_max == len(computed_fallback_fluxes) + 1:
             next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
-            compute_fallback_fluxes(sim, next_fallback_scheme)
+            update_fv_fluxes(
+                _uold_,
+                _wold_,
+                _F_ if "x" in active_dims else np.array([]),
+                _G_ if "y" in active_dims else np.array([]),
+                _H_ if "z" in active_dims else np.array([]),
+                _theta_,
+                _qcc_,
+                _alpha_,
+                idx,
+                active_dims,
+                mesh,
+                next_fallback_scheme,
+                hydro_params,
+            )
+            if "x" in active_dims:
+                _F_fallback_[..., i_max] = _F_.copy()
+            if "y" in active_dims:
+                _G_fallback_[..., i_max] = _G_.copy()
+            if "z" in active_dims:
+                _H_fallback_[..., i_max] = _H_.copy()
             computed_fallback_fluxes.append(next_fallback_scheme)
         elif i_max != len(computed_fallback_fluxes):
             raise RuntimeError(
@@ -412,10 +521,41 @@ def mood_loop(sim: HydroSolver, t: float, dt: float):
 
         # Update state
         substep_summary.n_MOOD_revisions += 1
-        assign_fluxes(sim, computed_fallback_fluxes)
+        assign_fluxes(
+            _cascade_idx_,
+            _F_fallback_,
+            _G_fallback_,
+            _H_fallback_,
+            _F_,
+            _G_,
+            _H_,
+            active_dims,
+            mesh.nghost,
+            base_scheme,
+            computed_fallback_fluxes,
+        )
 
     if mood_params.detect_closing_troubles:
-        n_closing_troubles = detect_troubled_cells(sim, t, dt)
+        n_closing_troubles = detect_troubled_cells(
+            _uold_,
+            _wold_,
+            F,
+            G,
+            H,
+            _cascade_idx_,
+            _unew_,
+            _wnew_,
+            _troubles_,
+            revisable_troubles,
+            _alpha_,
+            idx,
+            t,
+            dt,
+            mesh,
+            base_scheme,
+            bc_params,
+            hydro_params,
+        )
         substep_summary.n_troubles_hist.append(n_closing_troubles)
 
 
