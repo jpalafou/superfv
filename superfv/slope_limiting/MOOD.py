@@ -494,9 +494,9 @@ def mood_loop(
             update_fv_fluxes(
                 _uold_,
                 _wold_,
-                _F_ if "x" in active_dims else np.array([]),
-                _G_ if "y" in active_dims else np.array([]),
-                _H_ if "z" in active_dims else np.array([]),
+                _F_,
+                _G_,
+                _H_,
                 _theta_,
                 _qcc_,
                 _alpha_,
