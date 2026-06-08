@@ -38,6 +38,7 @@ from .field import MultivarField, UnivarField
 from .finite_volume_driver import (
     compute_fv_dt,
     compute_fv_dudt,
+    compute_fv_nghost,
     get_interior_view,
     update_fv_fluxes,
     update_fv_workspace,
@@ -45,7 +46,6 @@ from .finite_volume_driver import (
 from .hydro import cons_to_prim, prim_to_cons
 from .mesh import UniformFVMesh
 from .slope_limiting.MOOD import mood_loop
-from .stencils import conservative_interpolation
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import replace_slice
 from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
@@ -455,7 +455,7 @@ class HydroSolver:
             nx=nx,
             ny=ny,
             nz=nz,
-            nghost=self._compute_nghost(fv_scheme_params, len(active_dims)),
+            nghost=compute_fv_nghost(fv_scheme_params, len(active_dims)),
             xlims=xlims,
             ylims=ylims,
             zlims=zlims,
@@ -518,42 +518,6 @@ class HydroSolver:
             update["P"] = (hydro_params.P_min, None)
 
         return {**PAD_bounds, **update}
-
-    def _compute_nghost(self, fv_scheme: FV_SchemeParameters, ndim: int) -> int:
-        dummy_stencil = conservative_interpolation.left_right(fv_scheme.p)
-
-        # Ghost cell cost of interpolating cell center and face nodes
-        nghost = dummy_stencil.shape[1] // 2
-
-        if (
-            fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM
-            and fv_scheme.lazy_primitive_mode != LazyPrimitiveMode.FULL
-        ):
-            nghost *= 3
-
-        if (
-            fv_scheme.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE
-            and fv_scheme.shock_detection_params.use_shock_detection
-        ):
-            nghost += 2
-
-        # Ghost cell cost of integrating fluxes and Riemann Solver
-        if fv_scheme.flux_quadrature == FluxQuadrature.TRANSVERSE and ndim >= 2:
-            nghost += max(dummy_stencil.shape[1] // 2, 1)
-        else:
-            nghost += 1
-
-        # Ghost cell cost of slope limiter
-        nghost += max(
-            1 if fv_scheme.zhang_shu_params.use_ZS else 0,
-            (1 if fv_scheme.mood_params.NAD_params.use_NAD else 0)
-            + (1 if fv_scheme.mood_params.blend_troubles else 0),
-            3 if fv_scheme.muscl_params.SED_params.use_SED else 0,
-            3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 0,
-            3 if fv_scheme.mood_params.NAD_params.SED_params.use_SED else 0,
-        )
-
-        return nghost
 
     def _compute_active_dims(self, nx: int, ny: int, nz: int) -> Tuple[Literal["x", "y", "z"], ...]:
         return tuple(dim for dim, n in zip(XYZ_TUPLE, [nx, ny, nz]) if n > 1)

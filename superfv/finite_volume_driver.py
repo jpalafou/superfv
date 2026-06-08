@@ -1088,3 +1088,52 @@ def compute_fv_dt(
     dt = hp.CFL / max_speed
 
     return dt
+
+
+def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int) -> int:
+    """
+    Returns the number of ghost cells required in the padded arrays of the HydroSolver based on
+    the provided `fv_scheme`.
+    """
+    left_right_reach = conservative_interpolation.left_right(fv_scheme.p).shape[1] // 2
+    cell_center_reach = conservative_interpolation.cell_center(fv_scheme.p).shape[1] // 2
+    transverse_reach = transverse_integration(fv_scheme.p).shape[1] // 2
+
+    nghost = left_right_reach  # Interpolating left/right face values
+
+    # Cost of update_fv_workspace
+    if fv_scheme.lazy_primitive_mode in (LazyPrimitiveMode.NONE, LazyPrimitiveMode.ADAPTIVE):
+        interpolates_from_high_order_primitives = False
+        if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM:
+            interpolates_from_high_order_primitives = True
+        if fv_scheme.zhang_shu_params.use_ZS and fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+            interpolates_from_high_order_primitives = True
+
+        if interpolates_from_high_order_primitives:
+            nghost += cell_center_reach + transverse_reach  # Interpolating primitives before faces
+        else:
+            nghost = max(nghost, cell_center_reach)  # Interpolating cell centers
+
+        if (
+            fv_scheme.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE
+            and fv_scheme.shock_detection_params.use_shock_detection
+        ):
+            nghost += 2  # Shock detection on top of primitive cell averages
+
+    # Ghost cell cost of integrating fluxes and Riemann Solver
+    if fv_scheme.flux_quadrature == FluxQuadrature.TRANSVERSE and ndim >= 2:
+        nghost += max(transverse_reach, 1)  # Transverse integration + Riemann solver
+    else:
+        nghost += 1  # Riemann solver
+
+    # Ghost cell cost of slope limiter
+    nghost += max(
+        max(1, cell_center_reach) if fv_scheme.zhang_shu_params.use_ZS else 0,
+        (1 if fv_scheme.mood_params.NAD_params.use_NAD else 0)
+        + (1 if fv_scheme.mood_params.blend_troubles else 0),
+        3 if fv_scheme.muscl_params.SED_params.use_SED else 0,
+        3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 0,
+        3 if fv_scheme.mood_params.NAD_params.SED_params.use_SED else 0,
+    )
+
+    return nghost
