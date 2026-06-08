@@ -16,6 +16,7 @@ dependencies = [
     "ipykernel",
     "matplotlib",
     "numpy",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
