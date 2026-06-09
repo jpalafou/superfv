@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.2", "wheel"]
+requires = ["setuptools>=61.2", "wheel", "pybind11"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -26,6 +26,9 @@ test = ["pytest"]
 
 [tool.setuptools]
 packages = ["superfv", "teyssier"]
+ext-modules = [
+    {name = "superfv.bin._finite_volume_driver", sources = ["superfv/cpp/update_fv_fluxes.cpp"], include-dirs = ["/opt/homebrew/include"], language = "c++", extra-compile-args = ["-std=c++17"]},
+]
 
 [tool.mypy]
 mypy_path = "stubs"
