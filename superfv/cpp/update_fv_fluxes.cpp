@@ -3,6 +3,93 @@
 
 namespace py = pybind11;
 
+
+double conservative_interpolation(
+    double ul4,
+    double ul3,
+    double ul2,
+    double ul1, 
+    double ucc,
+    double ur1,
+    double ur2,
+    double ur3,
+    double ur4,
+    int pos,
+    int p
+) {
+    double wl4, wl3, wl2, wl1, wcc, wr1, wr2, wr3, wr4;
+    if (pos < -1 || pos > 1) {
+        throw std::invalid_argument("Invalid position for interpolation");
+    }
+
+    switch (p) {
+        case 0:
+            return ucc;
+        case 1:
+            switch (pos) {
+                case -1:
+                    wl1 = 1.0 / 4.0;
+                    wcc = 1.0;
+                    wr1 = -1.0 / 4.0;
+                    break;
+                case 0:
+                    wl1 = 0.0;
+                    wcc = 1.0;
+                    wr1 = 0.0;
+                    break;
+                case 1:
+                    wl1 = -1.0 / 4.0;
+                    wcc = 1.0;
+                    wr1 = 1.0 / 4.0;
+                    break;
+            }
+            return wl1 * ul1 + wcc * ucc + wr1 * ur1;
+        case 2:
+            switch (pos) {
+                case -1:
+                    wl1 = 1.0 / 3.0;
+                    wcc = 5.0 / 6.0;
+                    wr1 = -1.0 / 6.0;
+                    break;
+                case 0:
+                    wl1 = -1.0 / 24.0;
+                    wcc = 13.0 / 12.0;
+                    wr1 = -1.0 / 24.0;
+                    break;
+                case 1:
+                    wl1 = -1.0 / 6.0;
+                    wcc = 5.0 / 6.0;
+                    wr1 = 1.0 / 3.0;
+                    break;
+            }
+            return wl1 * ul1 + wcc * ucc + wr1 * ur1;
+        case 3:
+            switch (pos) {
+                case -1:
+                    wl2 = -1.0 / 24.0;
+                    wl1 = 5.0 / 12.0;
+                    wcc = 5.0 / 6.0;
+                    wr1 = -1.0 / 4.0;
+                    wr2 = 1.0 / 24.0;
+                    break;
+                case 0:
+                    wl1 = -1.0 / 24.0;
+                    wcc = 13.0 / 12.0;
+                    wr1 = -1.0 / 24.0;
+                    break;
+                case 1:
+                    wl2 = 1.0 / 24.0;
+                    wl1 = -1.0 / 4.0;
+                    wcc = 5.0 / 6.0;
+                    wr1 = 5.0 / 12.0;
+                    wr2 = -1.0 / 24.0;
+                    break;
+            }
+            return wl2 * ul2 + wl1 * ul1 + wcc * ucc + wr1 * ur1 + wr2 * ur2;
+    }
+}
+
+
 void update_fv_fluxes_cpp(
     py::array _F_,
     py::array _G_,
