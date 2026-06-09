@@ -1194,10 +1194,10 @@ def rayleigh_taylor(
 
     out = xp.zeros((len(idx.idxs), *x.shape))
     out[idx("rho")] = xp.where(_y > yc, rho2, rho1)
-    out[idx("P")] = xp.where(_y > yc, rho2 * _y + (rho1 - rho2) * yc, rho1 * _y)
+    out[idx("P")] = xp.where(_y > yc, P0 + rho2 * _y + (rho1 - rho2) * yc, P0 + rho1 * _y)
 
     dv = xp.sqrt(gamma * (P0 + rho1 * yc - P0 + 1) / rho1)
 
-    out[idx("vy")] = -0.025 * dv * xp.sin(8 * xp.pi * _x)
+    out[idx("v" + dim2)] = -0.025 * dv * xp.cos(8 * xp.pi * _x)
 
     return out
