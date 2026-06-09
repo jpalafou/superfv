@@ -1022,7 +1022,7 @@ def compute_fv_dudt(
     F: ArrayLike,
     G: ArrayLike,
     H: ArrayLike,
-    idx: VariableIndexMap,
+    S: ArrayLike,
     mesh: UniformFVMesh,
 ) -> ArrayLike:
     """
@@ -1034,18 +1034,11 @@ def compute_fv_dudt(
         "y" is in active_dims.
     H: shape (nvars, mesh.nx, mesh.ny, nz + 1) - Array to which the z-fluxes are written if
         "z" is in active_dims.
+    S: shape (nvars, mesh.nx, mesh.ny, mesh.nz) - Array of source terms.
     mesh: Mesh object containing information about the mesh and its dimensions.
     """
-    active_dims = mesh.active_dims
-
-    xp = (
-        cp
-        if CUPY_AVAILABLE and isinstance({"x": F, "y": G, "z": H}[active_dims[0]], cp.ndarray)
-        else np
-    )
-
-    dudt = xp.zeros((idx.nvars, mesh.nx, mesh.ny, mesh.nz))  # TEMP ARRAY
-    for dim in active_dims:
+    dudt = S.copy()  # TEMP ARRAY
+    for dim in mesh.active_dims:
         left = crop(DIM_TO_AXIS[dim], (None, -1), ndim=4)
         right = crop(DIM_TO_AXIS[dim], (1, None), ndim=4)
         fluxes = {"x": F, "y": G, "z": H}[dim]

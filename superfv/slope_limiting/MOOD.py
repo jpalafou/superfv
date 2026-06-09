@@ -85,6 +85,7 @@ def detect_troubled_cells(
     F: ArrayLike,
     G: ArrayLike,
     H: ArrayLike,
+    S: ArrayLike,
     _cascade_idx_: ArrayLike,
     _unew_: ArrayLike,
     _wnew_: ArrayLike,
@@ -115,7 +116,7 @@ def detect_troubled_cells(
     _troubles_[...] = 0.0
 
     # Compute candidate solution _unew_, _wnew_
-    dudt = compute_fv_dudt(F, G, H, idx, mesh)
+    dudt = compute_fv_dudt(F, G, H, S, mesh)
     _unew_[interior] = _uold_[interior] + dt * dudt
 
     apply_fv_bc(_unew_, idx, mesh, t, base_scheme.p, bc)
@@ -417,6 +418,7 @@ def mood_loop(
     _F_fallback_: ArrayLike,
     _G_fallback_: ArrayLike,
     _H_fallback_: ArrayLike,
+    S: ArrayLike,
     idx: VariableIndexMap,
     t: float,
     dt: float,
@@ -465,6 +467,7 @@ def mood_loop(
             F,
             G,
             H,
+            S,
             _cascade_idx_,
             _unew_,
             _wnew_,
@@ -542,6 +545,7 @@ def mood_loop(
             F,
             G,
             H,
+            S,
             _cascade_idx_,
             _unew_,
             _wnew_,

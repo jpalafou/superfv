@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import BC, PatchBC
-from .field import MultivarField, UnivarField
+from .field import MultivarField, SourceTerm, UnivarField
 from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import CUPY_AVAILABLE
@@ -298,6 +298,7 @@ class BoundaryConditionParameters:
 class SolverParameters:
     hydro: HydroParameters
     ic: InitialConditionParameters
+    source: SourceTerm
     mesh: MeshParameters
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters

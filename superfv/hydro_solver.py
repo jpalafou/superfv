@@ -34,7 +34,7 @@ from .configs import (
     SolverParameters,
     ZhangShuParameters,
 )
-from .field import MultivarField, UnivarField
+from .field import MultivarField, SourceTerm, UnivarField
 from .finite_volume_driver import (
     compute_fv_dt,
     compute_fv_dudt,
@@ -46,6 +46,7 @@ from .finite_volume_driver import (
 from .hydro import cons_to_prim, prim_to_cons
 from .mesh import UniformFVMesh
 from .slope_limiting.MOOD import mood_loop
+from .source import trivial_source
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import replace_slice
 from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
@@ -127,6 +128,8 @@ class HydroSolver:
         ic: MultivarField = partial(ics.square, vx=1),
         passive_ics: Optional[Dict[str, UnivarField]] = None,
         force_1st_order_ic_cell_averages: bool = False,
+        # Source term params
+        source: Optional[SourceTerm] = None,
         # BC params
         bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
         bcy: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
@@ -208,6 +211,12 @@ class HydroSolver:
                 that take (x, y, z, t, xp=xp) and return an array of shape (nx, ny, nz).
             force_1st_order_ic_cell_averages: If True, force the initial condition to be sampled
                 with first-order cell averages, even if the base scheme is higher-order.
+
+        Source term parameters:
+            source: Optional source term function that takes (idx, w, xp=xp) and returns an array
+                of shape (nvars, nx, ny, nz). If None, a trivial source term that returns zeros is
+                used. Note that `w` is an array of primitive cell averages, so the source term will
+                only be correct for constant multiples of the primitive variables.
 
         Boundary condition parameters:
             bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
@@ -467,6 +476,7 @@ class HydroSolver:
         self.params = SolverParameters(
             hydro=hydro_params,
             ic=ic_params,
+            source=trivial_source if source is None else source,
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
@@ -693,6 +703,7 @@ class HydroSolver:
         # define basic conservative/primitive state arrays
         arrays.add("u", self._compute_ic_array())
         arrays.add("w", self.xp.empty((nvars, nx, ny, nz)))
+        arrays.add("source", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("dudt", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("unew", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("_u_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
@@ -927,6 +938,7 @@ class HydroSolver:
         hydro_params = params.hydro
         mesh = self.mesh
         active_dims = params.mesh.active_dims
+        interior = get_interior_view(active_dims, params.mesh.nghost)
         arrays = self.arrays
 
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
@@ -960,6 +972,9 @@ class HydroSolver:
                 dt if hancock else 0.0,
             )
 
+            # Compute source term
+            arrays["source"] = self.params.source(idx, arrays["_w_"][interior], xp=self.xp)
+
             if base_scheme.mood_params.use_MOOD:
                 mood_loop(
                     arrays["_u_"],
@@ -978,6 +993,7 @@ class HydroSolver:
                     arrays["_F_fallback_"] if "x" in active_dims else np.array([]),
                     arrays["_G_fallback_"] if "y" in active_dims else np.array([]),
                     arrays["_H_fallback_"] if "z" in active_dims else np.array([]),
+                    arrays["source"],
                     idx,
                     t,
                     dt,
@@ -992,7 +1008,7 @@ class HydroSolver:
             arrays["F"] if "x" in active_dims else np.array([]),
             arrays["G"] if "y" in active_dims else np.array([]),
             arrays["H"] if "z" in active_dims else np.array([]),
-            idx,
+            arrays["source"],
             mesh,
         )
 

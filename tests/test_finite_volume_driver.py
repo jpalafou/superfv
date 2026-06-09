@@ -259,6 +259,7 @@ def test_fv_rhs_is_finite(
         if "z" in active_dims
         else np.array([])
     )
+    source = np.zeros_like(u)
     _theta_ = _u_.copy() if base_scheme.zhang_shu_params.use_ZS else np.array([])
     _qcc_ = _u_.copy() if base_scheme.zhang_shu_params.use_ZS else np.array([])
     _alpha_ = _u_.copy()
@@ -320,7 +321,7 @@ def test_fv_rhs_is_finite(
             if "z" in active_dims
             else np.array([])
         ),
-        idx,
+        source,
         mesh,
     )
 

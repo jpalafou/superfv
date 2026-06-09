@@ -28,3 +28,13 @@ class UnivarField(Protocol):
         *,
         xp: ModuleType,
     ) -> ArrayLike: ...
+
+
+class SourceTerm(Protocol):
+    def __call__(
+        self,
+        idx: VariableIndexMap,
+        w: ArrayLike,
+        *,
+        xp: ModuleType,
+    ) -> ArrayLike: ...
