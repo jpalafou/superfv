@@ -938,7 +938,6 @@ class HydroSolver:
         hydro_params = params.hydro
         mesh = self.mesh
         active_dims = params.mesh.active_dims
-        interior = get_interior_view(active_dims, params.mesh.nghost)
         arrays = self.arrays
 
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
@@ -973,7 +972,7 @@ class HydroSolver:
             )
 
             # Compute source term
-            arrays["source"] = self.params.source(idx, arrays["_w_"][interior], xp=self.xp)
+            arrays["source"] = self.params.source(idx, u, xp=self.xp)
 
             if base_scheme.mood_params.use_MOOD:
                 mood_loop(

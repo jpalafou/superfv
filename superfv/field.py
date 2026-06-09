@@ -34,7 +34,7 @@ class SourceTerm(Protocol):
     def __call__(
         self,
         idx: VariableIndexMap,
-        w: ArrayLike,
+        u: ArrayLike,
         *,
         xp: ModuleType,
     ) -> ArrayLike: ...
