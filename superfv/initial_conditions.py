@@ -1033,8 +1033,7 @@ def gresho_vortex(
     v0: float,
 ) -> ArrayLike:
     """
-    Returns array for the Gresho vortex in the first active dimension
-    (x, for example) and [0,1] in the second active dimension (y, for example).
+    Returns array for the Gresho vortex initial conditions along two active dimensions.
 
     Args:
         idx: VariableIndexMap object with indices for hydro variables.
@@ -1145,5 +1144,60 @@ def entropy_wave(
         out[idx("v" + dim)] = 1.0
     out[idx("v" + passive_dim)] = xp.sin(2 * np.pi * r)
     out[idx("P")] = 1.0 / gamma
+
+    return out
+
+
+def rayleigh_taylor(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float,
+    *,
+    xp: ModuleType,
+    gamma: float,
+    P0: float,
+) -> ArrayLike:
+    """
+    Returns array for the Rayleigh-Taylor initial conditions along two active dimensions.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+        gamma: Ratio of specific heats.
+        P0: Midplane pressure.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError("Rayleigh-Taylor initial condition requires all hydro variables.")
+
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Rayleigh-Taylor initial condition is only defined in 2D.")
+
+    dim1 = dims[0]
+    dim2 = dims[1]
+
+    yc = 0.5
+    rho1 = 2.0
+    rho2 = 1.0
+
+    _x = {"x": x, "y": y, "z": z}[dim1]
+    _y = {"x": x, "y": y, "z": z}[dim2]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+    out[idx("rho")] = xp.where(_y > yc, rho2, rho1)
+    out[idx("P")] = xp.where(_y > yc, rho2 * _y + (rho1 - rho2) * yc, rho1 * _y)
+
+    dv = xp.sqrt(gamma * (P0 + rho1 * yc - P0 + 1) / rho1)
+
+    out[idx("vy")] = -0.025 * dv * xp.sin(8 * xp.pi * _x)
 
     return out
