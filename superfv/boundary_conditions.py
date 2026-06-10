@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import ModuleType
-from typing import Callable, Literal, Optional, Tuple, Union, cast
+from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
 
 from .axes import AXIS_TO_DIM
 from .field import MultivarField
-from .mesh import UniformFVMesh
+from .mesh import UniformFiniteVolumeMesh
 from .tools.device_management import ArrayLike
 from .tools.slicing import crop
 from .tools.variable_index_map import VariableIndexMap
@@ -26,6 +26,18 @@ class BC(Enum):
     IC = 9  # gets switched to DIRICHLET in the solver
 
 
+MESH_REGION_LOOKUP: Dict[
+    Literal["x", "y", "z"],
+    Dict[
+        Literal["l", "r"], Literal["xl_slab", "xr_slab", "yl_slab", "yr_slab", "zl_slab", "zr_slab"]
+    ],
+] = {
+    "x": {"l": "xl_slab", "r": "xr_slab"},
+    "y": {"l": "yl_slab", "r": "yr_slab"},
+    "z": {"l": "zl_slab", "r": "zr_slab"},
+}
+
+
 @dataclass
 class BCcontext:
     axis: int
@@ -33,7 +45,7 @@ class BCcontext:
     nghost: int
     f: Optional[MultivarField] = None
     variable_index_map: Optional[VariableIndexMap] = None
-    mesh: Optional[UniformFVMesh] = None
+    mesh: Optional[UniformFiniteVolumeMesh] = None
     t: Optional[float] = None
     p: Optional[int] = None
     xp: Optional[ModuleType] = None
@@ -56,7 +68,7 @@ def apply_bc(
     bcz_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
     bcz_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
     variable_index_map: Optional[VariableIndexMap] = None,
-    mesh: Optional[UniformFVMesh] = None,
+    mesh: Optional[UniformFiniteVolumeMesh] = None,
     t: Optional[float] = None,
     p: Optional[int] = None,
 ):
@@ -153,17 +165,11 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     else:
         outer_slice = crop(axis, (-nghost, None), ndim=4)
 
-    slab_region = AXIS_TO_DIM[axis] + ("l" if lower else "r")
-
-    f_eval = xp.empty_like(_u_[outer_slice])
-    mesh.perform_GaussLegendre_quadrature(
+    _u_[outer_slice] = mesh.perform_GaussLegendre_quadrature(
         lambda X, Y, Z: f(idx, X, Y, Z, t, xp=xp),
-        f_eval,
-        mesh_region=cast(Literal["xl", "xr", "yl", "yr", "zl", "zr"], slab_region),
-        cell_region="interior",
-        p=p,
+        p,
+        MESH_REGION_LOOKUP[AXIS_TO_DIM[axis]][("l" if lower else "r")],
     )
-    _u_[outer_slice] = f_eval
 
 
 def apply_free_bc(_u_: ArrayLike, context: BCcontext):

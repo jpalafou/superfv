@@ -23,7 +23,7 @@ from .configs import (
     ZhangShuParameters,
 )
 from .hydro import cons_to_prim, prim_to_cs
-from .mesh import UniformFVMesh
+from .mesh import UniformFiniteVolumeMesh
 from .quadrature import perform_quadrature
 from .riemann_solvers import solve_riemann_problem
 from .slope_limiting import compute_dmp
@@ -331,7 +331,7 @@ def integrate_transverse_nodes(
 def apply_fv_bc(
     _u_: ArrayLike,
     idx: VariableIndexMap,
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     t: float,
     p: int,
     bc_params: BoundaryConditionParameters,
@@ -417,7 +417,7 @@ def update_fv_workspace(
     _has_shock_: ArrayLike,
     t: float,
     idx: VariableIndexMap,
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     fv_params: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
     hydro_params: HydroParameters,
@@ -652,7 +652,7 @@ def update_weno_fluxes(
     _alpha_: ArrayLike,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
 ):
@@ -813,7 +813,7 @@ def update_MUSCL_fluxes(
     _alpha_: ArrayLike,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
     hancock_dt: float = 0.0,
@@ -953,7 +953,7 @@ def update_fv_fluxes(
     _alpha_: ArrayLike,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
     hancock_dt: float = 0.0,
@@ -1023,7 +1023,7 @@ def compute_fv_dudt(
     G: ArrayLike,
     H: ArrayLike,
     S: ArrayLike,
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
 ) -> ArrayLike:
     """
     Compute the finite volume time derivative of the conserved variables.
@@ -1050,7 +1050,10 @@ def compute_fv_dudt(
 
 
 def compute_fv_dt(
-    u: ArrayLike, idx: VariableIndexMap, mesh: UniformFVMesh, hydro_params: HydroParameters
+    u: ArrayLike,
+    idx: VariableIndexMap,
+    mesh: UniformFiniteVolumeMesh,
+    hydro_params: HydroParameters,
 ) -> float:
     """
     Compute the finite volume time step.

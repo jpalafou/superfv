@@ -20,7 +20,7 @@ from superfv.finite_volume_driver import (
     update_fv_fluxes,
 )
 from superfv.hydro import cons_to_prim
-from superfv.mesh import UniformFVMesh
+from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
@@ -95,7 +95,7 @@ def detect_troubled_cells(
     idx: VariableIndexMap,
     t: float,
     dt: float,
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     base_scheme: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
     hydro_params: HydroParameters,
@@ -422,7 +422,7 @@ def mood_loop(
     idx: VariableIndexMap,
     t: float,
     dt: float,
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     base_scheme: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
     hydro_params: HydroParameters,

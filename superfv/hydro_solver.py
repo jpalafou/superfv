@@ -44,7 +44,7 @@ from .finite_volume_driver import (
     update_fv_workspace,
 )
 from .hydro import cons_to_prim, prim_to_cons
-from .mesh import UniformFVMesh
+from .mesh import UniformFiniteVolumeMesh
 from .slope_limiting.MOOD import mood_loop
 from .source import trivial_source
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
@@ -303,10 +303,9 @@ class HydroSolver:
         """
         # Define the following attributes:
         self.arrays: ArrayManager
-        self.mesh_arrays: ArrayManager
         self.params: SolverParameters
         self.u0_func: MultivarField
-        self.mesh: UniformFVMesh
+        self.mesh: UniformFiniteVolumeMesh
         self.xp: ModuleType
         self.t: float
         self.t_wall_start: float
@@ -315,9 +314,8 @@ class HydroSolver:
         self.step_history: StepHistory
         self.snapshot_history: SnapshotHistory
 
-        # These are straightforward
+        # This is straightforward
         self.arrays = ArrayManager()
-        self.mesh_arrays = ArrayManager()
 
         # self.params requires many sub-parameters to be defined
         ic_params = InitialConditionParameters(
@@ -640,16 +638,16 @@ class HydroSolver:
     def _build_mesh(self):
         mesh_params = self.params.mesh
 
-        self.mesh = UniformFVMesh(
+        self.mesh = UniformFiniteVolumeMesh(
+            xlims=mesh_params.xlims,
+            ylims=mesh_params.ylims,
+            zlims=mesh_params.zlims,
             nx=mesh_params.nx,
             ny=mesh_params.ny,
             nz=mesh_params.nz,
             nghost=mesh_params.nghost,
-            xlims=mesh_params.xlims,
-            ylims=mesh_params.ylims,
-            zlims=mesh_params.zlims,
             active_dims=mesh_params.active_dims,
-            array_manager=self.mesh_arrays,
+            cupy=self.params.cupy,
         )
 
     def _init_cupy(self, tried_cupy: bool, cupy_available: bool):
@@ -660,7 +658,6 @@ class HydroSolver:
 
         if self.params.cupy:
             self.arrays.transfer_to("gpu")
-            self.mesh_arrays.transfer_to("gpu")
 
             self.xp = xp
         else:
@@ -669,21 +666,14 @@ class HydroSolver:
     def _compute_ic_array(self) -> ArrayLike:
         params = self.params
         idx = params.variable_index_map
-        nvars = idx.nvars
         mesh = self.mesh
-        nx, ny, nz = mesh.shape
 
-        u0 = self.xp.empty((nvars, nx, ny, nz))
         if params.fv_scheme.p > 1 and not params.ic.force_1st_order_ic_cell_averages:
-            mesh.perform_GaussLegendre_quadrature(
-                lambda x, y, z: self.u0_func(idx, x, y, z, 0.0, xp=self.xp),
-                u0,
-                mesh_region="core",
-                cell_region="interior",
-                p=params.fv_scheme.p,
+            u0 = mesh.perform_GaussLegendre_quadrature(
+                lambda x, y, z: self.u0_func(idx, x, y, z, 0.0, xp=self.xp), params.fv_scheme.p
             )
         else:
-            u0[...] = self.u0_func(idx, *mesh.get_cell_centers(), 0.0, xp=self.xp)
+            u0 = self.u0_func(idx, *mesh.Centers, 0.0, xp=self.xp)
 
         return u0
 
@@ -883,14 +873,8 @@ class HydroSolver:
         if output_path is None:
             return
 
-        if self.params.cupy:
-            mesh.array_manager.transfer_to("cpu")
-
         with open(output_path / "mesh.pkl", "wb") as f:
             pickle.dump(mesh, f)
-
-        if self.params.cupy:
-            mesh.array_manager.transfer_to("gpu")
 
     def _prepare_output_directory(self, overwrite: bool):
         """

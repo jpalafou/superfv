@@ -26,7 +26,7 @@ from superfv.finite_volume_driver import (
     update_fv_workspace,
 )
 from superfv.hydro import prim_to_cons
-from superfv.mesh import UniformFVMesh
+from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.riemann_solvers import RiemannSolver
 from superfv.tools.slicing import replace_slice
 from superfv.tools.variable_index_map import VariableIndexMap
@@ -218,14 +218,14 @@ def test_fv_rhs_is_finite(
     print(f"{base_scheme=}")
 
     # Build mesh
-    mesh = UniformFVMesh(
+    mesh = UniformFiniteVolumeMesh(
+        xlims=(0.0, 1.0),
+        ylims=(0.0, 1.0),
+        zlims=(0.0, 1.0),
         nx=N if "x" in active_dims else 1,
         ny=N if "y" in active_dims else 1,
         nz=N if "z" in active_dims else 1,
         nghost=compute_fv_nghost(base_scheme, len(active_dims)),
-        xlims=(0.0, 1.0),
-        ylims=(0.0, 1.0),
-        zlims=(0.0, 1.0),
         active_dims=active_dims,
     )
 

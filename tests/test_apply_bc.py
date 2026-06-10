@@ -3,7 +3,7 @@ import pytest
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BC, apply_bc
-from superfv.mesh import UniformFVMesh
+from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.tools.norms import linf_norm
 from superfv.tools.slicing import crop
 from superfv.tools.variable_index_map import VariableIndexMap
@@ -151,47 +151,36 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
         return u
 
     # create meshes
-    mesh = UniformFVMesh(
+    mesh = UniformFiniteVolumeMesh(
+        xlims=(0, 1),
+        ylims=(0, 1),
+        zlims=(0, 1),
         nx=N if "x" in dims else 1,
         ny=N if "y" in dims else 1,
         nz=N if "z" in dims else 1,
         nghost=nghost,
-        xlims=(0, 1),
-        ylims=(0, 1),
-        zlims=(0, 1),
         active_dims=tuple(dims),
     )
-    megamesh = UniformFVMesh(
+    megamesh = UniformFiniteVolumeMesh(
+        xlims=(-0.5, 1.5) if "x" in dims else (0, 1),
+        ylims=(-0.5, 1.5) if "y" in dims else (0, 1),
+        zlims=(-0.5, 1.5) if "z" in dims else (0, 1),
         nx=N + 2 * nghost if "x" in dims else 1,
         ny=N + 2 * nghost if "y" in dims else 1,
         nz=N + 2 * nghost if "z" in dims else 1,
         nghost=0,
-        xlims=(-0.5, 1.5) if "x" in dims else (0, 1),
-        ylims=(-0.5, 1.5) if "y" in dims else (0, 1),
-        zlims=(-0.5, 1.5) if "z" in dims else (0, 1),
         active_dims=tuple(dims),
     )
     assert mesh._shape_ == megamesh.shape
 
     # baseline case: apply dirichlet boundary function to megamesh
-    megamesh_u = np.empty((5, *megamesh.shape))
-    megamesh.perform_GaussLegendre_quadrature(
-        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np),
-        megamesh_u,
-        mesh_region="core",
-        cell_region="interior",
-        p=p,
+    megamesh_u = megamesh.perform_GaussLegendre_quadrature(
+        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), p
     )
 
     # test case: apply dirichlet boundary condition with custom function
-    u = np.empty((5, *mesh.shape))
-    mesh.perform_GaussLegendre_quadrature(
-        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np),
-        u,
-        mesh_region="core",
-        cell_region="interior",
-        p=p,
-    )
+    u = mesh.perform_GaussLegendre_quadrature(lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), p)
+
     _u_ = np.empty(
         (
             5,

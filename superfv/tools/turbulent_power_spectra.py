@@ -2,7 +2,7 @@ from typing import Literal, Tuple
 
 import numpy as np
 
-from superfv.mesh import UniformFVMesh
+from superfv.mesh import UniformFiniteVolumeMesh
 
 from .variable_index_map import VariableIndexMap
 
@@ -10,7 +10,7 @@ from .variable_index_map import VariableIndexMap
 def turbulent_power_specta(
     idx: VariableIndexMap,
     w: np.ndarray,
-    mesh: UniformFVMesh,
+    mesh: UniformFiniteVolumeMesh,
     nbins: int,
     binmode: Literal["linear", "log"] = "linear",
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -20,7 +20,7 @@ def turbulent_power_specta(
     Args:
         idx: VariableIndexMap object with indices for hydro variables.
         w: Array of primitive variables. Has shape (nvars, nx, ny, nz, ...).
-        mesh: UniformFVMesh object defining the computational mesh.
+        mesh: UniformFiniteVolumeMesh object defining the computational mesh.
         nbins: Number of bins for the power spectrum.
         binmode: Bin spacing mode, either "linear" or "log".
 

@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass, field, fields
 from functools import cached_property
 from itertools import product
@@ -446,6 +447,11 @@ class UniformFiniteVolumeMeshRegion:
     nz: int
     cupy: bool = False
 
+    def __post_init__(self):
+        if self.cupy and not CUPY_AVAILABLE:
+            warnings.warn("Cupy is not available. Falling back to NumPy.")
+            self.cupy = False
+
     @cached_property
     def hx(self) -> float:
         return (self.xlims[1] - self.xlims[0]) / self.nx
@@ -485,7 +491,7 @@ class UniformFiniteVolumeMeshRegion:
     def shape(self) -> Tuple[int, int, int]:
         return (self.nx, self.ny, self.nz)
 
-    def gauss_legendre_nodes(
+    def GaussLegendre_nodes(
         self, p: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
     ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         xp = cp if CUPY_AVAILABLE and self.cupy else np
@@ -560,15 +566,35 @@ class UniformFiniteVolumeMeshRegion:
 
         raise ValueError("Invalid number of active dimensions.")
 
+    def perform_GaussLegendre_quadrature(
+        self,
+        f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        p: int,
+        active_dims: Tuple[Literal["x", "y", "z"], ...],
+    ) -> ArrayLike:
+        xp = cp if CUPY_AVAILABLE and self.cupy else np
+        ndim = len(active_dims)
+
+        GL_weights = ci.gauss_legendre_weights(p, ndim)
+        if CUPY_AVAILABLE and self.cupy:
+            GL_weights = cp.asarray(GL_weights)
+
+        Xgl, Ygl, Zgl = self.GaussLegendre_nodes(p, active_dims)
+        f_eval = f(Xgl, Ygl, Zgl)
+
+        ndim_eval = f_eval.ndim
+        return xp.sum(f_eval * GL_weights.reshape(*[1] * (ndim_eval - 1), -1), axis=-1)
+
     def __getstate__(self) -> Dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        self.__post_init__()
 
 
 @dataclass
-class UniformFinteVolumeMesh:
+class UniformFiniteVolumeMesh:
     xlims: Tuple[float, float]
     ylims: Tuple[float, float]
     zlims: Tuple[float, float]
@@ -607,14 +633,24 @@ class UniformFinteVolumeMesh:
     def shape(self) -> Tuple[int, int, int]:
         return (self.nx, self.ny, self.nz)
 
-    def gauss_legendre_nodes(
+    def GaussLegendre_nodes(
         self,
         p: int,
         region: Literal[
             "core", "xl_slab", "xr_slab", "yl_slab", "yr_slab", "zl_slab", "zr_slab"
         ] = "core",
     ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
-        return getattr(self, region).gauss_legendre_nodes(p, self.active_dims)
+        return getattr(self, region).GaussLegendre_nodes(p, self.active_dims)
+
+    def perform_GaussLegendre_quadrature(
+        self,
+        f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
+        p: int,
+        region: Literal[
+            "core", "xl_slab", "xr_slab", "yl_slab", "yr_slab", "zl_slab", "zr_slab"
+        ] = "core",
+    ) -> ArrayLike:
+        return getattr(self, region).perform_GaussLegendre_quadrature(f, p, self.active_dims)
 
     @property
     def _nx_(self) -> int:
@@ -633,6 +669,10 @@ class UniformFinteVolumeMesh:
         return (self._nx_, self._ny_, self._nz_)
 
     def __post_init__(self):
+        if self.cupy and not CUPY_AVAILABLE:
+            warnings.warn("Cupy is not available. Falling back to NumPy.")
+            self.cupy = False
+
         self.core = UniformFiniteVolumeMeshRegion(
             self.xlims, self.ylims, self.zlims, self.nx, self.ny, self.nz, cupy=self.cupy
         )
