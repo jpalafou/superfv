@@ -449,6 +449,9 @@ def mood_loop(
     mood_params = base_scheme.mood_params
     n_cascade = len(mood_params.fallback_cascade)
     active_dims = mesh.active_dims
+    using_x = "x" in active_dims
+    using_y = "y" in active_dims
+    using_z = "z" in active_dims
     interior = get_interior_view(active_dims, mesh.nghost)
     Finterior = replace_slice(interior, DIM_TO_AXIS["x"], slice(None))
     Ginterior = replace_slice(interior, DIM_TO_AXIS["y"], slice(None))
@@ -462,9 +465,9 @@ def mood_loop(
         n_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
-            _F_[Finterior] if "x" in active_dims else np.array([]),
-            _G_[Ginterior] if "y" in active_dims else np.array([]),
-            _H_[Hinterior] if "z" in active_dims else np.array([]),
+            _F_[Finterior] if using_x else np.array([]),
+            _G_[Ginterior] if using_y else np.array([]),
+            _H_[Hinterior] if using_z else np.array([]),
             S,
             _cascade_idx_,
             _unew_,
@@ -521,12 +524,12 @@ def mood_loop(
         substep_summary.n_MOOD_revisions += 1
         assign_fluxes(
             _cascade_idx_,
-            _F_fallback_[insert_slice(Finterior, 4, slice(None))] if "x" in active_dims else None,
-            _G_fallback_[insert_slice(Ginterior, 4, slice(None))] if "y" in active_dims else None,
-            _H_fallback_[insert_slice(Hinterior, 4, slice(None))] if "z" in active_dims else None,
-            _F_[Finterior] if "x" in active_dims else None,
-            _G_[Ginterior] if "y" in active_dims else None,
-            _H_[Hinterior] if "z" in active_dims else None,
+            _F_fallback_[insert_slice(Finterior, 4, slice(None))] if using_x else np.array([]),
+            _G_fallback_[insert_slice(Ginterior, 4, slice(None))] if using_y else np.array([]),
+            _H_fallback_[insert_slice(Hinterior, 4, slice(None))] if using_z else np.array([]),
+            _F_[Finterior] if using_x else np.array([]),
+            _G_[Ginterior] if using_y else np.array([]),
+            _H_[Hinterior] if using_z else np.array([]),
             active_dims,
             mesh.nghost,
             base_scheme,
@@ -537,9 +540,9 @@ def mood_loop(
         n_closing_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
-            _F_[Finterior] if "x" in active_dims else np.array([]),
-            _G_[Ginterior] if "y" in active_dims else np.array([]),
-            _H_[Hinterior] if "z" in active_dims else np.array([]),
+            _F_[Finterior] if using_x else np.array([]),
+            _G_[Ginterior] if using_y else np.array([]),
+            _H_[Hinterior] if using_z else np.array([]),
             S,
             _cascade_idx_,
             _unew_,
