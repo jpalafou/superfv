@@ -146,10 +146,14 @@ def test_square_with_unlimited_schemes(scheme, active_dims):
         dict(
             p=7,
             use_MOOD=True,
+            fallback_cascade=FallbackCascade.MUSCL,
+            max_revs=1,
+        ),
+        dict(
+            p=7,
+            use_MOOD=True,
             fallback_cascade=FallbackCascade.MUSCL0,
             max_revs=3,
-            MUSCL_limiter=MUSCL_SlopeLimiter.MONCEN,
-            riemann_solver=RiemannSolver.LLF,
         ),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, max_revs=7),
     ],
