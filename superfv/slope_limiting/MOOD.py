@@ -460,23 +460,9 @@ def mood_loop(
     n_cascade = len(mood_params.fallback_cascade)
     active_dims = mesh.active_dims
     interior = get_interior_view(active_dims, mesh.nghost)
-
-    # Assign flux interior
-    F = (
-        _F_[replace_slice(interior, DIM_TO_AXIS["x"], slice(None))]
-        if "x" in active_dims
-        else np.array([])
-    )
-    G = (
-        _G_[replace_slice(interior, DIM_TO_AXIS["y"], slice(None))]
-        if "y" in active_dims
-        else np.array([])
-    )
-    H = (
-        _H_[replace_slice(interior, DIM_TO_AXIS["z"], slice(None))]
-        if "z" in active_dims
-        else np.array([])
-    )
+    Finterior = replace_slice(interior, DIM_TO_AXIS["x"], slice(None))
+    Ginterior = replace_slice(interior, DIM_TO_AXIS["y"], slice(None))
+    Hinterior = replace_slice(interior, DIM_TO_AXIS["z"], slice(None))
 
     # Initialize MOOD arrays
     init_mood(_F_, _G_, _H_, _F_fallback_, _G_fallback_, _H_fallback_, _cascade_idx_, active_dims)
@@ -486,9 +472,9 @@ def mood_loop(
         n_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
-            F,
-            G,
-            H,
+            _F_[Finterior] if "x" in active_dims else None,
+            _G_[Ginterior] if "y" in active_dims else None,
+            _H_[Hinterior] if "z" in active_dims else None,
             S,
             _cascade_idx_,
             _unew_,
@@ -564,9 +550,9 @@ def mood_loop(
         n_closing_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
-            F,
-            G,
-            H,
+            _F_[Finterior] if "x" in active_dims else None,
+            _G_[Ginterior] if "y" in active_dims else None,
+            _H_[Hinterior] if "z" in active_dims else None,
             S,
             _cascade_idx_,
             _unew_,
