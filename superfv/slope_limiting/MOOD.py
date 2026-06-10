@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Tuple
+from typing import Literal, Tuple
 
 import numpy as np
 
@@ -341,12 +341,12 @@ def get_face_mask(
 
 def assign_blended_fluxes(
     _cascade_idx_: ArrayLike,
-    _F_fallback_: ArrayLike,
-    _G_fallback_: ArrayLike,
-    _H_fallback_: ArrayLike,
-    _F_: ArrayLike,
-    _G_: ArrayLike,
-    _H_: ArrayLike,
+    F_fallback: ArrayLike,
+    G_fallback: ArrayLike,
+    H_fallback: ArrayLike,
+    F: ArrayLike,
+    G: ArrayLike,
+    H: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     nghost: int,
 ):
@@ -354,37 +354,32 @@ def assign_blended_fluxes(
     Update the flux arrays "F", ... by blending the high-order and fallback fluxes based on
     a blended troubled cell mask.
     """
-    interior = get_interior_view(active_dims, nghost)
-
     _blended_troubles_ = blend_troubled_cells(_cascade_idx_, active_dims)
 
     for dim in active_dims:
-        axis = DIM_TO_AXIS[dim]
-        finterior = replace_slice(interior, axis, slice(None))
-
-        F_in = {"x": _F_fallback_, "y": _G_fallback_, "z": _H_fallback_}[dim]
-        F_out = {"x": _F_, "y": _G_, "z": _H_}[dim]
+        F_in = {"x": F_fallback, "y": G_fallback, "z": H_fallback}[dim]
+        F_out = {"x": F, "y": G, "z": H}[dim]
 
         theta_fv = get_face_mask(_blended_troubles_, dim, active_dims, nghost)
 
-        F_high_order = F_in[insert_slice(finterior, 4, 0)]
-        F_fallback = F_in[insert_slice(finterior, 4, 1)]
+        F_high_order = F_in[..., 0]
+        F_fallback = F_in[..., 1]
 
-        F_out[finterior] = (1 - theta_fv) * F_high_order + theta_fv * F_fallback
+        F_out[...] = (1 - theta_fv) * F_high_order + theta_fv * F_fallback
 
 
 def assign_fluxes(
     _cascade_idx_: ArrayLike,
-    _F_fallback_: ArrayLike,
-    _G_fallback_: ArrayLike,
-    _H_fallback_: ArrayLike,
-    _F_: ArrayLike,
-    _G_: ArrayLike,
-    _H_: ArrayLike,
+    F_fallback: ArrayLike,
+    G_fallback: ArrayLike,
+    H_fallback: ArrayLike,
+    F: ArrayLike,
+    G: ArrayLike,
+    H: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     nghost: int,
     base_scheme: FV_SchemeParameters,
-    computed_fallback_fluxes: List[FV_SchemeParameters],
+    i_max_computed: int,
 ):
     """
     Update the flux arrays "F", ... based on the current "_cascade_idx_"
@@ -392,35 +387,30 @@ def assign_fluxes(
     if base_scheme.mood_params.blend_troubles:
         assign_blended_fluxes(
             _cascade_idx_,
-            _F_fallback_,
-            _G_fallback_,
-            _H_fallback_,
-            _F_,
-            _G_,
-            _H_,
+            F_fallback,
+            G_fallback,
+            H_fallback,
+            F,
+            G,
+            H,
             active_dims,
             nghost,
         )
         return
 
-    interior = get_interior_view(active_dims, nghost)
+    xp = cp if CUPY_AVAILABLE and isinstance(_cascade_idx_, cp.ndarray) else np
 
     # Assign fluxes based on cascade index
     for dim in active_dims:
-        axis = DIM_TO_AXIS[dim]
-        finterior = replace_slice(interior, axis, slice(None))
-
-        F_in = {"x": _F_fallback_, "y": _G_fallback_, "z": _H_fallback_}[dim]
-        F_out = {"x": _F_, "y": _G_, "z": _H_}[dim]
-
-        F_out[finterior] = 0.0
+        F_in = {"x": F_fallback, "y": G_fallback, "z": H_fallback}[dim]
+        F_out = {"x": F, "y": G, "z": H}[dim]
 
         cascade_face_mask = get_face_mask(_cascade_idx_, dim, active_dims, nghost)
-        for i in range(1 + len(computed_fallback_fluxes)):
-            F_fallback = F_in[insert_slice(finterior, 4, i)]
-
-            in_mask = cascade_face_mask == i
-            F_out[finterior] += F_fallback * in_mask
+        combined_fluxes = F_in[..., 0].copy()
+        for i in range(1, i_max_computed + 1):
+            F_fallback = F_in[..., i]
+            combined_fluxes = xp.where(cascade_face_mask == i, F_fallback, combined_fluxes)
+        F_out[...] = combined_fluxes
 
 
 def mood_loop(
@@ -466,7 +456,7 @@ def mood_loop(
 
     # Initialize MOOD arrays
     init_mood(_F_, _G_, _H_, _F_fallback_, _G_fallback_, _H_fallback_, _cascade_idx_, active_dims)
-    computed_fallback_fluxes: List[FV_SchemeParameters] = []
+    i_max_computed: int = 0
 
     for _ in range(mood_params.max_revs):
         n_troubles = detect_troubled_cells(
@@ -500,7 +490,7 @@ def mood_loop(
         xp.minimum(_cascade_idx_ + _troubles_, n_cascade, out=_cascade_idx_)
 
         i_max = xp.max(_cascade_idx_).item()
-        if i_max == len(computed_fallback_fluxes) + 1:
+        if i_max == i_max_computed + 1:
             next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
             update_fv_fluxes(
                 _uold_,
@@ -523,27 +513,24 @@ def mood_loop(
                 _G_fallback_[..., i_max] = _G_.copy()
             if "z" in active_dims:
                 _H_fallback_[..., i_max] = _H_.copy()
-            computed_fallback_fluxes.append(next_fallback_scheme)
-        elif i_max != len(computed_fallback_fluxes):
-            raise RuntimeError(
-                f"Unexpected cascade index {i_max} with {len(computed_fallback_fluxes)} "
-                "computed fallback fluxes."
-            )
+            i_max_computed += 1
+        elif i_max != i_max_computed:
+            raise RuntimeError(f"Unexpected {i_max=} with {i_max_computed=}.")
 
         # Update state
         substep_summary.n_MOOD_revisions += 1
         assign_fluxes(
             _cascade_idx_,
-            _F_fallback_,
-            _G_fallback_,
-            _H_fallback_,
-            _F_,
-            _G_,
-            _H_,
+            _F_fallback_[insert_slice(Finterior, 4, slice(None))] if "x" in active_dims else None,
+            _G_fallback_[insert_slice(Ginterior, 4, slice(None))] if "y" in active_dims else None,
+            _H_fallback_[insert_slice(Hinterior, 4, slice(None))] if "z" in active_dims else None,
+            _F_[Finterior] if "x" in active_dims else None,
+            _G_[Ginterior] if "y" in active_dims else None,
+            _H_[Hinterior] if "z" in active_dims else None,
             active_dims,
             mesh.nghost,
             base_scheme,
-            computed_fallback_fluxes,
+            i_max_computed,
         )
 
     if mood_params.detect_closing_troubles:
