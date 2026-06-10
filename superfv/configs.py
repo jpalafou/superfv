@@ -139,6 +139,7 @@ class FluxRecipe(Enum):
 class FluxQuadrature(Enum):
     TRANSVERSE = 0
     GAUSS_LEGENDRE = 1
+    NONE = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,3 +383,7 @@ class SolverParameters:
             and self.mesh.ndim != 2
         ):
             raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
+
+        # No flux quadarture in 1D
+        if self.mesh.ndim == 1 and self.fv_scheme.flux_quadrature != FluxQuadrature.NONE:
+            raise ValueError("Flux quadrature must be NONE for 1D simulations.")

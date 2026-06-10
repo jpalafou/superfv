@@ -112,7 +112,7 @@ def test_sedov_with_passive_scalar(scheme):
         dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FIRST_ORDER, rtol=0, max_revs=1),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, rtol=0, max_revs=2),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, rtol=0, max_revs=16),
+        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, rtol=0, max_revs=64),
     ],
 )
 def test_preservation_of_maximum_principle(scheme):

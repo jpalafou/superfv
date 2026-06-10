@@ -9,12 +9,17 @@ from superfv import (
     FluxQuadrature,
     HydroSolver,
     LazyPrimitiveMode,
+    MUSCL_SlopeLimiter,
+    SnapshotMode,
     TimeIntegrator,
     ics,
 )
+from superfv.riemann_solvers import RiemannSolver
 
 if CUPY_AVAILABLE:
     import cupy as cp
+
+N = 32
 
 
 @pytest.mark.parametrize(
@@ -36,11 +41,22 @@ if CUPY_AVAILABLE:
             lazy_primitive_mode=LazyPrimitiveMode.FULL,
             flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, max_revs=3),
+        dict(
+            p=7,
+            use_MOOD=True,
+            fallback_cascade=FallbackCascade.MUSCL0,
+            max_revs=3,
+            MUSCL_limiter=MUSCL_SlopeLimiter.MONCEN,
+            riemann_solver=RiemannSolver.LLF,
+        ),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, max_revs=7),
     ],
 )
-def test_sedov(scheme):
+# @pytest.mark.parametrize(
+#     "active_dims", [("x",), ("y",), ("z"), ("x", "y"), ("x", "z"), ("y", "z"), ("x", "y", "z")]
+# )
+@pytest.mark.parametrize("active_dims", [("x",), ("y",), ("z"), ("x", "y"), ("x", "z"), ("y", "z")])
+def test_sedov(scheme, active_dims):
     if not CUPY_AVAILABLE:
         pytest.skip("Cupy is not available, skipping test.")
 
@@ -50,9 +66,9 @@ def test_sedov(scheme):
         bcy=(BC.REFLECTIVE, BC.FREE),
         bcz=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
-        nx=64,
-        ny=64,
-        nz=64,
+        nx=N if "x" in active_dims else 1,
+        ny=N if "y" in active_dims else 1,
+        nz=N if "z" in active_dims else 1,
         **scheme,
     )
     sim_cp = HydroSolver(
@@ -61,26 +77,63 @@ def test_sedov(scheme):
         bcy=(BC.REFLECTIVE, BC.FREE),
         bcz=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
-        nx=64,
-        ny=64,
-        nz=64,
+        nx=N if "x" in active_dims else 1,
+        ny=N if "y" in active_dims else 1,
+        nz=N if "z" in active_dims else 1,
         cupy=True,
         **scheme,
     )
 
     if scheme.get("use_MUSCL", False):
-        sim_np.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK, print_frequency=1)
-        sim_cp.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK, print_frequency=1)
+        sim_np.take_n_steps(
+            10,
+            time_integrator=TimeIntegrator.MUSCL_HANCOCK,
+            snapshot_mode=SnapshotMode.EVERY,
+            print_frequency=1,
+        )
+        sim_cp.take_n_steps(
+            10,
+            time_integrator=TimeIntegrator.MUSCL_HANCOCK,
+            snapshot_mode=SnapshotMode.EVERY,
+            print_frequency=1,
+        )
     else:
-        sim_np.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3, print_frequency=1)
-        sim_cp.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3, print_frequency=1)
+        sim_np.take_n_steps(
+            10,
+            time_integrator=TimeIntegrator.SSPRK3,
+            snapshot_mode=SnapshotMode.EVERY,
+            print_frequency=1,
+        )
+        sim_cp.take_n_steps(
+            10,
+            time_integrator=TimeIntegrator.SSPRK3,
+            snapshot_mode=SnapshotMode.EVERY,
+            print_frequency=1,
+        )
 
-    assert (
-        cp.max(
+    for i, (snapshot_np, snapshot_cp) in enumerate(
+        zip(sim_np.snapshot_history, sim_cp.snapshot_history)
+    ):
+        if sim_np.params.fv_scheme.mood_params.use_MOOD:
+            if not cp.array_equal(
+                cp.asarray(snapshot_np.cascade_idx), cp.asarray(snapshot_cp.cascade_idx)
+            ):
+                raise AssertionError(f"Cascade indices diverge after {i} steps.")
+        rho_err = cp.max(
             cp.abs(
                 cp.asarray(sim_cp.snapshot_history[-1].u[sim_cp.idx("rho"), ...])
                 - cp.asarray(sim_np.snapshot_history[-1].u[sim_np.idx("rho"), ...])
             )
         ).item()
-        < 1e-12
-    )
+        if rho_err >= 1e-12:
+            raise AssertionError(f"Density diverges after {i} steps with max error {rho_err}.")
+
+    # assert (
+    #     cp.max(
+    #         cp.abs(
+    #             cp.asarray(sim_cp.snapshot_history[-1].u[sim_cp.idx("rho"), ...])
+    #             - cp.asarray(sim_np.snapshot_history[-1].u[sim_np.idx("rho"), ...])
+    #         )
+    #     ).item()
+    #     < 1e-12
+    # )

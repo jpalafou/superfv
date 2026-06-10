@@ -249,6 +249,10 @@ class UniformFiniteVolumeMesh:
     def _shape_(self) -> Tuple[int, int, int]:
         return (self._nx_, self._ny_, self._nz_)
 
+    @property
+    def ndim(self) -> int:
+        return len(self.active_dims)
+
     def __post_init__(self):
         if self.cupy and not CUPY_AVAILABLE:
             warnings.warn("Cupy is not available. Falling back to NumPy.")

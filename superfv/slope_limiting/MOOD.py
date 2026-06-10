@@ -5,6 +5,7 @@ from typing import List, Literal, Tuple
 import numpy as np
 
 from superfv.axes import DIM_TO_AXIS
+from superfv.boundary_conditions import BC, apply_bc
 from superfv.configs import (
     BoundaryConditionParameters,
     FluxRecipe,
@@ -77,6 +78,24 @@ def numerical_admissibility_detection(
 
     # Update troubled cells
     np.maximum(_troubles_, np.any(_NAD_troubles_, axis=0), out=_troubles_)
+
+
+def apply_troubles_bc(
+    _troubles_: ArrayLike,
+    nghost: int,
+    bc_params: BoundaryConditionParameters,
+):
+    none = (BC.NONE, BC.NONE)
+    periodic = (BC.PERIODIC, BC.PERIODIC)
+    zeros = (BC.ZEROS, BC.ZEROS)
+    apply_bc(
+        cp if CUPY_AVAILABLE and isinstance(_troubles_, cp.ndarray) else np,
+        _troubles_,
+        nghost,
+        {none: none, periodic: periodic}.get(bc_params.bcx, zeros),
+        {none: none, periodic: periodic}.get(bc_params.bcy, zeros),
+        {none: none, periodic: periodic}.get(bc_params.bcz, zeros),
+    )
 
 
 def detect_troubled_cells(
@@ -182,6 +201,9 @@ def detect_troubled_cells(
                     np.maximum(_troubles_, _wnew_[idx(v)] < lb, out=_troubles_)
                 if ub is not None:
                     np.maximum(_troubles_, _wnew_[idx(v)] > ub, out=_troubles_)
+
+    # Update _troubles_ ghost cells
+    apply_troubles_bc(_troubles_, mesh.nghost, bc_params)
 
     # Return number of revisable troubled cells
     xp.minimum(_troubles_[interior], _cascade_idx_[interior] < n_cascade, out=revisable_troubles)

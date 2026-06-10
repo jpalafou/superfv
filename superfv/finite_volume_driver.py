@@ -1123,10 +1123,15 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int) -> int:
         nghost += 1  # Riemann solver
 
     # Ghost cell cost of slope limiter
+    mood_cost = 0
+    if fv_scheme.mood_params.use_MOOD:
+        if fv_scheme.mood_params.NAD_params.use_NAD:
+            mood_cost += 1
+        mood_cost += 2 if fv_scheme.mood_params.blend_troubles else 1
+
     nghost += max(
         max(1, cell_center_reach) if fv_scheme.zhang_shu_params.use_ZS else 0,
-        (1 if fv_scheme.mood_params.NAD_params.use_NAD else 0)
-        + (1 if fv_scheme.mood_params.blend_troubles else 0),
+        mood_cost,
         3 if fv_scheme.muscl_params.SED_params.use_SED else 0,
         3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 0,
         3 if fv_scheme.mood_params.NAD_params.SED_params.use_SED else 0,

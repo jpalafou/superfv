@@ -28,6 +28,7 @@ from superfv.finite_volume_driver import (
 from superfv.hydro import prim_to_cons
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.riemann_solvers import RiemannSolver
+from superfv.tools.device_management import xp
 from superfv.tools.slicing import replace_slice
 from superfv.tools.variable_index_map import VariableIndexMap
 
@@ -96,7 +97,7 @@ for p in range(8):
                         mood_params=MOOD_Parameters(
                             False,
                             NumericalAdmissibilityParameters(
-                                False, np.nan, np.nan, SmoothExtremaDetectionParameters(False), []
+                                False, xp.nan, xp.nan, SmoothExtremaDetectionParameters(False), []
                             ),
                             PhysicalAdmissibilityParameters(False, {}),
                             [],
@@ -139,7 +140,7 @@ for flux_recipe in [
                         mood_params=MOOD_Parameters(
                             False,
                             NumericalAdmissibilityParameters(
-                                False, np.nan, np.nan, SmoothExtremaDetectionParameters(False), []
+                                False, xp.nan, xp.nan, SmoothExtremaDetectionParameters(False), []
                             ),
                             PhysicalAdmissibilityParameters(False, {}),
                             [],
@@ -188,8 +189,8 @@ for p in [3, 7]:
                                 False,
                                 NumericalAdmissibilityParameters(
                                     False,
-                                    np.nan,
-                                    np.nan,
+                                    xp.nan,
+                                    xp.nan,
                                     SmoothExtremaDetectionParameters(False),
                                     [],
                                 ),
@@ -236,36 +237,36 @@ def test_fv_rhs_is_finite(
     )
 
     # Allocate arrays
-    u = np.full((idx.nvars, *mesh.shape), np.nan)
-    _u_ = np.full((idx.nvars, *mesh._shape_), np.nan)
+    u = xp.full((idx.nvars, *mesh.shape), xp.nan)
+    _u_ = xp.full((idx.nvars, *mesh._shape_), xp.nan)
     _w_ = _u_.copy()
     _has_shock_ = (
-        np.full((1, *mesh._shape_), -1, dtype=np.int32)
+        xp.full((1, *mesh._shape_), -1, dtype=xp.int32)
         if base_scheme.shock_detection_params.use_shock_detection
-        else np.array([])
+        else xp.array([])
     )
     _F_ = (
-        np.full((idx.nvars, mesh.nx + 1, mesh._ny_, mesh._nz_), np.nan)
+        xp.full((idx.nvars, mesh.nx + 1, mesh._ny_, mesh._nz_), xp.nan)
         if "x" in active_dims
-        else np.array([])
+        else xp.array([])
     )
     _G_ = (
-        np.full((idx.nvars, mesh._nx_, mesh.ny + 1, mesh._nz_), np.nan)
+        xp.full((idx.nvars, mesh._nx_, mesh.ny + 1, mesh._nz_), xp.nan)
         if "y" in active_dims
-        else np.array([])
+        else xp.array([])
     )
     _H_ = (
-        np.full((idx.nvars, mesh._nx_, mesh._ny_, mesh.nz + 1), np.nan)
+        xp.full((idx.nvars, mesh._nx_, mesh._ny_, mesh.nz + 1), xp.nan)
         if "z" in active_dims
-        else np.array([])
+        else xp.array([])
     )
-    source = np.zeros_like(u)
-    _theta_ = _u_.copy() if base_scheme.zhang_shu_params.use_ZS else np.array([])
-    _qcc_ = _u_.copy() if base_scheme.zhang_shu_params.use_ZS else np.array([])
+    source = xp.zeros_like(u)
+    _theta_ = _u_.copy() if base_scheme.zhang_shu_params.use_ZS else xp.array([])
+    _qcc_ = _u_.copy() if base_scheme.zhang_shu_params.use_ZS else xp.array([])
     _alpha_ = _u_.copy()
 
     # Apply initial conditions
-    w = np.empty_like(u)
+    w = xp.empty_like(u)
     w[idx("rho"), ...] = 1.0
     w[idx("vx"), ...] = 0.1
     w[idx("vy"), ...] = 0.1
@@ -309,20 +310,20 @@ def test_fv_rhs_is_finite(
         (
             _F_[replace_slice(interior, DIM_TO_AXIS["x"], slice(None))]
             if "x" in active_dims
-            else np.array([])
+            else xp.array([])
         ),
         (
             _G_[replace_slice(interior, DIM_TO_AXIS["y"], slice(None))]
             if "y" in active_dims
-            else np.array([])
+            else xp.array([])
         ),
         (
             _H_[replace_slice(interior, DIM_TO_AXIS["z"], slice(None))]
             if "z" in active_dims
-            else np.array([])
+            else xp.array([])
         ),
         source,
         mesh,
     )
 
-    assert np.all(np.isfinite(dudt))
+    assert xp.all(xp.isfinite(dudt))

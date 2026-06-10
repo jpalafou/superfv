@@ -314,6 +314,11 @@ class HydroSolver:
         self.step_history: StepHistory
         self.snapshot_history: SnapshotHistory
 
+        # Decide on active dimensions based on nx, ny, nz
+        active_dims = self._compute_active_dims(nx, ny, nz)
+        if len(active_dims) == 1:
+            flux_quadrature = FluxQuadrature.NONE  # No flux quadrature in 1D, so force it to NONE
+
         # This is straightforward
         self.arrays = ArrayManager()
 
@@ -457,7 +462,6 @@ class HydroSolver:
             ),
         )
 
-        active_dims = self._compute_active_dims(nx, ny, nz)
         mesh_params = MeshParameters(
             nx=nx,
             ny=ny,

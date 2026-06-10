@@ -241,6 +241,7 @@ def cons_to_prim(
             gamma,
             isothermal,
             iso_cs,
+            *(u[idx(v)] for v in passives),
             w[idx("rho")],
             w[idx("vx")],
             w[idx("vy")],

@@ -214,13 +214,15 @@ if CUPY_AVAILABLE:
                         double dur = 0.5 * (u[j4] - u[j2]);
 
                         double dv = 0.25 * (dur - dul);
-                        double dv_safe = (fabs(dv) > eps ? dv : (dv > 0 ? eps : -eps));
+                        double dv_safe = (fabs(dv) > eps ? dv : (dv >= 0 ? eps : -eps));
 
                         double dvl = dul - duc;
-                        double alphal = -((dv < 0) ? fmax(dvl, 0.0) : fmin(dvl, 0.0)) / dv_safe;
+                        double alphal =
+                            -((dv_safe < 0) ? fmax(dvl, 0.0) : fmin(dvl, 0.0)) / dv_safe;
 
                         double dvr = dur - duc;
-                        double alphar = ((dv > 0) ? fmax(dvr, 0.0) : fmin(dvr, 0.0)) / dv_safe;
+                        double alphar =
+                            ((dv_safe > 0) ? fmax(dvr, 0.0) : fmin(dvr, 0.0)) / dv_safe;
 
                         double alpha_dim_j = fmin(fmin(alphal, alphar), 1.0);
 

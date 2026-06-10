@@ -253,8 +253,8 @@ class LLF_RiemannSolver(RiemmannSolverBase):
             Fm3l += Pl;
             Fm3r += Pr;
         }
-        FEl = vl * (El + Pl);
-        FEr = vr * (Er + Pr);
+        double FEl = vl * (El + Pl);
+        double FEr = vr * (Er + Pr);
 
         // Compute LLF flux
         Frho = 0.5 * (Flrho + Frrho - smax * (rhor - rhol));
@@ -267,9 +267,9 @@ class LLF_RiemannSolver(RiemmannSolverBase):
             body += f"""
             double conspassl{i} = rhol * passl{i};
             double conspassr{i} = rhor * passr{i};
-            double Fpassl = conspassl{i} * vl;
-            double Fpassr = conspassr{i} * vr;
-            Fpass{i} = 0.5 * (Fpassl + Fpassr - smax * (conspassr{i} - conspassl{i}));
+            double Fpassl{i} = conspassl{i} * vl;
+            double Fpassr{i} = conspassr{i} * vr;
+            Fpass{i} = 0.5 * (Fpassl{i} + Fpassr{i} - smax * (conspassr{i} - conspassl{i}));
             """
         return body
 
@@ -407,7 +407,7 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         double vP_star_denom_safe = (
             fabs(vP_star_denom) > 1e-15
                 ? vP_star_denom
-                : (vP_star_denom > 0 ? 1e-15 : -1e-15)
+                : (vP_star_denom >= 0 ? 1e-15 : -1e-15)
         );
         double vstar = (rcr * vr + rcl * vl + (Pl - Pr)) / vP_star_denom_safe;
         double Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (vl - vr)) / vP_star_denom_safe;
@@ -417,12 +417,12 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         double rhoE_star_denoml_safe = (
             fabs(rhoE_star_denoml) > 1e-15
                 ? rhoE_star_denoml
-                : (rhoE_star_denoml > 0 ? 1e-15 : -1e-15)
+                : (rhoE_star_denoml >= 0 ? 1e-15 : -1e-15)
         );
         double rhoE_star_denomr_safe = (
             fabs(rhoE_star_denomr) > 1e-15
                 ? rhoE_star_denomr
-                : (rhoE_star_denomr > 0 ? 1e-15 : -1e-15)
+                : (rhoE_star_denomr >= 0 ? 1e-15 : -1e-15)
         );
         double rhostarl = rhol * (sl - vl) / rhoE_star_denoml_safe;
         double rhostarr = rhor * (sr - vr) / rhoE_star_denomr_safe;
