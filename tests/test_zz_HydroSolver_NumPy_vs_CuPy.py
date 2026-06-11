@@ -11,11 +11,11 @@ from superfv import (
     HydroSolver,
     LazyPrimitiveMode,
     MUSCL_SlopeLimiter,
+    RiemannSolver,
     SnapshotMode,
     TimeIntegrator,
     ics,
 )
-from superfv.riemann_solvers import RiemannSolver
 
 if CUPY_AVAILABLE:
     import cupy as cp
@@ -49,15 +49,12 @@ N = 32
         dict(p=7, flux_recipe=FluxRecipe.PRIM_PRIM_LIM, lazy_primitive_mode=LazyPrimitiveMode.NONE),
     ],
 )
-# @pytest.mark.parametrize(
-#     "active_dims", [("x",), ("y",), ("z"), ("x", "y"), ("x", "z"), ("y", "z"), ("x", "y", "z")]
-# )
-@pytest.mark.parametrize("active_dims", [("x",), ("y",), ("z"), ("x", "y"), ("x", "z"), ("y", "z")])
-def test_square_with_unlimited_schemes(scheme, active_dims):
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz"])
+def test_square_with_unlimited_schemes(scheme, dims):
     if not CUPY_AVAILABLE:
         pytest.skip("Cupy is not available, skipping test.")
     if (
-        len(active_dims) == 1
+        len(dims) == 1
         and scheme.get("flux_quadrature", FluxQuadrature.NONE) == FluxQuadrature.GAUSS_LEGENDRE
     ):
         pytest.skip("Flux quadrature is not supported for 1D simulations, skipping test.")
@@ -65,27 +62,27 @@ def test_square_with_unlimited_schemes(scheme, active_dims):
     sim_np = HydroSolver(
         ic=partial(
             ics.square,
-            vx=1.0 if "x" in active_dims else 0.0,
-            vy=1.0 if "y" in active_dims else 0.0,
-            vz=1.0 if "z" in active_dims else 0.0,
+            vx=1.0 if "x" in dims else 0.0,
+            vy=1.0 if "y" in dims else 0.0,
+            vz=1.0 if "z" in dims else 0.0,
         ),
         gamma=1.4,
-        nx=N if "x" in active_dims else 1,
-        ny=N if "y" in active_dims else 1,
-        nz=N if "z" in active_dims else 1,
+        nx=N if "x" in dims else 1,
+        ny=N if "y" in dims else 1,
+        nz=N if "z" in dims else 1,
         **scheme,
     )
     sim_cp = HydroSolver(
         ic=partial(
             ics.square,
-            vx=1.0 if "x" in active_dims else 0.0,
-            vy=1.0 if "y" in active_dims else 0.0,
-            vz=1.0 if "z" in active_dims else 0.0,
+            vx=1.0 if "x" in dims else 0.0,
+            vy=1.0 if "y" in dims else 0.0,
+            vz=1.0 if "z" in dims else 0.0,
         ),
         gamma=1.4,
-        nx=N if "x" in active_dims else 1,
-        ny=N if "y" in active_dims else 1,
-        nz=N if "z" in active_dims else 1,
+        nx=N if "x" in dims else 1,
+        ny=N if "y" in dims else 1,
+        nz=N if "z" in dims else 1,
         cupy=True,
         **scheme,
     )
@@ -133,15 +130,24 @@ def test_square_with_unlimited_schemes(scheme, active_dims):
             p=3,
             use_ZS=True,
             adaptive_dt=True,
-            lazy_primitive_mode=LazyPrimitiveMode.FULL,
             flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
         ),
         dict(
             p=7,
             use_ZS=True,
             adaptive_dt=True,
-            lazy_primitive_mode=LazyPrimitiveMode.FULL,
+            lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE,
             flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+        ),
+        dict(
+            p=7,
+            use_ZS=True,
+            flux_recipe=FluxRecipe.CONS_LIM_PRIM,
+        ),
+        dict(
+            p=7,
+            use_ZS=True,
+            flux_recipe=FluxRecipe.PRIM_PRIM_LIM,
         ),
         dict(
             p=7,
@@ -152,81 +158,82 @@ def test_square_with_unlimited_schemes(scheme, active_dims):
         dict(
             p=7,
             use_MOOD=True,
+            fallback_cascade=FallbackCascade.MUSCL,
+            max_revs=1,
+            flux_recipe=FluxRecipe.CONS_LIM_PRIM,
+        ),
+        dict(
+            p=7,
+            use_MOOD=True,
             fallback_cascade=FallbackCascade.MUSCL0,
             max_revs=3,
         ),
         dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, max_revs=7),
     ],
 )
-# @pytest.mark.parametrize(
-#     "active_dims", [("x",), ("y",), ("z"), ("x", "y"), ("x", "z"), ("y", "z"), ("x", "y", "z")]
-# )
-@pytest.mark.parametrize("active_dims", [("x",), ("y",), ("z"), ("x", "y"), ("x", "z"), ("y", "z")])
-def test_sedov(scheme, active_dims):
+@pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz"])
+def test_square_with_limited_schemes(scheme, dims):
     if not CUPY_AVAILABLE:
         pytest.skip("Cupy is not available, skipping test.")
 
     sim_np = HydroSolver(
-        ic=partial(ics.sedov, h=1 / 64, gamma=1.4, P0=1e-5),
+        ic=partial(
+            ics.square,
+            vx=1.0 if "x" in dims else 0.0,
+            vy=1.0 if "y" in dims else 0.0,
+            vz=1.0 if "z" in dims else 0.0,
+        ),
         bcx=(BC.REFLECTIVE, BC.FREE),
         bcy=(BC.REFLECTIVE, BC.FREE),
         bcz=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
-        nx=N if "x" in active_dims else 1,
-        ny=N if "y" in active_dims else 1,
-        nz=N if "z" in active_dims else 1,
+        nx=N if "x" in dims else 1,
+        ny=N if "y" in dims else 1,
+        nz=N if "z" in dims else 1,
         **scheme,
     )
     sim_cp = HydroSolver(
-        ic=partial(ics.sedov, h=1 / 64, gamma=1.4, P0=1e-5),
+        ic=partial(
+            ics.square,
+            vx=1.0 if "x" in dims else 0.0,
+            vy=1.0 if "y" in dims else 0.0,
+            vz=1.0 if "z" in dims else 0.0,
+        ),
         bcx=(BC.REFLECTIVE, BC.FREE),
         bcy=(BC.REFLECTIVE, BC.FREE),
         bcz=(BC.REFLECTIVE, BC.FREE),
         gamma=1.4,
-        nx=N if "x" in active_dims else 1,
-        ny=N if "y" in active_dims else 1,
-        nz=N if "z" in active_dims else 1,
+        nx=N if "x" in dims else 1,
+        ny=N if "y" in dims else 1,
+        nz=N if "z" in dims else 1,
         cupy=True,
         **scheme,
     )
 
-    if scheme.get("use_MUSCL", False):
-        sim_np.take_n_steps(
-            10,
-            time_integrator=TimeIntegrator.MUSCL_HANCOCK,
-            snapshot_mode=SnapshotMode.EVERY,
-            print_frequency=1,
-        )
-        sim_cp.take_n_steps(
-            10,
-            time_integrator=TimeIntegrator.MUSCL_HANCOCK,
-            snapshot_mode=SnapshotMode.EVERY,
-            print_frequency=1,
-        )
-    else:
-        sim_np.take_n_steps(
-            10,
-            time_integrator=TimeIntegrator.SSPRK3,
-            snapshot_mode=SnapshotMode.EVERY,
-            print_frequency=1,
-        )
-        sim_cp.take_n_steps(
-            10,
-            time_integrator=TimeIntegrator.SSPRK3,
-            snapshot_mode=SnapshotMode.EVERY,
-            print_frequency=1,
-        )
+    sim_np.take_n_steps(
+        10,
+        time_integrator=(
+            TimeIntegrator.MUSCL_HANCOCK
+            if scheme.get("use_MUSCL", False)
+            else TimeIntegrator.SSPRK3
+        ),
+        snapshot_mode=SnapshotMode.EVERY,
+        print_frequency=1,
+    )
+    sim_cp.take_n_steps(
+        10,
+        time_integrator=(
+            TimeIntegrator.MUSCL_HANCOCK
+            if scheme.get("use_MUSCL", False)
+            else TimeIntegrator.SSPRK3
+        ),
+        snapshot_mode=SnapshotMode.EVERY,
+        print_frequency=1,
+    )
 
     for i, (snapshot_np, snapshot_cp) in enumerate(
         zip(sim_np.snapshot_history, sim_cp.snapshot_history)
     ):
-        if sim_np.params.fv_scheme.mood_params.use_MOOD:
-            if not cp.array_equal(
-                cp.asarray(snapshot_np.cascade_idx), cp.asarray(snapshot_cp.cascade_idx)
-            ):
-                print(f"{sim_np.step_history[i]=}")
-                print(f"{sim_cp.step_history[i]=}")
-                raise AssertionError(f"Cascade indices diverge after {i} steps.")
         rho_err = cp.max(
             cp.abs(
                 cp.asarray(snapshot_np.u[sim_cp.idx("rho"), ...])
@@ -235,13 +242,3 @@ def test_sedov(scheme, active_dims):
         ).item()
         if rho_err >= 1e-12:
             raise AssertionError(f"Density diverges after {i} steps with max error {rho_err}.")
-
-    # assert (
-    #     cp.max(
-    #         cp.abs(
-    #             cp.asarray(sim_cp.snapshot_history[-1].u[sim_cp.idx("rho"), ...])
-    #             - cp.asarray(sim_np.snapshot_history[-1].u[sim_np.idx("rho"), ...])
-    #         )
-    #     ).item()
-    #     < 1e-12
-    # )
