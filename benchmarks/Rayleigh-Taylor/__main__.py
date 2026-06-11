@@ -3,17 +3,10 @@ from functools import partial
 import cupy as cp
 import matplotlib.pyplot as plt
 
-from superfv import (
-    BC,
-    FluxQuadrature,
-    HydroSolver,
-    MUSCL_SlopeLimiter,
-    TimeIntegrator,
-    ics,
-)
+from superfv import BC, HydroSolver, MUSCL_SlopeLimiter, TimeIntegrator, ics
 from superfv.tools.run_helper import run_multiple_simulations
 
-N = 192
+N = 782
 P0 = 1.0
 
 base_path = f"/scratch/gpfs/jp7427/superfv/Rayleigh-Taylor/{P0=}/{N=}/"
@@ -45,8 +38,6 @@ run_params = dict(t=1.95)
 
 schemes = {
     "MUSCL-Hancock": dict(p=1, use_MUSCL=True, MUSCL_limiter=MUSCL_SlopeLimiter.PP2D),
-    "ZS4": dict(p=3, use_ZS=True, flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE, adaptive_dt=True),
-    "ZS8": dict(p=8, use_ZS=True, flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE, adaptive_dt=True),
     "MM4_rtol=1e-5": dict(p=3, use_MOOD=True, rtol=1e-5),
     "MM4_rtol=1e-3": dict(p=3, use_MOOD=True, rtol=1e-3),
     "MM4_rtol=1e-1": dict(p=3, use_MOOD=True, rtol=1e-1),

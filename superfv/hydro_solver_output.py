@@ -30,4 +30,8 @@ class HydroSolverOutput:
         if not file_path.exists():
             raise FileNotFoundError(f"File {file_path} does not exist.")
         with open(file_path, "rb") as f:
-            return pickle.load(f)
+            try:
+                return pickle.load(f)
+            except Exception as e:
+                print(f"Error occurred while unpickling {file_path}: {e}")
+                return None
