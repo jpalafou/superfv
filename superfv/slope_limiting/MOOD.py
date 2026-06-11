@@ -147,7 +147,7 @@ def detect_troubled_cells(
 
     # Update smooth extrema
     if mood_params.NAD_params.use_NAD and mood_params.NAD_params.SED_params.use_SED:
-        compute_alpha(_qold_, _alpha_, active_dims)
+        compute_alpha(_qold_, _alpha_, active_dims, mood_params.NAD_params.SED_params.clip_zero_tol)
 
     if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray):
         # Detect troubled cells with CuPy using a custom kernel

@@ -583,7 +583,7 @@ def apply_zhang_shu_limiter(
     if params.SED_params.use_SED:
         if _alpha_ is None:
             raise ValueError("_alpha_ must be provided if detect_smooth_extrema is True")
-        compute_alpha(_q_, _alpha_, active_dims)
+        compute_alpha(_q_, _alpha_, active_dims, params.SED_params.clip_zero_tol)
 
         if params.PAD_params.use_PAD and primitives:
             _physical_ = xp.ones_like(_alpha_[0], dtype=bool)  # TEMP ARRAY
