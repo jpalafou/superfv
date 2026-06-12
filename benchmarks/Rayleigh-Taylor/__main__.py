@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 from superfv import BC, HydroSolver, MUSCL_SlopeLimiter, TimeIntegrator, ics
 from superfv.tools.run_helper import run_multiple_simulations
 
-N = 782
+N = 768
 P0 = 1.0
 
 base_path = f"/scratch/gpfs/jp7427/superfv/Rayleigh-Taylor/{P0=}/{N=}/"
-overwrite = True
+overwrite = False
 
 
 def gravity(idx, u, *, xp):
@@ -38,11 +38,15 @@ run_params = dict(t=1.95)
 
 schemes = {
     "MUSCL-Hancock": dict(p=1, use_MUSCL=True, MUSCL_limiter=MUSCL_SlopeLimiter.PP2D),
+    "MM4_rtol=0": dict(p=3, use_MOOD=True, rtol=0),
+    "MM8_rtol=0": dict(p=7, use_MOOD=True, rtol=0),
+    "MM4_rtol=1e-7": dict(p=3, use_MOOD=True, rtol=1e-7),
+    "MM8_rtol=1e-7": dict(p=7, use_MOOD=True, rtol=1e-7),
     "MM4_rtol=1e-5": dict(p=3, use_MOOD=True, rtol=1e-5),
-    "MM4_rtol=1e-3": dict(p=3, use_MOOD=True, rtol=1e-3),
-    "MM4_rtol=1e-1": dict(p=3, use_MOOD=True, rtol=1e-1),
     "MM8_rtol=1e-5": dict(p=7, use_MOOD=True, rtol=1e-5),
+    "MM4_rtol=1e-3": dict(p=3, use_MOOD=True, rtol=1e-3),
     "MM8_rtol=1e-3": dict(p=7, use_MOOD=True, rtol=1e-3),
+    "MM4_rtol=1e-1": dict(p=3, use_MOOD=True, rtol=1e-1),
     "MM8_rtol=1e-1": dict(p=7, use_MOOD=True, rtol=1e-1),
 }
 
