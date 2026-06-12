@@ -47,22 +47,18 @@ def numerical_admissibility_detection(
     _NAD_troubles_ = np.zeros_like(_qold_, dtype=bool)
     _dmp_M_ = np.empty_like(_qold_)
     _dmp_m_ = np.empty_like(_qold_)
-    _lower_ = np.empty_like(_qold_)
-    _upper_ = np.empty_like(_qold_)
 
     # Update DMP
     compute_dmp(_qold_, _dmp_M_, _dmp_m_, active_dims, params.include_corners)
 
     # compute lower and upper bounds for NAD
     if params.delta:
-        _delta_ = np.empty_like(_qold_)
-
-        _delta_[...] = _dmp_M_ - _dmp_m_
-        _lower_[...] = _dmp_m_ - params.rtol * _delta_ - params.atol
-        _upper_[...] = _dmp_M_ + params.rtol * _delta_ + params.atol
+        _delta_ = _dmp_M_ - _dmp_m_  # TEMP ARRAY
+        _lower_ = _dmp_m_ - params.rtol * _delta_ - params.atol  # TEMP ARRAY
+        _upper_ = _dmp_M_ + params.rtol * _delta_ + params.atol  # TEMP ARRAY
     else:
-        _lower_[...] = _dmp_m_ - params.rtol * np.abs(_dmp_m_) - params.atol
-        _upper_[...] = _dmp_M_ + params.rtol * np.abs(_dmp_M_) + params.atol
+        _lower_ = _dmp_m_ - params.rtol * np.abs(_dmp_m_) - params.atol  # TEMP ARRAY
+        _upper_ = _dmp_M_ + params.rtol * np.abs(_dmp_M_) + params.atol  # TEMP ARRAY
 
     # Detect NAD violations
     _NAD_troubles_ |= _qnew_ < _lower_
