@@ -826,7 +826,7 @@ class HydroSolver:
             t=self.t,
             data=SnapshotData(
                 u=self.arrays.get_numpy_copy("u"),
-                w=self.xp.asnumpy(w) if self.params.cupy else w,
+                w=self.arrays.get_numpy_copy("w"),
                 has_shock=(
                     self.arrays.get_numpy_copy("has_shock_log")
                     if params.fv_scheme.shock_detection_params.use_shock_detection
