@@ -118,8 +118,8 @@ def test_reflective_boundary_conditions(ref_slab):
 
 
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz", "xyz"])
-@pytest.mark.parametrize("p", [0, 1, 2, 3])
-def test_dirichlet_boundary_condition_fv_averages(dims, p):
+@pytest.mark.parametrize("sampling_p", [0, 1, 2, 3])
+def test_dirichlet_boundary_condition_fv_averages(dims, sampling_p):
     """
     Test the application of a Dirichlet boundary condition using the FV averages
     method.
@@ -172,11 +172,13 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
 
     # baseline case: apply dirichlet boundary function to megamesh
     megamesh_u = megamesh.perform_GaussLegendre_quadrature(
-        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), p
+        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), sampling_p
     )
 
     # test case: apply dirichlet boundary condition with custom function
-    u = mesh.perform_GaussLegendre_quadrature(lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), p)
+    u = mesh.perform_GaussLegendre_quadrature(
+        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), sampling_p
+    )
 
     _u_ = np.empty(
         (
@@ -207,7 +209,7 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
         mesh=mesh,
         variable_index_map=idx,
         t=t,
-        p=p,
+        sampling_p=sampling_p,
     )
 
     assert linf_norm(_u_ - megamesh_u) < 1e-15

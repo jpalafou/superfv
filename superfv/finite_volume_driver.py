@@ -333,7 +333,6 @@ def apply_fv_bc(
     idx: VariableIndexMap,
     mesh: UniformFiniteVolumeMesh,
     t: float,
-    p: int,
     bc_params: BoundaryConditionParameters,
 ):
     """
@@ -355,7 +354,7 @@ def apply_fv_bc(
         idx,
         mesh,
         t,
-        p,
+        bc_params.sampling_p,
     )
 
 
@@ -447,7 +446,7 @@ def update_fv_workspace(
 
     # 0) Update interior conservative FV averages and apply BC
     _u_[interior] = u
-    apply_fv_bc(_u_, idx, mesh, t, fv.p, bc_params)
+    apply_fv_bc(_u_, idx, mesh, t, bc_params)
 
     # Early escape for low-order scheme. The rest of the arrays are useless.
     if fv.p < 2:

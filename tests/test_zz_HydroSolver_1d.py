@@ -208,7 +208,7 @@ def test_compare_with_teyssier_code(p, ic_type_t_sim):
         ic={"sod test": ics.sod_shock_tube_1d, "toro test2": ics.toro2, "toro test3": ics.toro3}[
             ic_type
         ],
-        force_1st_order_ic_cell_averages=True,
+        sampling_p=0,
         bcx=(BC.FREE, BC.FREE),
         nx=N,
         p=p,

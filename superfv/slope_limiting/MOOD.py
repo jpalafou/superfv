@@ -133,7 +133,7 @@ def detect_troubled_cells(
     dudt = compute_fv_dudt(F, G, H, S, mesh)
     _unew_[interior] = _uold_[interior] + dt * dudt
 
-    apply_fv_bc(_unew_, idx, mesh, t, base_scheme.p, bc)
+    apply_fv_bc(_unew_, idx, mesh, t, bc)
     cons_to_prim(_unew_, _wnew_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
     # Assign _qold_ and _qnew_, the NAD arrays

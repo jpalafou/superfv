@@ -51,7 +51,7 @@ class BCcontext:
     variable_index_map: Optional[VariableIndexMap] = None
     mesh: Optional[UniformFiniteVolumeMesh] = None
     t: Optional[float] = None
-    p: Optional[int] = None
+    sampling_p: Optional[int] = None
 
 
 PatchBC = Callable[[ArrayLike, BCcontext], None]
@@ -72,7 +72,7 @@ def apply_bc(
     variable_index_map: Optional[VariableIndexMap] = None,
     mesh: Optional[UniformFiniteVolumeMesh] = None,
     t: Optional[float] = None,
-    p: Optional[int] = None,
+    sampling_p: Optional[int] = None,
 ):
     for i, (dim, modelr) in enumerate(zip(["x", "y", "z"], [bcx, bcy, bcz])):
         for j, bound in enumerate(("lower", "upper")):
@@ -97,7 +97,7 @@ def apply_bc(
                 variable_index_map=variable_index_map,
                 mesh=mesh,
                 t=t,
-                p=p,
+                sampling_p=sampling_p,
             )
 
             match mode:
@@ -147,7 +147,7 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     idx = context.variable_index_map
     mesh = context.mesh
     t = context.t
-    p = context.p
+    sampling_p = context.sampling_p
 
     if f is None:
         raise ValueError("Dirichlet boundary condition requires a callable function.")
@@ -157,7 +157,7 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
         raise ValueError("Dirichlet boundary condition requires a mesh.")
     if t is None:
         raise ValueError("Dirichlet boundary condition requires a time value.")
-    if p is None:
+    if sampling_p is None:
         raise ValueError("Dirichlet boundary condition requires a quadrature order.")
 
     if lower:
@@ -167,7 +167,7 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
 
     _u_[outer_slice] = mesh.perform_GaussLegendre_quadrature(
         lambda X, Y, Z: f(idx, X, Y, Z, t, xp=xp),
-        p,
+        sampling_p,
         MESH_REGION_LOOKUP[AXIS_TO_DIM[axis]][("l" if lower else "r")],
     )
 

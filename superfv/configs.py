@@ -236,7 +236,7 @@ class MeshParameters:
 class InitialConditionParameters:
     ic: MultivarField
     passive_ics: Dict[str, UnivarField]
-    force_1st_order_ic_cell_averages: bool = False
+    sampling_p: int
 
     @property
     def npassives(self) -> int:
@@ -254,6 +254,7 @@ class BoundaryConditionParameters:
     bcy_callable_upper: Optional[Union[MultivarField, PatchBC]] = None
     bcz_callable_lower: Optional[Union[MultivarField, PatchBC]] = None
     bcz_callable_upper: Optional[Union[MultivarField, PatchBC]] = None
+    sampling_p: Optional[int] = None
 
     def __post_init__(self):
         if bool(self.bcx[0] == BC.PERIODIC) != bool(self.bcx[1] == BC.PERIODIC):

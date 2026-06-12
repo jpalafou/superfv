@@ -127,7 +127,7 @@ class HydroSolver:
         # IC params
         ic: MultivarField = partial(ics.square, vx=1),
         passive_ics: Optional[Dict[str, UnivarField]] = None,
-        force_1st_order_ic_cell_averages: bool = False,
+        sampling_p: Optional[int] = None,
         # Source term params
         source: Optional[SourceTerm] = None,
         # BC params
@@ -209,8 +209,9 @@ class HydroSolver:
                 array of shape (nvars, nx, ny, nz).
             passive_ics: Optional dictionary with keys as variable names and values as functions
                 that take (x, y, z, t, xp=xp) and return an array of shape (nx, ny, nz).
-            force_1st_order_ic_cell_averages: If True, force the initial condition to be sampled
-                with first-order cell averages, even if the base scheme is higher-order.
+            sampling_p: If specified, use this polynomial degree for Gauss-Legendre quadrature when
+                computing cell averages from the initial condition or Dirichlet boundary
+                conditions. If None, defaults to the polynomial degree `p`.
 
         Source term parameters:
             source: Optional source term function that takes (idx, w, xp=xp) and returns an array
@@ -326,7 +327,7 @@ class HydroSolver:
         ic_params = InitialConditionParameters(
             ic=ic,
             passive_ics={} if passive_ics is None else passive_ics,
-            force_1st_order_ic_cell_averages=force_1st_order_ic_cell_averages,
+            sampling_p=sampling_p if sampling_p is not None else p,
         )
 
         bc_params = BoundaryConditionParameters(
@@ -339,6 +340,7 @@ class HydroSolver:
             bcy_callable_upper=bcy_callable_upper,
             bcz_callable_lower=bcz_callable_lower,
             bcz_callable_upper=bcz_callable_upper,
+            sampling_p=sampling_p if sampling_p is not None else p,
         )
 
         hydro_params = HydroParameters(
@@ -672,12 +674,10 @@ class HydroSolver:
         idx = params.variable_index_map
         mesh = self.mesh
 
-        if params.fv_scheme.p > 1 and not params.ic.force_1st_order_ic_cell_averages:
-            u0 = mesh.perform_GaussLegendre_quadrature(
-                lambda x, y, z: self.u0_func(idx, x, y, z, 0.0, xp=self.xp), params.fv_scheme.p
-            )
-        else:
-            u0 = self.u0_func(idx, *mesh.Centers, 0.0, xp=self.xp)
+        u0 = mesh.perform_GaussLegendre_quadrature(
+            lambda x, y, z: self.u0_func(idx, x, y, z, 0.0, xp=self.xp),
+            params.ic.sampling_p,
+        )
 
         return u0
 

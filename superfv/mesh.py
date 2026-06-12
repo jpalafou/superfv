@@ -73,12 +73,12 @@ class UniformFiniteVolumeMeshRegion:
         return (self.nx, self.ny, self.nz)
 
     def GaussLegendre_nodes(
-        self, p: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
+        self, sampling_p: int, active_dims: Tuple[Literal["x", "y", "z"], ...]
     ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         xp = cp if CUPY_AVAILABLE and self.cupy else np
         na = xp.newaxis
 
-        GL_stencil = ci.gauss_legendre_nodes(p)
+        GL_stencil = ci.gauss_legendre_nodes(sampling_p)
         nnodes = GL_stencil.shape[0]
         nghost = (GL_stencil.shape[1] - 1) // 2
 
@@ -150,17 +150,17 @@ class UniformFiniteVolumeMeshRegion:
     def perform_GaussLegendre_quadrature(
         self,
         f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        p: int,
+        sampling_p: int,
         active_dims: Tuple[Literal["x", "y", "z"], ...],
     ) -> ArrayLike:
         xp = cp if CUPY_AVAILABLE and self.cupy else np
         ndim = len(active_dims)
 
-        GL_weights = ci.gauss_legendre_weights(p, ndim)
+        GL_weights = ci.gauss_legendre_weights(sampling_p, ndim)
         if CUPY_AVAILABLE and self.cupy:
             GL_weights = cp.asarray(GL_weights)
 
-        Xgl, Ygl, Zgl = self.GaussLegendre_nodes(p, active_dims)
+        Xgl, Ygl, Zgl = self.GaussLegendre_nodes(sampling_p, active_dims)
         f_eval = f(Xgl, Ygl, Zgl)
 
         ndim_eval = f_eval.ndim
@@ -216,22 +216,24 @@ class UniformFiniteVolumeMesh:
 
     def GaussLegendre_nodes(
         self,
-        p: int,
+        sampling_p: int,
         region: Literal[
             "core", "xl_slab", "xr_slab", "yl_slab", "yr_slab", "zl_slab", "zr_slab"
         ] = "core",
     ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
-        return getattr(self, region).GaussLegendre_nodes(p, self.active_dims)
+        return getattr(self, region).GaussLegendre_nodes(sampling_p, self.active_dims)
 
     def perform_GaussLegendre_quadrature(
         self,
         f: Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike],
-        p: int,
+        sampling_p: int,
         region: Literal[
             "core", "xl_slab", "xr_slab", "yl_slab", "yr_slab", "zl_slab", "zr_slab"
         ] = "core",
     ) -> ArrayLike:
-        return getattr(self, region).perform_GaussLegendre_quadrature(f, p, self.active_dims)
+        return getattr(self, region).perform_GaussLegendre_quadrature(
+            f, sampling_p, self.active_dims
+        )
 
     @property
     def _nx_(self) -> int:
