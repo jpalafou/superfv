@@ -34,7 +34,6 @@ def test_boundary_conditions_numpy_pad_equivalence(bc_type):
 
     # test case: apply boundary conditions with custom function
     apply_bc(
-        np,
         _u_,
         nghost,
         bcx=(bc_type, bc_type),
@@ -64,7 +63,6 @@ def test_reflective_boundary_conditions(ref_slab):
     _u_sym = _u_ref.copy()
 
     apply_bc(
-        np,
         _u_ref,
         nghost,
         bcx=(
@@ -83,7 +81,6 @@ def test_reflective_boundary_conditions(ref_slab):
     )
 
     apply_bc(
-        np,
         _u_sym,
         nghost,
         bcx=(
@@ -196,7 +193,6 @@ def test_dirichlet_boundary_condition_fv_averages(dims, p):
         slice(nghost, -nghost) if "z" in dims else slice(1),
     ] = u
     apply_bc(
-        np,
         _u_,
         nghost,
         bcx=(BC.DIRICHLET, BC.DIRICHLET) if "x" in dims else (BC.NONE, BC.NONE),

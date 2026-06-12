@@ -341,7 +341,6 @@ def apply_fv_bc(
     specified boundary conditions.
     """
     apply_bc(
-        cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np,
         _u_,
         mesh.nghost,
         bc_params.bcx,

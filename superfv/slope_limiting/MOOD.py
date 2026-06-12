@@ -89,7 +89,6 @@ def apply_troubles_bc(
     periodic = (BC.PERIODIC, BC.PERIODIC)
     zeros = (BC.ZEROS, BC.ZEROS)
     apply_bc(
-        cp if CUPY_AVAILABLE and isinstance(_troubles_, cp.ndarray) else np,
         _troubles_,
         nghost,
         {none: none, periodic: periodic}.get(bc_params.bcx, zeros),

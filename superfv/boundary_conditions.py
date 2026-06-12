@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from types import ModuleType
 from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
+
+import numpy as np
 
 from .axes import AXIS_TO_DIM
 from .field import MultivarField
 from .mesh import UniformFiniteVolumeMesh
-from .tools.device_management import ArrayLike
+from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import crop
 from .tools.variable_index_map import VariableIndexMap
+
+if CUPY_AVAILABLE:
+    import cupy as cp  # type: ignore
 
 
 class BC(Enum):
@@ -48,14 +52,12 @@ class BCcontext:
     mesh: Optional[UniformFiniteVolumeMesh] = None
     t: Optional[float] = None
     p: Optional[int] = None
-    xp: Optional[ModuleType] = None
 
 
 PatchBC = Callable[[ArrayLike, BCcontext], None]
 
 
 def apply_bc(
-    xp: ModuleType,
     _u_: ArrayLike,
     nghost: int,
     bcx: Tuple[BC, BC],
@@ -96,7 +98,6 @@ def apply_bc(
                 mesh=mesh,
                 t=t,
                 p=p,
-                xp=xp,
             )
 
             match mode:
@@ -137,6 +138,8 @@ def apply_periodic_bc(_u_: ArrayLike, context: BCcontext):
 
 
 def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
+    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
+
     nghost = context.nghost
     axis = context.axis
     lower = context.lower
@@ -145,7 +148,6 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     mesh = context.mesh
     t = context.t
     p = context.p
-    xp = context.xp
 
     if f is None:
         raise ValueError("Dirichlet boundary condition requires a callable function.")
@@ -157,8 +159,6 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
         raise ValueError("Dirichlet boundary condition requires a time value.")
     if p is None:
         raise ValueError("Dirichlet boundary condition requires a quadrature order.")
-    if xp is None:
-        raise ValueError("Dirichlet boundary condition requires a module type (xp).")
 
     if lower:
         outer_slice = crop(axis, (None, nghost), ndim=4)
