@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 from superfv import HydroSolver, ics, run_multiple_simulations
 
-N = 768
+N = 3072
 P0 = 1.0
 
 base_path = f"/scratch/gpfs/jp7427/superfv/Rayleigh-Taylor/{P0=}/{N=}/"
