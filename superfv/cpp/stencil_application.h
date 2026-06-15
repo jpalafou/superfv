@@ -20,7 +20,7 @@ double apply_1d_stencil(
     const int axis,
     const int ny,
     const int nz,
-    const int nweights,
+    const int nweights
 ) {
     // u_ijk points to u[v, i, j, k], with u having shape (nvars, nx, ny, nz)
     // stencil has shape (nweights,)

@@ -13,7 +13,7 @@ from superfv.slope_limiting.muscl import (
 )
 from superfv.tools.slicing import crop, merge_slices
 
-from .bin._finite_volume_driver import update_fv_fluxes_cpp
+from .bin._finite_volume_driver import update_fv_fluxes as update_fv_fluxes_cpp
 from .configs import (
     BoundaryConditionParameters,
     FluxQuadrature,

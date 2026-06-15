@@ -17,7 +17,7 @@ double conservative_interpolation_LCR(
     int pos,
     int p
 ) {
-    double wl4, wl3, wl2, wl1, wcc, wr1, wr2, wr3, wr4;
+    double wl2, wl1, wcc, wr1, wr2;
     if (pos < -1 || pos > 1) {
         throw std::invalid_argument("Invalid position for interpolation");
     }
@@ -90,7 +90,7 @@ double conservative_interpolation_LCR(
 }
 
 
-void update_fv_fluxes_cpp(
+void update_fv_fluxes(
     py::array _F_,
     py::array _G_,
     py::array _H_,
@@ -161,5 +161,5 @@ void update_fv_fluxes_cpp(
 }
 
 PYBIND11_MODULE(_finite_volume_driver, m) {
-    m.def("update_fv_fluxes_cpp", &update_fv_fluxes_cpp);
+    m.def("update_fv_fluxes", &update_fv_fluxes);
 }

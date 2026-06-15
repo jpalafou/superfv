@@ -306,6 +306,7 @@ class SolverParameters:
     fv_scheme: FV_SchemeParameters
     variable_index_map: VariableIndexMap
     cupy: bool = False
+    cpp_backend: bool = False
     profile: bool = False
     output_path: Optional[Path] = None
     discard_after_writing: bool = True
@@ -388,3 +389,6 @@ class SolverParameters:
         # No flux quadarture in 1D
         if self.mesh.ndim == 1 and self.fv_scheme.flux_quadrature != FluxQuadrature.NONE:
             raise ValueError("Flux quadrature must be NONE for 1D simulations.")
+
+        if self.cupy and self.cpp_backend:
+            raise ValueError("CuPy and C++ backend cannot both be enabled at the same time.")

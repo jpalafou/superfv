@@ -185,6 +185,7 @@ class HydroSolver:
         include_corners: bool = True,
         # Solver params
         cupy: bool = False,
+        cpp_backend: bool = False,
         profile: bool = False,
         output_path: Optional[Union[str, Path]] = None,
         discard_after_writing: bool = True,
@@ -297,6 +298,8 @@ class HydroSolver:
 
         Solver parameters:
             cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
+            cpp_backend: If True, use the C++ backend for flux updates (requires C++ extension to be
+                built).
             profile: If True, many timers are added to the solver.
             output_path: Optional path to save simulation outputs. If None, no outputs are saved.
             discard_after_writing: If True, discard arrays after writing to disk to save memory.
@@ -488,6 +491,7 @@ class HydroSolver:
                 ic_params, fv_scheme_params
             ),
             cupy=cupy and CUPY_AVAILABLE,
+            cpp_backend=cpp_backend,
             profile=profile,
             output_path=Path(output_path) if output_path is not None else None,
             discard_after_writing=discard_after_writing,
