@@ -1,4 +1,4 @@
-using namespace std;
+#include <cstddef>
 #include <stdexcept>
 
 std::ptrdiff_t get_stride(int axis, int ny, int nz) {
@@ -27,7 +27,7 @@ double apply_1d_stencil(
 
     const std::ptrdiff_t stride = get_stride(axis, ny, nz);
     const int reach = (nweights - 1) / 2;
-    
+
     double out = 0.0;
     for (int i = 0; i < nweights; ++i) {
         const int off = i - reach;

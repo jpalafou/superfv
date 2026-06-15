@@ -1,5 +1,6 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <stdexcept>
 #include "stencil_application.h"
 
 namespace py = pybind11;
@@ -8,7 +9,7 @@ double conservative_interpolation_LCR(
     double ul4,
     double ul3,
     double ul2,
-    double ul1, 
+    double ul1,
     double ucc,
     double ur1,
     double ur2,
@@ -17,7 +18,12 @@ double conservative_interpolation_LCR(
     int pos,
     int p
 ) {
-    double wl2, wl1, wcc, wr1, wr2;
+    double wl2 = 0.0;
+    double wl1 = 0.0;
+    double wcc = 0.0;
+    double wr1 = 0.0;
+    double wr2 = 0.0;
+
     if (pos < -1 || pos > 1) {
         throw std::invalid_argument("Invalid position for interpolation");
     }
@@ -87,8 +93,79 @@ double conservative_interpolation_LCR(
             }
             return wl2 * ul2 + wl1 * ul1 + wcc * ucc + wr1 * ur1 + wr2 * ur2;
     }
+    throw std::invalid_argument("Invalid order of interpolation");
 }
 
+void interpolate_cell_centers(
+    const py::array_t<double> _u_,
+    py::array_t<double> _ucc_,
+    int p,
+    int nvars,
+    int nx,
+    int ny,
+    int nz,
+    int nghost
+) {
+    double stencil[3] = {0.0};
+    int nkernel = 0;
+    if (p == 0 or p == 1) {
+        stencil[0] = 1.0;
+        nkernel = 1;
+    } else if (p == 2 or p == 3) {
+        stencil[0] = -1.0 / 24.0;
+        stencil[1] = 13.0 / 12.0;
+        stencil[2] = -1.0 / 24.0;
+        nkernel = 3;
+    } else {
+        throw std::invalid_argument("Invalid order of interpolation");
+    }
+
+    int ndim = 0;
+    if (nx > 1) {
+        if (ny > 1) {
+            if (nz > 1) {
+                ndim = 3;
+            } else {
+                ndim = 2;
+            }
+        } else {
+            ndim = 1;
+        }
+    }
+
+    if (ndim == 1) {
+        for (int v = 0; v < nvars; ++v) {
+            for (int i = nghost; i < nx - nghost; ++i) {
+                _ucc_.mutable_at(v, i, 0, 0) = apply_1d_stencil(_u_.data(v, i, 0, 0), stencil, 0, ny, nz, nkernel);
+            }
+        }
+    } else if (ndim == 2) {
+        double temp[9] = {0.0};
+
+        for (int v = 0; v < nvars; ++v) {
+            for (int i = nghost; i < nx - nghost; ++i) {
+                for (int j = nghost; j < ny - nghost; ++j) {
+                    _ucc_.mutable_at(v, i, j, 0) = apply_2d_stencil(_u_.data(v, i, j, 0), stencil, stencil, temp, 0, 1, ny, nz, nkernel, nkernel);
+                }
+            }
+        }
+    } else if (ndim == 3) {
+        double temp1[9] = {0.0};
+        double temp2[9] = {0.0};
+
+        for (int v = 0; v < nvars; ++v) {
+            for (int i = nghost; i < nx - nghost; ++i) {
+                for (int j = nghost; j < ny - nghost; ++j) {
+                    for (int k = nghost; k < nz - nghost; ++k) {
+                        _ucc_.mutable_at(v, i, j, k) = apply_3d_stencil(_u_.data(v, i, j, k), stencil, stencil, stencil, temp1, temp2, 0, 1, 2, ny, nz, nkernel, nkernel, nkernel);
+                    }
+                }
+            }
+        }
+    } else {
+        throw std::runtime_error("Invalid number of dimensions");
+    }
+}
 
 void update_fv_fluxes(
     py::array _F_,
@@ -162,4 +239,5 @@ void update_fv_fluxes(
 
 PYBIND11_MODULE(_finite_volume_driver, m) {
     m.def("update_fv_fluxes", &update_fv_fluxes);
+    m.def("interpolate_cell_centers", &interpolate_cell_centers);
 }
