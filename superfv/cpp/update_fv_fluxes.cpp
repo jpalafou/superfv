@@ -5,18 +5,22 @@
 
 namespace py = pybind11;
 
-void interpolate_cell_centers(
+void _interpolate_cell_centers_or_averages(
     const py::array_t<double> _u_,
     py::array_t<double> _ucc_,
     int p,
-    int nghost
+    int nghost,
+    bool cell_centers
 ) {
-    if (_u_.ndim() != _ucc_.ndim()) {
-        throw std::invalid_argument("u and ucc must have the same number of dimensions");
+    if (_u_.ndim() != 4) {
+        throw std::invalid_argument("_u_ must be a 4D array");
+    }
+    if (_ucc_.ndim() != 4) {
+        throw std::invalid_argument("_ucc_ must be a 4D array");
     }
     for (py::ssize_t d = 0; d < _u_.ndim(); ++d) {
         if (_u_.shape(d) != _ucc_.shape(d)) {
-            throw std::invalid_argument("u and ucc must have the same shape");
+            throw std::invalid_argument("_u_ and _ucc_ must have the same shape");
         }
     }
     const int nvars = static_cast<int>(_u_.shape(0));
@@ -27,32 +31,62 @@ void interpolate_cell_centers(
 
     double stencil[nkernel_max] = {0.0};
     int nkernel = 0;
-    if (p == 0 or p == 1) {
-        stencil[0] = 1.0;
-        nkernel = 1;
-    } else if (p == 2 or p == 3) {
-        stencil[0] = -1.0 / 24.0;
-        stencil[1] = 13.0 / 12.0;
-        stencil[2] = -1.0 / 24.0;
-        nkernel = 3;
-    } else if (p == 4 or p == 5) {
-        stencil[0] = 3.0 / 640.0;
-        stencil[1] = -29.0 / 480.0;
-        stencil[2] = 1067.0 / 960.0;
-        stencil[3] = -29.0 / 480.0;
-        stencil[4] = 3.0 / 640.0;
-        nkernel = 5;
-    } else if (p == 6 or p == 7) {
-        stencil[0] = -5.0 / 7168.0;
-        stencil[1] = 159.0 / 17920.0;
-        stencil[2] = -7621.0 / 107520.0;
-        stencil[3] = 30251.0 / 26880.0;
-        stencil[4] = -7621.0 / 107520.0;
-        stencil[5] = 159.0 / 17920.0;
-        stencil[6] = -5.0 / 7168.0;
-        nkernel = 7;
+    if (cell_centers) {
+        if (p == 0 or p == 1) {
+            stencil[0] = 1.0;
+            nkernel = 1;
+        } else if (p == 2 or p == 3) {
+            stencil[0] = -1.0 / 24.0;
+            stencil[1] = 13.0 / 12.0;
+            stencil[2] = -1.0 / 24.0;
+            nkernel = 3;
+        } else if (p == 4 or p == 5) {
+            stencil[0] = 3.0 / 640.0;
+            stencil[1] = -29.0 / 480.0;
+            stencil[2] = 1067.0 / 960.0;
+            stencil[3] = -29.0 / 480.0;
+            stencil[4] = 3.0 / 640.0;
+            nkernel = 5;
+        } else if (p == 6 or p == 7) {
+            stencil[0] = -5.0 / 7168.0;
+            stencil[1] = 159.0 / 17920.0;
+            stencil[2] = -7621.0 / 107520.0;
+            stencil[3] = 30251.0 / 26880.0;
+            stencil[4] = -7621.0 / 107520.0;
+            stencil[5] = 159.0 / 17920.0;
+            stencil[6] = -5.0 / 7168.0;
+            nkernel = 7;
+        } else {
+            throw std::invalid_argument("Invalid order of interpolation");
+        }
     } else {
-        throw std::invalid_argument("Invalid order of interpolation");
+        if (p == 0 or p == 1) {
+            stencil[0] = 1.0;
+            nkernel = 1;
+        } else if (p == 2 or p == 3) {
+            stencil[0] = 1.0 / 24.0;
+            stencil[1] = 11.0 / 12.0;
+            stencil[2] = 1.0 / 24.0;
+            nkernel = 3;
+        } else if (p == 4 or p == 5) {
+            stencil[0] = -17.0 / 5760.0;
+            stencil[1] = 77.0 / 1440.0;
+            stencil[2] = 863.0 / 960.0;
+            stencil[3] = 77.0 / 1440.0;
+            stencil[4] = -17.0 / 5760.0;
+            nkernel = 5;
+        } else if (p == 6 or p == 7) {
+            stencil[0] = 367.0 / 967680.0;
+            stencil[1] = -281.0 / 53760.0;
+            stencil[2] = 6361.0 / 107520.0;
+            stencil[3] = 215641.0 / 241920.0;
+            stencil[4] = 6361.0 / 107520.0;
+            stencil[5] = -281.0 / 53760.0;
+            stencil[6] = 367.0 / 967680.0;
+            nkernel = 7;
+        } else {
+            throw std::invalid_argument("Invalid order of interpolation");
+        }
     }
 
     int ndim = 0;
@@ -100,6 +134,24 @@ void interpolate_cell_centers(
     } else {
         throw std::runtime_error("Invalid number of dimensions");
     }
+}
+
+void interpolate_cell_centers(
+    const py::array_t<double> _u_,
+    py::array_t<double> _ucc_,
+    int p,
+    int nghost
+) {
+    _interpolate_cell_centers_or_averages(_u_, _ucc_, p, nghost, true);
+}
+
+void interpolate_cell_averages(
+    const py::array_t<double> _u_,
+    py::array_t<double> _ucc_,
+    int p,
+    int nghost
+) {
+    _interpolate_cell_centers_or_averages(_u_, _ucc_, p, nghost, false);
 }
 
 void update_fv_fluxes(
@@ -175,4 +227,5 @@ void update_fv_fluxes(
 PYBIND11_MODULE(_finite_volume_driver, m) {
     m.def("update_fv_fluxes", &update_fv_fluxes);
     m.def("interpolate_cell_centers", &interpolate_cell_centers);
+    m.def("interpolate_cell_averages", &interpolate_cell_averages);
 }
