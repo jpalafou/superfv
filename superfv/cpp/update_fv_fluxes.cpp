@@ -5,28 +5,24 @@
 
 namespace py = pybind11;
 
-void _interpolate_cell_centers_or_averages(
-    const py::array_t<double> _u_,
-    py::array_t<double> _ucc_,
-    int p,
-    int nghost,
-    bool cell_centers
+int count_ndim(const int nx, const int ny, const int nz) {
+    if (!(nx >= ny && ny >= nz)) {
+        throw std::invalid_argument("Invalid grid dimensions");
+    }
+    return static_cast<int>(nx > 1) + static_cast<int>(ny > 1) + static_cast<int>(nz > 1);
+}
+
+double _interpolate_cell_centers_or_averages(
+    const double* u_ijk,
+    const int p,
+    const int nx,
+    const int ny,
+    const int nz,
+    const bool cell_centers
 ) {
-    if (_u_.ndim() != 4) {
-        throw std::invalid_argument("_u_ must be a 4D array");
-    }
-    if (_ucc_.ndim() != 4) {
-        throw std::invalid_argument("_ucc_ must be a 4D array");
-    }
-    for (py::ssize_t d = 0; d < _u_.ndim(); ++d) {
-        if (_u_.shape(d) != _ucc_.shape(d)) {
-            throw std::invalid_argument("_u_ and _ucc_ must have the same shape");
-        }
-    }
-    const int nvars = static_cast<int>(_u_.shape(0));
-    const int nx    = static_cast<int>(_u_.shape(1));
-    const int ny    = static_cast<int>(_u_.shape(2));
-    const int nz    = static_cast<int>(_u_.shape(3));
+    // u_ijk points to u[..., i, j, k], with u having shape (..., nx, ny, nz)
+
+    const int ndim = count_ndim(nx, ny, nz);
     const int nkernel_max = 7;
 
     double stencil[nkernel_max] = {0.0};
@@ -89,135 +85,77 @@ void _interpolate_cell_centers_or_averages(
         }
     }
 
-    int ndim = 0;
-    if (nx > 1) {
-        if (ny > 1) {
-            if (nz > 1) {
-                ndim = 3;
-            } else {
-                ndim = 2;
-            }
-        } else {
-            ndim = 1;
-        }
-    }
-
     if (ndim == 1) {
-        for (int v = 0; v < nvars; ++v) {
-            for (int i = nghost; i < nx - nghost; ++i) {
-                _ucc_.mutable_at(v, i, 0, 0) = apply_1d_stencil(_u_.data(v, i, 0, 0), stencil, 0, ny, nz, nkernel);
-            }
-        }
+        return apply_1d_stencil(u_ijk, stencil, 0, ny, nz, nkernel);
     } else if (ndim == 2) {
         double temp[nkernel_max] = {0.0};
-
-        for (int v = 0; v < nvars; ++v) {
-            for (int i = nghost; i < nx - nghost; ++i) {
-                for (int j = nghost; j < ny - nghost; ++j) {
-                    _ucc_.mutable_at(v, i, j, 0) = apply_2d_stencil(_u_.data(v, i, j, 0), stencil, stencil, temp, 0, 1, ny, nz, nkernel, nkernel);
-                }
-            }
-        }
+        return apply_2d_stencil(u_ijk, stencil, stencil, temp, 0, 1, ny, nz, nkernel, nkernel);
     } else if (ndim == 3) {
         double temp1[nkernel_max] = {0.0};
         double temp2[nkernel_max] = {0.0};
-
-        for (int v = 0; v < nvars; ++v) {
-            for (int i = nghost; i < nx - nghost; ++i) {
-                for (int j = nghost; j < ny - nghost; ++j) {
-                    for (int k = nghost; k < nz - nghost; ++k) {
-                        _ucc_.mutable_at(v, i, j, k) = apply_3d_stencil(_u_.data(v, i, j, k), stencil, stencil, stencil, temp1, temp2, 0, 1, 2, ny, nz, nkernel, nkernel, nkernel);
-                    }
-                }
-            }
-        }
+        return apply_3d_stencil(u_ijk, stencil, stencil, stencil, temp1, temp2, 0, 1, 2, ny, nz, nkernel, nkernel, nkernel);
     } else {
         throw std::runtime_error("Invalid number of dimensions");
     }
 }
 
-void interpolate_cell_centers(
-    const py::array_t<double> _u_,
-    py::array_t<double> _ucc_,
-    int p,
-    int nghost
+double interpolate_cell_centers(
+    const double* u_ijk,
+    const int p,
+    const int nx,
+    const int ny,
+    const int nz
 ) {
-    _interpolate_cell_centers_or_averages(_u_, _ucc_, p, nghost, true);
+    return _interpolate_cell_centers_or_averages(u_ijk, p, nx, ny, nz, true);
 }
 
-void interpolate_cell_averages(
-    const py::array_t<double> _u_,
-    py::array_t<double> _ucc_,
-    int p,
-    int nghost
+double interpolate_cell_averages(
+    const double* u_ijk,
+    const int p,
+    const int nx,
+    const int ny,
+    const int nz
 ) {
-    _interpolate_cell_centers_or_averages(_u_, _ucc_, p, nghost, false);
+    return _interpolate_cell_centers_or_averages(u_ijk, p, nx, ny, nz, false);
 }
 
 void update_fv_fluxes(
-    py::array _F_,
-    py::array _G_,
-    py::array _H_,
-    int nvars,
-    int nx,
-    int ny,
-    int nz,
-    int nghost,
-    bool x_active,
-    bool y_active,
-    bool z_active
+    const py::array_t<double> _u_,
+    py::array_t<double> _w_,
+    py::array_t<double> _ucc_,
+    const int p,
+    const int nghost
 ) {
-    int _nx_ = x_active ? nx + 2 * nghost : 1;
-    int _ny_ = y_active ? ny + 2 * nghost : 1;
-    int _nz_ = z_active ? nz + 2 * nghost : 1;
-    int x_inner_i0 = x_active ? nghost : 0;
-    int x_inner_i1 = x_active ? nx + nghost : 1;
-    int y_inner_j0 = y_active ? nghost : 0;
-    int y_inner_j1 = y_active ? ny + nghost : 1;
-    int z_inner_k0 = z_active ? nghost : 0;
-    int z_inner_k1 = z_active ? nz + nghost : 1;
-
-    for (int i = x_inner_i0; i < x_inner_i1; ++i) {
-        for (int j = y_inner_j0; j < y_inner_j1; ++j) {
-            for (int k = z_inner_k0; k < z_inner_k1; ++k) {
-            }
+    if (_u_.ndim() != 4) {
+        throw std::invalid_argument("_u_ must be a 4D array");
+    }
+    if (_ucc_.ndim() != 4) {
+        throw std::invalid_argument("_ucc_ must be a 4D array");
+    }
+    for (py::ssize_t d = 0; d < _u_.ndim(); ++d) {
+        if (_u_.shape(d) != _ucc_.shape(d)) {
+            throw std::invalid_argument("_u_ and _ucc_ must have the same shape");
         }
     }
+    const int nvars = static_cast<int>(_u_.shape(0));
+    const int nx    = static_cast<int>(_u_.shape(1));
+    const int ny    = static_cast<int>(_u_.shape(2));
+    const int nz    = static_cast<int>(_u_.shape(3));
+    const int ndim = count_ndim(nx, ny, nz);
 
-    if (x_active) {
-        auto _f_ = _F_.mutable_unchecked<double, 4>();
-        for (py::ssize_t v = 0; v < nvars; ++v) {
-            for (int i = 0; i < nx + 1; ++i) {
-                for (int j = 0; j < _ny_; ++j) {
-                    for (int k = 0; k < _nz_; ++k) {
-                        _f_(v, i, j, k) = 0.0;
-                    }
-                }
-            }
-        }
-    }
+    int xIdx1 = nghost;
+    int xIdx2 = nx - nghost;
+    int yIdx1 = ndim > 1 ? nghost : 0;
+    int yIdx2 = ndim > 1 ? ny - nghost : 1;
+    int zIdx1 = ndim > 2 ? nghost : 0;
+    int zIdx2 = ndim > 2 ? nz - nghost : 1;
 
-    if (y_active) {
-        auto _g_ = _G_.mutable_unchecked<double, 4>();
-        for (py::ssize_t v = 0; v < nvars; ++v) {
-            for (int i = 0; i < _nx_; ++i) {
-                for (int j = 0; j < ny + 1; ++j) {
-                    for (int k = 0; k < _nz_; ++k) {
-                        _g_(v, i, j, k) = 0.0;
-                    }
-                }
-            }
-        }
-    }
-
-    if (z_active) {
-        auto _h_ = _H_.mutable_unchecked<double, 4>();
-        for (py::ssize_t v = 0; v < nvars; ++v) {
-            for (int i = 0; i < _nx_; ++i) {
-                for (int j = 0; j < _ny_; ++j) {
-                    for (int k = 0; k < nz + 1; ++k) {
-                        _h_(v, i, j, k) = 0.0;
-                    }
+    for (int v = 0; v < nvars; ++v) {
+        for (int i = xIdx1; i < xIdx2; ++i) {
+            for (int j = yIdx1; j < yIdx2; ++j) {
+                for (int k = zIdx1; k < zIdx2; ++k) {
+                    _ucc_.mutable_at(v, i, j, k) = interpolate_cell_centers(_u_.data(v, i, j, k), p, nx, ny, nz);
+                    _w_.mutable_at(v, i, j, k) = interpolate_cell_averages(_u_.data(v, i, j, k), p, nx, ny, nz);
                 }
             }
         }
@@ -226,6 +164,4 @@ void update_fv_fluxes(
 
 PYBIND11_MODULE(_finite_volume_driver, m) {
     m.def("update_fv_fluxes", &update_fv_fluxes);
-    m.def("interpolate_cell_centers", &interpolate_cell_centers);
-    m.def("interpolate_cell_averages", &interpolate_cell_averages);
 }
