@@ -1,6 +1,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <stdexcept>
+#include "constants.h"
 #include "stencils.h"
 #include "stencil_application.h"
 #include "hydro.h"
@@ -15,65 +16,35 @@ int count_ndim(const int nx, const int ny, const int nz) {
     return static_cast<int>(nx > 1) + static_cast<int>(ny > 1) + static_cast<int>(nz > 1);
 }
 
-double _interpolate_cell_center_or_average(
+double interpolate_cell_center_or_average(
     const double* u_ijk,
-    const int p,
+    const Stencil& stencil,
     const int nx,
     const int ny,
-    const int nz,
-    const bool cell_centers
+    const int nz
 ) {
     // u_ijk points to u[..., i, j, k], with u having shape (..., nx, ny, nz)
 
     const int ndim = count_ndim(nx, ny, nz);
-    const int nkernel_max = 7;
-
-    double stencil[nkernel_max] = {0.0};
-    int nkernel = 0;
-    if (cell_centers) {
-        nkernel = write_weights_for_conservative_interpolation_of_cell_center(stencil, nkernel_max, p);
-    } else {
-        nkernel = write_weights_for_transverse_integration_of_cell_average(stencil, nkernel_max, p);
-    }
 
     if (ndim == 1) {
-        return apply_1d_stencil(u_ijk, stencil, 0, ny, nz, nkernel);
+        return apply_1d_stencil(u_ijk, stencil, 0, ny, nz);
     } else if (ndim == 2) {
-        double temp[nkernel_max] = {0.0};
-        return apply_2d_stencil(u_ijk, stencil, stencil, temp, 0, 1, ny, nz, nkernel, nkernel);
+        double temp[MAX_NODES] = {0.0};
+        return apply_2d_stencil(u_ijk, stencil, stencil, temp, 0, 1, ny, nz);
     } else if (ndim == 3) {
-        double temp1[nkernel_max] = {0.0};
-        double temp2[nkernel_max] = {0.0};
-        return apply_3d_stencil(u_ijk, stencil, stencil, stencil, temp1, temp2, 0, 1, 2, ny, nz, nkernel, nkernel, nkernel);
+        double temp1[MAX_NODES] = {0.0};
+        double temp2[MAX_NODES] = {0.0};
+        return apply_3d_stencil(u_ijk, stencil, stencil, stencil, temp1, temp2, 0, 1, 2, ny, nz);
     } else {
         throw std::runtime_error("Invalid number of dimensions");
     }
 }
 
-double interpolate_cell_center(
-    const double* u_ijk,
-    const int p,
-    const int nx,
-    const int ny,
-    const int nz
-) {
-    return _interpolate_cell_center_or_average(u_ijk, p, nx, ny, nz, true);
-}
-
-double interpolate_cell_average(
-    const double* u_ijk,
-    const int p,
-    const int nx,
-    const int ny,
-    const int nz
-) {
-    return _interpolate_cell_center_or_average(u_ijk, p, nx, ny, nz, false);
-}
-
 double interpolate_face_center(
     const double* u_ijk,
-    const bool left,
-    const int p,
+    const Stencil& lr_stencil,
+    const Stencil& c_stencil,
     const int axis,
     const int nx,
     const int ny,
@@ -82,24 +53,16 @@ double interpolate_face_center(
     // u_ijk points to u[..., i, j, k], with u having shape (..., nx, ny, nz)
 
     const int ndim = count_ndim(nx, ny, nz);
-    const int nkernel_max = 9;
-
-    double LRstencil[nkernel_max] = {0.0};
-    double Cstencil[nkernel_max] = {0.0};
-    int LRnkernel = 0;
-    int Cnkernel = 0;
-    LRnkernel = write_weights_for_conservative_interpolation_of_left_or_right_face(LRstencil, nkernel_max, p, left);
-    Cnkernel = write_weights_for_conservative_interpolation_of_cell_center(Cstencil, nkernel_max, p);
 
     if (ndim == 1) {
-        return apply_1d_stencil(u_ijk, LRstencil, axis, ny, nz, LRnkernel);
+        return apply_1d_stencil(u_ijk, lr_stencil, axis, ny, nz);
     } else if (ndim == 2) {
-        double temp[nkernel_max] = {0.0};
-        return apply_2d_stencil(u_ijk, LRstencil, Cstencil, temp, axis, (axis + 1) % 2, ny, nz, LRnkernel, Cnkernel);
+        double temp[MAX_NODES] = {0.0};
+        return apply_2d_stencil(u_ijk, lr_stencil, c_stencil, temp, axis, (axis + 1) % 2, ny, nz);
     } else if (ndim == 3) {
-        double temp1[nkernel_max] = {0.0};
-        double temp2[nkernel_max] = {0.0};
-        return apply_3d_stencil(u_ijk, LRstencil, Cstencil, Cstencil, temp1, temp2, axis, (axis + 1) % 3, (axis + 2) % 3, ny, nz, LRnkernel, Cnkernel, Cnkernel);
+        double temp1[MAX_NODES] = {0.0};
+        double temp2[MAX_NODES] = {0.0};
+        return apply_3d_stencil(u_ijk, lr_stencil, c_stencil, c_stencil, temp1, temp2, axis, (axis + 1) % 3, (axis + 2) % 3, ny, nz);
     } else {
         throw std::runtime_error("Invalid number of dimensions");
     }
@@ -107,7 +70,7 @@ double interpolate_face_center(
 
 double integrate_transverse_faces(
     const double* u_ijk,
-    const int p,
+    const Stencil& stencil,
     const int axis,
     const int nx,
     const int ny,
@@ -116,41 +79,17 @@ double integrate_transverse_faces(
     // u_ijk points to u[..., i, j, k], with u having shape (..., nx, ny, nz)
 
     const int ndim = count_ndim(nx, ny, nz);
-    const int nkernel_max = 7;
-
-    double stencil[nkernel_max] = {0.0};
-    int nkernel = write_weights_for_transverse_integration_of_cell_average(stencil, nkernel_max, p);
 
     if (ndim == 1) {
         throw std::runtime_error("Cannot integrate transverse faces in 1D");
     } else if (ndim == 2) {
-        return apply_1d_stencil(u_ijk, stencil, (axis + 1) % 2, ny, nz, nkernel);
+        return apply_1d_stencil(u_ijk, stencil, (axis + 1) % 2, ny, nz);
     } else if (ndim == 3) {
-        double temp[nkernel_max] = {0.0};
-        return apply_2d_stencil(u_ijk, stencil, stencil, temp, (axis + 1) % 3, (axis + 2) % 3, ny, nz, nkernel, nkernel);
+        double temp[MAX_NODES] = {0.0};
+        return apply_2d_stencil(u_ijk, stencil, stencil, temp, (axis + 1) % 3, (axis + 2) % 3, ny, nz);
     } else {
         throw std::runtime_error("Invalid number of dimensions");
     }
-}
-
-double integrate_transverse_nodes(const double* nodes, const int p, const int nnodes) {
-    const int nnodes_max = 7;
-
-    double stencil[nnodes_max] = {0.0};
-    int nkernel = write_weights_for_transverse_integration_of_cell_average(stencil, nnodes_max, p);
-
-    if (nnodes > nnodes_max) {
-        throw std::invalid_argument("Number of nodes exceeds maximum supported");
-    }
-    if (nnodes != nkernel) {
-        throw std::invalid_argument("Number of nodes does not match stencil size");
-    }
-
-    double out = 0.0;
-    for (int i = 0; i < nkernel; ++i) {
-        out += stencil[i] * nodes[i];
-    }
-    return out;
 }
 
 void update_1D_fv_fluxes(
@@ -170,6 +109,9 @@ void update_1D_fv_fluxes(
     }
 
     const int nx = static_cast<int>(_u_.shape(1));
+    const Stencil l_stencil = conservative_interpolation_of_left_or_right_face(p, true);
+    const Stencil r_stencil = conservative_interpolation_of_left_or_right_face(p, false);
+    const Stencil c_stencil = conservative_interpolation_of_cell_center(p);
 
     for (int i = 0; i < nx - 2 * nghost + 1; ++i) {
         Conservatives left_cons{}, right_cons{}, flux{};
@@ -178,20 +120,20 @@ void update_1D_fv_fluxes(
 
         // Interpolate node to the left of the interface
         io = i + nghost - 1;
-        left_cons.rho = interpolate_face_center(_u_.data(0, io, 0, 0), false, p, 0, nx, 1, 1);
-        left_cons.mx  = interpolate_face_center(_u_.data(1, io, 0, 0), false, p, 0, nx, 1, 1);
-        left_cons.my  = interpolate_face_center(_u_.data(2, io, 0, 0), false, p, 0, nx, 1, 1);
-        left_cons.mz  = interpolate_face_center(_u_.data(3, io, 0, 0), false, p, 0, nx, 1, 1);
-        left_cons.E   = interpolate_face_center(_u_.data(4, io, 0, 0), false, p, 0, nx, 1, 1);
+        left_cons.rho = interpolate_face_center(_u_.data(0, io, 0, 0), r_stencil, c_stencil, 0, nx, 1, 1);
+        left_cons.mx  = interpolate_face_center(_u_.data(1, io, 0, 0), r_stencil, c_stencil, 0, nx, 1, 1);
+        left_cons.my  = interpolate_face_center(_u_.data(2, io, 0, 0), r_stencil, c_stencil, 0, nx, 1, 1);
+        left_cons.mz  = interpolate_face_center(_u_.data(3, io, 0, 0), r_stencil, c_stencil, 0, nx, 1, 1);
+        left_cons.E   = interpolate_face_center(_u_.data(4, io, 0, 0), r_stencil, c_stencil, 0, nx, 1, 1);
         cons_to_prim(left_cons, left_prim, gamma, isothermal, iso_cs);
 
         // Interpolate node to the right of the interface
         io = i + nghost;
-        right_cons.rho = interpolate_face_center(_u_.data(0, io, 0, 0), true, p, 0, nx, 1, 1);
-        right_cons.mx  = interpolate_face_center(_u_.data(1, io, 0, 0), true, p, 0, nx, 1, 1);
-        right_cons.my  = interpolate_face_center(_u_.data(2, io, 0, 0), true, p, 0, nx, 1, 1);
-        right_cons.mz  = interpolate_face_center(_u_.data(3, io, 0, 0), true, p, 0, nx, 1, 1);
-        right_cons.E   = interpolate_face_center(_u_.data(4, io, 0, 0), true, p, 0, nx, 1, 1);
+        right_cons.rho = interpolate_face_center(_u_.data(0, io, 0, 0), l_stencil, c_stencil, 0, nx, 1, 1);
+        right_cons.mx  = interpolate_face_center(_u_.data(1, io, 0, 0), l_stencil, c_stencil, 0, nx, 1, 1);
+        right_cons.my  = interpolate_face_center(_u_.data(2, io, 0, 0), l_stencil, c_stencil, 0, nx, 1, 1);
+        right_cons.mz  = interpolate_face_center(_u_.data(3, io, 0, 0), l_stencil, c_stencil, 0, nx, 1, 1);
+        right_cons.E   = interpolate_face_center(_u_.data(4, io, 0, 0), l_stencil, c_stencil, 0, nx, 1, 1);
         cons_to_prim(right_cons, right_prim, gamma, isothermal, iso_cs);
 
         // Call Riemann solver
@@ -227,16 +169,11 @@ void update_2D_fv_fluxes(
     const int nvars = static_cast<int>(_u_.shape(0));
     const int nx    = static_cast<int>(_u_.shape(1));
     const int ny    = static_cast<int>(_u_.shape(2));
-    const int nnodes_max = 7;
-    const int nvars_max = 10;
-
-    double stencil[nnodes_max] = {};
-    int nnodes = write_weights_for_transverse_integration_of_cell_average(stencil, nnodes_max, p);
-    int reach = (nnodes - 1) / 2;
-
-    if (nnodes > nnodes_max) {
-        throw std::invalid_argument("Polynomial order p is too high for the maximum supported number of nodes");
-    }
+    const Stencil l_stencil = conservative_interpolation_of_left_or_right_face(p, true);
+    const Stencil r_stencil = conservative_interpolation_of_left_or_right_face(p, false);
+    const Stencil c_stencil = conservative_interpolation_of_cell_center(p);
+    const Stencil t_stencil = conservative_interpolation_of_cell_center(p);
+    const int c_reach = (l_stencil.n - 1) / 2;
 
     for (int i = 0; i < nx - 2 * nghost + 1; ++i) {
         for (int j = 0; j < ny - 2 * nghost + 1; ++j) {
@@ -246,9 +183,9 @@ void update_2D_fv_fluxes(
                 if (axis == 1 && i == nx - 2 * nghost) {continue;}
 
                 // Collect nodes for transverse integration
-                double nodal_fluxes[nvars_max * nnodes_max] = {};
-                for (int q = 0; q < nnodes; ++q) {
-                    const int offset = q - reach;
+                double nodal_fluxes[MAX_NVARS * MAX_NODES] = {};
+                for (int q = 0; q < c_stencil.n; ++q) {
+                    const int offset = q - c_reach;
 
                     Conservatives left_cons{}, right_cons{}, flux{};
                     Primitives left_prim{}, right_prim{};
@@ -257,41 +194,41 @@ void update_2D_fv_fluxes(
                     // Interpolate node to the left of the interface
                     io = axis == 0 ? i + nghost - 1: i + nghost + offset;
                     jo = axis == 1 ? j + nghost - 1: j + nghost + offset;
-                    left_cons.rho = interpolate_face_center(_u_.data(0, io, jo, 0), false, p, axis, nx, ny, 1);
-                    left_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, 0), false, p, axis, nx, ny, 1);
-                    left_cons.my  = interpolate_face_center(_u_.data(2, io, jo, 0), false, p, axis, nx, ny, 1);
-                    left_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, 0), false, p, axis, nx, ny, 1);
-                    left_cons.E   = interpolate_face_center(_u_.data(4, io, jo, 0), false, p, axis, nx, ny, 1);
+                    left_cons.rho = interpolate_face_center(_u_.data(0, io, jo, 0), r_stencil, c_stencil, axis, nx, ny, 1);
+                    left_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, 0), r_stencil, c_stencil, axis, nx, ny, 1);
+                    left_cons.my  = interpolate_face_center(_u_.data(2, io, jo, 0), r_stencil, c_stencil, axis, nx, ny, 1);
+                    left_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, 0), r_stencil, c_stencil, axis, nx, ny, 1);
+                    left_cons.E   = interpolate_face_center(_u_.data(4, io, jo, 0), r_stencil, c_stencil, axis, nx, ny, 1);
                     cons_to_prim(left_cons, left_prim, gamma, isothermal, iso_cs);
 
                     // Interpolate node to the right of the interface
                     io = axis == 0 ? i + nghost: i + nghost + offset;
                     jo = axis == 1 ? j + nghost: j + nghost + offset;
-                    right_cons.rho = interpolate_face_center(_u_.data(0, io, jo, 0), true, p, axis, nx, ny, 1);
-                    right_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, 0), true, p, axis, nx, ny, 1);
-                    right_cons.my  = interpolate_face_center(_u_.data(2, io, jo, 0), true, p, axis, nx, ny, 1);
-                    right_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, 0), true, p, axis, nx, ny, 1);
-                    right_cons.E   = interpolate_face_center(_u_.data(4, io, jo, 0), true, p, axis, nx, ny, 1);
+                    right_cons.rho = interpolate_face_center(_u_.data(0, io, jo, 0), l_stencil, c_stencil, axis, nx, ny, 1);
+                    right_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, 0), l_stencil, c_stencil, axis, nx, ny, 1);
+                    right_cons.my  = interpolate_face_center(_u_.data(2, io, jo, 0), l_stencil, c_stencil, axis, nx, ny, 1);
+                    right_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, 0), l_stencil, c_stencil, axis, nx, ny, 1);
+                    right_cons.E   = interpolate_face_center(_u_.data(4, io, jo, 0), l_stencil, c_stencil, axis, nx, ny, 1);
                     cons_to_prim(right_cons, right_prim, gamma, isothermal, iso_cs);
 
                     // Call Riemann solver and store nodal fluxes
                     hllc_flux(left_prim, right_prim, flux, axis + 1, gamma, isothermal, iso_cs);
-                    nodal_fluxes[0 * nnodes_max + q] = flux.rho;
-                    nodal_fluxes[1 * nnodes_max + q] = flux.mx;
-                    nodal_fluxes[2 * nnodes_max + q] = flux.my;
-                    nodal_fluxes[3 * nnodes_max + q] = flux.mz;
-                    nodal_fluxes[4 * nnodes_max + q] = flux.E;
+                    nodal_fluxes[0 * MAX_NODES + q] = flux.rho;
+                    nodal_fluxes[1 * MAX_NODES + q] = flux.mx;
+                    nodal_fluxes[2 * MAX_NODES + q] = flux.my;
+                    nodal_fluxes[3 * MAX_NODES + q] = flux.mz;
+                    nodal_fluxes[4 * MAX_NODES + q] = flux.E;
                 }
 
                 // Integrate nodal fluxes to get face-centered flux
-                ptrdiff_t center_offset = nnodes / 2;
+                ptrdiff_t center_offset = t_stencil.n / 2;
                 if (axis == 0) {
                     for (int v = 0; v < nvars; ++v) {
-                        F.mutable_at(v, i, j, 0) = apply_1d_stencil(&nodal_fluxes[v * nnodes_max + center_offset], stencil, 0, 1, 1, nnodes);
+                        F.mutable_at(v, i, j, 0) = apply_1d_stencil(&nodal_fluxes[v * MAX_NODES + center_offset], t_stencil, 0, 1, 1);
                     }
                 } else {
                     for (int v = 0; v < nvars; ++v) {
-                        G.mutable_at(v, i, j, 0) = apply_1d_stencil(&nodal_fluxes[v * nnodes_max + center_offset], stencil, 0, 1, 1, nnodes);
+                        G.mutable_at(v, i, j, 0) = apply_1d_stencil(&nodal_fluxes[v * MAX_NODES + center_offset], t_stencil, 0, 1, 1);
                     }
                 }
             }
@@ -327,16 +264,11 @@ void update_3D_fv_fluxes(
     const int nx    = static_cast<int>(_u_.shape(1));
     const int ny    = static_cast<int>(_u_.shape(2));
     const int nz    = static_cast<int>(_u_.shape(3));
-    const int nnodes_max = 7;
-    const int nvars_max = 10;
-
-    double stencil[nnodes_max] = {};
-    int nnodes = write_weights_for_transverse_integration_of_cell_average(stencil, nnodes_max, p);
-    int reach = (nnodes - 1) / 2;
-
-    if (nnodes > nnodes_max) {
-        throw std::invalid_argument("Polynomial order p is too high for the maximum supported number of nodes");
-    }
+    const Stencil l_stencil = conservative_interpolation_of_left_or_right_face(p, true);
+    const Stencil r_stencil = conservative_interpolation_of_left_or_right_face(p, false);
+    const Stencil c_stencil = conservative_interpolation_of_cell_center(p);
+    const Stencil t_stencil = conservative_interpolation_of_cell_center(p);
+    const int c_reach = (l_stencil.n - 1) / 2;
 
     for (int i = 0; i < nx - 2 * nghost + 1; ++i) {
         for (int j = 0; j < ny - 2 * nghost + 1; ++j) {
@@ -348,12 +280,12 @@ void update_3D_fv_fluxes(
                     if (axis == 2 && ((i == nx - 2 * nghost) || (j == ny - 2 * nghost))) {continue;}
 
                     // Collect nodes for transverse integration
-                    double nodal_fluxes[nvars_max * nnodes_max * nnodes_max] = {};
-                    double temp[nvars_max * nnodes_max] = {};
-                    for (int q1 = 0; q1 < nnodes; ++q1) {
-                        for (int q2 = 0; q2 < nnodes; ++q2) {
-                            const int offset1 = q1 - reach;
-                            const int offset2 = q2 - reach;
+                    double nodal_fluxes[MAX_NVARS * MAX_NODES * MAX_NODES] = {};
+                    double temp[MAX_NVARS * MAX_NODES] = {};
+                    for (int q1 = 0; q1 < c_stencil.n; ++q1) {
+                        for (int q2 = 0; q2 < c_stencil.n; ++q2) {
+                            const int offset1 = q1 - c_reach;
+                            const int offset2 = q2 - c_reach;
 
                             Conservatives left_cons{}, right_cons{}, flux{};
                             Primitives left_prim{}, right_prim{};
@@ -373,11 +305,11 @@ void update_3D_fv_fluxes(
                                 jo = j + nghost + offset2;
                                 ko = k + nghost - 1;
                             }
-                            left_cons.rho = interpolate_face_center(_u_.data(0, io, jo, ko), false, p, axis, nx, ny, nz);
-                            left_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, ko), false, p, axis, nx, ny, nz);
-                            left_cons.my  = interpolate_face_center(_u_.data(2, io, jo, ko), false, p, axis, nx, ny, nz);
-                            left_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, ko), false, p, axis, nx, ny, nz);
-                            left_cons.E   = interpolate_face_center(_u_.data(4, io, jo, ko), false, p, axis, nx, ny, nz);
+                            left_cons.rho = interpolate_face_center(_u_.data(0, io, jo, ko), r_stencil, c_stencil, axis, nx, ny, nz);
+                            left_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, ko), r_stencil, c_stencil, axis, nx, ny, nz);
+                            left_cons.my  = interpolate_face_center(_u_.data(2, io, jo, ko), r_stencil, c_stencil, axis, nx, ny, nz);
+                            left_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, ko), r_stencil, c_stencil, axis, nx, ny, nz);
+                            left_cons.E   = interpolate_face_center(_u_.data(4, io, jo, ko), r_stencil, c_stencil, axis, nx, ny, nz);
                             cons_to_prim(left_cons, left_prim, gamma, isothermal, iso_cs);
 
                             // Interpolate node to the right of the interface
@@ -394,36 +326,36 @@ void update_3D_fv_fluxes(
                                 jo = j + nghost + offset2;
                                 ko = k + nghost;
                             }
-                            right_cons.rho = interpolate_face_center(_u_.data(0, io, jo, ko), true, p, axis, nx, ny, nz);
-                            right_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, ko), true, p, axis, nx, ny, nz);
-                            right_cons.my  = interpolate_face_center(_u_.data(2, io, jo, ko), true, p, axis, nx, ny, nz);
-                            right_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, ko), true, p, axis, nx, ny, nz);
-                            right_cons.E   = interpolate_face_center(_u_.data(4, io, jo, ko), true, p, axis, nx, ny, nz);
+                            right_cons.rho = interpolate_face_center(_u_.data(0, io, jo, ko), l_stencil, c_stencil, axis, nx, ny, nz);
+                            right_cons.mx  = interpolate_face_center(_u_.data(1, io, jo, ko), l_stencil, c_stencil, axis, nx, ny, nz);
+                            right_cons.my  = interpolate_face_center(_u_.data(2, io, jo, ko), l_stencil, c_stencil, axis, nx, ny, nz);
+                            right_cons.mz  = interpolate_face_center(_u_.data(3, io, jo, ko), l_stencil, c_stencil, axis, nx, ny, nz);
+                            right_cons.E   = interpolate_face_center(_u_.data(4, io, jo, ko), l_stencil, c_stencil, axis, nx, ny, nz);
                             cons_to_prim(right_cons, right_prim, gamma, isothermal, iso_cs);
 
                             // Call Riemann solver and store nodal fluxes
                             hllc_flux(left_prim, right_prim, flux, axis + 1, gamma, isothermal, iso_cs);
-                            nodal_fluxes[0 * nnodes_max * nnodes_max + q1 * nnodes_max + q2] = flux.rho;
-                            nodal_fluxes[1 * nnodes_max * nnodes_max + q1 * nnodes_max + q2] = flux.mx;
-                            nodal_fluxes[2 * nnodes_max * nnodes_max + q1 * nnodes_max + q2] = flux.my;
-                            nodal_fluxes[3 * nnodes_max * nnodes_max + q1 * nnodes_max + q2] = flux.mz;
-                            nodal_fluxes[4 * nnodes_max * nnodes_max + q1 * nnodes_max + q2] = flux.E;
+                            nodal_fluxes[0 * MAX_NODES * MAX_NODES + q1 * MAX_NODES + q2] = flux.rho;
+                            nodal_fluxes[1 * MAX_NODES * MAX_NODES + q1 * MAX_NODES + q2] = flux.mx;
+                            nodal_fluxes[2 * MAX_NODES * MAX_NODES + q1 * MAX_NODES + q2] = flux.my;
+                            nodal_fluxes[3 * MAX_NODES * MAX_NODES + q1 * MAX_NODES + q2] = flux.mz;
+                            nodal_fluxes[4 * MAX_NODES * MAX_NODES + q1 * MAX_NODES + q2] = flux.E;
                         }
                     }
 
                     // Integrate nodal fluxes to get face-centered flux
-                    ptrdiff_t center_offset = nnodes / 2;
+                    ptrdiff_t center_offset = t_stencil.n / 2;
                     if (axis == 0) {
                         for (int v = 0; v < nvars; ++v) {
-                            F.mutable_at(v, i, j, k) = apply_2d_stencil(&nodal_fluxes[v * nnodes_max * nnodes_max + center_offset * nnodes_max + center_offset], stencil, stencil, temp, 0, 1, nnodes_max, 1, nnodes, nnodes);
+                            F.mutable_at(v, i, j, k) = apply_2d_stencil(&nodal_fluxes[v * MAX_NODES * MAX_NODES + center_offset * MAX_NODES + center_offset], t_stencil, t_stencil, temp, 0, 1, MAX_NODES, 1);
                         }
                     } else if (axis == 1) {
                         for (int v = 0; v < nvars; ++v) {
-                            G.mutable_at(v, i, j, k) = apply_2d_stencil(&nodal_fluxes[v * nnodes_max * nnodes_max + center_offset * nnodes_max + center_offset], stencil, stencil, temp, 0, 1, nnodes_max, 1, nnodes, nnodes);
+                            G.mutable_at(v, i, j, k) = apply_2d_stencil(&nodal_fluxes[v * MAX_NODES * MAX_NODES + center_offset * MAX_NODES + center_offset], t_stencil, t_stencil, temp, 0, 1, MAX_NODES, 1);
                         }
                     } else {
                         for (int v = 0; v < nvars; ++v) {
-                            H.mutable_at(v, i, j, k) = apply_2d_stencil(&nodal_fluxes[v * nnodes_max * nnodes_max + center_offset * nnodes_max + center_offset], stencil, stencil, temp, 0, 1, nnodes_max, 1, nnodes, nnodes);
+                            H.mutable_at(v, i, j, k) = apply_2d_stencil(&nodal_fluxes[v * MAX_NODES * MAX_NODES + center_offset * MAX_NODES + center_offset], t_stencil, t_stencil, temp, 0, 1, MAX_NODES, 1);
                         }
                     }
                 }
