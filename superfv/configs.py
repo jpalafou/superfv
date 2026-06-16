@@ -392,3 +392,60 @@ class SolverParameters:
 
         if self.cupy and self.cpp_backend:
             raise ValueError("CuPy and C++ backend cannot both be enabled at the same time.")
+
+
+def generate_fv_scheme_parameters(
+    name: str,
+    p: int,
+    flux_recipe: Optional[FluxRecipe] = None,
+    flux_quadrature: Optional[FluxQuadrature] = None,
+    lazy_primitive_mode: Optional[LazyPrimitiveMode] = None,
+    muscl_params: Optional[MUSCL_Parameters] = None,
+    zhang_shu_params: Optional[ZhangShuParameters] = None,
+    mood_params: Optional[MOOD_Parameters] = None,
+    shock_detection_params: Optional[ShockDetectionParameters] = None,
+) -> FV_SchemeParameters:
+    default_flux_recipe = FluxRecipe.CONS_PRIM_LIM
+    default_flux_quadrature = FluxQuadrature.NONE
+    default_lazy_primitive_mode = LazyPrimitiveMode.FULL
+    _default_SED_params = SmoothExtremaDetectionParameters(False)
+    _default_PAD_params = PhysicalAdmissibilityParameters(False, {})
+    default_muscl_params = MUSCL_Parameters(
+        use_MUSCL=False, MUSCL_limiter=MUSCL_SlopeLimiter.NONE, SED_params=_default_SED_params
+    )
+    default_zhang_shu_params = ZhangShuParameters(
+        use_ZS=False,
+        adaptive_dt=False,
+        SED_params=_default_SED_params,
+        PAD_params=_default_PAD_params,
+        omit_vars=[],
+    )
+    default_mood_params = MOOD_Parameters(
+        use_MOOD=False,
+        NAD_params=NumericalAdmissibilityParameters(False, 0.0, 0.0, _default_SED_params, []),
+        PAD_params=_default_PAD_params,
+        fallback_cascade=[],
+        max_revs=0,
+        blend_troubles=False,
+    )
+    default_shock_detection_params = ShockDetectionParameters(False)
+
+    return FV_SchemeParameters(
+        name=name,
+        p=p,
+        flux_recipe=flux_recipe if flux_recipe is not None else default_flux_recipe,
+        flux_quadrature=flux_quadrature if flux_quadrature is not None else default_flux_quadrature,
+        lazy_primitive_mode=(
+            lazy_primitive_mode if lazy_primitive_mode is not None else default_lazy_primitive_mode
+        ),
+        muscl_params=muscl_params if muscl_params is not None else default_muscl_params,
+        zhang_shu_params=(
+            zhang_shu_params if zhang_shu_params is not None else default_zhang_shu_params
+        ),
+        mood_params=mood_params if mood_params is not None else default_mood_params,
+        shock_detection_params=(
+            shock_detection_params
+            if shock_detection_params is not None
+            else default_shock_detection_params
+        ),
+    )

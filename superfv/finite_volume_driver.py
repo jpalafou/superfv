@@ -13,7 +13,6 @@ from superfv.slope_limiting.muscl import (
 )
 from superfv.tools.slicing import crop, merge_slices
 
-from .bin._finite_volume_driver import update_fv_fluxes as update_fv_fluxes_cpp
 from .configs import (
     BoundaryConditionParameters,
     FluxQuadrature,
@@ -984,22 +983,6 @@ def update_fv_fluxes(
     hancock_dt: Time step to use for MUSCL-Hancock predictor step. If 0, the predictor step is
         skipped. Is ignored if the FV scheme is not a MUSCL scheme.
     """
-    if fv_params.cpp_backend:
-        update_fv_fluxes_cpp(
-            _F_,
-            _G_,
-            _H_,
-            idx.nvars,
-            mesh.nx,
-            mesh.ny,
-            mesh.nz,
-            mesh.nghost,
-            "x" in active_dims,
-            "y" in active_dims,
-            "z" in active_dims,
-        )
-        return
-
     if fv_params.muscl_params.use_MUSCL:
         update_MUSCL_fluxes(
             _u_,

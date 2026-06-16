@@ -1,3 +1,5 @@
+#pragma once
+
 #include <stdexcept>
 
 int write_weights_for_conservative_interpolation_of_cell_center(
@@ -54,7 +56,7 @@ int write_weights_for_transverse_integration_of_cell_average(
     if (stencil_size < 7) {
         throw std::invalid_argument("Stencil size must be at least 7");
     }
-    
+
     int nkernel = 0;
     if (p == 0 or p == 1) {
         stencil[0] = 1.0;
