@@ -2,7 +2,7 @@
 #include <stdexcept>
 
 std::ptrdiff_t get_stride(int axis, int ny, int nz) {
-    // Returns the stride in the flattened array with dimensions (nvars, nx, ny, nz) for the given axis
+    // Returns the stride in the flattened array with dimensions (nx, ny, nz) for the given axis
     if (axis == 0) {
         return ny * nz;
     } else if (axis == 1) {
@@ -22,7 +22,7 @@ double apply_1d_stencil(
     const int nz,
     const int nweights
 ) {
-    // u_ijk points to u[v, i, j, k], with u having shape (nvars, nx, ny, nz)
+    // u_ijk points to u[i, j, k], with u having shape (nx, ny, nz)
     // stencil has shape (nweights,)
 
     const std::ptrdiff_t stride = get_stride(axis, ny, nz);
@@ -48,7 +48,7 @@ double apply_2d_stencil(
     const int nweights1,
     const int nweights2
 ) {
-    // u_ijk points to u[v, i, j, k], with u having shape (nvars, nx, ny, nz)
+    // u_ijk points to u[i, j, k], with u having shape (nx, ny, nz)
     // stencil1 has shape (nweights1,)
     // stencil2 has shape (nweights2,)
     // temp has shape (nweights2,)
@@ -82,7 +82,7 @@ double apply_3d_stencil(
     const int nweights2,
     const int nweights3
 ) {
-    // u_ijk points to u[v, i, j, k], with u having shape (nvars, nx, ny, nz)
+    // u_ijk points to u[i, j, k], with u having shape (nx, ny, nz)
     // stencil1 has shape (nweights1,)
     // stencil2 has shape (nweights2,)
     // stencil3 has shape (nweights3,)

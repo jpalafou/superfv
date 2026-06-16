@@ -106,7 +106,9 @@ void interpolate_cell_centers(
     int nz,
     int nghost
 ) {
-    double stencil[3] = {0.0};
+    const int nkernel_max = 7;
+
+    double stencil[nkernel_max] = {0.0};
     int nkernel = 0;
     if (p == 0 or p == 1) {
         stencil[0] = 1.0;
@@ -116,6 +118,22 @@ void interpolate_cell_centers(
         stencil[1] = 13.0 / 12.0;
         stencil[2] = -1.0 / 24.0;
         nkernel = 3;
+    } else if (p == 4 or p == 5) {
+        stencil[0] = 3.0 / 640.0;
+        stencil[1] = -29.0 / 480.0;
+        stencil[2] = 1067.0 / 960.0;
+        stencil[3] = -29.0 / 480.0;
+        stencil[4] = 3.0 / 640.0;
+        nkernel = 5;
+    } else if (p == 6 or p == 7) {
+        stencil[0] = -5.0 / 7168.0;
+        stencil[1] = 159.0 / 17920.0;
+        stencil[2] = -7621.0 / 107520.0;
+        stencil[3] = 30251.0 / 26880.0;
+        stencil[4] = -7621.0 / 107520.0;
+        stencil[5] = 159.0 / 17920.0;
+        stencil[6] = -5.0 / 7168.0;
+        nkernel = 7;
     } else {
         throw std::invalid_argument("Invalid order of interpolation");
     }
@@ -140,7 +158,7 @@ void interpolate_cell_centers(
             }
         }
     } else if (ndim == 2) {
-        double temp[9] = {0.0};
+        double temp[nkernel_max] = {0.0};
 
         for (int v = 0; v < nvars; ++v) {
             for (int i = nghost; i < nx - nghost; ++i) {
@@ -150,8 +168,8 @@ void interpolate_cell_centers(
             }
         }
     } else if (ndim == 3) {
-        double temp1[9] = {0.0};
-        double temp2[9] = {0.0};
+        double temp1[nkernel_max] = {0.0};
+        double temp2[nkernel_max] = {0.0};
 
         for (int v = 0; v < nvars; ++v) {
             for (int i = nghost; i < nx - nghost; ++i) {
