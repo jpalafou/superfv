@@ -12,7 +12,7 @@ int count_ndim(const int nx, const int ny, const int nz) {
     return static_cast<int>(nx > 1) + static_cast<int>(ny > 1) + static_cast<int>(nz > 1);
 }
 
-double _interpolate_cell_centers_or_averages(
+double _interpolate_cell_center_or_average(
     const double* u_ijk,
     const int p,
     const int nx,
@@ -99,24 +99,24 @@ double _interpolate_cell_centers_or_averages(
     }
 }
 
-double interpolate_cell_centers(
+double interpolate_cell_center(
     const double* u_ijk,
     const int p,
     const int nx,
     const int ny,
     const int nz
 ) {
-    return _interpolate_cell_centers_or_averages(u_ijk, p, nx, ny, nz, true);
+    return _interpolate_cell_center_or_average(u_ijk, p, nx, ny, nz, true);
 }
 
-double interpolate_cell_averages(
+double interpolate_cell_average(
     const double* u_ijk,
     const int p,
     const int nx,
     const int ny,
     const int nz
 ) {
-    return _interpolate_cell_centers_or_averages(u_ijk, p, nx, ny, nz, false);
+    return _interpolate_cell_center_or_average(u_ijk, p, nx, ny, nz, false);
 }
 
 void update_fv_fluxes(
@@ -154,8 +154,8 @@ void update_fv_fluxes(
         for (int i = xIdx1; i < xIdx2; ++i) {
             for (int j = yIdx1; j < yIdx2; ++j) {
                 for (int k = zIdx1; k < zIdx2; ++k) {
-                    _ucc_.mutable_at(v, i, j, k) = interpolate_cell_centers(_u_.data(v, i, j, k), p, nx, ny, nz);
-                    _w_.mutable_at(v, i, j, k) = interpolate_cell_averages(_u_.data(v, i, j, k), p, nx, ny, nz);
+                    _ucc_.mutable_at(v, i, j, k) = interpolate_cell_center(_u_.data(v, i, j, k), p, nx, ny, nz);
+                    _w_.mutable_at(v, i, j, k) = interpolate_cell_average(_u_.data(v, i, j, k), p, nx, ny, nz);
                 }
             }
         }
