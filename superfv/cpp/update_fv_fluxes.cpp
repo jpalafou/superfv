@@ -100,12 +100,20 @@ void interpolate_cell_centers(
     const py::array_t<double> _u_,
     py::array_t<double> _ucc_,
     int p,
-    int nvars,
-    int nx,
-    int ny,
-    int nz,
     int nghost
 ) {
+    if (_u_.ndim() != _ucc_.ndim()) {
+        throw std::invalid_argument("u and ucc must have the same number of dimensions");
+    }
+    for (py::ssize_t d = 0; d < _u_.ndim(); ++d) {
+        if (_u_.shape(d) != _ucc_.shape(d)) {
+            throw std::invalid_argument("u and ucc must have the same shape");
+        }
+    }
+    const int nvars = static_cast<int>(_u_.shape(0));
+    const int nx    = static_cast<int>(_u_.shape(1));
+    const int ny    = static_cast<int>(_u_.shape(2));
+    const int nz    = static_cast<int>(_u_.shape(3));
     const int nkernel_max = 7;
 
     double stencil[nkernel_max] = {0.0};
