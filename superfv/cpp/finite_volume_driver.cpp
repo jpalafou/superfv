@@ -172,7 +172,7 @@ void update_2D_fv_fluxes(
     const Stencil l_stencil = conservative_interpolation_of_left_or_right_face(p, true);
     const Stencil r_stencil = conservative_interpolation_of_left_or_right_face(p, false);
     const Stencil c_stencil = conservative_interpolation_of_cell_center(p);
-    const Stencil t_stencil = conservative_interpolation_of_cell_center(p);
+    const Stencil t_stencil = transverse_integration_of_cell_average(p);
     const int c_reach = (l_stencil.n - 1) / 2;
 
     for (int i = 0; i < nx - 2 * nghost + 1; ++i) {
@@ -267,7 +267,7 @@ void update_3D_fv_fluxes(
     const Stencil l_stencil = conservative_interpolation_of_left_or_right_face(p, true);
     const Stencil r_stencil = conservative_interpolation_of_left_or_right_face(p, false);
     const Stencil c_stencil = conservative_interpolation_of_cell_center(p);
-    const Stencil t_stencil = conservative_interpolation_of_cell_center(p);
+    const Stencil t_stencil = transverse_integration_of_cell_average(p);
     const int c_reach = (l_stencil.n - 1) / 2;
 
     for (int i = 0; i < nx - 2 * nghost + 1; ++i) {
