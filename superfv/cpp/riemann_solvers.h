@@ -9,25 +9,30 @@ void hllc_flux(
     const Primitives& left,
     const Primitives& right,
     Conservatives& flux,
+    const int dim,
     const double gamma,
     const bool isothermal,
     const double iso_cs
 ) {
+    if (dim < 1 || dim > 3) {
+        throw std::invalid_argument("Invalid dimension");
+    }
+
     double csl;
     double csr;
     prim_to_cs(left, csl, gamma, isothermal, iso_cs);
     prim_to_cs(right, csr, gamma, isothermal, iso_cs);
 
     double rhol = left.rho;
-    double v1l = left.vx;
-    double v2l = left.vy;
-    double v3l = left.vz;
+    double v1l = dim == 1 ? left.vx : (dim == 2 ? left.vy : left.vz);
+    double v2l = dim == 1 ? left.vy : (dim == 2 ? left.vz : left.vx);
+    double v3l = dim == 1 ? left.vz : (dim == 2 ? left.vx : left.vy);
     double Pl = left.P;
 
     double rhor = right.rho;
-    double v1r = right.vx;
-    double v2r = right.vy;
-    double v3r = right.vz;
+    double v1r = dim == 1 ? right.vx : (dim == 2 ? right.vy : right.vz);
+    double v2r = dim == 1 ? right.vy : (dim == 2 ? right.vz : right.vx);
+    double v3r = dim == 1 ? right.vz : (dim == 2 ? right.vx : right.vy);
     double Pr = right.P;
 
     double Kl = 0.5 * rhol * (v1l * v1l + v2l * v2l + v3l * v3l);
@@ -97,9 +102,12 @@ void hllc_flux(
     }
 
     flux.rho = rhogdv * vgdv;
-    flux.mx = flux.rho * vgdv + Pgdv;
-    flux.my = flux.rho * (vstar > 0 ? v2l : v2r);
-    flux.mz = flux.rho * (vstar > 0 ? v3l : v3r);
+    double m1 = flux.rho * vgdv + Pgdv;
+    double m2 = flux.rho * (vstar > 0 ? v2l : v2r);
+    double m3 = flux.rho * (vstar > 0 ? v3l : v3r);
+    flux.mx = dim == 1 ? m1 : (dim == 2 ? m3 : m2);
+    flux.my = dim == 1 ? m2 : (dim == 2 ? m1 : m3);
+    flux.mz = dim == 1 ? m3 : (dim == 2 ? m2 : m1);
     flux.E = vgdv * (Egdv + Pgdv);
 
     for (int i = 0; i < flux.npassive; ++i) {
