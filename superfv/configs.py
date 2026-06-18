@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import pickle
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, SourceTerm, UnivarField
@@ -396,3 +397,42 @@ class SolverParameters:
         # No flux quadarture in 1D
         if self.mesh.ndim == 1 and self.fv_scheme.flux_quadrature != FluxQuadrature.NONE:
             raise ValueError("Flux quadrature must be NONE for 1D simulations.")
+
+
+def dummy_function(*args: Any, **kwargs: Any) -> None:
+    raise RuntimeError(
+        "This function was replaced because the original function could not be pickled."
+    )
+
+
+def _pickle_or_dummy(obj: Any) -> Any:
+    if obj is None:
+        return None
+    try:
+        pickle.dumps(obj)
+    except (AttributeError, pickle.PicklingError, TypeError):
+        return dummy_function
+    return obj
+
+
+def pickle_SolverParameters(params: SolverParameters, file: IO[bytes]) -> None:
+    ic = replace(
+        params.ic,
+        ic=_pickle_or_dummy(params.ic.ic),
+        passive_ics={
+            name: _pickle_or_dummy(passive_ic) for name, passive_ic in params.ic.passive_ics.items()
+        },
+    )
+    bc = replace(
+        params.bc,
+        bcx_callable_lower=_pickle_or_dummy(params.bc.bcx_callable_lower),
+        bcx_callable_upper=_pickle_or_dummy(params.bc.bcx_callable_upper),
+        bcy_callable_lower=_pickle_or_dummy(params.bc.bcy_callable_lower),
+        bcy_callable_upper=_pickle_or_dummy(params.bc.bcy_callable_upper),
+        bcz_callable_lower=_pickle_or_dummy(params.bc.bcz_callable_lower),
+        bcz_callable_upper=_pickle_or_dummy(params.bc.bcz_callable_upper),
+    )
+    pickle.dump(
+        replace(params, ic=ic, source=_pickle_or_dummy(params.source), bc=bc),
+        file,
+    )

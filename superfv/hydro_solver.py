@@ -33,6 +33,7 @@ from .configs import (
     SmoothExtremaDetectionParameters,
     SolverParameters,
     ZhangShuParameters,
+    pickle_SolverParameters,
 )
 from .field import MultivarField, SourceTerm, UnivarField
 from .finite_volume_driver import (
@@ -890,7 +891,7 @@ class HydroSolver:
             with open(output_path / "params.yaml", "w") as f:
                 f.write(yaml_dump(self.params))
             with open(output_path / "params.pkl", "wb") as f:
-                pickle.dump(self.params, f)
+                pickle_SolverParameters(self.params, f)
 
     def _write_mesh(self):
         output_path = self.params.output_path

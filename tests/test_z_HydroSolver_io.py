@@ -1,4 +1,5 @@
 import os
+import pickle
 import shutil
 from functools import partial
 from pathlib import Path
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 from superfv import HydroSolver, HydroSolverOutput, ics
+from superfv.configs import dummy_function
 
 OUTPUT_PATH = Path("snapshot_test")
 
@@ -37,6 +39,46 @@ def test_overwrite():
     assert not os.path.exists(OUTPUT_PATH / "dummy.txt"), "Dummy file should be removed"
 
     shutil.rmtree(OUTPUT_PATH)
+
+
+def test_lambda_source_does_not_break_params_files(tmp_path):
+    f0 = partial(ics.square, vx=1)
+
+    output_path = tmp_path / "snapshot_test"
+    _ = HydroSolver(
+        ic=f0,
+        source=lambda idx, u, *, xp: xp.zeros_like(u),
+        p=1,
+        nx=64,
+        use_MUSCL=True,
+        output_path=output_path,
+    )
+
+    assert (output_path / "params.yaml").exists()
+    with open(output_path / "params.pkl", "rb") as f:
+        params = pickle.load(f)
+    assert params.source is dummy_function
+    assert params.ic.ic.func is ics.square
+    assert params.ic.ic.keywords == {"vx": 1}
+
+
+def test_local_ic_does_not_break_params_files(tmp_path):
+    def local_ic(idx, x, y, z, t, *, xp):
+        return ics.square(idx, x, y, z, t, xp=xp, vx=1)
+
+    output_path = tmp_path / "snapshot_test"
+    _ = HydroSolver(
+        ic=local_ic,
+        p=1,
+        nx=64,
+        use_MUSCL=True,
+        output_path=output_path,
+    )
+
+    assert (output_path / "params.yaml").exists()
+    with open(output_path / "params.pkl", "rb") as f:
+        params = pickle.load(f)
+    assert params.ic.ic is dummy_function
 
 
 @pytest.mark.parametrize("discard_after_writing", [True, False])
