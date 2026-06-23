@@ -75,7 +75,7 @@ def run_spd_sim(name, p, NDOF, **kwargs):
         p=p,
         N=(Nelements, Nelements),
         init_fct=partial(sine_wave, vx=2.0, vy=1.0),
-        cfl_coeff=reduce_CFL(NDOF, p, 0.4),
+        cfl_coeff=reduce_CFL(NDOF, p, 0.8),
         use_cupy=True,
         time_integrator="rk4",
         scheme="SD",
@@ -101,4 +101,4 @@ def run_spd_sim(name, p, NDOF, **kwargs):
 for NDOF in [16, 32, 64, 128, 256]:
     for p in [3, 7]:
         run_superfv_sim("", p, NDOF)
-        run_spd_sim("", p, NDOF)
+        run_spd_sim("doubleCFL", p, NDOF)
