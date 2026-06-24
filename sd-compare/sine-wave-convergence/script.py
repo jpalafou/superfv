@@ -99,7 +99,8 @@ def run_spd_sim(name, p, NDOF, **kwargs):
     return sim
 
 
-for NDOF in [16, 32, 64]:
-    for p in [3, 7]:
-        run_superfv_sim("LLF", p, NDOF)
-        run_spd_sim("LLF", p, NDOF)
+if __name__ == "__main__":
+    for NDOF in [16, 32, 64]:
+        for p in [3, 7]:
+            run_superfv_sim("LLF", p, NDOF)
+            run_spd_sim("LLF", p, NDOF)
