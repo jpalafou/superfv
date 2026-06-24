@@ -5,7 +5,7 @@ from functools import partial
 import numpy as np
 from spd.sdfb_simulator import SPD_Simulator
 
-from superfv import HydroSolver, HydroSolverOutput, TimeIntegrator, ics
+from superfv import HydroSolver, HydroSolverOutput, RiemannSolver, TimeIntegrator, ics
 
 base_directory = "/scratch/gpfs/jp7427/FVvsSD/sinus/"
 
@@ -40,6 +40,7 @@ def run_superfv_sim(name, p, N, **kwargs):
         ny=N,
         p=p,
         CFL=reduce_CFL(N, p),
+        riemann_solver=RiemannSolver.LLF,
         cupy=True,
         output_path=path,
         **kwargs,
@@ -80,7 +81,7 @@ def run_spd_sim(name, p, NDOF, **kwargs):
         time_integrator="rk4",
         scheme="SD",
         FB=False,
-        riemann_solver_sd="hllc",  # MUSCL fallback flux
+        riemann_solver_sd="llf",  # MUSCL fallback flux
         folder=path,
         **kwargs,
     )
@@ -98,7 +99,7 @@ def run_spd_sim(name, p, NDOF, **kwargs):
     return sim
 
 
-for NDOF in [16, 32, 64, 128, 256]:
+for NDOF in [16, 32, 64]:
     for p in [3, 7]:
-        run_superfv_sim("", p, NDOF)
-        run_spd_sim("doubleCFL", p, NDOF)
+        run_superfv_sim("LLF", p, NDOF)
+        run_spd_sim("LLF", p, NDOF)
