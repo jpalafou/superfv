@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sinus                    # create a short name for your job
+#SBATCH --job-name=gresho                   # create a short name for your job
 #SBATCH --nodes=1                           # node count
 #SBATCH --ntasks-per-node=1                 # total number of tasks per node
 #SBATCH --cpus-per-task=1                   # cpu-cores per task (>1 if multi-threaded tasks)
@@ -14,4 +14,4 @@ module purge
 module load anaconda3/2025.12
 conda activate spd
 
-python sd-compare/sine_wave_convergence.py
+python sd-compare/gresho-vortex/script.py
