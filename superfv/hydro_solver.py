@@ -813,10 +813,9 @@ class HydroSolver:
                     "take_snapshot",
                     "compute_dt",
                     "update_unew",
-                    "update_W",
-                    "update_fluxes",
                     "riemann_solver",
-                    "update_dudt",
+                    "zhang_shu_limiter",
+                    "mood_loop",
                 ]
             ),
         )
@@ -982,12 +981,14 @@ class HydroSolver:
                 base_scheme,
                 hydro_params,
                 dt if hancock else 0.0,
+                self.step_summary.timer if self.params.profile else None,
             )
 
             # Compute source term
             arrays["source"] = self.params.source(idx, u, xp=self.xp)
 
             if base_scheme.mood_params.use_MOOD:
+                params.profile and self._start_timer("mood_loop")  # TIMER START
                 mood_loop(
                     arrays["_u_"],
                     arrays["_w_"],
@@ -1015,6 +1016,7 @@ class HydroSolver:
                     hydro_params,
                     self.substep_summary,
                 )
+                params.profile and self._stop_timer("mood_loop")  # TIMER STOP
 
         return compute_fv_dudt(
             arrays["F"] if "x" in active_dims else np.array([]),

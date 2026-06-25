@@ -12,6 +12,7 @@ from superfv.slope_limiting.muscl import (
     compute_PP2D_slopes,
 )
 from superfv.tools.slicing import crop, merge_slices
+from superfv.tools.step_history import MultiTimer
 
 from .configs import (
     BoundaryConditionParameters,
@@ -849,6 +850,7 @@ def update_weno_fluxes(
     mesh: UniformFiniteVolumeMesh,
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Update the finite volume fluxes with a WENO reconstruction and the Zhang-Shu limiter.
@@ -875,8 +877,10 @@ def update_weno_fluxes(
     mesh: Mesh object containing information about the mesh and its dimensions.
     fv_params: Parameters for the finite volume scheme.
     hydro_params: Hydrodynamic parameters.
+    timer: MultiTimer object for timing various routines. If None, timing is not performed.
     """
-    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
+    using_cupy = CUPY_AVAILABLE and isinstance(_u_, cp.ndarray)
+    xp = cp if using_cupy else np
     na = xp.newaxis
     fv = fv_params
     hp = hydro_params
@@ -902,6 +906,7 @@ def update_weno_fluxes(
 
     if fv.zhang_shu_params.use_ZS:
         # a priori slope limiting
+        timer is not None and timer.start("zhang_shu_limiter", using_cupy)  # TIMER START
         apply_zhang_shu_limiter(
             _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_,
             node_dict["x"] if "x" in active_dims else np.array([]),
@@ -916,6 +921,7 @@ def update_weno_fluxes(
             fv.p,
             fv.zhang_shu_params,
         )
+        timer is not None and timer.stop("zhang_shu_limiter", using_cupy)  # TIMER STOP
 
     if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
         # Convert conservative nodal values to primitives after slope limiting
@@ -928,6 +934,7 @@ def update_weno_fluxes(
 
     # 3) Solve Riemann problem at each face node and integrate to get fluxes
     for dim in active_dims:
+        timer is not None and timer.start("riemann_solver", using_cupy)  # TIMER START
         axis = DIM_TO_AXIS[dim]
         minus, plus = _get_riemann_solver_slices(axis, n_nodes, nghost)
 
@@ -950,6 +957,7 @@ def update_weno_fluxes(
             hp.isothermal,
             hp.iso_cs,
         )
+        timer is not None and timer.stop("riemann_solver", using_cupy)  # TIMER STOP
 
         # Compute viscuous fluxes
         if hydro_params.dissipation:
@@ -1024,6 +1032,7 @@ def update_MUSCL_fluxes(
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
     hancock_dt: float = 0.0,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Update the finite volume fluxes with a MUSCL scheme.
@@ -1047,8 +1056,10 @@ def update_MUSCL_fluxes(
     hydro_params: Hydrodynamic parameters.
     hancock_dt: Time step to use for MUSCL-Hancock predictor step. If 0, the predictor step is
         skipped.
+    timer: MultiTimer object for timing various routines. If None, timing is not performed.
     """
-    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
+    using_cupy = CUPY_AVAILABLE and isinstance(_u_, cp.ndarray)
+    xp = cp if using_cupy else np
     na = xp.newaxis
     fv = fv_params
     hp = hydro_params
@@ -1135,6 +1146,7 @@ def update_MUSCL_fluxes(
         _positivity_guard(_faces_, _w_, idx, hp)
 
         # Solve Riemann problem at faces
+        timer is not None and timer.start("riemann_solver", using_cupy)  # TIMER START
         minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
         solve_riemann_problem(
             _faces_[minus],
@@ -1147,6 +1159,7 @@ def update_MUSCL_fluxes(
             hp.isothermal,
             hp.iso_cs,
         )
+        timer is not None and timer.stop("riemann_solver", using_cupy)  # TIMER STOP
 
         # Compute viscuous fluxes
         if hydro_params.dissipation:
@@ -1183,6 +1196,7 @@ def update_fv_fluxes(
     fv_params: FV_SchemeParameters,
     hydro_params: HydroParameters,
     hancock_dt: float = 0.0,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Update the finite volume fluxes with a WENO or MUSCL scheme.
@@ -1210,6 +1224,7 @@ def update_fv_fluxes(
     hydro_params: Hydrodynamic parameters.
     hancock_dt: Time step to use for MUSCL-Hancock predictor step. If 0, the predictor step is
         skipped. Is ignored if the FV scheme is not a MUSCL scheme.
+    timer: MultiTimer object for timing various routines. If None, timing is not performed.
     """
     if fv_params.muscl_params.use_MUSCL:
         update_MUSCL_fluxes(
@@ -1225,6 +1240,7 @@ def update_fv_fluxes(
             fv_params,
             hydro_params,
             hancock_dt,
+            timer,
         )
     else:
         update_weno_fluxes(
@@ -1241,6 +1257,7 @@ def update_fv_fluxes(
             mesh,
             fv_params,
             hydro_params,
+            timer,
         )
 
 
