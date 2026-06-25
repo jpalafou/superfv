@@ -14,4 +14,4 @@ module purge
 module load anaconda3/2025.12
 conda activate spd
 
-python sd-compare/sine-wave-timing/job.slurm
+python sd-compare/sine-wave-timing/script.py
