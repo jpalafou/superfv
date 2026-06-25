@@ -1,5 +1,4 @@
 from functools import partial
-from timeit import default_timer as timer
 
 import numpy as np
 import pandas as pd
@@ -10,7 +9,7 @@ from superfv.hydro_solver import SnapshotMode
 from superfv.tools.device_management import CUPY_AVAILABLE
 
 if CUPY_AVAILABLE:
-    import cupy as cp
+    pass
 
 base_directory = "/scratch/gpfs/jp7427/FVvsSD/sinus-timing/"
 
@@ -29,14 +28,13 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
     )
 
     # prime solver with untimed step
-    sim.take_n_steps(1, time_integrator=TimeIntegrator.SSPRK3, snapshot_mode=SnapshotMode.NONE)
+    sim.take_n_steps(
+        nsteps + 1, time_integrator=TimeIntegrator.SSPRK3, snapshot_mode=SnapshotMode.NONE
+    )
+    assert len(sim.step_history) == nsteps + 2
+    ellapsed_time = sum(x.timer["take_step"].cum_time for x in sim.step_history[2:])
+    cell_updates_per_second = nsteps * N**2 / ellapsed_time
 
-    # take nsteps and time the simulation
-    t0 = timer()
-    sim.take_n_steps(nsteps, time_integrator=TimeIntegrator.SSPRK3, snapshot_mode=SnapshotMode.NONE)
-    elapsed = timer() - t0
-
-    cell_updates_per_second = nsteps * N**2 / elapsed
     return cell_updates_per_second
 
 
@@ -74,30 +72,25 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
         **kwargs,
     )
 
-    # prime solver with untimed step
-    sim.compute_dt()
-    sim.perform_update()
-
     # take nsteps and time the simulation
-    t0 = timer()
-    for _ in range(nsteps):
-        sim.compute_dt()
-        sim.perform_update()
-    if CUPY_AVAILABLE and sim.use_cupy:
-        cp.cuda.Device().synchronize()
-    elapsed = timer() - t0
+    sim.perform_iterations(1)  # warm-up / compile
+    step0 = sim.n_step
+    sim.perform_iterations(nsteps)  # use sim.execution_time
+    assert sim.n_step - step0 == nsteps
 
-    DOF_updates_per_second = nsteps * NDOF**2 / elapsed
+    DOF_updates_per_second = sim.domain_size * nsteps / sim.execution_time
     return DOF_updates_per_second
 
 
 if __name__ == "__main__":
     data = []
-    for NDOF in [64, 128, 256, 512, 1024]:
+    for NDOF in [64, 128, 256, 512, 1024, 2048, 3000]:
         for p in [3, 7]:
+            print(f"Running FV simulation with NDOF={NDOF}, p={p}")
             superfv_update_rate = run_superfv_sim(p, NDOF, nsteps=10)
             data.append(dict(NDOF=NDOF, p=p, scheme="FV", update_rate=superfv_update_rate))
 
+            print(f"Running SD simulation with NDOF={NDOF}, p={p}")
             spd_time = time_spd_sim(p, NDOF, nsteps=10)
             data.append(dict(NDOF=NDOF, p=p, scheme="SD", update_rate=spd_time))
     df = pd.DataFrame(data)
