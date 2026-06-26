@@ -31,11 +31,17 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
     sim.take_n_steps(
         nsteps + 1, time_integrator=TimeIntegrator.SSPRK3, snapshot_mode=SnapshotMode.NONE
     )
-    assert len(sim.step_history) == nsteps + 2
-    ellapsed_time = sum(x.timer["take_step"].cum_time for x in sim.step_history[2:])
-    cell_updates_per_second = nsteps * N**2 / ellapsed_time
 
-    return cell_updates_per_second
+    step_history = sim.step_history[2:]
+    assert len(sim.step_history[2:]) == nsteps
+
+    total_time = sum(x.timer["take_step"].cum_time for x in step_history)
+    riemann_solver_time = sum(x.timer["riemann_solver"].cum_time for x in step_history)
+
+    cell_updates_per_second = nsteps * N**2 / total_time
+    riemann_solver_time_per_step = riemann_solver_time / nsteps
+
+    return cell_updates_per_second, riemann_solver_time_per_step
 
 
 def time_spd_sim(p, NDOF, nsteps, **kwargs):
@@ -78,8 +84,10 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
     sim.perform_iterations(nsteps)  # use sim.execution_time
     assert sim.n_step - step0 == nsteps
 
-    DOF_updates_per_second = sim.domain_size * nsteps / sim.execution_time
-    return DOF_updates_per_second
+    DOF_updates_per_second = sim.domain_size * nsteps / sim.execution_times["total"]
+    riemann_solver_time_per_step = sim.execution_times["riemann_solver_sd"] / nsteps
+
+    return DOF_updates_per_second, riemann_solver_time_per_step
 
 
 if __name__ == "__main__":
@@ -87,12 +95,18 @@ if __name__ == "__main__":
     for NDOF in [64, 128, 256, 512, 1024, 2048, 3000]:
         for p in [3, 7]:
             print(f"Running FV simulation with NDOF={NDOF}, p={p}")
-            superfv_update_rate = run_superfv_sim(p, NDOF, nsteps=10)
-            data.append(dict(NDOF=NDOF, p=p, scheme="FV", update_rate=superfv_update_rate))
+            update_rate, rs_per_step = run_superfv_sim(p, NDOF, nsteps=10)
+            data.append(
+                dict(NDOF=NDOF, p=p, scheme="FV", update_rate=update_rate, rs_per_step=rs_per_step)
+            )
+            print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
 
             print(f"Running SD simulation with NDOF={NDOF}, p={p}")
-            spd_time = time_spd_sim(p, NDOF, nsteps=10)
-            data.append(dict(NDOF=NDOF, p=p, scheme="SD", update_rate=spd_time))
+            update_rate, rs_per_step = time_spd_sim(p, NDOF, nsteps=10)
+            data.append(
+                dict(NDOF=NDOF, p=p, scheme="SD", update_rate=update_rate, rs_per_step=rs_per_step)
+            )
+            print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
     df = pd.DataFrame(data)
 
     # write to csv
