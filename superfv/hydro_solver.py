@@ -325,6 +325,7 @@ class HydroSolver:
         self.step_summary: StepSummary
         self.step_history: StepHistory
         self.snapshot_history: SnapshotHistory
+        self.w0_func: MultivarField
 
         # Decide on active dimensions based on nx, ny, nz
         active_dims = self._compute_active_dims(nx, ny, nz)
@@ -615,6 +616,7 @@ class HydroSolver:
 
     def _build_conservative_ic_u0_func(self):
         w0_func = self._primitive_ic_w0_func()
+        self.w0_func = w0_func
 
         def u0_func(
             idx: VariableIndexMap,
@@ -649,7 +651,7 @@ class HydroSolver:
             bc.bcz_callable_lower = None
             bc.bcz_callable_upper = None
 
-        # set BC to DIRICHLET with u0_func if BC is IC
+        # set BC to DIRICHLET with the primitive IC if BC is IC
         for dim in ["x", "y", "z"]:
             bcdim0 = getattr(bc, f"bc{dim}")[0]
             bcdim1 = getattr(bc, f"bc{dim}")[1]
@@ -660,10 +662,10 @@ class HydroSolver:
             new_bcdim = [bcdim0, bcdim1]
             if bcdim0 == BC.IC:
                 new_bcdim[0] = BC.DIRICHLET
-                setattr(bc, f"bc{dim}_callable_lower", self.u0_func)
+                setattr(bc, f"bc{dim}_callable_lower", self.w0_func)
             if bcdim1 == BC.IC:
                 new_bcdim[1] = BC.DIRICHLET
-                setattr(bc, f"bc{dim}_callable_upper", self.u0_func)
+                setattr(bc, f"bc{dim}_callable_upper", self.w0_func)
             setattr(bc, f"bc{dim}", tuple(new_bcdim))
 
     def _build_mesh(self):

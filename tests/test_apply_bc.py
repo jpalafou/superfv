@@ -3,6 +3,7 @@ import pytest
 
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BC, apply_bc
+from superfv.hydro import prim_to_cons
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.tools.norms import linf_norm
 from superfv.tools.slicing import crop
@@ -127,8 +128,22 @@ def test_dirichlet_boundary_condition_fv_averages(dims, sampling_p):
     N = 32
     nghost = 16
 
-    idx = VariableIndexMap({"rho": 0, "vx": 1, "vy": 2, "vz": 3, "P": 4}, {})
+    idx = VariableIndexMap(
+        {
+            "rho": 0,
+            "vx": 1,
+            "vy": 2,
+            "vz": 3,
+            "P": 4,
+            "mx": 1,
+            "my": 2,
+            "mz": 3,
+            "E": 4,
+        },
+        {},
+    )
     t = 0.1
+    gamma = 1.4
 
     # define a sinusoidal function for the boundary condition
     def sinus(idx, x, y, z, t, *, xp):
@@ -170,14 +185,21 @@ def test_dirichlet_boundary_condition_fv_averages(dims, sampling_p):
     )
     assert mesh._shape_ == megamesh.shape
 
-    # baseline case: apply dirichlet boundary function to megamesh
+    def conservative_sinus(idx, x, y, z, t, *, xp):
+        w = sinus(idx, x, y, z, t, xp=xp)
+        u = xp.empty_like(w)
+        prim_to_cons(w, u, idx, gamma)
+        return u
+
+    # baseline case: apply the conservative form to the megamesh
     megamesh_u = megamesh.perform_GaussLegendre_quadrature(
-        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), sampling_p
+        lambda X, Y, Z: conservative_sinus(idx, X, Y, Z, t, xp=np), sampling_p
     )
 
-    # test case: apply dirichlet boundary condition with custom function
+    # test case: start with conservative interior averages and apply the
+    # primitive-valued Dirichlet boundary function
     u = mesh.perform_GaussLegendre_quadrature(
-        lambda X, Y, Z: sinus(idx, X, Y, Z, t, xp=np), sampling_p
+        lambda X, Y, Z: conservative_sinus(idx, X, Y, Z, t, xp=np), sampling_p
     )
 
     _u_ = np.empty(
@@ -210,6 +232,7 @@ def test_dirichlet_boundary_condition_fv_averages(dims, sampling_p):
         variable_index_map=idx,
         t=t,
         sampling_p=sampling_p,
+        gamma=gamma,
     )
 
     assert linf_norm(_u_ - megamesh_u) < 1e-15

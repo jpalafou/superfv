@@ -8,6 +8,7 @@ import numpy as np
 
 from .axes import AXIS_TO_DIM
 from .field import MultivarField
+from .hydro import prim_to_cons
 from .mesh import UniformFiniteVolumeMesh
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.slicing import crop
@@ -52,6 +53,7 @@ class BCcontext:
     mesh: Optional[UniformFiniteVolumeMesh] = None
     t: Optional[float] = None
     sampling_p: Optional[int] = None
+    gamma: Optional[float] = None
 
 
 PatchBC = Callable[[ArrayLike, BCcontext], None]
@@ -73,6 +75,7 @@ def apply_bc(
     mesh: Optional[UniformFiniteVolumeMesh] = None,
     t: Optional[float] = None,
     sampling_p: Optional[int] = None,
+    gamma: Optional[float] = None,
 ):
     for i, (dim, modelr) in enumerate(zip(["x", "y", "z"], [bcx, bcy, bcz])):
         for j, bound in enumerate(("lower", "upper")):
@@ -98,6 +101,7 @@ def apply_bc(
                 mesh=mesh,
                 t=t,
                 sampling_p=sampling_p,
+                gamma=gamma,
             )
 
             match mode:
@@ -148,6 +152,7 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
     mesh = context.mesh
     t = context.t
     sampling_p = context.sampling_p
+    gamma = context.gamma
 
     if f is None:
         raise ValueError("Dirichlet boundary condition requires a callable function.")
@@ -159,14 +164,22 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
         raise ValueError("Dirichlet boundary condition requires a time value.")
     if sampling_p is None:
         raise ValueError("Dirichlet boundary condition requires a quadrature order.")
+    if gamma is None:
+        raise ValueError("Dirichlet boundary condition requires gamma.")
 
     if lower:
         outer_slice = crop(axis, (None, nghost), ndim=4)
     else:
         outer_slice = crop(axis, (-nghost, None), ndim=4)
 
+    def conservative_boundary(X, Y, Z):
+        w = f(idx, X, Y, Z, t, xp=xp)
+        u = xp.empty_like(w)
+        prim_to_cons(w, u, idx, gamma)
+        return u
+
     _u_[outer_slice] = mesh.perform_GaussLegendre_quadrature(
-        lambda X, Y, Z: f(idx, X, Y, Z, t, xp=xp),
+        conservative_boundary,
         sampling_p,
         MESH_REGION_LOOKUP[AXIS_TO_DIM[axis]][("l" if lower else "r")],
     )
