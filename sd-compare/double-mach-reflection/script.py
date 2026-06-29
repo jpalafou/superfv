@@ -52,8 +52,7 @@ def bottom_boundary(u, context):
         raise ValueError("The Double Mach Reflection patch requires a mesh.")
 
     x = context.mesh.centers[0]
-    n_inflow = int((x < shock_foot).sum().item())
-    split = context.nghost + n_inflow
+    split = int((x < shock_foot).sum().item()) + context.nghost - 1
 
     inflow_section = crop(1, (None, split), ndim=4)
     wall_section = crop(1, (split, None), ndim=4)
@@ -64,7 +63,6 @@ def bottom_boundary(u, context):
 
 def run_superfv_sim(name, p, NDOF, **kwargs):
     path = base_directory + f"FV_{name}_{NDOF=}_{p=}"
-    cupy = kwargs.pop("cupy", True)
 
     try:
         out = HydroSolverOutput(path)
@@ -94,7 +92,7 @@ def run_superfv_sim(name, p, NDOF, **kwargs):
         bcy_callable_upper=moving_shock_state,
         use_MOOD=True,
         MUSCL_limiter=MUSCL_SlopeLimiter.MONCEN,
-        cupy=cupy,
+        cupy=True,
         output_path=path,
         **kwargs,
     )
@@ -105,7 +103,6 @@ def run_superfv_sim(name, p, NDOF, **kwargs):
 def run_spd_sim(name, p, NDOF, **kwargs):
     path = base_directory + f"SD_{name}_{NDOF=}_{p=}"
     Nelements = NDOF // (p + 1)
-    use_cupy = kwargs.pop("use_cupy", True)
 
     sim = SPD_Simulator(
         p=p,
@@ -115,8 +112,8 @@ def run_spd_sim(name, p, NDOF, **kwargs):
         gamma=gamma,
         BC=(("doublemach", "doublemach"), ("doublemach", "doublemach")),
         init_fct=ic.double_mach_reflection(),
-        cfl_coeff=0.4,
-        use_cupy=use_cupy,
+        cfl_coeff={3: 0.4, 7: 0.2}[p],
+        use_cupy=True,
         time_integrator="rk3",
         scheme="SDFB",
         fallback="MUSCL",
@@ -152,14 +149,14 @@ if __name__ == "__main__":
     for p, riemann_solver in product([3, 7], ["llf", "hllc"]):
         print(f"Running FV and SD simulations for p={p}, riemann_solver={riemann_solver}")
         run_superfv_sim(
-            f"{riemann_solver=}",
+            riemann_solver,
             p,
             NDOF,
             rtol=1e-5,
             riemann_solver=dict(llf=RiemannSolver.LLF, hllc=RiemannSolver.HLLC)[riemann_solver],
         )
         run_spd_sim(
-            f"{riemann_solver=}",
+            riemann_solver,
             p,
             NDOF,
             tolerance=1e-5,
