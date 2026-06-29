@@ -1,5 +1,6 @@
 import os
 import shutil
+from itertools import product
 
 import numpy as np
 import spd.initial_conditions as ic
@@ -7,7 +8,6 @@ from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import (
     BC,
-    FallbackCascade,
     HydroSolver,
     HydroSolverOutput,
     MUSCL_SlopeLimiter,
@@ -17,8 +17,6 @@ from superfv import (
 )
 from superfv.boundary_conditions import apply_free_bc, apply_reflective_bc
 from superfv.tools.slicing import crop
-
-from itertools import product
 
 base_directory = "/scratch/gpfs/jp7427/FVvsSD/double-mach-reflection/"
 
@@ -43,12 +41,8 @@ def moving_shock_state(idx, x, y, z, t, *, xp):
 
     out = xp.zeros((len(idx.idxs), *x.shape))
     out[idx("rho")] = xp.where(behind_shock, 8.0, gamma)
-    out[idx("vx")] = xp.where(
-        behind_shock, 8.25 * np.cos(np.pi / 6.0), 0.0
-    )
-    out[idx("vy")] = xp.where(
-        behind_shock, -8.25 * np.sin(np.pi / 6.0), 0.0
-    )
+    out[idx("vx")] = xp.where(behind_shock, 8.25 * np.cos(np.pi / 6.0), 0.0)
+    out[idx("vy")] = xp.where(behind_shock, -8.25 * np.sin(np.pi / 6.0), 0.0)
     out[idx("P")] = xp.where(behind_shock, 116.5, 1.0)
     return out
 
@@ -157,5 +151,18 @@ if __name__ == "__main__":
 
     for p, riemann_solver in product([3, 7], ["llf", "hllc"]):
         print(f"Running FV and SD simulations for p={p}, riemann_solver={riemann_solver}")
-        run_superfv_sim(f"{riemann_solver=}", p, NDOF, rtol=1e-5, riemann_solver=dict(llf=RiemannSolver.LLF, hllc=RiemannSolver.HLLC)[riemann_solver])
-        run_spd_sim(f"{riemann_solver=}", p, NDOF, tolerance=1e-5, riemann_solver_sd=riemann_solver, riemann_solver_fv=riemann_solver)
+        run_superfv_sim(
+            f"{riemann_solver=}",
+            p,
+            NDOF,
+            rtol=1e-5,
+            riemann_solver=dict(llf=RiemannSolver.LLF, hllc=RiemannSolver.HLLC)[riemann_solver],
+        )
+        run_spd_sim(
+            f"{riemann_solver=}",
+            p,
+            NDOF,
+            tolerance=1e-5,
+            riemann_solver_sd=riemann_solver,
+            riemann_solver_fv=riemann_solver,
+        )
