@@ -126,17 +126,17 @@ if __name__ == "__main__":
     for p, riemann_solver in product([3, 7], ["llf", "hllc"]):
         print(f"Running FV and SD simulations for p={p}, riemann_solver={riemann_solver}")
         run_superfv_sim(
-            riemann_solver,
+            riemann_solver + "_rtol=0",
             p,
             NDOF,
-            rtol=1e-5,
+            rtol=0,
             riemann_solver=dict(llf=RiemannSolver.LLF, hllc=RiemannSolver.HLLC)[riemann_solver],
         )
         run_spd_sim(
-            riemann_solver,
+            riemann_solver + "_rtol=0",
             p,
             NDOF,
-            tolerance=1e-5,
+            tolerance=0,
             riemann_solver_sd=riemann_solver,
             riemann_solver_fv=riemann_solver,
         )
