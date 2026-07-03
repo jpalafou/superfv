@@ -214,6 +214,14 @@ class UniformFiniteVolumeMesh:
     def shape(self) -> Tuple[int, int, int]:
         return (self.nx, self.ny, self.nz)
 
+    @cached_property
+    def boxlen(self) -> float:
+        return max(
+            self.xlims[1] - self.xlims[0],
+            self.ylims[1] - self.ylims[0],
+            self.zlims[1] - self.zlims[0],
+        )
+
     def GaussLegendre_nodes(
         self,
         sampling_p: int,

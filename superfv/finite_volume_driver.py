@@ -4,7 +4,7 @@ from typing import Dict, Literal, Tuple
 
 import numpy as np
 
-from superfv.axes import DIM_TO_AXIS
+from superfv.axes import DIM_TO_AXIS, XYZ_TUPLE
 from superfv.boundary_conditions import apply_bc
 from superfv.slope_limiting.muscl import (
     MUSCL_SlopeLimiter,
@@ -30,7 +30,11 @@ from .slope_limiting import compute_dmp
 from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .slope_limiting.zhang_and_shu import compute_theta
-from .stencils import conservative_interpolation, transverse_integration
+from .stencils import (
+    conservative_interpolation,
+    finite_difference,
+    transverse_integration,
+)
 from .sweep import stencil_sweep
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 from .tools.variable_index_map import VariableIndexMap
@@ -43,7 +47,10 @@ class FV_Stencil(Enum):
     CONSERVATIVE_INTERPOLATION_CENTER = 0
     CONSERVATIVE_INTERPOLATION_LEFT_RIGHT = 1
     CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE = 2
-    TRANSVERSE_INTEGRATION = 3
+    CONSERVATIVE_INTERPOLATION_INTERFACE = 3
+    CONSERVATIVE_INTERPOLATION_INTERFACE_FIRST_DERIVATIVE = 4
+    TRANSVERSE_INTEGRATION = 5
+    FINITE_DIFFERENCE_FIRST_DERIVATIVE = 6
 
 
 @lru_cache
@@ -55,8 +62,14 @@ def _stencil_cache(interpolation: FV_Stencil, p: int, cupy: bool = False):
             stencil = conservative_interpolation.left_right(p)
         case FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE:
             stencil = conservative_interpolation.gauss_legendre_nodes(p)
+        case FV_Stencil.CONSERVATIVE_INTERPOLATION_INTERFACE:
+            stencil = conservative_interpolation.interface(p)
+        case FV_Stencil.CONSERVATIVE_INTERPOLATION_INTERFACE_FIRST_DERIVATIVE:
+            stencil = conservative_interpolation.interface_first_derivative(p)
         case FV_Stencil.TRANSVERSE_INTEGRATION:
             stencil = transverse_integration(p)
+        case FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE:
+            stencil = finite_difference.first_derivative(p)
 
     if CUPY_AVAILABLE and cupy:
         return cp.asarray(stencil)
@@ -259,6 +272,55 @@ def interpolate_face_nodes(
             return
 
     raise ValueError(f"Unsupported number of dimensions: {ndim}")
+
+
+def interpolate_interface_nodes(
+    _q_: ArrayLike,
+    _qf_: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    gauss_legendre: bool = False,
+):
+    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    xp = cp if cupy else np
+    interface_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_INTERFACE, p, cupy)
+    center_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER, p, cupy)
+    na = xp.newaxis
+    ndim = len(active_dims)
+
+    if gauss_legendre:
+        raise NotImplementedError("Gauss-Legendre interface nodes are not implemented yet.")
+    if dim not in active_dims:
+        raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
+    if _q_.ndim != 4:
+        raise ValueError("_q_ must be 4D.")
+    if _q_.shape[:4] != _qf_.shape[:4]:
+        raise ValueError("The first 4 dimensions of _q_ and _qf_ must match.")
+    if _qf_.shape[4] != 1:
+        raise ValueError("The 5th dimension of _qf_ must be 1 for interface nodes.")
+
+    if ndim == 1:
+        stencil_sweep(_q_[..., na], interface_stencil, _qf_, dim)
+        return
+
+    if ndim == 2:
+        trans_dim = [d for d in active_dims if d != dim][0]
+        _qtemp_ = xp.empty((*_q_.shape, 1))
+        stencil_sweep(_q_[..., na], interface_stencil, _qtemp_, dim)
+        stencil_sweep(_qtemp_, center_stencil, _qf_, trans_dim)
+        return
+
+    if ndim == 3:
+        trans_dims = [d for d in active_dims if d != dim]
+        trans_dim1 = trans_dims[0]
+        trans_dim2 = trans_dims[1]
+        _qtemp1_ = xp.empty((*_q_.shape, 1))
+        _qtemp2_ = xp.empty((*_q_.shape, 1))
+        stencil_sweep(_q_[..., na], interface_stencil, _qtemp1_, dim)
+        stencil_sweep(_qtemp1_, center_stencil, _qtemp2_, trans_dim1)
+        stencil_sweep(_qtemp2_, center_stencil, _qf_, trans_dim2)
+        return
 
 
 def integrate_gauss_legendre_face_nodes(
@@ -639,6 +701,97 @@ def _get_riemann_solver_slices(
     return minus, plus
 
 
+def compute_nu(w: ArrayLike, idx: VariableIndexMap, Re: float, boxlen: float):
+    vmag = np.sqrt(np.sum(np.square(w[idx("v")]), axis=1))  # TEMP ARRAY
+    nu = vmag * boxlen / Re  # TEMP ARRAY
+    return nu
+
+
+def add_viscuous_fluxes(
+    _w_: ArrayLike,
+    _f_: ArrayLike,
+    idx: VariableIndexMap,
+    dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    use_GL: bool,
+    Re: float,
+    Chi: float,
+    boxlen: float,
+):
+    cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
+    xp = cp if cupy else np
+    normal_first_derivative_stencil = _stencil_cache(
+        FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE, p, cupy
+    )
+    transverse_first_derivative_stencil = _stencil_cache(
+        FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE, p, cupy
+    )
+
+    if dim not in active_dims:
+        raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
+
+    if "passives" in idx.group_var_map:
+        raise NotImplementedError("Viscous fluxes for passive scalars are not implemented yet.")
+
+    rho = _w_[idx("rho")]
+    vx = _w_[idx("vx")]
+    vy = _w_[idx("vy")]
+    vz = _w_[idx("vz")]
+
+    _wf_ = xp.empty_like(_w_)  # TEMP ARRAY
+    interpolate_interface_nodes(_w_, _wf_, dim, active_dims, p, use_GL)
+
+    # assign dvdx9 as [dudx, dvdx, dwdx, dudy, dvdy, dwdy, dudz, dvdz, dwdz]
+    dvdx9 = xp.zeros((9, *_wf_.shape[1:]))  # TEMP ARRAY
+    for i, d in enumerate(XYZ_TUPLE):
+        slc = slice(i * 3, (i + 1) * 3)
+        if d == dim:
+            stencil_sweep(_w_[idx("v")], normal_first_derivative_stencil, dvdx9[slc, ...], d)
+        elif d in active_dims:
+            stencil_sweep(_wf_[idx("v")], transverse_first_derivative_stencil, dvdx9[slc, ...], d)
+
+    minus_nu_rho = -compute_nu(_wf_, idx, Re, boxlen) * rho  # TEMP ARRAY
+    if dim == "x":
+        Pi11 = 4 * dvdx9[0, ...] - 2 * dvdx9[4, ...] - 2 * dvdx9[8, ...]  # TEMP ARRAY
+        Pi11 *= minus_nu_rho / 3
+        Pi12 = minus_nu_rho * (dvdx9[1, ...] + dvdx9[3, ...])  # TEMP ARRAY
+        Pi13 = minus_nu_rho * (dvdx9[2, ...] + dvdx9[6, ...])  # TEMP ARRAY
+
+        _f_[idx("mx")] += Pi11
+        _f_[idx("my")] += Pi12
+        _f_[idx("mz")] += Pi13
+        _f_[idx("E")] += vx * Pi11 + vy * Pi12 + vz * Pi13
+    elif dim == "y":
+        Pi22 = -2 * dvdx9[0, ...] + 4 * dvdx9[4, ...] - 2 * dvdx9[8, ...]  # TEMP ARRAY
+        Pi22 *= minus_nu_rho / 3
+        Pi12 = minus_nu_rho * (dvdx9[1, ...] + dvdx9[3, ...])  # TEMP ARRAY
+        Pi23 = minus_nu_rho * (dvdx9[5, ...] + dvdx9[7, ...])  # TEMP ARRAY
+
+        _f_[idx("mx")] += Pi12
+        _f_[idx("my")] += Pi22
+        _f_[idx("mz")] += Pi23
+        _f_[idx("E")] += vx * Pi12 + vy * Pi22 + vz * Pi23
+    elif dim == "z":
+        Pi33 = -2 * dvdx9[0, ...] - 2 * dvdx9[4, ...] + 4 * dvdx9[8, ...]  # TEMP ARRAY
+        Pi33 *= minus_nu_rho / 3
+        Pi13 = minus_nu_rho * (dvdx9[2, ...] + dvdx9[6, ...])  # TEMP ARRAY
+        Pi23 = minus_nu_rho * (dvdx9[5, ...] + dvdx9[7, ...])  # TEMP ARRAY
+
+        _f_[idx("mx")] += Pi13
+        _f_[idx("my")] += Pi23
+        _f_[idx("mz")] += Pi33
+        _f_[idx("E")] += vx * Pi13 + vy * Pi23 + vz * Pi33
+    else:
+        raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
+
+    # thermal fluxes
+    if Chi > 0.0:
+        dPdx = xp.empty_like(_wf_[idx("rho")])  # TEMP ARRAY
+        stencil_sweep(_wf_[idx("P")], normal_first_derivative_stencil, dPdx, dim)
+        _f_[idx("E")] += Chi * dPdx
+
+
 def update_weno_fluxes(
     _u_: ArrayLike,
     _w_: ArrayLike,
@@ -685,6 +838,7 @@ def update_weno_fluxes(
     fv = fv_params
     hp = hydro_params
     nghost = mesh.nghost
+    use_GL = fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE
 
     # 1) Interpolate nodes at each face from either primitives or conservatives
     _q_ = _w_ if fv.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_
@@ -694,14 +848,7 @@ def update_weno_fluxes(
 
     for dim in active_dims:
         _nodes_ = xp.empty(_w_.shape + (2 * n_nodes,))  # TEMP ARRAY
-        interpolate_face_nodes(
-            _q_,
-            _nodes_,
-            dim,
-            active_dims,
-            fv.p,
-            fv.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE,
-        )
+        interpolate_face_nodes(_q_, _nodes_, dim, active_dims, fv.p, use_GL)
         node_dict[dim] = _nodes_
 
     # 2) Ensure nodes are primitive and apply a priori limiting. Apply negative guard.
@@ -761,10 +908,25 @@ def update_weno_fluxes(
             hp.iso_cs,
         )
 
+        # Compute viscuous fluxes
+        if hydro_params.Re is not None:
+            add_viscuous_fluxes(
+                _w_,
+                _fnodes_,
+                idx,
+                dim,
+                active_dims,
+                fv.p,
+                use_GL,
+                hydro_params.Re,
+                hydro_params.Chi,
+                mesh.boxlen,
+            )
+
         if len(active_dims) == 1:
             break
 
-        if fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+        if use_GL:
             integrate_gauss_legendre_face_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
         else:
             integrate_transverse_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
@@ -938,6 +1100,21 @@ def update_MUSCL_fluxes(
             hp.isothermal,
             hp.iso_cs,
         )
+
+        # Compute viscuous fluxes
+        if hydro_params.Re is not None:
+            add_viscuous_fluxes(
+                _w_,
+                _F_out_,
+                idx,
+                dim,
+                active_dims,
+                fv.p,
+                False,
+                hydro_params.Re,
+                hydro_params.Chi,
+                mesh.boxlen,
+            )
 
 
 def update_fv_fluxes(

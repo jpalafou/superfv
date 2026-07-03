@@ -79,6 +79,51 @@ def left_right(p: int) -> np.ndarray:
     return np.array([wl, wr])
 
 
+def interface(p: int) -> np.ndarray:
+    """
+    Returns stencil weights for conservative interpolation of cell interface for
+    polynomial degree `p`.
+
+    Args:
+        p: Polynomial degree (0 to 7).
+
+    Returns:
+        Stencil weight array of shape (1, n).
+    """
+    if p in (0, 1):
+        return np.array([[1 / 2, 1 / 2]])
+    if p in (2, 3):
+        return np.array([[-1 / 12, 7 / 12, 7 / 12, -1 / 12]])
+    if p in (4, 5):
+        return np.array([[1 / 60, -2 / 15, 37 / 60, 37 / 60, -2 / 15, 1 / 60]])
+    if p in (6, 7):
+        return np.array(
+            [[-1 / 280, 29 / 840, -139 / 840, 533 / 840, 533 / 840, -139 / 840, 29 / 840, -1 / 280]]
+        )
+    raise NotImplementedError(f"Unsupported polynomial degree: {p}")
+
+
+def interface_first_derivative(p: int) -> np.ndarray:
+    """
+    Returns stencil weights for conservative interpolation of first derivative at
+    cell interface for polynomial degree `p`. Remember to divide by the cell width `h`.
+
+    Args:
+        p: Polynomial degree (0 to 7).
+    """
+    if p in (0, 1):
+        return np.array([[-1, 1]])
+    if p in (2, 3):
+        return np.array([[1 / 12, -5 / 4, 5 / 4, -1 / 12]])
+    if p in (4, 5):
+        return np.array([[-1 / 90, 5 / 36, -49 / 36, 49 / 36, -5 / 36, 1 / 90]])
+    if p in (6, 7):
+        return np.array(
+            [[1 / 560, -17 / 720, 127 / 720, -205 / 144, 205 / 144, -127 / 720, 17 / 720, -1 / 560]]
+        )
+    raise NotImplementedError(f"Unsupported polynomial degree: {p}")
+
+
 def n_gauss_legendre_nodes(p: int) -> int:
     """
     Returns the number of nodes for a Gauss-Legendre quadrature that is exact for

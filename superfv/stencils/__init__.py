@@ -1,11 +1,4 @@
-from enum import Enum
-
 import numpy as np
-
-
-class FiniteVolumeStencil(Enum):
-    CONSERVATIVE_INTERPOLATION = 0
-    TRANSVERSE_INTEGRATION = 1
 
 
 def transverse_integration(p: int) -> np.ndarray:

@@ -37,8 +37,9 @@ def stencil_sweep(
     _, _, _, _, ninterps = u.shape
     nouterps, stencil_size = weights.shape
 
-    reach = (stencil_size - 1) // 2
-    modified = crop(axis, (reach, -reach), ndim=5)
+    lreach = (stencil_size - 1) // 2
+    rreach = (stencil_size - 1) - lreach
+    modified = crop(axis, (lreach, -rreach), ndim=5)
 
     u_windows = np.lib.stride_tricks.sliding_window_view(u, window_shape=stencil_size, axis=axis)
     contracted = np.einsum("...ik,ok->...io", u_windows, weights, optimize=True)
@@ -74,7 +75,8 @@ if CUPY_AVAILABLE:
             const long long stride = (long long)blockDim.x * gridDim.x;
 
             const long long ntotal = (long long)nvars * nx * ny * nz * ninterps;
-            const int reach = (nkernel - 1) / 2;
+            const int lreach = (nkernel - 1) / 2;
+            const int rreach = (nkernel - 1) - lreach;
 
             for (long long i = tid; i < ntotal; i += stride) {
                 long long t = i;
@@ -86,12 +88,11 @@ if CUPY_AVAILABLE:
 
                 // skip threads which reach out of bounds
                 switch (dim) {
-                    case 1: if (ix < reach || ix >= nx - reach) continue; break;
-                    case 2: if (iy < reach || iy >= ny - reach) continue; break;
-                    case 3: if (iz < reach || iz >= nz - reach) continue; break;
+                    case 1: if (ix < lreach || ix >= nx - rreach) continue; break;
+                    case 2: if (iy < lreach || iy >= ny - rreach) continue; break;
+                    case 3: if (iz < lreach || iz >= nz - rreach) continue; break;
                     default: return; // invalid dimension
                 }
-
 
                 for (int qj = 0; qj < nouterps; qj++) {
                     long long j = (((((long long)iv * nx + ix) * ny + iy) * nz + iz)
@@ -101,7 +102,7 @@ if CUPY_AVAILABLE:
 
                     for (int ik = 0; ik < nkernel; ik++) {
                         // compute neighbor index
-                        int off = ik - reach;
+                        int off = ik - lreach;
                         int kv = iv, kx = ix, ky = iy, kz = iz, ki = ii;
                         switch (dim) {
                             case 1: kx += off; break;
@@ -154,5 +155,6 @@ if CUPY_AVAILABLE:
             (u, weights, uj, axis, nvars, nx, ny, nz, ninterps, nouterps, nkernel),
         )
 
-        reach = (nkernel - 1) // 2
-        return crop(axis, (reach, -reach), ndim=5)
+        lreach = (nkernel - 1) // 2
+        rreach = (nkernel - 1) - lreach
+        return crop(axis, (lreach, -rreach), ndim=5)
