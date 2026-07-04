@@ -208,19 +208,13 @@ class HydroParameters:
     gamma: float
     riemann_solver: RiemannSolver
     CFL: float
-    Re: Optional[float] = None
+    nu: float = 0.0
     Chi: float = 0.0
     dt_min: float = 1e-15
     rho_min: float = 1e-12
     P_min: float = 1e-12
     isothermal: bool = False
     iso_cs: float = 1.0
-
-    def __post_init__(self):
-        if self.Re is not None and self.Re <= 0.0:
-            raise ValueError("Re must be positive if provided.")
-        if self.Chi < 0.0:
-            raise ValueError("Chi must be non-negative.")
 
 
 @dataclass(frozen=True, slots=True)

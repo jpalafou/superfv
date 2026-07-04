@@ -1201,3 +1201,60 @@ def rayleigh_taylor(
     out[idx("v" + dim2)] = -0.025 * dv * xp.cos(8 * xp.pi * _x)
 
     return out
+
+
+def velocity_shear_diffusion(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float,
+    *,
+    xp: ModuleType,
+    v0: float,
+    sigma0: float,
+    x0: float,
+    nu: float,
+    rho0: float,
+    kappa: float,
+    iso_cs: float,
+) -> ArrayLike:
+    """
+    Returns the nonuniform-density Gaussian velocity shear solution from
+    Dittmann & Ryan (2026).
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Time since the initial Gaussian state.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+        v0: Initial peak y-velocity.
+        sigma0: Initial standard deviation of the velocity Gaussian.
+        x0: Initial center of the velocity Gaussian.
+        nu: Constant kinematic viscosity.
+        rho0: Density at x = 0.
+        kappa: Exponential density-gradient parameter.
+        iso_cs: Isothermal sound speed.
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError("Velocity shear diffusion initial condition requires all hydro variables.")
+    if sigma0 <= 0:
+        raise ValueError("sigma0 must be positive.")
+    if nu < 0:
+        raise ValueError("nu must be nonnegative.")
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+    variance = sigma0**2 + 2 * nu * t
+    center = x0 + kappa * nu * t
+
+    out[idx("rho")] = rho0 * xp.exp(-kappa * x)
+    out[idx("vy")] = v0 * sigma0 / xp.sqrt(variance)
+    out[idx("vy")] *= xp.exp(-((x - center) ** 2) / (2 * variance))
+    out[idx("P")] = iso_cs**2 * out[idx("rho")]
+
+    return out

@@ -119,7 +119,7 @@ class HydroSolver:
         gamma: float = 1.4,
         riemann_solver: RiemannSolver = RiemannSolver.HLLC,
         CFL: float = 0.8,
-        Re: Optional[float] = None,
+        nu: float = 0.0,
         Chi: float = 0.0,
         dt_min: float = 1e-15,
         rho_min: float = 1e-12,
@@ -200,9 +200,9 @@ class HydroSolver:
             riemann_solver: Riemann solver specified by the `RiemannSolver` enum. Possible values
                 include RiemannSolver.UPWIND, RiemannSolver.LLF, and RiemannSolver.HLLC.
             CFL: CFL number for time step calculation.
-            Re: Reynolds number for viscous fluxes. If None, viscous fluxes are not computed.
-            Chi: Thermal conductivity for thermal fluxes. If 0.0 or if Re is None, thermal fluxes
-                are not computed.
+            nu: Kinematic viscosity for viscous fluxes. If 0.0, viscous fluxes are not computed.
+            Chi: Thermal conductivity for thermal fluxes. If nu or Chi is 0.0, thermal fluxes are
+                not computed.
             dt_min: Minimum allowed time step size.
             rho_min: Minimum allowed density.
             P_min: Minimum allowed pressure.
@@ -352,7 +352,7 @@ class HydroSolver:
             gamma=gamma,
             riemann_solver=riemann_solver,
             CFL=CFL,
-            Re=Re,
+            nu=nu,
             Chi=Chi,
             dt_min=dt_min,
             rho_min=rho_min,
@@ -1260,7 +1260,7 @@ class HydroSolver:
     def take_n_steps(
         self,
         n: int,
-        time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
+        time_integrator: TimeIntegrator = TimeIntegrator.MATCH_P_UP_TO_SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
         print_update: bool = True,
         print_frequency: int = 100,
@@ -1290,7 +1290,7 @@ class HydroSolver:
     def run(
         self,
         t: Union[float, List[float]],
-        time_integrator: TimeIntegrator = TimeIntegrator.SSPRK3,
+        time_integrator: TimeIntegrator = TimeIntegrator.MATCH_P_UP_TO_SSPRK3,
         snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
         allow_overshoot: bool = False,
         print_update: bool = True,
