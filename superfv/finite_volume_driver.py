@@ -709,6 +709,9 @@ def add_viscuous_fluxes(
     idx: VariableIndexMap,
     dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
+    hx: float,
+    hy: float,
+    hz: float,
     p: int,
     use_GL: bool,
     nu: float,
@@ -716,7 +719,6 @@ def add_viscuous_fluxes(
 ):
     cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
     xp = cp if cupy else np
-    na = xp.newaxis
     normal_first_derivative_stencil = _stencil_cache(
         FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE, p, cupy
     )
@@ -733,24 +735,25 @@ def add_viscuous_fluxes(
     in1 = tuple(slice(1, None) if d == dim else slice(None) for d in XYZ_TUPLE)
     in2 = tuple(slice(1, -1) if d == dim else slice(None) for d in XYZ_TUPLE)
 
-    rho = _w_[idx("rho"), *in2, na]
-    vx = _w_[idx("vx"), *in2, na]
-    vy = _w_[idx("vy"), *in2, na]
-    vz = _w_[idx("vz"), *in2, na]
-    vxyz = _w_[idx("v"), ..., na]
-
     # interpolate continuous interface nodes using an even stencil
     _wf_ = xp.empty((*_w_.shape, 1))  # TEMP ARRAY
     interpolate_interface_nodes(_w_, _wf_, dim, active_dims, p, use_GL)
+
+    rho = _wf_[idx("rho"), *in2]
+    vx = _wf_[idx("vx"), *in2]
+    vy = _wf_[idx("vy"), *in2]
+    vz = _wf_[idx("vz"), *in2]
+    vxyz = _wf_[idx("v"), ...]
 
     # assign dvdx9 as [dudx, dvdx, dwdx, dudy, dvdy, dwdy, dudz, dvdz, dwdz]
     dvdx9 = xp.zeros((9, *_w_.shape[1:4], 1))  # TEMP ARRAY
     for i, d in enumerate(XYZ_TUPLE):
         slc = slice(i * 3, (i + 1) * 3)
+        h = {"x": hx, "y": hy, "z": hz}[d]
         if d == dim:
-            stencil_sweep(vxyz, normal_first_derivative_stencil, dvdx9[slc, ...], d)
+            stencil_sweep(vxyz, normal_first_derivative_stencil / h, dvdx9[slc, ...], d)
         elif d in active_dims:
-            stencil_sweep(vxyz, transverse_first_derivative_stencil, dvdx9[slc, ...], d)
+            stencil_sweep(vxyz, transverse_first_derivative_stencil / h, dvdx9[slc, ...], d)
 
     minus_nu_rho = -nu * rho  # TEMP ARRAY
     if dim == "x":
@@ -789,7 +792,8 @@ def add_viscuous_fluxes(
     # thermal fluxes
     if Chi > 0.0:
         dPdx = xp.empty_like(_wf_[idx("rho")])  # TEMP ARRAY
-        stencil_sweep(_wf_[idx("P")], normal_first_derivative_stencil, dPdx, dim)
+        h = {"x": hx, "y": hy, "z": hz}[dim]
+        stencil_sweep(_wf_[idx("P")], normal_first_derivative_stencil / h, dPdx, dim)
         _f_[idx("E"), *in1] += Chi * dPdx
 
 
@@ -917,6 +921,9 @@ def update_weno_fluxes(
                 idx,
                 dim,
                 active_dims,
+                mesh.hx,
+                mesh.hy,
+                mesh.hz,
                 fv.p,
                 use_GL,
                 hydro_params.nu,
@@ -1109,6 +1116,9 @@ def update_MUSCL_fluxes(
                 idx,
                 dim,
                 active_dims,
+                mesh.hx,
+                mesh.hy,
+                mesh.hz,
                 fv.p,
                 False,
                 hydro_params.nu,
