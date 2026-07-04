@@ -709,6 +709,7 @@ def add_viscuous_fluxes(
     idx: VariableIndexMap,
     dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
+    nghost: int,
     hx: float,
     hy: float,
     hz: float,
@@ -732,17 +733,18 @@ def add_viscuous_fluxes(
     if "passives" in idx.group_var_map:
         raise NotImplementedError("Viscous fluxes for passive scalars are not implemented yet.")
 
-    in1 = tuple(slice(1, None) if d == dim else slice(None) for d in XYZ_TUPLE)
-    in2 = tuple(slice(1, -1) if d == dim else slice(None) for d in XYZ_TUPLE)
+    # f has shape (nvars, nx + 1, ny + 2 * ng, nz + 2 * ng, 1)
+    # w has shape (nvars, nx + 2 * ng, ny + 2 * ng, nz + 2 * ng, 1)
+    in1 = tuple(slice(nghost - 1, -nghost) if d == dim else slice(None) for d in XYZ_TUPLE)
 
     # interpolate continuous interface nodes using an even stencil
     _wf_ = xp.empty((*_w_.shape, 1))  # TEMP ARRAY
     interpolate_interface_nodes(_w_, _wf_, dim, active_dims, p, use_GL)
 
-    rho = _wf_[idx("rho"), *in2]
-    vx = _wf_[idx("vx"), *in2]
-    vy = _wf_[idx("vy"), *in2]
-    vz = _wf_[idx("vz"), *in2]
+    rho = _wf_[idx("rho"), *in1]
+    vx = _wf_[idx("vx"), *in1]
+    vy = _wf_[idx("vy"), *in1]
+    vz = _wf_[idx("vz"), *in1]
     vxyz = _wf_[idx("v"), ...]
 
     # assign dvdx9 as [dudx, dvdx, dwdx, dudy, dvdy, dwdy, dudz, dvdz, dwdz]
@@ -757,35 +759,35 @@ def add_viscuous_fluxes(
 
     minus_nu_rho = -nu * rho  # TEMP ARRAY
     if dim == "x":
-        Pi11 = 4 * dvdx9[0, *in2] - 2 * dvdx9[4, *in2] - 2 * dvdx9[8, *in2]  # TEMP ARRAY
+        Pi11 = 4 * dvdx9[0, *in1] - 2 * dvdx9[4, *in1] - 2 * dvdx9[8, *in1]  # TEMP ARRAY
         Pi11 *= minus_nu_rho / 3
-        Pi12 = minus_nu_rho * (dvdx9[1, *in2] + dvdx9[3, *in2])  # TEMP ARRAY
-        Pi13 = minus_nu_rho * (dvdx9[2, *in2] + dvdx9[6, *in2])  # TEMP ARRAY
+        Pi12 = minus_nu_rho * (dvdx9[1, *in1] + dvdx9[3, *in1])  # TEMP ARRAY
+        Pi13 = minus_nu_rho * (dvdx9[2, *in1] + dvdx9[6, *in1])  # TEMP ARRAY
 
-        _f_[idx("mx"), *in1] += Pi11
-        _f_[idx("my"), *in1] += Pi12
-        _f_[idx("mz"), *in1] += Pi13
-        _f_[idx("E"), *in1] += vx * Pi11 + vy * Pi12 + vz * Pi13
+        _f_[idx("mx"), ...] += Pi11
+        _f_[idx("my"), ...] += Pi12
+        _f_[idx("mz"), ...] += Pi13
+        _f_[idx("E"), ...] += vx * Pi11 + vy * Pi12 + vz * Pi13
     elif dim == "y":
-        Pi22 = -2 * dvdx9[0, *in2] + 4 * dvdx9[4, *in2] - 2 * dvdx9[8, *in2]  # TEMP ARRAY
+        Pi22 = -2 * dvdx9[0, *in1] + 4 * dvdx9[4, *in1] - 2 * dvdx9[8, *in1]  # TEMP ARRAY
         Pi22 *= minus_nu_rho / 3
-        Pi12 = minus_nu_rho * (dvdx9[1, *in2] + dvdx9[3, *in2])  # TEMP ARRAY
-        Pi23 = minus_nu_rho * (dvdx9[5, *in2] + dvdx9[7, *in2])  # TEMP ARRAY
+        Pi12 = minus_nu_rho * (dvdx9[1, *in1] + dvdx9[3, *in1])  # TEMP ARRAY
+        Pi23 = minus_nu_rho * (dvdx9[5, *in1] + dvdx9[7, *in1])  # TEMP ARRAY
 
-        _f_[idx("mx"), *in1] += Pi12
-        _f_[idx("my"), *in1] += Pi22
-        _f_[idx("mz"), *in1] += Pi23
-        _f_[idx("E"), *in1] += vx * Pi12 + vy * Pi22 + vz * Pi23
+        _f_[idx("mx"), ...] += Pi12
+        _f_[idx("my"), ...] += Pi22
+        _f_[idx("mz"), ...] += Pi23
+        _f_[idx("E"), ...] += vx * Pi12 + vy * Pi22 + vz * Pi23
     elif dim == "z":
-        Pi33 = -2 * dvdx9[0, *in2] - 2 * dvdx9[4, *in2] + 4 * dvdx9[8, *in2]  # TEMP ARRAY
+        Pi33 = -2 * dvdx9[0, *in1] - 2 * dvdx9[4, *in1] + 4 * dvdx9[8, *in1]  # TEMP ARRAY
         Pi33 *= minus_nu_rho / 3
-        Pi13 = minus_nu_rho * (dvdx9[2, *in2] + dvdx9[6, *in2])  # TEMP ARRAY
-        Pi23 = minus_nu_rho * (dvdx9[5, *in2] + dvdx9[7, *in2])  # TEMP ARRAY
+        Pi13 = minus_nu_rho * (dvdx9[2, *in1] + dvdx9[6, *in1])  # TEMP ARRAY
+        Pi23 = minus_nu_rho * (dvdx9[5, *in1] + dvdx9[7, *in1])  # TEMP ARRAY
 
-        _f_[idx("mx"), *in1] += Pi13
-        _f_[idx("my"), *in1] += Pi23
-        _f_[idx("mz"), *in1] += Pi33
-        _f_[idx("E"), *in1] += vx * Pi13 + vy * Pi23 + vz * Pi33
+        _f_[idx("mx"), ...] += Pi13
+        _f_[idx("my"), ...] += Pi23
+        _f_[idx("mz"), ...] += Pi33
+        _f_[idx("E"), ...] += vx * Pi13 + vy * Pi23 + vz * Pi33
     else:
         raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
 
@@ -794,7 +796,7 @@ def add_viscuous_fluxes(
         dPdx = xp.empty_like(_wf_[idx("rho")])  # TEMP ARRAY
         h = {"x": hx, "y": hy, "z": hz}[dim]
         stencil_sweep(_wf_[idx("P")], normal_first_derivative_stencil / h, dPdx, dim)
-        _f_[idx("E"), *in1] += Chi * dPdx
+        _f_[idx("E"),] += Chi * dPdx
 
 
 def update_weno_fluxes(
@@ -921,6 +923,7 @@ def update_weno_fluxes(
                 idx,
                 dim,
                 active_dims,
+                mesh.nghost,
                 mesh.hx,
                 mesh.hy,
                 mesh.hz,
@@ -1116,6 +1119,7 @@ def update_MUSCL_fluxes(
                 idx,
                 dim,
                 active_dims,
+                mesh.nghost,
                 mesh.hx,
                 mesh.hy,
                 mesh.hz,
@@ -1275,7 +1279,7 @@ def compute_fv_dt(
     return dt
 
 
-def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int) -> int:
+def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool = False) -> int:
     """
     Returns the number of ghost cells required in the padded arrays of the HydroSolver based on
     the provided `fv_scheme`.
