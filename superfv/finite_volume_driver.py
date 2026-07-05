@@ -793,10 +793,10 @@ def add_viscuous_fluxes(
 
     # thermal fluxes
     if Chi > 0.0:
-        dPdx = xp.empty_like(_wf_[idx("rho")])  # TEMP ARRAY
+        dPdx = xp.empty((*_w_[idx("rho")].shape, 1))  # TEMP ARRAY
         h = {"x": hx, "y": hy, "z": hz}[dim]
-        stencil_sweep(_wf_[idx("P")], normal_first_derivative_stencil / h, dPdx, dim)
-        _f_[idx("E"),] += Chi * dPdx
+        stencil_sweep(_w_[idx("P")], normal_first_derivative_stencil / h, dPdx, dim)
+        _f_[idx("E"), ...] += Chi * dPdx[*in1]
 
 
 def update_weno_fluxes(
@@ -1286,48 +1286,72 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
     """
     left_right_reach = conservative_interpolation.left_right(fv_scheme.p).shape[1] // 2
     cell_center_reach = conservative_interpolation.cell_center(fv_scheme.p).shape[1] // 2
+    interface_reach = conservative_interpolation.interface(fv_scheme.p).shape[1] // 2
+    in_deriv_reach = (
+        conservative_interpolation.interface_first_derivative(fv_scheme.p).shape[1] // 2
+    )
+    first_derivative_reach = finite_difference.first_derivative(fv_scheme.p).shape[1] // 2
     transverse_reach = transverse_integration(fv_scheme.p).shape[1] // 2
 
-    nghost = left_right_reach  # Interpolating left/right face values
+    # MUSCL scheme early escape
+    if fv_scheme.muscl_params.use_MUSCL:
+        face_node_cost = 3 if fv_scheme.muscl_params.SED_params.use_SED else 1
+        riemann_cost = 1
+        return face_node_cost + riemann_cost
 
     # Cost of update_fv_workspace
-    if fv_scheme.lazy_primitive_mode in (LazyPrimitiveMode.NONE, LazyPrimitiveMode.ADAPTIVE):
-        interpolates_from_high_order_primitives = False
-        if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM:
-            interpolates_from_high_order_primitives = True
-        if fv_scheme.zhang_shu_params.use_ZS and fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
-            interpolates_from_high_order_primitives = True
+    match fv_scheme.lazy_primitive_mode:
+        case LazyPrimitiveMode.NONE:
+            w_workspace_setup_cost = cell_center_reach + transverse_reach
+        case LazyPrimitiveMode.ADAPTIVE:
+            w_workspace_setup_cost = cell_center_reach + transverse_reach + 2
+        case LazyPrimitiveMode.FULL:
+            w_workspace_setup_cost = 0
 
-        if interpolates_from_high_order_primitives:
-            nghost += cell_center_reach + transverse_reach  # Interpolating primitives before faces
-        else:
-            nghost = max(nghost, cell_center_reach)  # Interpolating cell centers
+    # Cost of interpolating primitive node faces
+    face_node_cost = left_right_reach
+    if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM:
+        face_node_cost += w_workspace_setup_cost
+    nghost = face_node_cost
 
-        if (
-            fv_scheme.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE
-            and fv_scheme.shock_detection_params.use_shock_detection
-        ):
-            nghost += 2  # Shock detection on top of primitive cell averages
+    # Zhang-Shu limiter cost
+    ZS_cost = 0
+    if fv_scheme.zhang_shu_params.use_ZS:
+        ZS_cost = 3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 1
+        if fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+            ZS_cost = max(ZS_cost, w_workspace_setup_cost)
+    nghost += ZS_cost
 
-    # Ghost cell cost of integrating fluxes and Riemann Solver
-    if fv_scheme.flux_quadrature == FluxQuadrature.TRANSVERSE and ndim >= 2:
-        nghost += max(transverse_reach, 1)  # Transverse integration + Riemann solver
+    # Flux integral cost
+    riemann_cost = 1
+    if fv_scheme.flux_quadrature == FluxQuadrature.TRANSVERSE:
+        transverse_cost = transverse_reach
     else:
-        nghost += 1  # Riemann solver
+        transverse_cost = 0
+    flux_integral_cost = max(riemann_cost, transverse_cost)
+    nghost += flux_integral_cost
 
-    # Ghost cell cost of slope limiter
+    # Viscosity cost
+    if viscosity:
+        interface_cost = max(cell_center_reach, interface_reach)
+        in_deriv_cost = max(cell_center_reach, in_deriv_reach)
+
+        viscosity_cost = w_workspace_setup_cost
+        viscosity_cost += max(interface_cost, in_deriv_cost)
+        viscosity_cost += first_derivative_reach  # Riemann solve
+        viscosity_cost += flux_integral_cost
+    else:
+        viscosity_cost = 0
+    nghost = max(nghost, viscosity_cost)
+
+    # MOOD cost
     mood_cost = 0
     if fv_scheme.mood_params.use_MOOD:
         if fv_scheme.mood_params.NAD_params.use_NAD:
             mood_cost += 1
         mood_cost += 2 if fv_scheme.mood_params.blend_troubles else 1
-
-    nghost += max(
-        max(1, cell_center_reach) if fv_scheme.zhang_shu_params.use_ZS else 0,
-        mood_cost,
-        3 if fv_scheme.muscl_params.SED_params.use_SED else 0,
-        3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 0,
-        3 if fv_scheme.mood_params.NAD_params.SED_params.use_SED else 0,
-    )
+        if fv_scheme.mood_params.SED_params.use_SED:
+            mood_cost = max(mood_cost, 3)
+    nghost = max(nghost, mood_cost)
 
     return nghost

@@ -475,7 +475,11 @@ class HydroSolver:
             nx=nx,
             ny=ny,
             nz=nz,
-            nghost=compute_fv_nghost(fv_scheme_params, len(active_dims)),
+            nghost=compute_fv_nghost(
+                fv_scheme_params,
+                len(active_dims),
+                viscosity=hydro_params.nu > 0.0,
+            ),
             xlims=xlims,
             ylims=ylims,
             zlims=zlims,
