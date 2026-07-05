@@ -1,6 +1,6 @@
 from enum import Enum
 from functools import lru_cache
-from typing import Dict, Literal, Tuple
+from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 
@@ -43,32 +43,32 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
 
-class FV_Stencil(Enum):
-    CONSERVATIVE_INTERPOLATION_CENTER = 0
-    CONSERVATIVE_INTERPOLATION_LEFT_RIGHT = 1
-    CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE = 2
-    CONSERVATIVE_INTERPOLATION_INTERFACE = 3
-    CONSERVATIVE_INTERPOLATION_INTERFACE_FIRST_DERIVATIVE = 4
+class Stencil(Enum):
+    CONSERVATIVE_INTERP_CENTER = 0
+    CONSERVATIVE_INTERP_LEFT_RIGHT = 1
+    CONSERVATIVE_INTERP_GAUSS_LEGNEDRE = 2
+    CONSERVATIVE_INTERP_INTERFACE = 3
+    CONSERVATIVE_INTERP_INTERFACE_1ST_DER = 4
     TRANSVERSE_INTEGRATION = 5
     FINITE_DIFFERENCE_FIRST_DERIVATIVE = 6
 
 
 @lru_cache
-def _stencil_cache(interpolation: FV_Stencil, p: int, cupy: bool = False):
+def _stencil_cache(interpolation: Stencil, p: int, cupy: bool = False) -> ArrayLike:
     match interpolation:
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER:
+        case Stencil.CONSERVATIVE_INTERP_CENTER:
             stencil = conservative_interpolation.cell_center(p)
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT:
+        case Stencil.CONSERVATIVE_INTERP_LEFT_RIGHT:
             stencil = conservative_interpolation.left_right(p)
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE:
+        case Stencil.CONSERVATIVE_INTERP_GAUSS_LEGNEDRE:
             stencil = conservative_interpolation.gauss_legendre_nodes(p)
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_INTERFACE:
+        case Stencil.CONSERVATIVE_INTERP_INTERFACE:
             stencil = conservative_interpolation.interface(p)
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_INTERFACE_FIRST_DERIVATIVE:
+        case Stencil.CONSERVATIVE_INTERP_INTERFACE_1ST_DER:
             stencil = conservative_interpolation.interface_first_derivative(p)
-        case FV_Stencil.TRANSVERSE_INTEGRATION:
+        case Stencil.TRANSVERSE_INTEGRATION:
             stencil = transverse_integration(p)
-        case FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE:
+        case Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE:
             stencil = finite_difference.first_derivative(p)
 
     if CUPY_AVAILABLE and cupy:
@@ -97,7 +97,7 @@ def interpolate_cell_centers(
     Interpolate finite volume cell centers from `_q_` and write them to `_qcc_`.
     """
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
-    weights = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER, p, cupy)
+    weights = _stencil_cache(Stencil.CONSERVATIVE_INTERP_CENTER, p, cupy)
     na = cp.newaxis if cupy else np.newaxis
     ndim = len(active_dims)
 
@@ -141,7 +141,7 @@ def integrate_cell_averages(
     Interpolate finite volume cell averages from `_qcc_` and write them to `_q_`.
     """
     cupy = CUPY_AVAILABLE and isinstance(_qcc_, cp.ndarray)
-    weights = _stencil_cache(FV_Stencil.TRANSVERSE_INTEGRATION, p, cupy)
+    weights = _stencil_cache(Stencil.TRANSVERSE_INTEGRATION, p, cupy)
     na = cp.newaxis if cupy else np.newaxis
     ndim = len(active_dims)
 
@@ -184,7 +184,7 @@ def interpolate_face_nodes(
     gauss_legendre: bool = False,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
-    lr_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT, p, cupy)
+    lr_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_LEFT_RIGHT, p, cupy)
     na = cp.newaxis if cupy else np.newaxis
     ndim = len(active_dims)
 
@@ -212,7 +212,7 @@ def interpolate_face_nodes(
         return
 
     if gauss_legendre:
-        gl_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE, p, cupy)
+        gl_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_GAUSS_LEGNEDRE, p, cupy)
         ngl = gl_stencil.shape[0]
 
         if ndim == 2:
@@ -246,7 +246,7 @@ def interpolate_face_nodes(
             stencil_sweep(_qtemp2_, gl_stencil, _qj_, trans_dim2)
             return
     else:
-        cc_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER, p, cupy)
+        cc_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_CENTER, p, cupy)
         if _qj_.shape[4] != 2:
             raise ValueError(
                 "The 5th dimension of _qj_ must be 2 for transverse integration in 2D or 3D."
@@ -281,11 +281,20 @@ def interpolate_interface_nodes(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     gauss_legendre: bool = False,
+    first_derivative: bool = False,
+    h: Optional[float] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
     xp = cp if cupy else np
-    interface_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_INTERFACE, p, cupy)
-    center_stencil = _stencil_cache(FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER, p, cupy)
+    if first_derivative:
+        if h is None:
+            raise ValueError("h must be provided for first_derivative=True.")
+        interface_stencil = (
+            _stencil_cache(Stencil.CONSERVATIVE_INTERP_INTERFACE_1ST_DER, p, cupy) / h
+        )
+    else:
+        interface_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_INTERFACE, p, cupy)
+    center_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_CENTER, p, cupy)
     na = xp.newaxis
     ndim = len(active_dims)
 
@@ -358,7 +367,7 @@ def integrate_transverse_nodes(
     p: int,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
-    stencil = _stencil_cache(FV_Stencil.TRANSVERSE_INTEGRATION, p, cupy)
+    stencil = _stencil_cache(Stencil.TRANSVERSE_INTEGRATION, p, cupy)
     na = cp.newaxis if cupy else np.newaxis
     ndim = len(active_dims)
 
@@ -720,11 +729,8 @@ def add_viscuous_fluxes(
 ):
     cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
     xp = cp if cupy else np
-    normal_first_derivative_stencil = _stencil_cache(
-        FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE, p, cupy
-    )
     transverse_first_derivative_stencil = _stencil_cache(
-        FV_Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE, p, cupy
+        Stencil.FINITE_DIFFERENCE_FIRST_DERIVATIVE, p, cupy
     )
 
     if dim not in active_dims:
@@ -745,7 +751,8 @@ def add_viscuous_fluxes(
     vx = _wf_[idx("vx"), *in1]
     vy = _wf_[idx("vy"), *in1]
     vz = _wf_[idx("vz"), *in1]
-    vxyz = _wf_[idx("v"), ...]
+    vxyzf = _wf_[idx("v"), ...]
+    vxyz = _w_[idx("v"), ...]
 
     # assign dvdx9 as [dudx, dvdx, dwdx, dudy, dvdy, dwdy, dudz, dvdz, dwdz]
     dvdx9 = xp.zeros((9, *_w_.shape[1:4], 1))  # TEMP ARRAY
@@ -753,9 +760,11 @@ def add_viscuous_fluxes(
         slc = slice(i * 3, (i + 1) * 3)
         h = {"x": hx, "y": hy, "z": hz}[d]
         if d == dim:
-            stencil_sweep(vxyz, normal_first_derivative_stencil / h, dvdx9[slc, ...], d)
+            interpolate_interface_nodes(
+                vxyz, dvdx9[slc, ...], d, active_dims, p, use_GL, first_derivative=True, h=h
+            )
         elif d in active_dims:
-            stencil_sweep(vxyz, transverse_first_derivative_stencil / h, dvdx9[slc, ...], d)
+            stencil_sweep(vxyzf, transverse_first_derivative_stencil / h, dvdx9[slc, ...], d)
 
     minus_nu_rho = -nu * rho  # TEMP ARRAY
     if dim == "x":
@@ -795,7 +804,9 @@ def add_viscuous_fluxes(
     if Chi > 0.0:
         dPdx = xp.empty((*_w_[idx("rho")].shape, 1))  # TEMP ARRAY
         h = {"x": hx, "y": hy, "z": hz}[dim]
-        stencil_sweep(_w_[idx("P")], normal_first_derivative_stencil / h, dPdx, dim)
+        interpolate_interface_nodes(
+            _w_[idx("P"), ...], dPdx, dim, active_dims, p, use_GL, first_derivative=True, h=h
+        )
         _f_[idx("E"), ...] += Chi * dPdx[*in1]
 
 
@@ -1350,7 +1361,7 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
         if fv_scheme.mood_params.NAD_params.use_NAD:
             mood_cost += 1
         mood_cost += 2 if fv_scheme.mood_params.blend_troubles else 1
-        if fv_scheme.mood_params.SED_params.use_SED:
+        if fv_scheme.mood_params.NAD_params.SED_params.use_SED:
             mood_cost = max(mood_cost, 3)
     nghost = max(nghost, mood_cost)
 
