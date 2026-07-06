@@ -807,7 +807,7 @@ def add_viscuous_fluxes(
         interpolate_interface_nodes(
             _w_[idx("P"), ...], dPdx, dim, active_dims, p, use_GL, first_derivative=True, h=h
         )
-        _f_[idx("E"), ...] += Chi * dPdx[*in1]
+        _f_[idx("E"), ...] += -Chi * dPdx[*in1]
 
 
 def update_weno_fluxes(

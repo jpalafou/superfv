@@ -1,6 +1,6 @@
 import pytest
 
-from superfv.finite_volume_driver import FV_Stencil
+from superfv.finite_volume_driver import Stencil
 from superfv.stencils import transverse_integration
 from superfv.stencils.conservative_interpolation import (
     cell_center,
@@ -17,10 +17,10 @@ from superfv.tools.norms import linf_norm
 @pytest.mark.parametrize(
     "stencil",
     [
-        FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER,
-        FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT,
-        FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE,
-        FV_Stencil.TRANSVERSE_INTEGRATION,
+        Stencil.CONSERVATIVE_INTERP_CENTER,
+        Stencil.CONSERVATIVE_INTERP_LEFT_RIGHT,
+        Stencil.CONSERVATIVE_INTERP_GAUSS_LEGNEDRE,
+        Stencil.TRANSVERSE_INTEGRATION,
     ],
 )
 @pytest.mark.parametrize("ninterps", [1, 2])
@@ -34,13 +34,13 @@ def test_trivial_interpolation(active_dims, p, stencil, ninterps):
     )
 
     match stencil:
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_CENTER:
+        case Stencil.CONSERVATIVE_INTERP_CENTER:
             weights = cell_center(p)
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_LEFT_RIGHT:
+        case Stencil.CONSERVATIVE_INTERP_LEFT_RIGHT:
             weights = left_right(p)
-        case FV_Stencil.CONSERVATIVE_INTERPOLATION_GAUSS_LEGNEDRE:
+        case Stencil.CONSERVATIVE_INTERP_GAUSS_LEGNEDRE:
             weights = gauss_legendre_nodes(p)
-        case FV_Stencil.TRANSVERSE_INTEGRATION:
+        case Stencil.TRANSVERSE_INTEGRATION:
             weights = transverse_integration(p)
         case _:
             raise ValueError(f"Unknown stencil: {stencil}")
