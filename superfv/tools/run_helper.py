@@ -19,7 +19,8 @@ def run_multiple_simulations(
         configs: A dictionary mapping simulation names to tuples of the form
             `(init_params, run_params)`, where `init_params` is a dictionary of
             parameters to pass to the solver initialization and `run_params` is
-            a dictionary of parameters to pass to the `run` method.
+            a dictionary of parameters to pass to the `run` method, or to
+            `take_n_steps` when it contains `n`.
         base_path: The directory to save all simulation outputs to. Each simulation
             will be saved to a subdirectory of `base_path` with the name of the
             simulation provieed in `configs`.
@@ -78,7 +79,10 @@ def run_multiple_simulations(
         sim = HydroSolver(**(init_params | dict(output_path=sim_path, overwrite=True)))
 
         try:
-            sim.run(**run_params)
+            if "n" in run_params:
+                sim.take_n_steps(**run_params)
+            else:
+                sim.run(**run_params)
         except RuntimeError as e:
             print(f"Failed: {e}\n\n")
             with open(error_path, "w") as f:
