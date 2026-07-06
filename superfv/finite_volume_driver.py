@@ -1359,10 +1359,11 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
     mood_cost = 0
     if fv_scheme.mood_params.use_MOOD:
         if fv_scheme.mood_params.NAD_params.use_NAD:
-            mood_cost += 1
-        mood_cost += 2 if fv_scheme.mood_params.blend_troubles else 1
-        if fv_scheme.mood_params.NAD_params.SED_params.use_SED:
-            mood_cost = max(mood_cost, 3)
+            mood_cost = 1
+            if fv_scheme.mood_params.NAD_params.SED_params.use_SED:
+                mood_cost = 3
+        if fv_scheme.mood_params.blend_troubles:
+            mood_cost = 3
     nghost = max(nghost, mood_cost)
 
     return nghost
