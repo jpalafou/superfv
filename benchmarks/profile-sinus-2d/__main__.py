@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--cupy", action="store_true", help="Use CuPy for GPU acceleration")
 cupy = parser.parse_args().cupy
 
-run_params = dict(n=10, snapshot_mode=SnapshotMode.NONE)
+run_params = dict(n=11, snapshot_mode=SnapshotMode.NONE)
 init_params = dict(
     ic=partial(ics.sinus, rho_min=1, rho_max=2, vx=2, vy=1, P=1),
     gamma=1.4,
@@ -92,6 +92,6 @@ run_multiple_simulations(
         )
         for (name, config), N in product(configs.items(), N_values)
     },
-    "/scratch/gpfs/TEYSSIER/jp7427/out/timing-of-2d-sine-wave/" + ("cupy/" if cupy else ""),
+    "/scratch/gpfs/jp7427/superfv/sinus-2d-profiling/" + ("cupy/" if cupy else ""),
     overwrite=True,
 )
