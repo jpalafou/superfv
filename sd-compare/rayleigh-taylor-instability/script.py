@@ -98,7 +98,6 @@ def run_spd_sim(name, p, NDOF, **kwargs):
         limiting_variables=[0, 1, 2, 4],
         PAD=True,
         SED=True,
-        NAD="",
         blending=False,
         folder=path,
         **kwargs,
@@ -126,17 +125,18 @@ if __name__ == "__main__":
     for p, riemann_solver in product([3, 7], ["llf", "hllc"]):
         print(f"Running FV and SD simulations for p={p}, riemann_solver={riemann_solver}")
         run_superfv_sim(
-            riemann_solver + "_rtol=0",
+            riemann_solver,
             p,
             NDOF,
-            rtol=0,
+            rtol=1e-5,
             riemann_solver=dict(llf=RiemannSolver.LLF, hllc=RiemannSolver.HLLC)[riemann_solver],
         )
         run_spd_sim(
-            riemann_solver + "_rtol=0",
+            riemann_solver + "_romain_NAD",
             p,
             NDOF,
-            tolerance=0,
+            tolerance=1e-5,
+            NAD="romain",
             riemann_solver_sd=riemann_solver,
             riemann_solver_fv=riemann_solver,
         )
