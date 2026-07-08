@@ -98,11 +98,11 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
     # take nsteps and time the simulation
     sim.perform_iterations(1)  # warm-up / compile
     step0 = sim.n_step
-    sim.perform_iterations(nsteps)  # use sim.execution_time
+    sim.perform_iterations(nsteps)  # use synced take_step timing
     assert sim.n_step - step0 == nsteps
 
     report = dict(
-        DOF_updates_per_second=sim.domain_size * nsteps / sim.execution_times["total"],
+        DOF_updates_per_second=sim.domain_size * nsteps / sim.execution_times["take_step"],
         riemann_solver_time_per_step=sim.execution_times["riemann_solver_sd"] / nsteps,
         limiter_time_per_step=sim.execution_times["mood_loop"] / nsteps,
     )
