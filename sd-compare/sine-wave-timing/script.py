@@ -23,7 +23,9 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
         nx=N,
         ny=N,
         p=p,
+        use_MOOD=True,
         cupy=True,
+        profile=True,
         **kwargs,
     )
 
@@ -37,11 +39,15 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
 
     total_time = sum(x.timer["take_step"].cum_time for x in step_history)
     riemann_solver_time = sum(x.timer["riemann_solver"].cum_time for x in step_history)
+    limiter_time = sum(x.timer["mood_loop"].cum_time for x in step_history)
 
-    cell_updates_per_second = nsteps * N**2 / total_time
-    riemann_solver_time_per_step = riemann_solver_time / nsteps
+    report = dict(
+        cell_updates_per_second=nsteps * N**2 / total_time,
+        riemann_solver_time_per_step=riemann_solver_time / nsteps,
+        limiter_time_per_step=limiter_time / nsteps,
+    )
 
-    return cell_updates_per_second, riemann_solver_time_per_step
+    return report
 
 
 def time_spd_sim(p, NDOF, nsteps, **kwargs):
@@ -71,8 +77,16 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
         init_fct=partial(sine_wave, vx=2.0, vy=1.0),
         use_cupy=True,
         time_integrator="rk3",
-        scheme="SD",
-        FB=False,
+        # scheme="SD",
+        # FB=False,
+        scheme="SDFB",
+        fallback="MUSCL",
+        slope_limiter="moncen",
+        potential=True,
+        limiting_variables=[0, 1, 2, 4],
+        PAD=True,
+        SED=True,
+        blending=False,
         riemann_solver_sd="hllc",
         riemann_solver_fv="hllc",
         **kwargs,
@@ -84,10 +98,13 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
     sim.perform_iterations(nsteps)  # use sim.execution_time
     assert sim.n_step - step0 == nsteps
 
-    DOF_updates_per_second = sim.domain_size * nsteps / sim.execution_times["total"]
-    riemann_solver_time_per_step = sim.execution_times["riemann_solver_sd"] / nsteps
+    report = dict(
+        DOF_updates_per_second=sim.domain_size * nsteps / sim.execution_times["total"],
+        riemann_solver_time_per_step=sim.execution_times["riemann_solver_sd"] / nsteps,
+        limiter_time_per_step=sim.execution_times["mood_loop"] / nsteps,
+    )
 
-    return DOF_updates_per_second, riemann_solver_time_per_step
+    return report
 
 
 if __name__ == "__main__":
@@ -95,16 +112,32 @@ if __name__ == "__main__":
     for NDOF in [64, 128, 256, 512, 1024, 2048, 3000]:
         for p in [3, 7]:
             print(f"Running FV simulation with NDOF={NDOF}, p={p}")
-            update_rate, rs_per_step = run_superfv_sim(p, NDOF, nsteps=10)
+            fv_report = run_superfv_sim(p, NDOF, nsteps=10)
+            update_rate = fv_report["cell_updates_per_second"]
             data.append(
-                dict(NDOF=NDOF, p=p, scheme="FV", update_rate=update_rate, rs_per_step=rs_per_step)
+                dict(
+                    NDOF=NDOF,
+                    p=p,
+                    scheme="FV",
+                    update_rate=update_rate,
+                    rs_per_step=fv_report["riemann_solver_time_per_step"],
+                    limiter_per_step=fv_report["limiter_time_per_step"],
+                )
             )
             print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
 
             print(f"Running SD simulation with NDOF={NDOF}, p={p}")
-            update_rate, rs_per_step = time_spd_sim(p, NDOF, nsteps=10)
+            spd_report = time_spd_sim(p, NDOF, nsteps=10)
+            update_rate = spd_report["DOF_updates_per_second"]
             data.append(
-                dict(NDOF=NDOF, p=p, scheme="SD", update_rate=update_rate, rs_per_step=rs_per_step)
+                dict(
+                    NDOF=NDOF,
+                    p=p,
+                    scheme="SD",
+                    update_rate=update_rate,
+                    rs_per_step=spd_report["riemann_solver_time_per_step"],
+                    limiter_per_step=spd_report["limiter_time_per_step"],
+                )
             )
             print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
     df = pd.DataFrame(data)
