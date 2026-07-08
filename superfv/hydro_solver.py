@@ -302,7 +302,7 @@ class HydroSolver:
 
         Solver parameters:
             cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
-            profile: If True, many timers are added to the solver.
+            profile: If True, many timers are added to the solver beyond "take_step".
             output_path: Optional path to save simulation outputs. If None, no outputs are saved.
             discard_after_writing: If True, discard arrays after writing to disk to save memory.
             overwrite: If True, overwrite existing output directory if it exists.
@@ -793,8 +793,8 @@ class HydroSolver:
             substeps=[],
             timer=MultiTimer(
                 [
-                    "take_snapshot",
                     "take_step",
+                    "take_snapshot",
                     "compute_dt",
                     "update_unew",
                     "update_W",
@@ -805,16 +805,14 @@ class HydroSolver:
             ),
         )
 
-    def _start_timer(self, cat: str, force: bool = False):
-        if self.params.profile or force:
-            self.step_summary.timer.start(cat, self.params.cupy)
+    def _start_timer(self, cat: str, sync: bool = True):
+        self.step_summary.timer.start(cat, self.params.cupy and sync)
 
-    def _stop_timer(self, cat: str):
-        if self.step_summary.timer.is_timing(cat):
-            self.step_summary.timer.stop(cat, self.params.cupy)
+    def _stop_timer(self, cat: str, sync: bool = True):
+        self.step_summary.timer.stop(cat, self.params.cupy and sync)
 
     def _take_snapshot(self):
-        self._start_timer("take_snapshot")  # TIMER START
+        self.params.profile and self._start_timer("take_snapshot")  # TIMER START
 
         params = self.params
         idx = params.variable_index_map
@@ -871,7 +869,7 @@ class HydroSolver:
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
 
-        self._stop_timer("take_snapshot")  # TIMER STOP
+        self.params.profile and self._stop_timer("take_snapshot")  # TIMER STOP
 
     def _write_params_files(self):
         output_path = self.params.output_path
@@ -1064,8 +1062,6 @@ class HydroSolver:
         self._update_log_arrays(LogArrayAction.SUBSTEP_ADD)
 
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
-        self._start_timer("update_unew")  # TIMER START
-
         params = self.params
         unew = self.arrays["unew"]
 
@@ -1114,11 +1110,9 @@ class HydroSolver:
             case _:
                 raise ValueError(f"Unsupported time integrator: {time_integrator}")
 
-        self._stop_timer("update_unew")  # TIMER STOP
-
     def _open_step(self):
         self._update_log_arrays(LogArrayAction.RESET)
-        self._start_timer("take_step", force=True)  # TIMER START
+        self._start_timer("take_step")  # TIMER START
 
     def _close_step(self, take_snapshot: bool):
         self._stop_timer("take_step")  # TIMER STOP
@@ -1219,13 +1213,16 @@ class HydroSolver:
         u = arrays["u"]
         unew = arrays["unew"]
 
-        # Compute dt which may need to be clipped
+        # Compute dt
+        params.profile and self._start_timer("compute_dt")  # TIMER START
         dt = compute_fv_dt(u, idx, mesh, params.hydro)
         self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
+        params.profile and self._stop_timer("compute_dt")  # TIMER STOP
 
         # Compute new state
+        params.profile and self._start_timer("update_unew")  # TIMER START
         self._update_unew(t, u, dt, time_integrator)
 
         # Revise time-step size if needed
@@ -1235,6 +1232,7 @@ class HydroSolver:
                 self._check_dt(dt)
                 self._update_unew(t, u, dt, time_integrator)
                 self.step_summary.n_dt_revisions += 1
+        params.profile and self._stop_timer("update_unew")  # TIMER STOP
 
         # Update the state
         u[...] = unew
