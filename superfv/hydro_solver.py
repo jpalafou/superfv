@@ -816,6 +816,9 @@ class HydroSolver:
                     "riemann_solver",
                     "zhang_shu_limiter",
                     "mood_loop",
+                    "detect_troubles",
+                    "fallback_fluxes",
+                    "assign_fluxes",
                 ]
             ),
         )
@@ -1015,6 +1018,7 @@ class HydroSolver:
                     bc_params,
                     hydro_params,
                     self.substep_summary,
+                    self.step_summary.timer if self.params.profile else None,
                 )
                 params.profile and self._stop_timer("mood_loop")  # TIMER STOP
 

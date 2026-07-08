@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 
@@ -26,7 +26,7 @@ from superfv.slope_limiting import compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
-from superfv.tools.step_history import SubstepSummary
+from superfv.tools.step_history import MultiTimer, SubstepSummary
 from superfv.tools.variable_index_map import VariableIndexMap
 
 
@@ -434,12 +434,14 @@ def mood_loop(
     bc_params: BoundaryConditionParameters,
     hydro_params: HydroParameters,
     substep_summary: SubstepSummary,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Revise flux arrays "F", .. until no more revisable troubled cells are detected or the maximum
     number of revisions is reached. Update substep summary.
     """
-    xp = cp if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray) else np
+    using_cupy = CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray)
+    xp = cp if using_cupy else np
 
     mood_params = base_scheme.mood_params
     n_cascade = len(mood_params.fallback_cascade)
@@ -457,6 +459,7 @@ def mood_loop(
     i_max_computed: int = 0
 
     for _ in range(mood_params.max_revs):
+        timer is not None and timer.start("detect_troubles", using_cupy)  # TIMER START
         n_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
@@ -479,6 +482,7 @@ def mood_loop(
             hydro_params,
         )
         substep_summary.n_troubles_hist.append(n_troubles)
+        timer is not None and timer.stop("detect_troubles", using_cupy)  # TIMER STOP
 
         # Do not revise if no revisable troubled cells
         if n_troubles == 0:
@@ -490,6 +494,7 @@ def mood_loop(
         i_max = xp.max(_cascade_idx_).item()
         if i_max == i_max_computed + 1:
             next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
+            timer is not None and timer.start("fallback_fluxes", using_cupy)  # TIMER START
             update_fv_fluxes(
                 _uold_,
                 _wold_,
@@ -511,12 +516,14 @@ def mood_loop(
                 _G_fallback_[..., i_max] = _G_.copy()
             if "z" in active_dims:
                 _H_fallback_[..., i_max] = _H_.copy()
+            timer is not None and timer.stop("fallback_fluxes", using_cupy)  # TIMER STOP
             i_max_computed += 1
         elif i_max != i_max_computed:
             raise RuntimeError(f"Unexpected {i_max=} with {i_max_computed=}.")
 
         # Update state
         substep_summary.n_MOOD_revisions += 1
+        timer is not None and timer.start("assign_fluxes", using_cupy)  # TIMER START
         assign_fluxes(
             _cascade_idx_,
             _F_fallback_[insert_slice(Finterior, 4, slice(None))] if using_x else np.array([]),
@@ -530,6 +537,7 @@ def mood_loop(
             base_scheme,
             i_max_computed,
         )
+        timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
 
     if mood_params.detect_closing_troubles:
         n_closing_troubles = detect_troubled_cells(
