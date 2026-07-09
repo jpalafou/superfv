@@ -13,6 +13,13 @@ if CUPY_AVAILABLE:
 
 base_directory = "/scratch/gpfs/jp7427/FVvsSD/sinus-timing/"
 
+MOOD_ROUTINES = (
+    "candidate_solution",
+    "detect_troubles",
+    "fallback_fluxes",
+    "assign_fluxes",
+)
+
 
 def run_superfv_sim(p, N, nsteps, **kwargs):
 
@@ -41,12 +48,16 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
 
     total_time = sum(x.timer["take_step"].cum_time for x in step_history)
     riemann_solver_time = sum(x.timer["riemann_solver"].cum_time for x in step_history)
-    limiter_time = sum(x.timer["mood_loop"].cum_time for x in step_history)
+    mood_loop_time = sum(x.timer["mood_loop"].cum_time for x in step_history)
+    mood_routine_times = {
+        cat: sum(x.timer[cat].cum_time for x in step_history) for cat in MOOD_ROUTINES
+    }
 
     report = dict(
         cell_updates_per_second=nsteps * N**2 / total_time,
         riemann_solver_time_per_step=riemann_solver_time / nsteps,
-        limiter_time_per_step=limiter_time / nsteps,
+        mood_loop_time_per_step=mood_loop_time / nsteps,
+        **{f"{cat}_per_step": mood_routine_times[cat] / nsteps for cat in MOOD_ROUTINES},
     )
 
     return report
@@ -104,7 +115,8 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
     report = dict(
         DOF_updates_per_second=sim.domain_size * nsteps / sim.execution_times["take_step"],
         riemann_solver_time_per_step=sim.execution_times["riemann_solver_sd"] / nsteps,
-        limiter_time_per_step=sim.execution_times["mood_loop"] / nsteps,
+        mood_loop_time_per_step=sim.execution_times["mood_loop"] / nsteps,
+        **{f"{cat}_per_step": sim.execution_times[cat] / nsteps for cat in MOOD_ROUTINES},
     )
 
     return report
@@ -124,7 +136,8 @@ if __name__ == "__main__":
                     scheme="FV",
                     update_rate=update_rate,
                     rs_per_step=fv_report["riemann_solver_time_per_step"],
-                    limiter_per_step=fv_report["limiter_time_per_step"],
+                    mood_loop_per_step=fv_report["mood_loop_time_per_step"],
+                    **{f"{cat}_per_step": fv_report[f"{cat}_per_step"] for cat in MOOD_ROUTINES},
                 )
             )
             print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
@@ -139,7 +152,8 @@ if __name__ == "__main__":
                     scheme="SD",
                     update_rate=update_rate,
                     rs_per_step=spd_report["riemann_solver_time_per_step"],
-                    limiter_per_step=spd_report["limiter_time_per_step"],
+                    mood_loop_per_step=spd_report["mood_loop_time_per_step"],
+                    **{f"{cat}_per_step": spd_report[f"{cat}_per_step"] for cat in MOOD_ROUTINES},
                 )
             )
             print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
