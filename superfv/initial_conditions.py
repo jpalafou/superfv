@@ -834,7 +834,6 @@ def lecoanet_kelvin_helmholtz(
     v2 += xp.exp(-((z - z2) ** 2) / sigma**2)
     v2 *= A * xp.sin(2 * np.pi * x)
     P = P0
-    dye = 0.5 * (tanh2 - tanh1 + 2.0)
 
     out = xp.zeros((len(idx.idxs), *x.shape))
 
@@ -842,10 +841,38 @@ def lecoanet_kelvin_helmholtz(
     out[idx("v" + dim1)] = v1
     out[idx("v" + dim2)] = v2
     out[idx("P")] = P
-    if "passives" in idx.group_var_map and "dye" in idx.group_var_map["passives"]:
-        out[idx("dye")] = dye
 
     return out
+
+
+def lecoanet_kelvin_helmholtz_dye(
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float,
+    *,
+    xp: ModuleType,
+    a: float = 0.05,
+    z1: float = 0.5,
+    z2: float = 1.5,
+) -> ArrayLike:
+    """
+    IC corresponding to `lecoanet_kelvin_helmholtz` for a passive scalar named 'dye'.
+    """
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Kelvin-Helmholtz initial condition is only defined in 2D.")
+    dim1 = dims[0]
+    dim2 = dims[1]
+
+    x = {"x": x, "y": y, "z": z}[dim1]
+    z = {"x": x, "y": y, "z": z}[dim2]
+
+    tanh1 = xp.tanh((z - z1) / a)
+    tanh2 = xp.tanh((z - z2) / a)
+
+    dye = 0.5 * (tanh2 - tanh1 + 2.0)
+    return dye
 
 
 def double_mach_reflection(
