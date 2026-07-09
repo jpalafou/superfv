@@ -816,6 +816,7 @@ class HydroSolver:
                     "riemann_solver",
                     "zhang_shu_limiter",
                     "mood_loop",
+                    "candidate_solution",
                     "detect_troubles",
                     "fallback_fluxes",
                     "assign_fluxes",

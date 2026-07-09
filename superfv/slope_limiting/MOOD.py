@@ -473,7 +473,7 @@ def mood_loop(
     i_max_computed: int = 0
 
     for _ in range(mood_params.max_revs):
-        timer is not None and timer.start("detect_troubles", using_cupy)  # TIMER START
+        timer is not None and timer.start("candidate_solution", using_cupy)  # TIMER START
         compute_candidate_solution(
             _uold_,
             _F_[Finterior] if using_x else np.array([]),
@@ -489,6 +489,8 @@ def mood_loop(
             bc_params,
             hydro_params,
         )
+        timer is not None and timer.stop("candidate_solution", using_cupy)  # TIMER STOP
+        timer is not None and timer.start("detect_troubles", using_cupy)  # TIMER START
         n_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
@@ -562,6 +564,7 @@ def mood_loop(
         timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
 
     if mood_params.detect_closing_troubles:
+        timer is not None and timer.start("candidate_solution", using_cupy)  # TIMER START
         compute_candidate_solution(
             _uold_,
             _F_[Finterior] if using_x else np.array([]),
@@ -577,6 +580,8 @@ def mood_loop(
             bc_params,
             hydro_params,
         )
+        timer is not None and timer.stop("candidate_solution", using_cupy)  # TIMER STOP
+        timer is not None and timer.start("detect_troubles", using_cupy)  # TIMER START
         n_closing_troubles = detect_troubled_cells(
             _uold_,
             _wold_,
@@ -592,6 +597,7 @@ def mood_loop(
             bc_params,
         )
         substep_summary.n_troubles_hist.append(n_closing_troubles)
+        timer is not None and timer.stop("detect_troubles", using_cupy)  # TIMER STOP
 
 
 if CUPY_AVAILABLE:
