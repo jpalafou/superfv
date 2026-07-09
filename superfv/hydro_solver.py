@@ -180,6 +180,7 @@ class HydroSolver:
         # MOOD params
         use_MOOD: bool = False,
         fallback_cascade: FallbackCascade = FallbackCascade.MUSCL,
+        fallback_riemann_solver: Optional[RiemannSolver] = None,
         max_revs: int = 1,
         blend_troubles: bool = False,
         skip_trouble_counts: bool = False,
@@ -292,6 +293,8 @@ class HydroSolver:
                 schemes from `p` to 0 in increments of 1), FallbackCascade.MUSCL (which falls back
                 to MUSCL), FallbackCascade.FIRST_ORDER (which falls back to first-order),
                 and FallbackCascade.MUSCL0 (which falls back first to MUSCL and then first-order).
+            fallback_riemann_solver: Riemann solver to use in the fallback schemes in MOOD.
+                If None, defaults to the provided `riemann_solver` for the base scheme.
             max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
                 number of fallback schemes in the cascade.
             blend_troubles: If True, blend troubled cells in MOOD scheme.
@@ -353,7 +356,6 @@ class HydroSolver:
         dissipation = nu > 0.0 or Chi > 0.0 or nu_dye > 0.0
         hydro_params = HydroParameters(
             gamma=gamma,
-            riemann_solver=riemann_solver,
             CFL=CFL,
             nu=nu,
             Chi=Chi,
@@ -378,6 +380,8 @@ class HydroSolver:
 
         fallback_cascade_list: List[FV_SchemeParameters] = []
         if use_MOOD:
+            if fallback_riemann_solver is None:
+                fallback_riemann_solver = riemann_solver
             if fallback_cascade == FallbackCascade.FULL:
                 for reduced_p in range(p - 1, -1, -1):
                     fallback_cascade_list.append(
@@ -387,6 +391,7 @@ class HydroSolver:
                             flux_recipe=flux_recipe,
                             flux_quadrature=flux_quadrature,
                             lazy_primitive_mode=lazy_primitive_mode,
+                            riemann_solver=fallback_riemann_solver,
                             muscl_params=null_MUSCL,
                             zhang_shu_params=null_ZS,
                             mood_params=null_MOOD,
@@ -401,6 +406,7 @@ class HydroSolver:
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
                         lazy_primitive_mode=lazy_primitive_mode,
+                        riemann_solver=fallback_riemann_solver,
                         muscl_params=MUSCL_Parameters(True, MUSCL_limiter, null_SED),
                         zhang_shu_params=null_ZS,
                         mood_params=null_MOOD,
@@ -415,6 +421,7 @@ class HydroSolver:
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
                         lazy_primitive_mode=lazy_primitive_mode,
+                        riemann_solver=fallback_riemann_solver,
                         muscl_params=null_MUSCL,
                         zhang_shu_params=null_ZS,
                         mood_params=null_MOOD,
@@ -428,6 +435,7 @@ class HydroSolver:
             flux_recipe=flux_recipe,
             flux_quadrature=flux_quadrature,
             lazy_primitive_mode=lazy_primitive_mode,
+            riemann_solver=riemann_solver,
             muscl_params=MUSCL_Parameters(
                 use_MUSCL=use_MUSCL and p > 0,
                 MUSCL_limiter=MUSCL_limiter,

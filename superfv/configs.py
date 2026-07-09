@@ -149,6 +149,7 @@ class FV_SchemeParameters:
     flux_recipe: FluxRecipe
     flux_quadrature: FluxQuadrature
     lazy_primitive_mode: LazyPrimitiveMode
+    riemann_solver: RiemannSolver
     muscl_params: MUSCL_Parameters
     zhang_shu_params: ZhangShuParameters
     mood_params: MOOD_Parameters
@@ -206,7 +207,6 @@ class FV_SchemeParameters:
 @dataclass(frozen=True, slots=True)
 class HydroParameters:
     gamma: float
-    riemann_solver: RiemannSolver
     CFL: float
     dissipation: bool = False
     nu: float = 0.0
