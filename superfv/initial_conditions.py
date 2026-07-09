@@ -781,6 +781,73 @@ def kelvin_helmholtz_2d(
     return out
 
 
+def lecoanet_kelvin_helmholtz(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float,
+    *,
+    xp: ModuleType,
+    density_jump: float = 1.0,
+    a: float = 0.05,
+    sigma: float = 0.2,
+    u_flow: float = 1.0,
+    A: float = 0.01,
+    P0: float = 10.0,
+    z1: float = 0.5,
+    z2: float = 1.5,
+) -> ArrayLike:
+    """
+    Returns array for the Kelvin-Helmholtz instability initial condition used in
+    Lecoanet et al. (2016).
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+        raise ValueError("Kelvin-Helmholtz initial condition requires all hydro variables.")
+
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 2:
+        raise ValueError("Kelvin-Helmholtz initial condition is only defined in 2D.")
+    dim1 = dims[0]
+    dim2 = dims[1]
+
+    x = {"x": x, "y": y, "z": z}[dim1]
+    z = {"x": x, "y": y, "z": z}[dim2]
+
+    tanh1 = xp.tanh((z - z1) / a)
+    tanh2 = xp.tanh((z - z2) / a)
+
+    rho = 1.0 + 0.5 * density_jump * (tanh1 - tanh2)
+    v1 = u_flow * (tanh1 - tanh2 - 1.0)
+    v2 = xp.exp(-((z - z1) ** 2) / sigma**2)
+    v2 += xp.exp(-((z - z2) ** 2) / sigma**2)
+    v2 *= A * xp.sin(2 * np.pi * x)
+    P = P0
+    dye = 0.5 * (tanh2 - tanh1 + 2.0)
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    out[idx("rho")] = rho
+    out[idx("v" + dim1)] = v1
+    out[idx("v" + dim2)] = v2
+    out[idx("P")] = P
+    if "passives" in idx.group_var_map and "dye" in idx.group_var_map["passives"]:
+        out[idx("dye")] = dye
+
+    return out
+
+
 def double_mach_reflection(
     idx: VariableIndexMap,
     x: ArrayLike,
