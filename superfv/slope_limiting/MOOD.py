@@ -30,6 +30,36 @@ from superfv.tools.step_history import MultiTimer, SubstepSummary
 from superfv.tools.variable_index_map import VariableIndexMap
 
 
+def compute_candidate_solution(
+    _uold_: ArrayLike,
+    F: ArrayLike,
+    G: ArrayLike,
+    H: ArrayLike,
+    S: ArrayLike,
+    _unew_: ArrayLike,
+    _wnew_: ArrayLike,
+    idx: VariableIndexMap,
+    t: float,
+    dt: float,
+    mesh: UniformFiniteVolumeMesh,
+    bc_params: BoundaryConditionParameters,
+    hydro_params: HydroParameters,
+):
+    interior = get_interior_view(mesh.active_dims, mesh.nghost)
+    dudt = compute_fv_dudt(F, G, H, S, mesh)
+    _unew_[interior] = _uold_[interior] + dt * dudt
+
+    apply_fv_bc(_unew_, idx, mesh, t, bc_params, hydro_params)
+    cons_to_prim(
+        _unew_,
+        _wnew_,
+        idx,
+        hydro_params.gamma,
+        hydro_params.isothermal,
+        hydro_params.iso_cs,
+    )
+
+
 def numerical_admissibility_detection(
     _qold_: np.ndarray,
     _qnew_: np.ndarray,
@@ -96,31 +126,22 @@ def apply_troubles_bc(
 def detect_troubled_cells(
     _uold_: ArrayLike,
     _wold_: ArrayLike,
-    F: ArrayLike,
-    G: ArrayLike,
-    H: ArrayLike,
-    S: ArrayLike,
-    _cascade_idx_: ArrayLike,
     _unew_: ArrayLike,
     _wnew_: ArrayLike,
     _troubles_: ArrayLike,
+    _cascade_idx_: ArrayLike,
     revisable_troubles: ArrayLike,
     _alpha_: ArrayLike,
     idx: VariableIndexMap,
-    t: float,
-    dt: float,
     mesh: UniformFiniteVolumeMesh,
     base_scheme: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
-    hydro_params: HydroParameters,
 ) -> int:
     """
     Update "_troubles_" and return the number of revisable troubled cells.
     """
     xp = cp if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray) else np
 
-    hp = hydro_params
-    bc = bc_params
     mood_params = base_scheme.mood_params
     n_cascade = len(mood_params.fallback_cascade)
     active_dims = mesh.active_dims
@@ -128,13 +149,6 @@ def detect_troubled_cells(
 
     # Reset troubled cells
     _troubles_[...] = 0.0
-
-    # Compute candidate solution _unew_, _wnew_
-    dudt = compute_fv_dudt(F, G, H, S, mesh)
-    _unew_[interior] = _uold_[interior] + dt * dudt
-
-    apply_fv_bc(_unew_, idx, mesh, t, bc, hydro_params)
-    cons_to_prim(_unew_, _wnew_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
     # Assign _qold_ and _qnew_, the NAD arrays
     _qold_ = _uold_ if base_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _wold_
@@ -460,26 +474,34 @@ def mood_loop(
 
     for _ in range(mood_params.max_revs):
         timer is not None and timer.start("detect_troubles", using_cupy)  # TIMER START
-        n_troubles = detect_troubled_cells(
+        compute_candidate_solution(
             _uold_,
-            _wold_,
             _F_[Finterior] if using_x else np.array([]),
             _G_[Ginterior] if using_y else np.array([]),
             _H_[Hinterior] if using_z else np.array([]),
             S,
-            _cascade_idx_,
             _unew_,
             _wnew_,
-            _troubles_,
-            revisable_troubles,
-            _alpha_,
             idx,
             t,
             dt,
             mesh,
-            base_scheme,
             bc_params,
             hydro_params,
+        )
+        n_troubles = detect_troubled_cells(
+            _uold_,
+            _wold_,
+            _unew_,
+            _wnew_,
+            _troubles_,
+            _cascade_idx_,
+            revisable_troubles,
+            _alpha_,
+            idx,
+            mesh,
+            base_scheme,
+            bc_params,
         )
         substep_summary.n_troubles_hist.append(n_troubles)
         timer is not None and timer.stop("detect_troubles", using_cupy)  # TIMER STOP
@@ -540,26 +562,34 @@ def mood_loop(
         timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
 
     if mood_params.detect_closing_troubles:
-        n_closing_troubles = detect_troubled_cells(
+        compute_candidate_solution(
             _uold_,
-            _wold_,
             _F_[Finterior] if using_x else np.array([]),
             _G_[Ginterior] if using_y else np.array([]),
             _H_[Hinterior] if using_z else np.array([]),
             S,
-            _cascade_idx_,
             _unew_,
             _wnew_,
-            _troubles_,
-            revisable_troubles,
-            _alpha_,
             idx,
             t,
             dt,
             mesh,
-            base_scheme,
             bc_params,
             hydro_params,
+        )
+        n_closing_troubles = detect_troubled_cells(
+            _uold_,
+            _wold_,
+            _unew_,
+            _wnew_,
+            _troubles_,
+            _cascade_idx_,
+            revisable_troubles,
+            _alpha_,
+            idx,
+            mesh,
+            base_scheme,
+            bc_params,
         )
         substep_summary.n_troubles_hist.append(n_closing_troubles)
 
