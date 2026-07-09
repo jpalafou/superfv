@@ -813,6 +813,9 @@ class HydroSolver:
                     "take_snapshot",
                     "compute_dt",
                     "update_unew",
+                    "boundary_conditions",
+                    "stencil_sweep",
+                    "primitive_conservative",
                     "riemann_solver",
                     "zhang_shu_limiter",
                     "mood_loop",
@@ -968,6 +971,7 @@ class HydroSolver:
                 base_scheme,
                 bc_params,
                 hydro_params,
+                self.step_summary.timer if self.params.profile else None,
             )
 
             update_fv_fluxes(

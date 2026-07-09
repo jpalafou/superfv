@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from functools import cached_property, lru_cache
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
+
+from superfv.tools.step_history import MultiTimer
 
 from .hydro import prim_to_cons, prim_to_cs, prim_to_flux
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
@@ -578,7 +580,11 @@ def solve_riemann_problem(
     gamma: float,
     isothermal: bool = False,
     iso_cs: float = 1.0,
+    using_cupy: bool = False,
+    timer: Optional[MultiTimer] = None,
 ):
+    timer is not None and timer.start("riemann_solver", using_cupy)  # TIMER START
     npassives = len(idx.group_var_map.get("passives", []))
     solver = get_riemann_solver(riemann_solver, npassives)
     solver(wl, wr, fluxes, dim, idx, gamma, isothermal, iso_cs)
+    timer is not None and timer.stop("riemann_solver", using_cupy)  # TIMER STOP

@@ -93,6 +93,7 @@ def interpolate_cell_centers(
     _qcc_: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Interpolate finite volume cell centers from `_q_` and write them to `_qcc_`.
@@ -107,19 +108,20 @@ def interpolate_cell_centers(
     if _q_.shape != _qcc_.shape:
         raise ValueError("_q_ and _qcc_ must have the same shape.")
 
+    timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
+
     if p < 2:
         _qcc_[...] = _q_
+        timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
         return
 
     if ndim == 1:
         stencil_sweep(_q_[..., na], weights, _qcc_[..., na], active_dims[0])
-        return
     elif ndim == 2:
         _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
 
         stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qcc_[..., na], active_dims[1])
-        return
     elif ndim == 3:
         _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
         _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
@@ -127,9 +129,8 @@ def interpolate_cell_centers(
         stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qtemp2_, active_dims[1])
         stencil_sweep(_qtemp2_, weights, _qcc_[..., na], active_dims[2])
-        return
 
-    raise ValueError(f"Unsupported number of dimensions: {ndim}")
+    timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
 
 def integrate_cell_averages(
@@ -137,6 +138,7 @@ def integrate_cell_averages(
     _q_: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Interpolate finite volume cell averages from `_qcc_` and write them to `_q_`.
@@ -151,19 +153,20 @@ def integrate_cell_averages(
     if _qcc_.shape != _q_.shape:
         raise ValueError("_qcc_ and _q_ must have the same shape.")
 
+    timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
+
     if p < 2:
         _q_[...] = _qcc_
+        timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
         return
 
     if ndim == 1:
         stencil_sweep(_qcc_[..., na], weights, _q_[..., na], active_dims[0])
-        return
     elif ndim == 2:
         _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
 
         stencil_sweep(_qcc_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _q_[..., na], active_dims[1])
-        return
     elif ndim == 3:
         _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
         _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
@@ -171,9 +174,8 @@ def integrate_cell_averages(
         stencil_sweep(_qcc_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qtemp2_, active_dims[1])
         stencil_sweep(_qtemp2_, weights, _q_[..., na], active_dims[2])
-        return
 
-    raise ValueError(f"Unsupported number of dimensions: {ndim}")
+    timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
 
 def interpolate_face_nodes(
@@ -183,6 +185,7 @@ def interpolate_face_nodes(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     gauss_legendre: bool = False,
+    timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
     lr_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_LEFT_RIGHT, p, cupy)
@@ -196,10 +199,13 @@ def interpolate_face_nodes(
     if _q_.shape[:4] != _qj_.shape[:4]:
         raise ValueError("The first 4 dimensions of _q_ and _qj_ must match.")
 
+    timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
+
     if p < 1:
         if _qj_.shape[4] != 2:
             raise ValueError("The 5th dimension of _qj_ must be 2 for 1D interpolation.")
         _qj_[...] = _q_[..., na]
+        timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
         return
 
     base_shape = _q_.shape
@@ -210,6 +216,7 @@ def interpolate_face_nodes(
         if _qj_.shape[4] != 2:
             raise ValueError("The 5th dimension of _qj_ must be 2 for 1D interpolation.")
         stencil_sweep(_q_[..., na], lr_stencil, _qj_, dim)
+        timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
         return
 
     if gauss_legendre:
@@ -227,7 +234,6 @@ def interpolate_face_nodes(
             trans_dim = [d for d in active_dims if d != dim][0]
             stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
             stencil_sweep(_qtemp1_, gl_stencil, _qj_, trans_dim)
-            return
         elif ndim == 3:
             if _qj_.shape[4] != 2 * ngl**2:
                 raise ValueError(
@@ -245,7 +251,6 @@ def interpolate_face_nodes(
             stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
             stencil_sweep(_qtemp1_, gl_stencil, _qtemp2_, trans_dim1)
             stencil_sweep(_qtemp2_, gl_stencil, _qj_, trans_dim2)
-            return
     else:
         cc_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_CENTER, p, cupy)
         if _qj_.shape[4] != 2:
@@ -259,7 +264,6 @@ def interpolate_face_nodes(
             trans_dim = [d for d in active_dims if d != dim][0]
             stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim)
             stencil_sweep(_qtemp1_, lr_stencil, _qj_, dim)
-            return
         elif ndim == 3:
             _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
             _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
@@ -270,9 +274,8 @@ def interpolate_face_nodes(
             stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim2)
             stencil_sweep(_qtemp1_, cc_stencil, _qtemp2_, trans_dim1)
             stencil_sweep(_qtemp2_, lr_stencil, _qj_, dim)
-            return
 
-    raise ValueError(f"Unsupported number of dimensions: {ndim}")
+    timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
 
 def interpolate_interface_nodes(
@@ -284,6 +287,7 @@ def interpolate_interface_nodes(
     gauss_legendre: bool = False,
     first_derivative: bool = False,
     h: Optional[float] = None,
+    timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
     xp = cp if cupy else np
@@ -312,18 +316,16 @@ def interpolate_interface_nodes(
     if _qf_.shape[4] != 1:
         raise ValueError("The 5th dimension of _qf_ must be 1 for interface nodes.")
 
+    timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
+
     if ndim == 1:
         stencil_sweep(_q_[..., na], interface_stencil, _qf_, dim)
-        return
-
-    if ndim == 2:
+    elif ndim == 2:
         trans_dim = [d for d in active_dims if d != dim][0]
         _qtemp_ = xp.empty((*_q_.shape, 1))
         stencil_sweep(_q_[..., na], interface_stencil, _qtemp_, dim)
         stencil_sweep(_qtemp_, center_stencil, _qf_, trans_dim)
-        return
-
-    if ndim == 3:
+    elif ndim == 3:
         trans_dims = [d for d in active_dims if d != dim]
         trans_dim1 = trans_dims[0]
         trans_dim2 = trans_dims[1]
@@ -332,7 +334,8 @@ def interpolate_interface_nodes(
         stencil_sweep(_q_[..., na], interface_stencil, _qtemp1_, dim)
         stencil_sweep(_qtemp1_, center_stencil, _qtemp2_, trans_dim1)
         stencil_sweep(_qtemp2_, center_stencil, _qf_, trans_dim2)
-        return
+
+    timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
 
 def integrate_gauss_legendre_face_nodes(
@@ -341,6 +344,7 @@ def integrate_gauss_legendre_face_nodes(
     dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
+    timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
     ndim = len(active_dims)
@@ -357,7 +361,9 @@ def integrate_gauss_legendre_face_nodes(
     if _qj_.shape[:4] != _qF_.shape[:4]:
         raise ValueError("The first 4 dimensions of _qj_ and _qF_ must match.")
 
+    timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
     perform_quadrature(_qj_, weights, _qF_)
+    timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
 
 def integrate_transverse_nodes(
@@ -366,6 +372,7 @@ def integrate_transverse_nodes(
     dim: Literal["x", "y", "z"],
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
+    timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
     stencil = _stencil_cache(Stencil.TRANSVERSE_INTEGRATION, p, cupy)
@@ -379,8 +386,11 @@ def integrate_transverse_nodes(
     if _qF_.shape != _qj_.shape[:4]:
         raise ValueError("The shape of _qF_ must match the first 4 dimensions of _qj_.")
 
+    timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
+
     if p < 2:
         _qF_[...] = _qj_[..., 0]
+        timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
         return
 
     if ndim == 1:
@@ -388,7 +398,6 @@ def integrate_transverse_nodes(
     if ndim == 2:
         trans_dim = [d for d in active_dims if d != dim][0]
         stencil_sweep(_qj_, stencil, _qF_[..., na], trans_dim)
-        return
     elif ndim == 3:
         _qtemp_ = cp.empty_like(_qj_) if cupy else np.empty_like(_qj_)
 
@@ -397,9 +406,8 @@ def integrate_transverse_nodes(
         trans_dim2 = trans_dims[1]
         stencil_sweep(_qj_, stencil, _qtemp_, trans_dim1)
         stencil_sweep(_qtemp_, stencil, _qF_[..., na], trans_dim2)
-        return
 
-    raise ValueError(f"Unsupported number of dimensions: {ndim}")
+    timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
 
 def apply_fv_bc(
@@ -484,6 +492,19 @@ def _fv_detect_shocks(
     )
 
 
+def fv_cons_to_prim(
+    u: ArrayLike,
+    w: ArrayLike,
+    idx: VariableIndexMap,
+    hydro_params: HydroParameters,
+    using_cupy: bool,
+    timer: Optional[MultiTimer] = None,
+):
+    timer is not None and timer.start("primitive_conservative", using_cupy)  # TIMER START
+    cons_to_prim(u, w, idx, hydro_params.gamma, hydro_params.isothermal, hydro_params.iso_cs)
+    timer is not None and timer.stop("primitive_conservative", using_cupy)  # TIMER STOP
+
+
 def update_fv_workspace(
     u: ArrayLike,
     _u_: ArrayLike,
@@ -495,6 +516,7 @@ def update_fv_workspace(
     fv_params: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
     hydro_params: HydroParameters,
+    timer: Optional[MultiTimer] = None,
 ):
     """
     Update the `_u_` and `_w_` arrays with ghost-cell-padded conservative and primitive finite
@@ -513,50 +535,54 @@ def update_fv_workspace(
     fv_params: Parameters for the finite volume scheme.
     bc_params: Parameters for the boundary conditions.
     hydro_params: Hydrodynamic parameters.
+    timer: Optional[MultiTimer] = None - Timer object for performance measurement.
     """
-    xp = cp if CUPY_AVAILABLE and isinstance(_u_, cp.ndarray) else np
+    using_cupy = CUPY_AVAILABLE and isinstance(_u_, cp.ndarray)
+    xp = cp if using_cupy else np
     hp = hydro_params
     fv = fv_params
     active_dims = mesh.active_dims
     interior = get_interior_view(active_dims, mesh.nghost)
 
     # 0) Update interior conservative FV averages and apply BC
+    timer is not None and timer.start("boundary_conditions", using_cupy)  # TIMER START
     _u_[interior] = u
     apply_fv_bc(_u_, idx, mesh, t, bc_params, hydro_params)
+    timer is not None and timer.stop("boundary_conditions", using_cupy)  # TIMER STOP
 
     # Early escape for low-order scheme. The rest of the arrays are useless.
     if fv.p < 2:
-        cons_to_prim(_u_, _w_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        fv_cons_to_prim(_u_, _w_, idx, hp, using_cupy, timer)
         return
 
     # Allocate some temp arrays
     _qcc_ = xp.empty_like(_u_)
 
     # 1) Compute primitive cell-cenetered values
-    interpolate_cell_centers(_u_, _qcc_, active_dims, fv.p)
-    cons_to_prim(_qcc_, _qcc_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+    interpolate_cell_centers(_u_, _qcc_, active_dims, fv.p, timer)
+    fv_cons_to_prim(_qcc_, _qcc_, idx, hp, using_cupy, timer)
 
     # 2) Compute primitive finite-volume averages
     if fv.lazy_primitive_mode == LazyPrimitiveMode.FULL:
-        cons_to_prim(_u_, _w_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        fv_cons_to_prim(_u_, _w_, idx, hp, using_cupy, timer)
         return
 
     if fv.lazy_primitive_mode == LazyPrimitiveMode.NONE:
-        integrate_cell_averages(_qcc_, _w_, active_dims, fv.p)
+        integrate_cell_averages(_qcc_, _w_, active_dims, fv.p, timer)
 
         # Ensure density is always transformed in the lazy way
         _w_[idx("rho"), ...] = _u_[idx("rho"), ...]
         return
 
     if fv.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE:
-        integrate_cell_averages(_qcc_, _w_, active_dims, fv.p)
+        integrate_cell_averages(_qcc_, _w_, active_dims, fv.p, timer)
 
         # Allocate some more temp arrays
         _w1_ = xp.empty_like(_u_)
         _cs_ = xp.empty_like(_u_[idx("rho")])
 
         # Get lazy primitives
-        cons_to_prim(_u_, _w1_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+        fv_cons_to_prim(_u_, _w1_, idx, hp, using_cupy, timer)
 
         # Detect shocks and flag them in _has_shock_
         prim_to_cs(_w1_, _cs_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
@@ -611,8 +637,12 @@ def apply_zhang_shu_limiter(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     p: int,
     params: ZhangShuParameters,
+    timer: Optional[MultiTimer] = None,
 ):
-    xp = cp if CUPY_AVAILABLE and isinstance(_q_, cp.ndarray) else np
+    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    timer is not None and timer.start("zhang_shu_limiter", cupy)  # TIMER START
+
+    xp = cp if cupy else np
     na = xp.newaxis
 
     # Validate input
@@ -640,7 +670,7 @@ def apply_zhang_shu_limiter(
 
     # 1) Gather all node arrays to get nodal minima and maxima
     if p > 1:
-        interpolate_cell_centers(_q_, _qcc_, active_dims, p)
+        interpolate_cell_centers(_q_, _qcc_, active_dims, p)  # no timer
         _qj_ = xp.concatenate([_qcc_[..., na]] + [node_dict[dim] for dim in active_dims], axis=4)
     else:
         _qj_ = xp.concatenate([node_dict[dim] for dim in active_dims], axis=4)
@@ -679,6 +709,8 @@ def apply_zhang_shu_limiter(
         _apply_zhang_shu_limiter_to_node_array(_y_nodes_, _q_, _theta_)
     if "z" in active_dims:
         _apply_zhang_shu_limiter_to_node_array(_z_nodes_, _q_, _theta_)
+
+    timer is not None and timer.stop("zhang_shu_limiter", cupy)  # TIMER STOP
 
 
 def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
@@ -730,6 +762,7 @@ def add_viscuous_fluxes(
     nu: float,
     Chi: float,
     nu_dye: float,
+    timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
     xp = cp if cupy else np
@@ -746,7 +779,7 @@ def add_viscuous_fluxes(
 
     # interpolate continuous interface nodes using an even stencil
     _wf_ = xp.empty((*_w_.shape, 1))  # TEMP ARRAY
-    interpolate_interface_nodes(_w_, _wf_, dim, active_dims, p, use_GL)
+    interpolate_interface_nodes(_w_, _wf_, dim, active_dims, p, use_GL, timer=timer)
 
     rho = _wf_[idx("rho"), *in1]
 
@@ -762,12 +795,16 @@ def add_viscuous_fluxes(
         for i, d in enumerate(XYZ_TUPLE):
             slc = slice(i * 3, (i + 1) * 3)
             h = {"x": hx, "y": hy, "z": hz}[d]
+            if d not in active_dims:
+                continue
+            timer is not None and timer.start("stencil_sweep", cupy)  # TIMER START
             if d == dim:
                 interpolate_interface_nodes(
                     vxyz, dvdx9[slc, ...], d, active_dims, p, use_GL, first_derivative=True, h=h
                 )
-            elif d in active_dims:
+            else:
                 stencil_sweep(vxyzf, transverse_first_derivative_stencil / h, dvdx9[slc, ...], d)
+            timer is not None and timer.stop("stencil_sweep", cupy)  # TIMER STOP
 
         minus_nu_rho = -nu * rho  # TEMP ARRAY
         if dim == "x":
@@ -816,6 +853,7 @@ def add_viscuous_fluxes(
             use_GL,
             first_derivative=True,
             h=h,
+            timer=timer,
         )
         _f_[idx("E"), ...] += -Chi * dPdx[0, *in1]
 
@@ -832,6 +870,7 @@ def add_viscuous_fluxes(
             use_GL,
             first_derivative=True,
             h=h,
+            timer=timer,
         )
         _f_[idx("dye"), ...] += -rho * nu_dye * dcdx[0, *in1]
 
@@ -895,18 +934,17 @@ def update_weno_fluxes(
 
     for dim in active_dims:
         _nodes_ = xp.empty(_w_.shape + (2 * n_nodes,))  # TEMP ARRAY
-        interpolate_face_nodes(_q_, _nodes_, dim, active_dims, fv.p, use_GL)
+        interpolate_face_nodes(_q_, _nodes_, dim, active_dims, fv.p, use_GL, timer)
         node_dict[dim] = _nodes_
 
     # 2) Ensure nodes are primitive and apply a priori limiting. Apply negative guard.
     if fv.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
         # Convert conservative nodal values to primitives before slope limiting
         for dim in active_dims:
-            cons_to_prim(node_dict[dim], node_dict[dim], idx, hp.gamma, hp.isothermal, hp.iso_cs)
+            fv_cons_to_prim(node_dict[dim], node_dict[dim], idx, hp, using_cupy, timer)
 
     if fv.zhang_shu_params.use_ZS:
         # a priori slope limiting
-        timer is not None and timer.start("zhang_shu_limiter", using_cupy)  # TIMER START
         apply_zhang_shu_limiter(
             _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_,
             node_dict["x"] if "x" in active_dims else np.array([]),
@@ -920,13 +958,13 @@ def update_weno_fluxes(
             active_dims,
             fv.p,
             fv.zhang_shu_params,
+            timer,
         )
-        timer is not None and timer.stop("zhang_shu_limiter", using_cupy)  # TIMER STOP
 
     if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
         # Convert conservative nodal values to primitives after slope limiting
         for dim in active_dims:
-            cons_to_prim(node_dict[dim], node_dict[dim], idx, hp.gamma, hp.isothermal, hp.iso_cs)
+            fv_cons_to_prim(node_dict[dim], node_dict[dim], idx, hp, using_cupy, timer)
 
     # Fall back to first-order where nodes are negative
     for dim in active_dims:
@@ -934,7 +972,6 @@ def update_weno_fluxes(
 
     # 3) Solve Riemann problem at each face node and integrate to get fluxes
     for dim in active_dims:
-        timer is not None and timer.start("riemann_solver", using_cupy)  # TIMER START
         axis = DIM_TO_AXIS[dim]
         minus, plus = _get_riemann_solver_slices(axis, n_nodes, nghost)
 
@@ -950,14 +987,15 @@ def update_weno_fluxes(
             _left_nodes_,
             _right_nodes_,
             _fnodes_,
-            fv.riemann_solver,
+            fv_params.riemann_solver,
             dim,
             idx,
             hp.gamma,
             hp.isothermal,
             hp.iso_cs,
+            using_cupy,
+            timer,
         )
-        timer is not None and timer.stop("riemann_solver", using_cupy)  # TIMER STOP
 
         # Compute viscuous fluxes
         if hydro_params.dissipation:
@@ -976,15 +1014,18 @@ def update_weno_fluxes(
                 hydro_params.nu,
                 hydro_params.Chi,
                 hydro_params.nu_dye,
+                timer,
             )
 
         if len(active_dims) == 1:
             break
 
+        timer is not None and timer.start("stencil_sweep", using_cupy)  # TIMER START
         if use_GL:
             integrate_gauss_legendre_face_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
         else:
             integrate_transverse_nodes(_fnodes_, _F_out_, dim, active_dims, fv_params.p)
+        timer is not None and timer.stop("stencil_sweep", using_cupy)  # TIMER STOP
 
 
 def compute_flux_jvp(
@@ -1142,24 +1183,24 @@ def update_MUSCL_fluxes(
 
         # Ensure faces are positive and primitive
         if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
-            cons_to_prim(_faces_, _faces_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+            fv_cons_to_prim(_faces_, _faces_, idx, hp, using_cupy, timer)
         _positivity_guard(_faces_, _w_, idx, hp)
 
         # Solve Riemann problem at faces
-        timer is not None and timer.start("riemann_solver", using_cupy)  # TIMER START
         minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
         solve_riemann_problem(
             _faces_[minus],
             _faces_[plus],
             _F_out_,
-            fv.riemann_solver,
+            fv_params.riemann_solver,
             dim,
             idx,
             hp.gamma,
             hp.isothermal,
             hp.iso_cs,
+            using_cupy,
+            timer,
         )
-        timer is not None and timer.stop("riemann_solver", using_cupy)  # TIMER STOP
 
         # Compute viscuous fluxes
         if hydro_params.dissipation:
@@ -1178,6 +1219,7 @@ def update_MUSCL_fluxes(
                 hydro_params.nu,
                 hydro_params.Chi,
                 hydro_params.nu_dye,
+                timer,
             )
 
 
