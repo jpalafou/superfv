@@ -726,6 +726,7 @@ def add_viscuous_fluxes(
     use_GL: bool,
     nu: float,
     Chi: float,
+    nu_dye: float,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
     xp = cp if cupy else np
@@ -736,9 +737,6 @@ def add_viscuous_fluxes(
     if dim not in active_dims:
         raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
 
-    if "passives" in idx.group_var_map:
-        raise NotImplementedError("Viscous fluxes for passive scalars are not implemented yet.")
-
     # f has shape (nvars, nx + 1, ny + 2 * ng, nz + 2 * ng, 1)
     # w has shape (nvars, nx + 2 * ng, ny + 2 * ng, nz + 2 * ng, 1)
     in1 = tuple(slice(nghost - 1, -nghost) if d == dim else slice(None) for d in XYZ_TUPLE)
@@ -748,66 +746,91 @@ def add_viscuous_fluxes(
     interpolate_interface_nodes(_w_, _wf_, dim, active_dims, p, use_GL)
 
     rho = _wf_[idx("rho"), *in1]
-    vx = _wf_[idx("vx"), *in1]
-    vy = _wf_[idx("vy"), *in1]
-    vz = _wf_[idx("vz"), *in1]
-    vxyzf = _wf_[idx("v"), ...]
-    vxyz = _w_[idx("v"), ...]
 
-    # assign dvdx9 as [dudx, dvdx, dwdx, dudy, dvdy, dwdy, dudz, dvdz, dwdz]
-    dvdx9 = xp.zeros((9, *_w_.shape[1:4], 1))  # TEMP ARRAY
-    for i, d in enumerate(XYZ_TUPLE):
-        slc = slice(i * 3, (i + 1) * 3)
-        h = {"x": hx, "y": hy, "z": hz}[d]
-        if d == dim:
-            interpolate_interface_nodes(
-                vxyz, dvdx9[slc, ...], d, active_dims, p, use_GL, first_derivative=True, h=h
-            )
-        elif d in active_dims:
-            stencil_sweep(vxyzf, transverse_first_derivative_stencil / h, dvdx9[slc, ...], d)
+    if nu > 0.0:
+        vx = _wf_[idx("vx"), *in1]
+        vy = _wf_[idx("vy"), *in1]
+        vz = _wf_[idx("vz"), *in1]
+        vxyzf = _wf_[idx("v"), ...]
+        vxyz = _w_[idx("v"), ...]
 
-    minus_nu_rho = -nu * rho  # TEMP ARRAY
-    if dim == "x":
-        Pi11 = 4 * dvdx9[0, *in1] - 2 * dvdx9[4, *in1] - 2 * dvdx9[8, *in1]  # TEMP ARRAY
-        Pi11 *= minus_nu_rho / 3
-        Pi12 = minus_nu_rho * (dvdx9[1, *in1] + dvdx9[3, *in1])  # TEMP ARRAY
-        Pi13 = minus_nu_rho * (dvdx9[2, *in1] + dvdx9[6, *in1])  # TEMP ARRAY
+        # assign dvdx9 as [dudx, dvdx, dwdx, dudy, dvdy, dwdy, dudz, dvdz, dwdz]
+        dvdx9 = xp.zeros((9, *_w_.shape[1:4], 1))  # TEMP ARRAY
+        for i, d in enumerate(XYZ_TUPLE):
+            slc = slice(i * 3, (i + 1) * 3)
+            h = {"x": hx, "y": hy, "z": hz}[d]
+            if d == dim:
+                interpolate_interface_nodes(
+                    vxyz, dvdx9[slc, ...], d, active_dims, p, use_GL, first_derivative=True, h=h
+                )
+            elif d in active_dims:
+                stencil_sweep(vxyzf, transverse_first_derivative_stencil / h, dvdx9[slc, ...], d)
 
-        _f_[idx("mx"), ...] += Pi11
-        _f_[idx("my"), ...] += Pi12
-        _f_[idx("mz"), ...] += Pi13
-        _f_[idx("E"), ...] += vx * Pi11 + vy * Pi12 + vz * Pi13
-    elif dim == "y":
-        Pi22 = -2 * dvdx9[0, *in1] + 4 * dvdx9[4, *in1] - 2 * dvdx9[8, *in1]  # TEMP ARRAY
-        Pi22 *= minus_nu_rho / 3
-        Pi12 = minus_nu_rho * (dvdx9[1, *in1] + dvdx9[3, *in1])  # TEMP ARRAY
-        Pi23 = minus_nu_rho * (dvdx9[5, *in1] + dvdx9[7, *in1])  # TEMP ARRAY
+        minus_nu_rho = -nu * rho  # TEMP ARRAY
+        if dim == "x":
+            Pi11 = 4 * dvdx9[0, *in1] - 2 * dvdx9[4, *in1] - 2 * dvdx9[8, *in1]  # TEMP ARRAY
+            Pi11 *= minus_nu_rho / 3
+            Pi12 = minus_nu_rho * (dvdx9[1, *in1] + dvdx9[3, *in1])  # TEMP ARRAY
+            Pi13 = minus_nu_rho * (dvdx9[2, *in1] + dvdx9[6, *in1])  # TEMP ARRAY
 
-        _f_[idx("mx"), ...] += Pi12
-        _f_[idx("my"), ...] += Pi22
-        _f_[idx("mz"), ...] += Pi23
-        _f_[idx("E"), ...] += vx * Pi12 + vy * Pi22 + vz * Pi23
-    elif dim == "z":
-        Pi33 = -2 * dvdx9[0, *in1] - 2 * dvdx9[4, *in1] + 4 * dvdx9[8, *in1]  # TEMP ARRAY
-        Pi33 *= minus_nu_rho / 3
-        Pi13 = minus_nu_rho * (dvdx9[2, *in1] + dvdx9[6, *in1])  # TEMP ARRAY
-        Pi23 = minus_nu_rho * (dvdx9[5, *in1] + dvdx9[7, *in1])  # TEMP ARRAY
+            _f_[idx("mx"), ...] += Pi11
+            _f_[idx("my"), ...] += Pi12
+            _f_[idx("mz"), ...] += Pi13
+            _f_[idx("E"), ...] += vx * Pi11 + vy * Pi12 + vz * Pi13
+        elif dim == "y":
+            Pi22 = -2 * dvdx9[0, *in1] + 4 * dvdx9[4, *in1] - 2 * dvdx9[8, *in1]  # TEMP ARRAY
+            Pi22 *= minus_nu_rho / 3
+            Pi12 = minus_nu_rho * (dvdx9[1, *in1] + dvdx9[3, *in1])  # TEMP ARRAY
+            Pi23 = minus_nu_rho * (dvdx9[5, *in1] + dvdx9[7, *in1])  # TEMP ARRAY
 
-        _f_[idx("mx"), ...] += Pi13
-        _f_[idx("my"), ...] += Pi23
-        _f_[idx("mz"), ...] += Pi33
-        _f_[idx("E"), ...] += vx * Pi13 + vy * Pi23 + vz * Pi33
-    else:
-        raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
+            _f_[idx("mx"), ...] += Pi12
+            _f_[idx("my"), ...] += Pi22
+            _f_[idx("mz"), ...] += Pi23
+            _f_[idx("E"), ...] += vx * Pi12 + vy * Pi22 + vz * Pi23
+        elif dim == "z":
+            Pi33 = -2 * dvdx9[0, *in1] - 2 * dvdx9[4, *in1] + 4 * dvdx9[8, *in1]  # TEMP ARRAY
+            Pi33 *= minus_nu_rho / 3
+            Pi13 = minus_nu_rho * (dvdx9[2, *in1] + dvdx9[6, *in1])  # TEMP ARRAY
+            Pi23 = minus_nu_rho * (dvdx9[5, *in1] + dvdx9[7, *in1])  # TEMP ARRAY
+
+            _f_[idx("mx"), ...] += Pi13
+            _f_[idx("my"), ...] += Pi23
+            _f_[idx("mz"), ...] += Pi33
+            _f_[idx("E"), ...] += vx * Pi13 + vy * Pi23 + vz * Pi33
+        else:
+            raise ValueError(f"Dimension {dim} is not in active_dims {active_dims}.")
 
     # thermal fluxes
     if Chi > 0.0:
-        dPdx = xp.empty((*_w_[idx("rho")].shape, 1))  # TEMP ARRAY
+        dPdx = xp.empty((*_w_[idx("rho", keepdims=True)].shape, 1))  # TEMP ARRAY
         h = {"x": hx, "y": hy, "z": hz}[dim]
         interpolate_interface_nodes(
-            _w_[idx("P"), ...], dPdx, dim, active_dims, p, use_GL, first_derivative=True, h=h
+            _w_[idx("P", keepdims=True), ...],
+            dPdx,
+            dim,
+            active_dims,
+            p,
+            use_GL,
+            first_derivative=True,
+            h=h,
         )
-        _f_[idx("E"), ...] += -Chi * dPdx[*in1]
+        _f_[idx("E"), ...] += -Chi * dPdx[0, *in1]
+
+    # dye concentration flux
+    if nu_dye > 0.0:
+        dcdx = xp.empty((*_w_[idx("rho", keepdims=True)].shape, 1))  # TEMP ARRAY
+        h = {"x": hx, "y": hy, "z": hz}[dim]
+        interpolate_interface_nodes(
+            _w_[idx("dye", keepdims=True), ...],
+            dcdx,
+            dim,
+            active_dims,
+            p,
+            use_GL,
+            first_derivative=True,
+            h=h,
+        )
+        _f_[idx("dye"), ...] += -rho * nu_dye * dcdx[0, *in1]
 
 
 def update_weno_fluxes(
@@ -927,7 +950,7 @@ def update_weno_fluxes(
         )
 
         # Compute viscuous fluxes
-        if hydro_params.nu > 0.0:
+        if hydro_params.dissipation:
             add_viscuous_fluxes(
                 _w_,
                 _fnodes_,
@@ -942,6 +965,7 @@ def update_weno_fluxes(
                 use_GL,
                 hydro_params.nu,
                 hydro_params.Chi,
+                hydro_params.nu_dye,
             )
 
         if len(active_dims) == 1:
@@ -1123,7 +1147,7 @@ def update_MUSCL_fluxes(
         )
 
         # Compute viscuous fluxes
-        if hydro_params.nu > 0.0:
+        if hydro_params.dissipation:
             add_viscuous_fluxes(
                 _w_,
                 _F_out_,
@@ -1138,6 +1162,7 @@ def update_MUSCL_fluxes(
                 False,
                 hydro_params.nu,
                 hydro_params.Chi,
+                hydro_params.nu_dye,
             )
 
 
@@ -1282,7 +1307,7 @@ def compute_fv_dt(
     max_speed = xp.max(sum_of_s_over_h).item()
     dt = hp.CFL / max_speed
 
-    if hp.nu > 0.0:
+    if hp.dissipation:
         inv_h2 = sum(1.0 / getattr(mesh, f"h{dim}") ** 2 for dim in mesh.active_dims)
         dt_nu = hp.CFL / (2.0 * hp.nu * inv_h2)
         dt = min(dt, dt_nu)

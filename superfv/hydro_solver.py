@@ -121,6 +121,7 @@ class HydroSolver:
         CFL: float = 0.8,
         nu: float = 0.0,
         Chi: float = 0.0,
+        nu_dye: float = 0.0,
         dt_min: float = 1e-15,
         rho_min: float = 1e-12,
         P_min: float = 1e-12,
@@ -201,8 +202,9 @@ class HydroSolver:
                 include RiemannSolver.UPWIND, RiemannSolver.LLF, and RiemannSolver.HLLC.
             CFL: CFL number for time step calculation.
             nu: Kinematic viscosity for viscous fluxes. If 0.0, viscous fluxes are not computed.
-            Chi: Thermal conductivity for thermal fluxes. If nu or Chi is 0.0, thermal fluxes are
-                not computed.
+            Chi: Thermal conductivity for thermal fluxes. If 0.0, thermal fluxes are not computed.
+            nu_dye: Diffusion coefficient for a passive scalar named "dye". If 0.0, dye
+                diffusion is not computed.
             dt_min: Minimum allowed time step size.
             rho_min: Minimum allowed density.
             P_min: Minimum allowed pressure.
@@ -348,12 +350,15 @@ class HydroSolver:
             sampling_p=sampling_p if sampling_p is not None else p,
         )
 
+        dissipation = nu > 0.0 or Chi > 0.0 or nu_dye > 0.0
         hydro_params = HydroParameters(
             gamma=gamma,
             riemann_solver=riemann_solver,
             CFL=CFL,
             nu=nu,
             Chi=Chi,
+            nu_dye=nu_dye,
+            dissipation=dissipation,
             dt_min=dt_min,
             rho_min=rho_min,
             P_min=P_min,
@@ -478,7 +483,7 @@ class HydroSolver:
             nghost=compute_fv_nghost(
                 fv_scheme_params,
                 len(active_dims),
-                viscosity=hydro_params.nu > 0.0,
+                viscosity=hydro_params.dissipation,
             ),
             xlims=xlims,
             ylims=ylims,

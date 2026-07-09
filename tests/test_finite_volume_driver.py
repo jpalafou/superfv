@@ -19,6 +19,7 @@ from superfv.configs import (
     ZhangShuParameters,
 )
 from superfv.finite_volume_driver import (
+    add_viscuous_fluxes,
     compute_fv_dudt,
     compute_fv_nghost,
     get_interior_view,
@@ -327,3 +328,61 @@ def test_fv_rhs_is_finite(
     )
 
     assert xp.all(xp.isfinite(dudt))
+
+
+def test_dye_diffusive_flux_matches_linear_gradient():
+    dye_idx = VariableIndexMap(
+        {
+            "rho": 0,
+            "vx": 1,
+            "vy": 2,
+            "vz": 3,
+            "P": 4,
+            "mx": 1,
+            "my": 2,
+            "mz": 3,
+            "E": 4,
+            "dye": 5,
+            "passive1": 6,
+        },
+        group_var_map={
+            "v": ["vx", "vy", "vz"],
+            "m": ["mx", "my", "mz"],
+            "primitives": ["rho", "v", "P"],
+            "conservatives": ["rho", "m", "E"],
+            "passives": ["dye", "passive1"],
+        },
+    )
+    nx = 8
+    nghost = 3
+    hx = 1.0 / nx
+    rho = 2.0
+    nu_dye = 0.25
+    x = (np.arange(nx + 2 * nghost) - nghost + 0.5) * hx
+    _w_ = np.zeros((dye_idx.nvars, nx + 2 * nghost, 1, 1))
+    _f_ = np.zeros((dye_idx.nvars, nx + 1, 1, 1, 1))
+
+    _w_[dye_idx("rho"), ...] = rho
+    _w_[dye_idx("P"), ...] = 1.0
+    _w_[dye_idx("dye"), :, 0, 0] = x
+    _w_[dye_idx("passive1"), ...] = 3.0
+
+    add_viscuous_fluxes(
+        _w_,
+        _f_,
+        dye_idx,
+        "x",
+        ("x",),
+        nghost,
+        hx,
+        1.0,
+        1.0,
+        1,
+        False,
+        0.0,
+        0.0,
+        nu_dye,
+    )
+
+    np.testing.assert_allclose(_f_[dye_idx("dye"), :, 0, 0, 0], -rho * nu_dye)
+    np.testing.assert_allclose(_f_[dye_idx("passive1")], 0.0)
