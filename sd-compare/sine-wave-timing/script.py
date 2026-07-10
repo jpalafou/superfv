@@ -11,20 +11,16 @@ from superfv.tools.device_management import CUPY_AVAILABLE
 if CUPY_AVAILABLE:
     pass
 
-base_directory = "/scratch/gpfs/TEYSSIER/jp7427/FVvsSD/sinus-timing/"
+base_directory = "/scratch/gpfs/jp7427/FVvsSD/sinus-timing/"
 
-UNLIMITED_ROUTINES = (
+SUBROUTINES = (
     "compute_dt",
-    "update_unew",
     "primitive_conservative",
     "boundary_conditions",
     "stencil_sweep",
     "einsum",
-    "transpose",
     "riemann_solver",
-)
-
-MOOD_ROUTINES = (
+    "transpose",
     "candidate_solution",
     "detect_troubles",
     "fallback_fluxes",
@@ -41,7 +37,7 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
         nx=N,
         ny=N,
         p=p,
-        use_MOOD=False,
+        use_MOOD=True,
         rtol=0.0,
         use_SED=False,
         cupy=True,
@@ -65,11 +61,9 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
     take_step_time = get_total_time("take_step")
 
     report = dict(
-        cell_updates_per_second=nsteps * N**2 / take_step_time,
+        update_rate=nsteps * N**2 / take_step_time,
         total_time_per_step=take_step_time / nsteps,
-        mood_loop_time_per_step=get_total_time("mood_loop") / nsteps,
-        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in UNLIMITED_ROUTINES},
-        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in MOOD_ROUTINES},
+        **{f"{cat}_time_per_step": get_total_time(cat) / nsteps for cat in SUBROUTINES},
     )
 
     return report
@@ -102,17 +96,17 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
         init_fct=partial(sine_wave, vx=2.0, vy=1.0),
         use_cupy=True,
         time_integrator="rk3",
-        scheme="SD",
-        FB=False,
-        # scheme="SDFB",
-        # fallback="MUSCL",
-        # slope_limiter="moncen",
-        # potential=True,
-        # limiting_variables=[0, 1, 2, 4],
-        # tolerance=0.0,
-        # PAD=True,
-        # SED=True,
-        # blending=False,
+        # scheme="SD",
+        # FB=False,
+        scheme="SDFB",
+        fallback="MUSCL",
+        slope_limiter="moncen",
+        potential=True,
+        limiting_variables=[0, 1, 2, 4],
+        tolerance=0.0,
+        PAD=True,
+        SED=True,
+        blending=False,
         riemann_solver_sd="hllc",
         riemann_solver_fv="hllc",
         **kwargs,
@@ -132,11 +126,9 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
     take_step_time = get_total_time("take_step")
 
     report = dict(
-        DOF_updates_per_second=sim.domain_size * nsteps / take_step_time,
+        update_rate=sim.domain_size * nsteps / take_step_time,
         total_time_per_step=take_step_time / nsteps,
-        mood_loop_time_per_step=get_total_time("mood_loop") / nsteps,
-        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in UNLIMITED_ROUTINES},
-        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in MOOD_ROUTINES},
+        **{f"{cat}_time_per_step": get_total_time(cat) / nsteps for cat in SUBROUTINES},
     )
 
     return report
@@ -148,44 +140,28 @@ if __name__ == "__main__":
         for p in [3, 7]:
             print(f"Running FV simulation with NDOF={NDOF}, p={p}")
             fv_report = run_superfv_sim(p, NDOF, nsteps=10)
-            update_rate = fv_report["cell_updates_per_second"]
             data.append(
                 dict(
                     NDOF=NDOF,
                     p=p,
                     scheme="FV",
-                    update_rate=update_rate,
-                    total_per_step=fv_report["total_time_per_step"],
-                    rs_per_step=fv_report["riemann_solver_per_step"],
-                    mood_loop_per_step=fv_report["mood_loop_time_per_step"],
-                    **{
-                        f"{cat}_per_step": fv_report[f"{cat}_per_step"]
-                        for cat in UNLIMITED_ROUTINES
-                    },
-                    **{f"{cat}_per_step": fv_report[f"{cat}_per_step"] for cat in MOOD_ROUTINES},
+                    **fv_report,
                 )
             )
+            update_rate = fv_report["update_rate"]
             print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
 
             print(f"Running SD simulation with NDOF={NDOF}, p={p}")
             spd_report = time_spd_sim(p, NDOF, nsteps=10)
-            update_rate = spd_report["DOF_updates_per_second"]
             data.append(
                 dict(
                     NDOF=NDOF,
                     p=p,
                     scheme="SD",
-                    update_rate=update_rate,
-                    total_per_step=spd_report["total_time_per_step"],
-                    rs_per_step=spd_report["riemann_solver_per_step"],
-                    mood_loop_per_step=spd_report["mood_loop_time_per_step"],
-                    **{
-                        f"{cat}_per_step": spd_report[f"{cat}_per_step"]
-                        for cat in UNLIMITED_ROUTINES
-                    },
-                    **{f"{cat}_per_step": spd_report[f"{cat}_per_step"] for cat in MOOD_ROUTINES},
+                    **spd_report,
                 )
             )
+            update_rate = spd_report["update_rate"]
             print(f"Measured update rate: {update_rate:.2e} DOF updates per second\n")
     df = pd.DataFrame(data)
 
