@@ -1,6 +1,7 @@
 import shutil
 from functools import partial
 from pathlib import Path
+from typing import Tuple
 
 import h5py
 import numpy as np
@@ -15,11 +16,11 @@ dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
 Re_base10 = 5
 Nref = 4096
 density_jump = 2
-t_sim_approx = 8
+t_sim_approx = 4
 
 gamma = 5.0 / 3.0
-NDOF = 512
-p = 3
+NDOF = 2048
+p = 7
 
 
 def nu_from_Re(Re: float) -> float:
@@ -34,9 +35,17 @@ def params_to_dedalus_filename(
 
 def project_dedalus_to_t_exact(filename: Path) -> float:
     with h5py.File(filename, "r") as f:
-        out = float(f["scales"]["t"])
+        out = float(f["scales"]["sim_time"][0])
     print(f"t_exact from '{filename}' is {out}")
     return out
+
+
+def project_dedalus_to_x_y_dye(filename: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    with h5py.File(filename, "r") as f:
+        x = np.asarray(f["scales"]["x"])
+        y = np.asarray(f["scales"]["z"])
+        c = np.asarray(f["tasks"]["c"]).squeeze()
+    return x, y, c
 
 
 def _grid_values_to_uniform_cell_averages(
