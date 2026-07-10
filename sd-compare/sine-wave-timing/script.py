@@ -13,6 +13,17 @@ if CUPY_AVAILABLE:
 
 base_directory = "/scratch/gpfs/jp7427/FVvsSD/sinus-timing/"
 
+UNLIMITED_ROUTINES = (
+    "compute_dt",
+    "update_unew",
+    "primitive_conservative",
+    "boundary_conditions",
+    "stencil_sweep",
+    "einsum",
+    "transpose",
+    "riemann_solver",
+)
+
 MOOD_ROUTINES = (
     "candidate_solution",
     "detect_troubles",
@@ -30,7 +41,7 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
         nx=N,
         ny=N,
         p=p,
-        use_MOOD=True,
+        use_MOOD=False,
         rtol=0.0,
         use_SED=False,
         cupy=True,
@@ -44,20 +55,21 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
     )
 
     step_history = sim.step_history[2:]
-    assert len(sim.step_history[2:]) == nsteps
+    assert len(step_history) == nsteps
 
-    total_time = sum(x.timer["take_step"].cum_time for x in step_history)
-    riemann_solver_time = sum(x.timer["riemann_solver"].cum_time for x in step_history)
-    mood_loop_time = sum(x.timer["mood_loop"].cum_time for x in step_history)
-    mood_routine_times = {
-        cat: sum(x.timer[cat].cum_time for x in step_history) for cat in MOOD_ROUTINES
-    }
+    def get_total_time(routine):
+        if not step_history or routine not in step_history[0].timer.timers:
+            return 0.0
+        return sum(step.timer[routine].cum_time for step in step_history)
+
+    take_step_time = get_total_time("take_step")
 
     report = dict(
-        cell_updates_per_second=nsteps * N**2 / total_time,
-        riemann_solver_time_per_step=riemann_solver_time / nsteps,
-        mood_loop_time_per_step=mood_loop_time / nsteps,
-        **{f"{cat}_per_step": mood_routine_times[cat] / nsteps for cat in MOOD_ROUTINES},
+        cell_updates_per_second=nsteps * N**2 / take_step_time,
+        total_time_per_step=take_step_time / nsteps,
+        mood_loop_time_per_step=get_total_time("mood_loop") / nsteps,
+        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in UNLIMITED_ROUTINES},
+        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in MOOD_ROUTINES},
     )
 
     return report
@@ -90,17 +102,17 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
         init_fct=partial(sine_wave, vx=2.0, vy=1.0),
         use_cupy=True,
         time_integrator="rk3",
-        # scheme="SD",
-        # FB=False,
-        scheme="SDFB",
-        fallback="MUSCL",
-        slope_limiter="moncen",
-        potential=True,
-        limiting_variables=[0, 1, 2, 4],
-        tolerance=0.0,
-        PAD=True,
-        SED=True,
-        blending=False,
+        scheme="SD",
+        FB=False,
+        # scheme="SDFB",
+        # fallback="MUSCL",
+        # slope_limiter="moncen",
+        # potential=True,
+        # limiting_variables=[0, 1, 2, 4],
+        # tolerance=0.0,
+        # PAD=True,
+        # SED=True,
+        # blending=False,
         riemann_solver_sd="hllc",
         riemann_solver_fv="hllc",
         **kwargs,
@@ -109,14 +121,22 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
     # take nsteps and time the simulation
     sim.perform_iterations(1)  # warm-up / compile
     step0 = sim.n_step
-    sim.perform_iterations(nsteps)  # use synced take_step timing
+    sim.perform_iterations(nsteps)  # resets timers and uses synced take_step timing
     assert sim.n_step - step0 == nsteps
 
+    def get_total_time(routine):
+        if routine not in sim.timer.timers:
+            return 0.0
+        return sim.timer[routine].cum_time
+
+    take_step_time = get_total_time("take_step")
+
     report = dict(
-        DOF_updates_per_second=sim.domain_size * nsteps / sim.execution_times["take_step"],
-        riemann_solver_time_per_step=sim.execution_times["riemann_solver_sd"] / nsteps,
-        mood_loop_time_per_step=sim.execution_times["mood_loop"] / nsteps,
-        **{f"{cat}_per_step": sim.execution_times[cat] / nsteps for cat in MOOD_ROUTINES},
+        DOF_updates_per_second=sim.domain_size * nsteps / take_step_time,
+        total_time_per_step=take_step_time / nsteps,
+        mood_loop_time_per_step=get_total_time("mood_loop") / nsteps,
+        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in UNLIMITED_ROUTINES},
+        **{f"{cat}_per_step": get_total_time(cat) / nsteps for cat in MOOD_ROUTINES},
     )
 
     return report
@@ -124,7 +144,7 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
 
 if __name__ == "__main__":
     data = []
-    for NDOF in [64, 128, 256, 512, 1024, 2048, 3000]:
+    for NDOF in [64, 128, 256, 512, 1024, 2048, 3072]:
         for p in [3, 7]:
             print(f"Running FV simulation with NDOF={NDOF}, p={p}")
             fv_report = run_superfv_sim(p, NDOF, nsteps=10)
@@ -135,8 +155,13 @@ if __name__ == "__main__":
                     p=p,
                     scheme="FV",
                     update_rate=update_rate,
-                    rs_per_step=fv_report["riemann_solver_time_per_step"],
+                    total_per_step=fv_report["total_time_per_step"],
+                    rs_per_step=fv_report["riemann_solver_per_step"],
                     mood_loop_per_step=fv_report["mood_loop_time_per_step"],
+                    **{
+                        f"{cat}_per_step": fv_report[f"{cat}_per_step"]
+                        for cat in UNLIMITED_ROUTINES
+                    },
                     **{f"{cat}_per_step": fv_report[f"{cat}_per_step"] for cat in MOOD_ROUTINES},
                 )
             )
@@ -151,8 +176,13 @@ if __name__ == "__main__":
                     p=p,
                     scheme="SD",
                     update_rate=update_rate,
-                    rs_per_step=spd_report["riemann_solver_time_per_step"],
+                    total_per_step=spd_report["total_time_per_step"],
+                    rs_per_step=spd_report["riemann_solver_per_step"],
                     mood_loop_per_step=spd_report["mood_loop_time_per_step"],
+                    **{
+                        f"{cat}_per_step": spd_report[f"{cat}_per_step"]
+                        for cat in UNLIMITED_ROUTINES
+                    },
                     **{f"{cat}_per_step": spd_report[f"{cat}_per_step"] for cat in MOOD_ROUTINES},
                 )
             )
