@@ -842,11 +842,11 @@ def add_viscuous_fluxes(
 
     # thermal fluxes
     if Chi > 0.0:
-        dPdx = xp.empty((*_w_[idx("rho", keepdims=True)].shape, 1))  # TEMP ARRAY
+        dTdx = xp.empty((*_w_[idx("rho", keepdims=True)].shape, 1))  # TEMP ARRAY
         h = {"x": hx, "y": hy, "z": hz}[dim]
         interpolate_interface_nodes(
-            _w_[idx("P", keepdims=True), ...],
-            dPdx,
+            _w_[idx("P", keepdims=True), ...] / _w_[idx("rho", keepdims=True), ...],
+            dTdx,
             dim,
             active_dims,
             p,
@@ -855,7 +855,7 @@ def add_viscuous_fluxes(
             h=h,
             timer=timer,
         )
-        _f_[idx("E"), ...] += -Chi * dPdx[0, *in1]
+        _f_[idx("E"), ...] += -Chi * rho * dTdx[0, *in1]
 
     # dye concentration flux
     if nu_dye > 0.0:
