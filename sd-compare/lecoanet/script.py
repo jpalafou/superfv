@@ -20,7 +20,8 @@ t_sim_approx = 4
 
 gamma = 5.0 / 3.0
 NDOF = 2048
-p = 7
+p = 3
+which = "both"  # 'sd', 'fv', or 'both'
 
 
 def nu_from_Re(Re: float) -> float:
@@ -209,24 +210,26 @@ if __name__ == "__main__":
     if not reference_file.exists():
         raise FileNotFoundError(f"Reference file not found: {reference_file}")
 
-    run_superfv_sim(
-        name="",
-        p=p,
-        NDOF=NDOF,
-        Re_base10=Re_base10,
-        Nref=Nref,
-        density_jump=density_jump,
-        t_sim_approx=t_sim_approx,
-        rtol=1e-5,
-    )
+    if which in ["fv", "both"]:
+        run_superfv_sim(
+            name="",
+            p=p,
+            NDOF=NDOF,
+            Re_base10=Re_base10,
+            Nref=Nref,
+            density_jump=density_jump,
+            t_sim_approx=t_sim_approx,
+            rtol=1e-5,
+        )
 
-    run_spd_sim(
-        name="",
-        p=p,
-        NDOF=NDOF,
-        Re_base10=Re_base10,
-        Nref=Nref,
-        density_jump=density_jump,
-        t_sim_approx=t_sim_approx,
-        tolerance=1e-5,
-    )
+    if which in ["sd", "both"]:
+        run_spd_sim(
+            name="",
+            p=p,
+            NDOF=NDOF,
+            Re_base10=Re_base10,
+            Nref=Nref,
+            density_jump=density_jump,
+            t_sim_approx=t_sim_approx,
+            tolerance=1e-5,
+        )
