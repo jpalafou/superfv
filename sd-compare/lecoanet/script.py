@@ -21,7 +21,7 @@ t_sim_approx = 4
 gamma = 5.0 / 3.0
 NDOF = 2048
 p = 3
-which = "both"  # 'sd', 'fv', or 'both'
+which = "sd"  # 'sd', 'fv', or 'both'
 
 
 def nu_from_Re(Re: float) -> float:
