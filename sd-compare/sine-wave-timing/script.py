@@ -58,12 +58,19 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
             return 0.0
         return sum(step.timer[routine].cum_time for step in step_history)
 
+    def get_ncalls(routine):
+        if not step_history or routine not in step_history[0].timer.timers:
+            return 0
+        return sum(step.timer[routine].n_calls for step in step_history)
+
     take_step_time = get_total_time("take_step")
 
     report = dict(
+        nsteps=nsteps,
         update_rate=nsteps * N**2 / take_step_time,
         total_time_per_step=take_step_time / nsteps,
         **{f"{cat}_time_per_step": get_total_time(cat) / nsteps for cat in SUBROUTINES},
+        **{f"{cat}_ncalls_per_step": get_ncalls(cat) / nsteps for cat in SUBROUTINES},
     )
 
     return report
@@ -122,12 +129,19 @@ def time_spd_sim(p, NDOF, nsteps, **kwargs):
             return 0.0
         return sim.timer[routine].cum_time
 
+    def get_ncalls(routine):
+        if routine not in sim.timer.timers:
+            return 0
+        return sim.timer[routine].n_calls
+
     take_step_time = get_total_time("take_step")
 
     report = dict(
+        nsteps=nsteps,
         update_rate=sim.domain_size * nsteps / take_step_time,
         total_time_per_step=take_step_time / nsteps,
         **{f"{cat}_time_per_step": get_total_time(cat) / nsteps for cat in SUBROUTINES},
+        **{f"{cat}_ncalls_per_step": get_ncalls(cat) / nsteps for cat in SUBROUTINES},
     )
 
     return report
