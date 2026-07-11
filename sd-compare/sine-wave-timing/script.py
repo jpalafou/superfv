@@ -39,6 +39,7 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
         p=p,
         use_MOOD=True,
         rtol=-1e-5,
+        detect_closing_troubles=False,
         cupy=True,
         profile=True,
         **kwargs,
