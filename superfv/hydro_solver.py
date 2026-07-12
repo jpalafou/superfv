@@ -46,7 +46,7 @@ from .finite_volume_driver import (
 )
 from .hydro import cons_to_prim, prim_to_cons
 from .mesh import UniformFiniteVolumeMesh
-from .slope_limiting.MOOD import mood_loop
+from .slope_limiting.mood import mood_loop
 from .source import trivial_source
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import replace_slice
