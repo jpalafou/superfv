@@ -812,12 +812,13 @@ class HydroSolver:
                     "take_step",
                     "take_snapshot",
                     "compute_dt",
-                    "compute_dudt",
                     "update_unew",
+                    "f",
                     "boundary_conditions",
                     "stencil_sweep",
                     "primitive_conservative",
                     "riemann_solver",
+                    "compute_dudt",
                     "zhang_shu_limiter",
                     "mood_loop",
                     "candidate_solution",
@@ -960,6 +961,8 @@ class HydroSolver:
         active_dims = params.mesh.active_dims
         arrays = self.arrays
 
+        self.params.profile and self._start_timer("f")  # TIMER START
+
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             update_fv_workspace(
                 u,
@@ -1039,6 +1042,7 @@ class HydroSolver:
             )
         finally:
             params.profile and self._stop_timer("compute_dudt")  # TIMER STOP
+            params.profile and self._stop_timer("f")  # TIMER STOP
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
