@@ -27,7 +27,7 @@ def _prim_to_cs_np(
 
 
 @lru_cache(maxsize=None)
-def _make_prim_to_cs_kernel():
+def _make_prim_to_cs_elementwise_kernel():
     in_params = "float64 rho, float64 P, float64 gamma, bool isothermal, float64 iso_cs"
     out_params = "float64 cs"
 
@@ -63,7 +63,7 @@ def prim_to_cs(
     if cs.shape != w.shape[1:]:
         raise ValueError("Shape of cs must match the shape of a single variable in w")
     if CUPY_AVAILABLE and isinstance(w, cp.ndarray):
-        kernel = _make_prim_to_cs_kernel()
+        kernel = _make_prim_to_cs_elementwise_kernel()
         kernel(
             w[idx("rho")],
             w[idx("P")],

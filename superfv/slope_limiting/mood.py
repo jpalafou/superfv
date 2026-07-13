@@ -11,6 +11,7 @@ from superfv.configs import (
     FluxRecipe,
     FV_SchemeParameters,
     HydroParameters,
+    MOOD_Parameters,
     NumericalAdmissibilityParameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
@@ -252,12 +253,11 @@ def map_cells_values_to_face_values(_cell_values_: ArrayLike, axis: int) -> Arra
 
     fv_shape = list(_cell_values_.shape)
     fv_shape[axis] -= 1
-    _face_values_ = xp.empty(fv_shape, dtype=_cell_values_.dtype)
 
     lft_slc = crop(axis, (None, -1), ndim=4)
     rgt_slc = crop(axis, (1, None), ndim=4)
 
-    _face_values_[...] = _cell_values_[lft_slc]
+    _face_values_ = _cell_values_[lft_slc].copy()
     xp.maximum(_face_values_, _cell_values_[rgt_slc], out=_face_values_)
     return _face_values_
 
@@ -348,6 +348,19 @@ def get_face_mask(
     return _fv_[interior]
 
 
+def blend_fluxes(
+    F_high_order: ArrayLike, F_fallback: ArrayLike, theta: ArrayLike, F_blended: ArrayLike
+):
+    """
+    Return a blended flux array based on the high-order fluxes, fallback fluxes, and a
+    face-centered mask of troubled cells.
+    """
+    if CUPY_AVAILABLE and isinstance(F_high_order, cp.ndarray):
+        blend_fluxes_elementwise_kernel(F_high_order, F_fallback, theta, F_blended)
+        return
+    F_blended[...] = (1 - theta) * F_high_order + theta * F_fallback
+
+
 def assign_blended_fluxes(
     _cascade_idx_: ArrayLike,
     F_fallback: ArrayLike,
@@ -358,23 +371,39 @@ def assign_blended_fluxes(
     H: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     nghost: int,
+    blend_troubles: bool,
+    i_max_computed: int,
 ):
     """
     Update the flux arrays "F", ... by blending the high-order and fallback fluxes based on
     a blended troubled cell mask.
     """
-    _blended_troubles_ = blend_troubled_cells(_cascade_idx_, active_dims)
+    if i_max_computed != 1:
+        raise NotImplementedError(
+            "Blending is only implemented for a single pre-computed fallback scheme "
+            "(i_max_computed=1)."
+        )
+
+    if blend_troubles:
+        _blended_troubles_ = blend_troubled_cells(_cascade_idx_, active_dims)
+    else:
+        _blended_troubles_ = _cascade_idx_.astype(np.float64)
 
     for dim in active_dims:
+        _theta_ = get_face_mask(_blended_troubles_, dim, active_dims, nghost)
         F_in = {"x": F_fallback, "y": G_fallback, "z": H_fallback}[dim]
         F_out = {"x": F, "y": G, "z": H}[dim]
+        blend_fluxes(F_in[..., 0], F_in[..., 1], _theta_, F_out)
 
-        theta_fv = get_face_mask(_blended_troubles_, dim, active_dims, nghost)
 
-        F_high_order = F_in[..., 0]
-        F_fallback = F_in[..., 1]
-
-        F_out[...] = (1 - theta_fv) * F_high_order + theta_fv * F_fallback
+def add_specified_fluxes(cascade_idx_arr: ArrayLike, F_i: ArrayLike, F_total: ArrayLike, i: int):
+    """
+    Add the specified fluxes F_i to F_total based on the cascade index array.
+    """
+    if CUPY_AVAILABLE and isinstance(F_total, cp.ndarray):
+        add_specified_flux_elementwise_kernel(F_i, cascade_idx_arr, i, F_total)
+    else:
+        F_total += (cascade_idx_arr == i) * F_i
 
 
 def assign_fluxes(
@@ -387,13 +416,13 @@ def assign_fluxes(
     H: ArrayLike,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     nghost: int,
-    base_scheme: FV_SchemeParameters,
+    mood_params: MOOD_Parameters,
     i_max_computed: int,
 ):
     """
     Update the flux arrays "F", ... based on the current "_cascade_idx_"
     """
-    if base_scheme.mood_params.blend_troubles:
+    if len(mood_params.fallback_cascade) == 1:
         assign_blended_fluxes(
             _cascade_idx_,
             F_fallback,
@@ -404,6 +433,8 @@ def assign_fluxes(
             H,
             active_dims,
             nghost,
+            mood_params.blend_troubles,
+            i_max_computed,
         )
         return
 
@@ -415,10 +446,9 @@ def assign_fluxes(
         F_out = {"x": F, "y": G, "z": H}[dim]
 
         cascade_face_mask = get_face_mask(_cascade_idx_, dim, active_dims, nghost)
-        combined_fluxes = F_in[..., 0].copy()
-        for i in range(1, i_max_computed + 1):
-            F_fallback = F_in[..., i]
-            combined_fluxes = xp.where(cascade_face_mask == i, F_fallback, combined_fluxes)
+        combined_fluxes = xp.zeros_like(F_in[..., 0])
+        for i in range(i_max_computed + 1):
+            add_specified_fluxes(cascade_face_mask, F_in[..., i], combined_fluxes, i)
         F_out[...] = combined_fluxes
 
 
@@ -558,7 +588,7 @@ def mood_loop(
             _H_[Hinterior] if using_z else np.array([]),
             active_dims,
             mesh.nghost,
-            base_scheme,
+            base_scheme.mood_params,
             i_max_computed,
         )
         timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
@@ -602,6 +632,26 @@ def mood_loop(
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
+
+    blend_fluxes_elementwise_kernel = cp.ElementwiseKernel(
+        in_params="float64 F_high_order, float64 F_fallback, float64 theta",
+        out_params="float64 F_blended",
+        operation="F_blended = (1 - theta) * F_high_order + theta * F_fallback;",
+        name="blend_fluxes_elementwise_kernel",
+        no_return=True,
+    )
+
+    add_specified_flux_elementwise_kernel = cp.ElementwiseKernel(
+        in_params="float64 F_i, int32 cascade_idx_arr, int32 target_idx",
+        out_params="float64 F_total",
+        operation="""
+        if (cascade_idx_arr == target_idx) {
+            F_total += F_i;
+        }
+        """,
+        name="add_specified_flux_elementwise_kernel",
+        no_return=True,
+    )
 
     detect_troubles_kernel = cp.RawKernel(
         """
