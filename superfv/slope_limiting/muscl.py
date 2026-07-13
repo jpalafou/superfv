@@ -1,4 +1,5 @@
 from enum import Enum
+from functools import lru_cache
 from typing import Literal, Tuple
 
 import numpy as np
@@ -17,38 +18,35 @@ class MUSCL_SlopeLimiter(Enum):
     NONE = 3
 
 
-def compute_MUSCL_slopes(
-    u: ArrayLike,
-    alpha: ArrayLike,
-    out: ArrayLike,
+def compute_1d_limited_slopes(
+    u: np.ndarray,
+    alpha: np.ndarray,
+    out: np.ndarray,
     face_dim: Literal["x", "y", "z"],
     limiter: MUSCL_SlopeLimiter,
-    SED: bool = False,
+    use_SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
-    Compute limited MUSCL slopes from `u` and write them to the `out` array with optional
-    relaxation from the smooth extrema detector `alpha`. Renders a single ghost cell layer
-    along the `face_dim` dimension of the output array invalid.
+    Compute limited slopes from `u` using a 1D MUSCL limiter and write them to the `out` array
+    with optional relaxation from the smooth extrema detector `alpha`. Renders a single ghost
+    cell layer along the `face_dim` dimension of the output array invalid.
 
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
-        alpha: Array to store the smooth extrema detector values if SED is True in
+        alpha: Array to store the smooth extrema detector values if use_SED is True in
             `config`. Has shape (nvars, nx, ny, nz).
         out: Output array to which the limited slopes are written. Has shape
             (nvars, nx, ny, nz).
         face_dim: Dimension along which the limited slopes are computed.
         limiter: The slope limiter to use.
-        SED: Whether to apply smooth extrema detection (SED). If True, the limited
+        use_SED: Whether to apply smooth extrema detection (use_SED). If True, the limited
             slopes are relaxed to the unlimited centered difference slopes in smooth
             extrema regions where alpha >= 1.
 
     Returns:
         Slice objects indicating the valid region of the output array.
     """
-    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
-        return MUSCL_slopes_kernel_helper(u, alpha, out, face_dim, limiter, SED)
-
     # define slices for left, center, and right nodes
     left = crop(DIM_TO_AXIS[face_dim], (None, -2), ndim=4)
     inner = crop(DIM_TO_AXIS[face_dim], (1, -1), ndim=4)
@@ -63,9 +61,9 @@ def compute_MUSCL_slopes(
             dsgn = np.sign(dlft)
             dslp = dsgn * np.minimum(np.abs(dlft), np.abs(drgt))
             out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
-            if SED:
+            if use_SED:
                 if alpha is None:
-                    raise ValueError("alpha array must be provided when SED is True.")
+                    raise ValueError("alpha array must be provided when use_SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
         case MUSCL_SlopeLimiter.MONCEN:
             dlft = u[inner] - u[left]
@@ -74,9 +72,9 @@ def compute_MUSCL_slopes(
             dsgn = np.sign(dcen)
             dslp = dsgn * np.minimum(np.minimum(np.abs(2 * dlft), 2 * np.abs(drgt)), np.abs(dcen))
             out[inner] = np.where(dlft * drgt <= 0, 0, dslp)
-            if SED:
+            if use_SED:
                 if alpha is None:
-                    raise ValueError("alpha array must be provided when SED is True.")
+                    raise ValueError("alpha array must be provided when use_SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
         case MUSCL_SlopeLimiter.PP2D:
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
@@ -89,13 +87,13 @@ def compute_MUSCL_slopes(
 
 
 def compute_PP2D_slopes(
-    u: ArrayLike,
-    alpha: ArrayLike,
-    Sx: ArrayLike,
-    Sy: ArrayLike,
+    u: np.ndarray,
+    alpha: np.ndarray,
+    Sx: np.ndarray,
+    Sy: np.ndarray,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     eps: float = 1e-20,
-    SED: bool = False,
+    use_SED: bool = False,
 ) -> Tuple[slice, ...]:
     """
     Compute PP2D limited slopes from `u` and write them to the `Sx` and `Sy`
@@ -106,7 +104,7 @@ def compute_PP2D_slopes(
     Args:
         u: Array of finite volume averages to compute slopes from, has shape
             (nvars, nx, ny, nz).
-        alpha: Array to store the smooth extrema detector values if SED is True in
+        alpha: Array to store the smooth extrema detector values if use_SED is True in
             `config`. Has shape (nvars, nx, ny, nz).
         Sx: Output array to which the slopes in the direction of the first active dims
             are written. Has shape (nvars, nx, ny, nz).
@@ -114,28 +112,13 @@ def compute_PP2D_slopes(
             are written. Has shape (nvars, nx, ny, nz).
         active_dims: Tuple containing two active dims ("x", "y", or "z").
         eps: Tolerance value.
-        SED: Whether to apply smooth extrema detection (SED). If True, the limited
+        use_SED: Whether to apply smooth extrema detection (use_SED). If True, the limited
             slopes are relaxed to the unlimited centered difference slopes in smooth
             extrema regions where alpha >= 1.
 
     Returns:
         Slice objects indicating the valid region of the output arrays `Sx` and `Sy`.
     """
-    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
-        return PP2D_slopes_kernel_helper(
-            u,
-            alpha,
-            Sx,
-            Sy,
-            active_dims[0],
-            active_dims[1],
-            eps,
-            SED,
-        )
-
-    if len(active_dims) != 2:
-        raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
-
     axis1 = DIM_TO_AXIS[active_dims[0]]
     axis2 = DIM_TO_AXIS[active_dims[1]]
 
@@ -174,10 +157,10 @@ def compute_PP2D_slopes(
     V = 2 * np.minimum(np.abs(V_min), np.abs(V_max)) / (np.abs(Sx) + np.abs(Sy))
     theta = np.minimum(V, 1)
 
-    # apply SED if requested
-    if SED:
+    # apply use_SED if requested
+    if use_SED:
         if alpha is None:
-            raise ValueError("alpha array must be provided when SED is True.")
+            raise ValueError("alpha array must be provided when use_SED is True.")
         theta[...] = np.where(alpha < 1, theta, 1.0)
 
     Sx[inner] = theta[inner] * Sx[inner]
@@ -186,193 +169,176 @@ def compute_PP2D_slopes(
     return inner
 
 
+def compute_MUSCL_slopes(
+    u: ArrayLike,
+    alpha: ArrayLike,
+    slopes: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    limiter: MUSCL_SlopeLimiter,
+    use_SED: bool = False,
+    eps: float = 1e-20,
+):
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        MUSCL_kernel_helper(
+            u,
+            alpha,
+            slopes,
+            output="slopes",
+            limiter=limiter,
+            dim=dim,
+            active_dims=active_dims,
+            eps=eps,
+            SED=use_SED,
+        )
+        return
+    if limiter == MUSCL_SlopeLimiter.PP2D:
+        if len(active_dims) != 2:
+            raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
+        Sx = np.empty_like(u)
+        Sy = np.empty_like(u)
+        compute_PP2D_slopes(u, alpha, Sx, Sy, active_dims, eps=eps, use_SED=use_SED)
+        if dim == active_dims[0]:
+            slopes[...] = Sx
+        elif dim == active_dims[1]:
+            slopes[...] = Sy
+        else:
+            raise ValueError(f"Invalid dim {dim} for active_dims {active_dims}.")
+    else:
+        compute_1d_limited_slopes(u, alpha, slopes, dim, limiter, use_SED=use_SED)
+
+
+def reconstruct_MUSCL_faces(
+    u: ArrayLike,
+    alpha: ArrayLike,
+    faces: ArrayLike,
+    dim: Literal["x", "y", "z"],
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    limiter: MUSCL_SlopeLimiter,
+    use_SED: bool = False,
+    eps: float = 1e-20,
+):
+    if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
+        MUSCL_kernel_helper(
+            u,
+            alpha,
+            faces,
+            output="faces",
+            limiter=limiter,
+            dim=dim,
+            active_dims=active_dims,
+            eps=eps,
+            SED=use_SED,
+        )
+        return
+    slopes = np.empty_like(u)
+    compute_MUSCL_slopes(u, alpha, slopes, dim, active_dims, limiter, use_SED=use_SED, eps=eps)
+    faces[..., 0] = u - 0.5 * slopes  # left face
+    faces[..., 1] = u + 0.5 * slopes  # right face
+
+
 # - - - - - DEFINE CUPY KERNELS FOR GPU COMPUTATION - - - - -
 
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
-    MUSCL_slopes_kernel = cp.RawKernel(
-        """
-        extern "C" __global__
-        void MUSCL_slopes_kernel(
-            const double* __restrict__ u,
-            const double* __restrict__ alpha,
-            double* __restrict__ slopes,
-            const int dim,
-            const int slope_type,
-            const bool SED,
-            const int nvars,
-            const int nx,
-            const int ny,
-            const int nz
-        ){
-            // u        (nvars, nx, ny, nz)
-            // alpha    (nvars, nx, ny, nz)
-            // slopes   (nvars, nx, ny, nz)
-
-            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-            const long long stride = (long long)blockDim.x * gridDim.x;
-
-            const long long ntotal = (long long)nvars * nx * ny * nz;
-
-            for (long long i = tid; i < ntotal; i += stride) {
-                long long t = i;
-                int iz = (int)(t % nz); t /= nz;
-                int iy = (int)(t % ny); t /= ny;
-                int ix = (int)(t % nx); t /= nx;
-                int iv = (int)t;
-
-                // get neighbor indices
-                long long jl, jr;
-
-                switch (dim) {
-                    case 1: // x-slope
-                        if (ix < 1 || ix >= nx - 1) {continue;}
-                        jl = (((long long)iv * nx + (ix - 1)) * ny + iy) * nz + iz;
-                        jr = (((long long)iv * nx + (ix + 1)) * ny + iy) * nz + iz;
-                        break;
-                    case 2: // y-slope
-                        if (iy < 1 || iy >= ny - 1) {continue;}
-                        jl = (((long long)iv * nx + ix) * ny + (iy - 1)) * nz + iz;
-                        jr = (((long long)iv * nx + ix) * ny + (iy + 1)) * nz + iz;
-                        break;
-                    case 3: // z-slope
-                        if (iz < 1 || iz >= nz - 1) {continue;}
-                        jl = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 1);
-                        jr = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 1);
-                        break;
-                    default:
-                        slopes[i] = 0.0 / 0.0;
-                        continue;
-                }
-
-                // gather neighbor values
-                double ul = u[jl];
-                double uc = u[i];
-                double ur = u[jr];
-
-                // compute slopes
-                double dl = uc - ul;
-                double dr = ur - uc;
-                double dc = 0.5 * (dl + dr);
-                double slope;
-
-                // SED relaxation
-                if (SED && alpha[i] >= 1.0) {
-                    slopes[i] = dc;
-                    continue;
-                }
-
-                // apply limiter
-                switch (slope_type) {
-                    case 0: // no limiter
-                        slope = dc;
-                        break;
-                    case 1: // minmod
-                        if (dl * dr <= 0) {
-                            slope = 0.0;
-                        } else {
-                            double sgn = (dl > 0) ? 1.0 : -1.0;
-                            slope = sgn * fmin(fabs(dl), fabs(dr));
-                        }
-                        break;
-                    case 2: // moncen
-                        if (dl * dr <= 0) {
-                            slope = 0.0;
-                        } else {
-                            double sgn = (dc > 0) ? 1.0 : -1.0;
-                            slope = sgn * fmin(
-                                fmin(fabs(2.0 * dl), fabs(2.0 * dr)),
-                                fabs(dc)
-                            );
-                        }
-                        break;
-                    default: // undefined limiter, sabotage with NaN
-                        slope = 0.0 / 0.0;
-                        break;
-                }
-                slopes[i] = slope;
-            }
+    unlimited_device_function = """
+        __device__ __forceinline__ double limited_slope(double ul, double uc, double ur) {
+            return 0.5 * (ur - ul);
         }
-        """,
-        name="MUSCL_slopes_kernel",
-    )
-
-    def MUSCL_slopes_kernel_helper(
-        u: cp.ndarray,
-        alpha: cp.ndarray,
-        slopes: cp.ndarray,
-        dim: Literal["x", "y", "z"],
-        slope_type: MUSCL_SlopeLimiter,
-        SED: bool,
-    ) -> Tuple[slice, ...]:
-        if slope_type == MUSCL_SlopeLimiter.PP2D:
-            raise ValueError(
-                "PP2D slopes should be computed with the compute_PP2D_slopes "
-                "function, not the MUSCL_slopes_kernel."
-            )
-        if u.ndim != 4 or slopes.ndim != 4:
-            raise ValueError("u and slopes must be 4D arrays with shape (nvars, nx, ny, nz)")
-        if u.shape != slopes.shape:
-            raise ValueError("u and slopes must have the same shape")
-        if not u.flags.c_contiguous or not slopes.flags.c_contiguous:
-            raise ValueError("u and slopes must be C-contiguous arrays")
-        if u.dtype != cp.float64 or slopes.dtype != cp.float64:
-            raise ValueError("u and slopes must be of dtype float64")
-        if SED:
-            if alpha is None:
-                raise ValueError("alpha array must be provided when SED is True")
-            if alpha.ndim != 4 or alpha.shape != u.shape:
-                raise ValueError(
-                    "alpha must be a 4D array with the same shape as u when SED is " "True"
-                )
-            if not alpha.flags.c_contiguous:
-                raise ValueError("alpha must be a C-contiguous array when SED is True")
-            if alpha.dtype != cp.float64:
-                raise ValueError("alpha must be of dtype float64 when SED is True")
-
-        nvars, nx, ny, nz = u.shape
-        threads_per_block = DEFAULT_THREADS_PER_BLOCK
-        blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
-
-        MUSCL_slopes_kernel(
-            (blocks_per_grid,),
-            (threads_per_block,),
-            (
-                u,
-                alpha,
-                slopes,
-                DIM_TO_AXIS[dim],
-                {
-                    MUSCL_SlopeLimiter.NONE: 0,
-                    MUSCL_SlopeLimiter.MINMOD: 1,
-                    MUSCL_SlopeLimiter.MONCEN: 2,
-                }[slope_type],
-                SED,
-                nvars,
-                nx,
-                ny,
-                nz,
-            ),
-        )
-
-        return (
-            slice(None),
-            slice(1, -1) if dim == "x" else slice(None),
-            slice(1, -1) if dim == "y" else slice(None),
-            slice(1, -1) if dim == "z" else slice(None),
-        )
-
-    PP2D_slopes_kernel = cp.RawKernel(
         """
+
+    minmod_device_function = """
+        __device__ __forceinline__ double limited_slope(double ul, double uc, double ur) {
+            const double dl = uc - ul;
+            const double dr = ur - uc;
+
+            if (dl * dr <= 0.0) {
+                return 0.0;
+            }
+
+            const double sgn = dl > 0.0 ? 1.0 : -1.0;
+            return sgn * fmin(fabs(dl), fabs(dr));
+        }
+        """
+
+    moncen_device_function = """
+        __device__ __forceinline__ double limited_slope(double ul, double uc, double ur) {
+            const double dl = uc - ul;
+            const double dr = ur - uc;
+
+            if (dl * dr <= 0.0) {
+                return 0.0;
+            }
+
+            const double dc = 0.5 * (dl + dr);
+            const double sgn = dc > 0.0 ? 1.0 : -1.0;
+            return sgn * fmin(fmin(fabs(2.0 * dl), fabs(2.0 * dr)), fabs(dc));
+        }
+        """
+
+    PP2D_device_function = """
+        __device__ __forceinline__ double PP2D_limiter(
+            double u00,
+            double u01,
+            double u02,
+            double u10,
+            double u11,
+            double u12,
+            double u20,
+            double u21,
+            double u22,
+            double eps
+        ) {
+            const double sx = 0.5 * (u12 - u10);
+            const double sy = 0.5 * (u21 - u01);
+
+            const double uc = u11;
+            double du0 = u00 - uc;
+            double du1 = u01 - uc;
+            double du2 = u02 - uc;
+            double du3 = u10 - uc;
+            double du5 = u12 - uc;
+            double du6 = u20 - uc;
+            double du7 = u21 - uc;
+            double du8 = u22 - uc;
+
+            double vmin = -eps;
+            vmin = fmin(vmin, du0);
+            vmin = fmin(vmin, du1);
+            vmin = fmin(vmin, du2);
+            vmin = fmin(vmin, du3);
+            vmin = fmin(vmin, du5);
+            vmin = fmin(vmin, du6);
+            vmin = fmin(vmin, du7);
+            vmin = fmin(vmin, du8);
+
+            double vmax = eps;
+            vmax = fmax(vmax, du0);
+            vmax = fmax(vmax, du1);
+            vmax = fmax(vmax, du2);
+            vmax = fmax(vmax, du3);
+            vmax = fmax(vmax, du5);
+            vmax = fmax(vmax, du6);
+            vmax = fmax(vmax, du7);
+            vmax = fmax(vmax, du8);
+
+            double v = 2.0 * fmin(fabs(vmin), fabs(vmax)) / (fabs(sx) + fabs(sy));
+            return fmin(v, 1.0);
+        }
+        """
+
+    MUSCL_kernel_body = """
         extern "C" __global__
-        void PP2D_slopes_kernel(
+        void MUSCL_kernel(
             const double* __restrict__ u,
             const double* __restrict__ alpha,
-            double* __restrict__ xslopes,
-            double* __restrict__ yslopes,
-            const int xdim,
-            const int ydim,
+            double* __restrict__ OUTPUT_ARG,
+            const int dim,
+            const bool xactive,
+            const bool yactive,
+            const bool zactive,
+            const bool use_PP2D,
             const double eps,
             const bool SED,
             const int nvars,
@@ -382,8 +348,8 @@ if CUPY_AVAILABLE:
         ){
             // u        (nvars, nx, ny, nz)
             // alpha    (nvars, nx, ny, nz)
-            // xslopes  (nvars, nx, ny, nz)
-            // yslopes  (nvars, nx, ny, nz)
+            // faces    (nvars, nx, ny, nz)
+            OUTPUT_COMMENT
 
             const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
             const long long stride = (long long)blockDim.x * gridDim.x;
@@ -398,154 +364,158 @@ if CUPY_AVAILABLE:
                 int iv = (int)t;
 
                 // skip boundary cells only along active slope dimensions
-                switch (xdim) {
-                    case 1: if (ix < 1 || ix >= nx - 1) continue; break;
-                    case 2: if (iy < 1 || iy >= ny - 1) continue; break;
-                    case 3: if (iz < 1 || iz >= nz - 1) continue; break;
-                    default: break;
-                }
-                switch (ydim) {
-                    case 1: if (ix < 1 || ix >= nx - 1) continue; break;
-                    case 2: if (iy < 1 || iy >= ny - 1) continue; break;
-                    case 3: if (iz < 1 || iz >= nz - 1) continue; break;
-                    default: break;
-                }
-
-                // get neighbor indices
-                // j0, j1, j2
-                // j3, j4, j5
-                // j6, j7, j8
-
-                int j0v = iv, j0x = ix, j0y = iy, j0z = iz;
-                int j1v = iv, j1x = ix, j1y = iy, j1z = iz;
-                int j2v = iv, j2x = ix, j2y = iy, j2z = iz;
-                int j3v = iv, j3x = ix, j3y = iy, j3z = iz;
-                int j5v = iv, j5x = ix, j5y = iy, j5z = iz;
-                int j6v = iv, j6x = ix, j6y = iy, j6z = iz;
-                int j7v = iv, j7x = ix, j7y = iy, j7z = iz;
-                int j8v = iv, j8x = ix, j8y = iy, j8z = iz;
-
-                switch (xdim) {
-                    case 1:
-                        j0x -= 1; j3x -= 1; j6x -= 1;
-                        j2x += 1; j5x += 1; j8x += 1;
-                        break;
-                    case 2:
-                        j0y -= 1; j3y -= 1; j6y -= 1;
-                        j2y += 1; j5y += 1; j8y += 1;
-                        break;
-                    case 3:
-                        j0z -= 1; j3z -= 1; j6z -= 1;
-                        j2z += 1; j5z += 1; j8z += 1;
-                        break;
+                if (use_PP2D) {
+                    // PP2D requires two active dimensions, so we skip boundary cells along both of them
+                    if (nx > 1 && (ix < 1 || ix >= nx - 1)) continue;
+                    if (ny > 1 && (iy < 1 || iy >= ny - 1)) continue;
+                    if (nz > 1 && (iz < 1 || iz >= nz - 1)) continue;
+                } else {
+                    // 1D slope limiters only require one active dimension, so we skip boundary cells along that dimension
+                    switch (dim) {
+                        case 1: if (ix < 1 || ix >= nx - 1) continue; break;
+                        case 2: if (iy < 1 || iy >= ny - 1) continue; break;
+                        case 3: if (iz < 1 || iz >= nz - 1) continue; break;
+                        default: break;
+                    }
                 }
 
-                switch (ydim) {
-                    case 1:
-                        j0x -= 1; j1x -= 1; j2x -= 1;
-                        j6x += 1; j7x += 1; j8x += 1;
+                // assign some useful variables
+                long long il, ir;
+                switch (dim) {
+                    case 1: // x-slope
+                        il = (((long long)iv * nx + (ix - 1)) * ny + iy) * nz + iz;
+                        ir = (((long long)iv * nx + (ix + 1)) * ny + iy) * nz + iz;
                         break;
-                    case 2:
-                        j0y -= 1; j1y -= 1; j2y -= 1;
-                        j6y += 1; j7y += 1; j8y += 1;
+                    case 2: // y-slope
+                        il = (((long long)iv * nx + ix) * ny + (iy - 1)) * nz + iz;
+                        ir = (((long long)iv * nx + ix) * ny + (iy + 1)) * nz + iz;
                         break;
-                    case 3:
-                        j0z -= 1; j1z -= 1; j2z -= 1;
-                        j6z += 1; j7z += 1; j8z += 1;
+                    case 3: // z-slope
+                        il = (((long long)iv * nx + ix) * ny + iy) * nz + (iz - 1);
+                        ir = (((long long)iv * nx + ix) * ny + iy) * nz + (iz + 1);
                         break;
                 }
+                double myslope;
+                double mysecondorderslope = 0.5 * (u[ir] - u[il]);
 
-                long long j0 = (((long long)j0v * nx + j0x) * ny + j0y) * nz + j0z;
-                long long j1 = (((long long)j1v * nx + j1x) * ny + j1y) * nz + j1z;
-                long long j2 = (((long long)j2v * nx + j2x) * ny + j2y) * nz + j2z;
-                long long j3 = (((long long)j3v * nx + j3x) * ny + j3y) * nz + j3z;
-                long long j5 = (((long long)j5v * nx + j5x) * ny + j5y) * nz + j5z;
-                long long j6 = (((long long)j6v * nx + j6x) * ny + j6y) * nz + j6z;
-                long long j7 = (((long long)j7v * nx + j7x) * ny + j7y) * nz + j7z;
-                long long j8 = (((long long)j8v * nx + j8x) * ny + j8y) * nz + j8z;
-
-                // compute slopes
-                double sx = 0.5 * (u[j5] - u[j3]);
-                double sy = 0.5 * (u[j7] - u[j1]);
-
-                double uc = u[i];
-                double du0 = u[j0] - uc;
-                double du1 = u[j1] - uc;
-                double du2 = u[j2] - uc;
-                double du3 = u[j3] - uc;
-                double du5 = u[j5] - uc;
-                double du6 = u[j6] - uc;
-                double du7 = u[j7] - uc;
-                double du8 = u[j8] - uc;
-
-                double vmin = -eps;
-                vmin = fmin(vmin, du0);
-                vmin = fmin(vmin, du1);
-                vmin = fmin(vmin, du2);
-                vmin = fmin(vmin, du3);
-                vmin = fmin(vmin, du5);
-                vmin = fmin(vmin, du6);
-                vmin = fmin(vmin, du7);
-                vmin = fmin(vmin, du8);
-
-                double vmax = eps;
-                vmax = fmax(vmax, du0);
-                vmax = fmax(vmax, du1);
-                vmax = fmax(vmax, du2);
-                vmax = fmax(vmax, du3);
-                vmax = fmax(vmax, du5);
-                vmax = fmax(vmax, du6);
-                vmax = fmax(vmax, du7);
-                vmax = fmax(vmax, du8);
-
-                double v = 2.0 * fmin(fabs(vmin), fabs(vmax)) / (fabs(sx) + fabs(sy));
-                double theta = fmin(v, 1.0);
-
-                // SED relaxation
+                // compute limited slope
                 if (SED && alpha[i] >= 1.0) {
-                    theta = 1.0;
+                    myslope = mysecondorderslope;
+                } else if (use_PP2D) {
+                    // assume 2D layout
+                    long long stride1, stride2;
+                    if (xactive && yactive && !zactive) {
+                        stride1 = (long long)ny * nz;
+                        stride2 = nz;
+                    } else if (xactive && !yactive && zactive) {
+                        stride1 = (long long)ny * nz;
+                        stride2 = 1;
+                    } else if (!xactive && yactive && zactive) {
+                        stride1 = nz;
+                        stride2 = 1;
+                    } else {
+                        return; // invalid configuration
+                    }
+
+                    long long i00 = i - stride1 - stride2;
+                    long long i01 = i           - stride2;
+                    long long i02 = i + stride1 - stride2;
+                    long long i10 = i - stride1;
+                    long long i11 = i;
+                    long long i12 = i + stride1;
+                    long long i20 = i - stride1 + stride2;
+                    long long i21 = i           + stride2;
+                    long long i22 = i + stride1 + stride2;
+
+                    double theta = PP2D_limiter(
+                        u[i00], u[i01], u[i02],
+                        u[i10], u[i11], u[i12],
+                        u[i20], u[i21], u[i22],
+                        eps
+                    );
+                    myslope = theta * mysecondorderslope;
+                } else {
+                    myslope = limited_slope(u[il], u[i], u[ir]);
                 }
 
-                // limit slopes
-                sx *= theta;
-                sy *= theta;
-
-                xslopes[i] = sx;
-                yslopes[i] = sy;
+                // assign either slopes or faces
+                OUTPUT_ASSIGNMENT1
+                OUTPUT_ASSIGNMENT2
             }
         }
-        """,
-        name="PP2D_slopes_kernel",
-    )
+        """
 
-    def PP2D_slopes_kernel_helper(
+    @lru_cache(maxsize=8)
+    def MUSCL_kernel_builder(limiter: MUSCL_SlopeLimiter, x: Literal["faces", "slopes"]):
+        name = ""
+        body = ""
+        match limiter:
+            case MUSCL_SlopeLimiter.NONE:
+                body += unlimited_device_function
+            case MUSCL_SlopeLimiter.MINMOD:
+                body += minmod_device_function
+            case MUSCL_SlopeLimiter.MONCEN:
+                body += moncen_device_function
+            case MUSCL_SlopeLimiter.PP2D:
+                body += unlimited_device_function  # keeps limited_slope defined
+            case _:
+                raise ValueError(f"Unknown MUSCL slope limiter: {limiter}")
+        body += PP2D_device_function
+
+        spec = MUSCL_kernel_body
+        if x == "slopes":
+            name = f"MUSCL_slopes_kernel_{limiter.name}"
+            spec = spec.replace("MUSCL_kernel", name)
+            spec = spec.replace("OUTPUT_ARG", "slopes")
+            spec = spec.replace("OUTPUT_COMMENT", "// slopes   (nvars, nx, ny, nz)")
+            spec = spec.replace("OUTPUT_ASSIGNMENT1", "slopes[i] = myslope;")
+            spec = spec.replace("OUTPUT_ASSIGNMENT2", "")
+        elif x == "faces":
+            name = f"MUSCL_faces_kernel_{limiter.name}"
+            spec = spec.replace("MUSCL_kernel", name)
+            spec = spec.replace("OUTPUT_ARG", "faces")
+            spec = spec.replace("OUTPUT_COMMENT", "// faces    (nvars, nx, ny, nz, 2)")
+            spec = spec.replace(
+                "OUTPUT_ASSIGNMENT1", "faces[2 * i + 0] = u[i] - 0.5 * myslope; // left face"
+            )
+            spec = spec.replace(
+                "OUTPUT_ASSIGNMENT2", "faces[2 * i + 1] = u[i] + 0.5 * myslope; // right face"
+            )
+        else:
+            raise ValueError(f"Unknown output type: {x}")
+
+        body += spec
+        return cp.RawKernel(body, name=name)
+
+    def MUSCL_kernel_helper(
         u: cp.ndarray,
         alpha: cp.ndarray,
-        xslopes: cp.ndarray,
-        yslopes: cp.ndarray,
-        xdim: Literal["x", "y", "z"],
-        ydim: Literal["x", "y", "z"],
+        slopes_or_faces: cp.ndarray,
+        output: Literal["slopes", "faces"],
+        limiter: MUSCL_SlopeLimiter,
+        dim: Literal["x", "y", "z"],
+        active_dims: Tuple[Literal["x", "y", "z"], ...],
         eps: float,
         SED: bool,
-    ) -> Tuple[slice, ...]:
-        if u.ndim != 4 or xslopes.ndim != 4 or yslopes.ndim != 4:
-            raise ValueError(
-                "u, xslopes, and yslopes must be 4D arrays with shape " "(nvars, nx, ny, nz)"
-            )
-        if u.shape != xslopes.shape or u.shape != yslopes.shape:
-            raise ValueError("u, xslopes, and yslopes must have the same shape")
-        if (
-            not u.flags.c_contiguous
-            or not xslopes.flags.c_contiguous
-            or not yslopes.flags.c_contiguous
-        ):
-            raise ValueError("u, xslopes, and yslopes must be C-contiguous arrays")
-        if u.dtype != cp.float64 or xslopes.dtype != cp.float64 or yslopes.dtype != cp.float64:
-            raise ValueError("u, xslopes, and yslopes must be of dtype float64")
+    ):
+        if u.ndim != 4:
+            raise ValueError("u must be a 4D array with shape " "(nvars, nx, ny, nz)")
+        if output not in ("slopes", "faces"):
+            raise ValueError("output must be either 'slopes' or 'faces'")
+        if limiter == MUSCL_SlopeLimiter.PP2D and len(active_dims) != 2:
+            raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
+        if output == "slopes" and slopes_or_faces.shape != u.shape:
+            raise ValueError("slopes must have the same shape as u")
+        if output == "faces" and slopes_or_faces.shape != u.shape + (2,):
+            raise ValueError("faces must be a 5D array with shape (nvars, nx, ny, nz, 2)")
+        if not u.flags.c_contiguous or not slopes_or_faces.flags.c_contiguous:
+            raise ValueError("u and slopes_or_faces must be C-contiguous arrays")
+        if u.dtype != cp.float64 or slopes_or_faces.dtype != cp.float64:
+            raise ValueError("u and slopes_or_faces must be of dtype float64")
         if SED:
             if alpha is None:
                 raise ValueError("alpha array must be provided when SED is True")
-            if alpha.ndim != 4 or alpha.shape != u.shape:
+            if alpha.shape != u.shape:
                 raise ValueError(
                     "alpha must be a 4D array with the same shape as u when SED is " "True"
                 )
@@ -554,20 +524,24 @@ if CUPY_AVAILABLE:
             if alpha.dtype != cp.float64:
                 raise ValueError("alpha must be of dtype float64 when SED is True")
 
+        kernel = MUSCL_kernel_builder(limiter, output)
+
         nvars, nx, ny, nz = u.shape
         threads_per_block = DEFAULT_THREADS_PER_BLOCK
         blocks_per_grid = (nvars * nx * ny * nz + threads_per_block - 1) // threads_per_block
 
-        PP2D_slopes_kernel(
+        kernel(
             (blocks_per_grid,),
             (threads_per_block,),
             (
                 u,
                 alpha,
-                xslopes,
-                yslopes,
-                DIM_TO_AXIS[xdim],
-                DIM_TO_AXIS[ydim],
+                slopes_or_faces,
+                DIM_TO_AXIS[dim],
+                "x" in active_dims,
+                "y" in active_dims,
+                "z" in active_dims,
+                limiter == MUSCL_SlopeLimiter.PP2D,
                 eps,
                 SED,
                 nvars,
@@ -575,11 +549,4 @@ if CUPY_AVAILABLE:
                 ny,
                 nz,
             ),
-        )
-
-        return (
-            slice(None),
-            slice(1, -1) if "x" in (xdim, ydim) else slice(None),
-            slice(1, -1) if "y" in (xdim, ydim) else slice(None),
-            slice(1, -1) if "z" in (xdim, ydim) else slice(None),
         )

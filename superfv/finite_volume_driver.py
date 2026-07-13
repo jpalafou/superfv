@@ -4,16 +4,11 @@ from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 
-from superfv.axes import DIM_TO_AXIS, XYZ_TUPLE
-from superfv.boundary_conditions import apply_bc
-from superfv.slope_limiting.muscl import (
-    MUSCL_SlopeLimiter,
-    compute_MUSCL_slopes,
-    compute_PP2D_slopes,
-)
 from superfv.tools.slicing import crop, merge_slices
 from superfv.tools.step_history import MultiTimer
 
+from .axes import DIM_TO_AXIS, XYZ_TUPLE
+from .boundary_conditions import apply_bc
 from .configs import (
     BoundaryConditionParameters,
     FluxQuadrature,
@@ -28,6 +23,7 @@ from .mesh import UniformFiniteVolumeMesh
 from .quadrature import perform_quadrature
 from .riemann_solvers import solve_riemann_problem
 from .slope_limiting import compute_dmp
+from .slope_limiting.muscl import compute_MUSCL_slopes, reconstruct_MUSCL_faces
 from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import compute_alpha
 from .slope_limiting.zhang_and_shu import compute_theta
@@ -1076,7 +1072,7 @@ def update_MUSCL_fluxes(
     timer: Optional[MultiTimer] = None,
 ):
     """
-    Update the finite volume fluxes with a MUSCL scheme.
+    Update the finite volume fluxes with a MUSCL-Hancock scheme.
 
     _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Input array of conservative cell averages
         with ghost cells along active dimensions. Is not modified.
@@ -1095,8 +1091,8 @@ def update_MUSCL_fluxes(
     mesh: Mesh object containing information about the mesh and its dimensions.
     fv_params: Parameters for the finite volume scheme.
     hydro_params: Hydrodynamic parameters.
-    hancock_dt: Time step to use for MUSCL-Hancock predictor step. If 0, the predictor step is
-        skipped.
+    hancock_dt: Time step to use for MUSCL-Hancock predictor step. If nonpositive, the fluxes are
+        computed with the pure MUSCL scheme in `update_MUSCL_fluxes`.
     timer: MultiTimer object for timing various routines. If None, timing is not performed.
     """
     using_cupy = CUPY_AVAILABLE and isinstance(_u_, cp.ndarray)
@@ -1112,29 +1108,14 @@ def update_MUSCL_fluxes(
     # 1) Compute slopes from either conservatives or primitives
     _q_ = _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_
 
-    slope_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
-
     if fv.muscl_params.SED_params.use_SED:
         compute_alpha(_q_, _alpha_, active_dims, fv.muscl_params.SED_params.clip_zero_tol)
 
-    if fv.muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D:
-        if len(active_dims) != 2:
-            raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
+    # Optional predictor step for MUSCL-Hancock scheme
+    _predictor_q_ = np.array([])
+    slope_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
 
-        _slopes1_ = xp.empty_like(_q_)  # TEMP ARRAY
-        _slopes2_ = xp.empty_like(_q_)  # TEMP ARRAY
-        compute_PP2D_slopes(
-            _q_,
-            _alpha_,
-            _slopes1_,
-            _slopes2_,
-            active_dims,
-            1e-20,
-            fv.muscl_params.SED_params.use_SED,
-        )
-        slope_dict[active_dims[0]] = _slopes1_
-        slope_dict[active_dims[1]] = _slopes2_
-    else:
+    if hancock_dt > 0.0:
         for dim in active_dims:
             _slopes_ = xp.empty_like(_q_)  # TEMP ARRAY
             compute_MUSCL_slopes(
@@ -1142,15 +1123,14 @@ def update_MUSCL_fluxes(
                 _alpha_,
                 _slopes_,
                 dim,
+                active_dims,
                 fv.muscl_params.MUSCL_limiter,
                 fv.muscl_params.SED_params.use_SED,
             )
             slope_dict[dim] = _slopes_
 
-    # 2) Compute predictor step
-    _predictor_q_ = _q_.copy()  # TEMP ARRAY
-
-    if hancock_dt > 0:
+        # 2) Compute predictor step
+        _predictor_q_ = _q_.copy()  # TEMP ARRAY
         _jvp_ = xp.empty_like(_q_)  # TEMP ARRAY
 
         for dim in active_dims:
@@ -1173,13 +1153,26 @@ def update_MUSCL_fluxes(
     for dim in active_dims:
         _F_out_ = {"x": _F_, "y": _G_, "z": _H_}[dim][..., na]
 
-        # Allocate some temp arrays
-        _slopes_ = slope_dict[dim]
-        _left_face_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
-        _right_face_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
-        _faces_ = xp.concatenate(
-            [_left_face_[..., na], _right_face_[..., na]], axis=4
-        )  # TEMP ARRAY
+        # Reconstruct left and right faces
+        if hancock_dt > 0.0:
+            _slopes_ = slope_dict[dim]
+            _left_face_ = _predictor_q_ - 0.5 * _slopes_  # TEMP ARRAY
+            _right_face_ = _predictor_q_ + 0.5 * _slopes_  # TEMP ARRAY
+            _faces_ = xp.concatenate(
+                [_left_face_[..., na], _right_face_[..., na]], axis=4
+            )  # TEMP ARRAY
+        else:
+            _faces_ = xp.empty((*_w_.shape[:4], 2))  # TEMP ARRAY
+            reconstruct_MUSCL_faces(
+                _q_,
+                _alpha_,
+                _faces_,
+                dim,
+                active_dims,
+                fv.muscl_params.MUSCL_limiter,
+                fv.muscl_params.SED_params.use_SED,
+                fv.muscl_params.SED_params.clip_zero_tol,
+            )
 
         # Ensure faces are positive and primitive
         if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
