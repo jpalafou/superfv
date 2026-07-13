@@ -305,11 +305,11 @@ class BoundaryConditionParameters:
 class SolverParameters:
     hydro: HydroParameters
     ic: InitialConditionParameters
-    source: SourceTerm
     mesh: MeshParameters
     bc: BoundaryConditionParameters
     fv_scheme: FV_SchemeParameters
     variable_index_map: VariableIndexMap
+    source: Optional[SourceTerm] = None
     cupy: bool = False
     profile: bool = False
     output_path: Optional[Path] = None

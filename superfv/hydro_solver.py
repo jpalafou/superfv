@@ -47,7 +47,6 @@ from .finite_volume_driver import (
 from .hydro import cons_to_prim, prim_to_cons
 from .mesh import UniformFiniteVolumeMesh
 from .slope_limiting.mood import mood_loop
-from .source import trivial_source
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp
 from .tools.slicing import replace_slice
 from .tools.snapshot import Snapshot, SnapshotData, SnapshotHistory
@@ -224,9 +223,9 @@ class HydroSolver:
 
         Source term parameters:
             source: Optional source term function that takes (idx, w, xp=xp) and returns an array
-                of shape (nvars, nx, ny, nz). If None, a trivial source term that returns zeros is
-                used. Note that `w` is an array of primitive cell averages, so the source term will
-                only be correct for constant multiples of the primitive variables.
+                of shape (nvars, nx, ny, nz). Note that `w` is an array of primitive cell
+                averages, so the source term will only be correct for constant multiples of the
+                primitive variables.
 
         Boundary condition parameters:
             bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
@@ -506,13 +505,13 @@ class HydroSolver:
         self.params = SolverParameters(
             hydro=hydro_params,
             ic=ic_params,
-            source=trivial_source if source is None else source,
             mesh=mesh_params,
             bc=bc_params,
             fv_scheme=fv_scheme_params,
             variable_index_map=self._define_complete_variable_index_map(
                 ic_params, fv_scheme_params
             ),
+            source=source,
             cupy=cupy and CUPY_AVAILABLE,
             profile=profile,
             output_path=Path(output_path) if output_path is not None else None,
@@ -724,7 +723,7 @@ class HydroSolver:
         # define basic conservative/primitive state arrays
         arrays.add("u", self._compute_ic_array())
         arrays.add("w", self.xp.empty((nvars, nx, ny, nz)))
-        arrays.add("source", self.xp.empty((nvars, nx, ny, nz)))
+        arrays.add("source", self.xp.zeros((nvars, nx, ny, nz)))
         arrays.add("dudt", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("unew", self.xp.empty((nvars, nx, ny, nz)))
         arrays.add("_u_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
@@ -997,7 +996,8 @@ class HydroSolver:
             )
 
             # Compute source term
-            arrays["source"] = self.params.source(idx, u, xp=self.xp)
+            if self.params.source is not None:
+                arrays["source"][...] = self.params.source(idx, u, xp=self.xp)
 
             if base_scheme.mood_params.use_MOOD:
                 params.profile and self._start_timer("mood_loop")  # TIMER START
