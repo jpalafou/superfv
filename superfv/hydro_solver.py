@@ -812,6 +812,7 @@ class HydroSolver:
                     "take_step",
                     "take_snapshot",
                     "compute_dt",
+                    "compute_dudt",
                     "update_unew",
                     "boundary_conditions",
                     "stencil_sweep",
@@ -1027,13 +1028,17 @@ class HydroSolver:
                 )
                 params.profile and self._stop_timer("mood_loop")  # TIMER STOP
 
-        return compute_fv_dudt(
-            arrays["F"] if "x" in active_dims else np.array([]),
-            arrays["G"] if "y" in active_dims else np.array([]),
-            arrays["H"] if "z" in active_dims else np.array([]),
-            arrays["source"],
-            mesh,
-        )
+        try:
+            params.profile and self._start_timer("compute_dudt")  # TIMER START
+            return compute_fv_dudt(
+                arrays["F"] if "x" in active_dims else np.array([]),
+                arrays["G"] if "y" in active_dims else np.array([]),
+                arrays["H"] if "z" in active_dims else np.array([]),
+                arrays["source"],
+                mesh,
+            )
+        finally:
+            params.profile and self._stop_timer("compute_dudt")  # TIMER STOP
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
