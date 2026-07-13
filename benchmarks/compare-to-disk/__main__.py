@@ -10,7 +10,7 @@ from superfv import (
     ics,
 )
 
-path = "/scratch/gpfs/jp7427/superfv/reference_solution"
+path = "/scratch/gpfs/jp7427/superfv/reference-solutions/pp2d"
 
 ref_sim = None
 try:
