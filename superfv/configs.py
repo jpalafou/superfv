@@ -150,6 +150,7 @@ class FV_SchemeParameters:
     flux_recipe: FluxRecipe
     flux_quadrature: FluxQuadrature
     lazy_primitive_mode: LazyPrimitiveMode
+    positivity_guard: bool
     riemann_solver: RiemannSolver
     muscl_params: MUSCL_Parameters
     zhang_shu_params: ZhangShuParameters

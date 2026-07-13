@@ -84,6 +84,7 @@ for p in range(8):
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quad,
                         lazy_primitive_mode=lazy_prim,
+                        positivity_guard=True,
                         riemann_solver=RiemannSolver.HLLC,
                         muscl_params=MUSCL_Parameters(
                             False, MUSCL_SlopeLimiter.NONE, SmoothExtremaDetectionParameters(False)
@@ -128,6 +129,7 @@ for flux_recipe in [
                         flux_recipe=flux_recipe,
                         flux_quadrature=FluxQuadrature.TRANSVERSE,
                         lazy_primitive_mode=LazyPrimitiveMode.FULL,
+                        positivity_guard=True,
                         riemann_solver=RiemannSolver.HLLC,
                         muscl_params=MUSCL_Parameters(
                             True, limiter, SmoothExtremaDetectionParameters(use_SED)
@@ -175,6 +177,7 @@ for p in [3, 7]:
                             flux_recipe=flux_recipe,
                             flux_quadrature=flux_quad,
                             lazy_primitive_mode=lazy_prim,
+                            positivity_guard=True,
                             riemann_solver=RiemannSolver.HLLC,
                             muscl_params=MUSCL_Parameters(
                                 False,

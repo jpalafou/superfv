@@ -980,7 +980,8 @@ def update_weno_fluxes(
 
         if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             fv_cons_to_prim(_nodes_, _nodes_, idx, hp, using_cupy, timer)
-        enforce_positive_nodes(_nodes_, _w_, idx, hp)
+        if fv.positivity_guard:
+            enforce_positive_nodes(_nodes_, _w_, idx, hp)
 
         if len(active_dims) == 1:
             _fnodes_ = _F_out_[..., na]
@@ -1185,7 +1186,8 @@ def update_MUSCL_fluxes(
         # Ensure faces are positive and primitive
         if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             fv_cons_to_prim(_faces_, _faces_, idx, hp, using_cupy, timer)
-        enforce_positive_nodes(_faces_, _w_, idx, hp)
+        if fv.positivity_guard:
+            enforce_positive_nodes(_faces_, _w_, idx, hp)
 
         # Solve Riemann problem at faces
         minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)

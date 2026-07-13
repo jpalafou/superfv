@@ -123,6 +123,7 @@ class HydroSolver:
         Chi: float = 0.0,
         nu_dye: float = 0.0,
         dt_min: float = 1e-15,
+        positivity_guard: bool = True,
         rho_min: float = 1e-12,
         P_min: float = 1e-12,
         isothermal: bool = False,
@@ -207,6 +208,11 @@ class HydroSolver:
             nu_dye: Diffusion coefficient for a passive scalar named "dye". If 0.0, dye
                 diffusion is not computed.
             dt_min: Minimum allowed time step size.
+            positivity_guard: If True, enforce positivity of density and pressure by setting lower
+                bounds, `rho_min` and `P_min`, respectively. Violations of the face reconstruction
+                immediately before the Riemann solver will trigger a fallback to a first order
+                reconstruction for that node. It is only performed in the base scheme and not in
+                any fallback scheme.
             rho_min: Minimum allowed density.
             P_min: Minimum allowed pressure.
             isothermal: If True, use an isothermal equation of state.
@@ -392,6 +398,7 @@ class HydroSolver:
                             flux_recipe=flux_recipe,
                             flux_quadrature=flux_quadrature,
                             lazy_primitive_mode=lazy_primitive_mode,
+                            positivity_guard=False,
                             riemann_solver=fallback_riemann_solver,
                             muscl_params=null_MUSCL,
                             zhang_shu_params=null_ZS,
@@ -407,6 +414,7 @@ class HydroSolver:
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
                         lazy_primitive_mode=lazy_primitive_mode,
+                        positivity_guard=False,
                         riemann_solver=fallback_riemann_solver,
                         muscl_params=MUSCL_Parameters(True, MUSCL_limiter, null_SED),
                         zhang_shu_params=null_ZS,
@@ -422,6 +430,7 @@ class HydroSolver:
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
                         lazy_primitive_mode=lazy_primitive_mode,
+                        positivity_guard=False,
                         riemann_solver=fallback_riemann_solver,
                         muscl_params=null_MUSCL,
                         zhang_shu_params=null_ZS,
@@ -436,6 +445,7 @@ class HydroSolver:
             flux_recipe=flux_recipe,
             flux_quadrature=flux_quadrature,
             lazy_primitive_mode=lazy_primitive_mode,
+            positivity_guard=positivity_guard,
             riemann_solver=riemann_solver,
             muscl_params=MUSCL_Parameters(
                 use_MUSCL=use_MUSCL and p > 0,
