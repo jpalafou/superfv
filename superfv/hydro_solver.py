@@ -829,14 +829,15 @@ class HydroSolver:
         )
 
     def _start_timer(self, cat: str, sync: bool = True):
-        self.step_summary.timer.start(cat, self.params.cupy and sync)
+        if self.params.profile or cat == "take_step":
+            self.step_summary.timer.start(cat, self.params.cupy and sync)
 
     def _stop_timer(self, cat: str, sync: bool = True):
-        self.step_summary.timer.stop(cat, self.params.cupy and sync)
+        if self.params.profile or cat == "take_step":
+            self.step_summary.timer.stop(cat, self.params.cupy and sync)
 
     def _take_snapshot(self):
-        self.params.profile and self._start_timer("take_snapshot")  # TIMER START
-
+        self._start_timer("take_snapshot")  # TIMER START
         params = self.params
         idx = params.variable_index_map
         hp = params.hydro
@@ -891,8 +892,7 @@ class HydroSolver:
                 f.write(f"{snapshot.path.name},{snapshot.t}\n")
             snapshot.dump(params.discard_after_writing)
         self.snapshot_history.append(snapshot)
-
-        self.params.profile and self._stop_timer("take_snapshot")  # TIMER STOP
+        self._stop_timer("take_snapshot")  # TIMER STOP
 
     def _write_params_files(self):
         output_path = self.params.output_path
@@ -950,6 +950,7 @@ class HydroSolver:
     # ODE solver functions
 
     def f(self, t: float, u: ArrayLike, dt: float, hancock: bool = False) -> ArrayLike:
+        self._start_timer("f")  # TIMER START
         params = self.params
         idx = params.variable_index_map
         base_scheme = params.fv_scheme
@@ -959,8 +960,6 @@ class HydroSolver:
         mesh = self.mesh
         active_dims = params.mesh.active_dims
         arrays = self.arrays
-
-        self.params.profile and self._start_timer("f")  # TIMER START
 
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             update_fv_workspace(
@@ -1000,7 +999,7 @@ class HydroSolver:
                 arrays["source"][...] = self.params.source(idx, u, xp=self.xp)
 
             if base_scheme.mood_params.use_MOOD:
-                params.profile and self._start_timer("mood_loop")  # TIMER START
+                self._start_timer("mood_loop")  # TIMER START
                 mood_loop(
                     arrays["_u_"],
                     arrays["_w_"],
@@ -1029,10 +1028,10 @@ class HydroSolver:
                     self.substep_summary,
                     self.step_summary.timer if self.params.profile else None,
                 )
-                params.profile and self._stop_timer("mood_loop")  # TIMER STOP
+                self._stop_timer("mood_loop")  # TIMER STOP
 
         try:
-            params.profile and self._start_timer("compute_dudt")  # TIMER START
+            self._start_timer("compute_dudt")  # TIMER START
             return compute_fv_dudt(
                 arrays["F"] if "x" in active_dims else np.array([]),
                 arrays["G"] if "y" in active_dims else np.array([]),
@@ -1041,8 +1040,8 @@ class HydroSolver:
                 mesh,
             )
         finally:
-            params.profile and self._stop_timer("compute_dudt")  # TIMER STOP
-            params.profile and self._stop_timer("f")  # TIMER STOP
+            self._stop_timer("compute_dudt")  # TIMER STOP
+            self._stop_timer("f")  # TIMER STOP
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
@@ -1250,15 +1249,15 @@ class HydroSolver:
         unew = arrays["unew"]
 
         # Compute dt
-        params.profile and self._start_timer("compute_dt")  # TIMER START
+        self._start_timer("compute_dt")  # TIMER START
         dt = compute_fv_dt(u, idx, mesh, params.hydro)
         self._check_dt(dt)
         if dt_min is not None:
             dt = min(dt, dt_min)
-        params.profile and self._stop_timer("compute_dt")  # TIMER STOP
+        self._stop_timer("compute_dt")  # TIMER STOP
 
         # Compute new state
-        params.profile and self._start_timer("update_unew")  # TIMER START
+        self._start_timer("update_unew")  # TIMER START
         self._update_unew(t, u, dt, time_integrator)
 
         # Revise time-step size if needed
@@ -1268,7 +1267,7 @@ class HydroSolver:
                 self._check_dt(dt)
                 self._update_unew(t, u, dt, time_integrator)
                 self.step_summary.n_dt_revisions += 1
-        params.profile and self._stop_timer("update_unew")  # TIMER STOP
+        self._stop_timer("update_unew")  # TIMER STOP
 
         # Update the state
         u[...] = unew
