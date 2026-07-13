@@ -15,6 +15,7 @@ base_directory = "/scratch/gpfs/jp7427/FVvsSD/sinus-timing/"
 
 SUBROUTINES = (
     "compute_dt",
+    "compute_dudt",
     "primitive_conservative",
     "boundary_conditions",
     "stencil_sweep",
