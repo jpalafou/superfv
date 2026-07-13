@@ -717,15 +717,27 @@ def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
         return 1
 
 
-def _positivity_guard(wj: ArrayLike, w1: ArrayLike, idx: VariableIndexMap, hp: HydroParameters):
-    xp = cp if CUPY_AVAILABLE and isinstance(wj, cp.ndarray) else np
+def enforce_positive_nodes(
+    wj: ArrayLike, w1: ArrayLike, idx: VariableIndexMap, hp: HydroParameters
+):
+    use_cupy = CUPY_AVAILABLE and isinstance(wj, cp.ndarray)
+    xp = cp if use_cupy else np
     na = xp.newaxis
+
+    if use_cupy:
+        enforce_positive_nodes_elementwise_kernel(
+            wj[idx("rho"), ...], w1[idx("rho"), ..., na], hp.rho_min, wj[idx("rho"), ...]
+        )
+        enforce_positive_nodes_elementwise_kernel(
+            wj[idx("P"), ...], w1[idx("P"), ..., na], hp.P_min, wj[idx("P"), ...]
+        )
+        return
 
     density = wj[idx("rho")]
     pressure = wj[idx("P")]
 
-    density[...] = xp.where(density < hp.rho_min, w1[idx("rho"), ..., na], density)
-    pressure[...] = xp.where(pressure < hp.P_min, w1[idx("P"), ..., na], pressure)
+    density[...] = np.where(density < hp.rho_min, w1[idx("rho"), ..., na], density)
+    pressure[...] = np.where(pressure < hp.P_min, w1[idx("P"), ..., na], pressure)
 
 
 @lru_cache(maxsize=None)
@@ -922,7 +934,7 @@ def update_weno_fluxes(
     nghost = mesh.nghost
     use_GL = fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE
 
-    # 1) Interpolate nodes at each face from either primitives or conservatives
+    # 1) Interpolate nodes at each face
     _q_ = _w_ if fv.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_
 
     node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
@@ -931,14 +943,13 @@ def update_weno_fluxes(
     for dim in active_dims:
         _nodes_ = xp.empty(_w_.shape + (2 * n_nodes,))  # TEMP ARRAY
         interpolate_face_nodes(_q_, _nodes_, dim, active_dims, fv.p, use_GL, timer)
+
+        if fv.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+            fv_cons_to_prim(_nodes_, _nodes_, idx, hp, using_cupy, timer)
+
         node_dict[dim] = _nodes_
 
-    # 2) Ensure nodes are primitive and apply a priori limiting. Apply negative guard.
-    if fv.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
-        # Convert conservative nodal values to primitives before slope limiting
-        for dim in active_dims:
-            fv_cons_to_prim(node_dict[dim], node_dict[dim], idx, hp, using_cupy, timer)
-
+    # Optionally apply slope-limiting to the nodes
     if fv.zhang_shu_params.use_ZS:
         # a priori slope limiting
         apply_zhang_shu_limiter(
@@ -957,23 +968,20 @@ def update_weno_fluxes(
             timer,
         )
 
-    if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
-        # Convert conservative nodal values to primitives after slope limiting
-        for dim in active_dims:
-            fv_cons_to_prim(node_dict[dim], node_dict[dim], idx, hp, using_cupy, timer)
-
-    # Fall back to first-order where nodes are negative
-    for dim in active_dims:
-        _positivity_guard(node_dict[dim], _w_, idx, hp)
-
-    # 3) Solve Riemann problem at each face node and integrate to get fluxes
+    # 2) Solve Riemann problem at each face node and integrate to get fluxes
     for dim in active_dims:
         axis = DIM_TO_AXIS[dim]
         minus, plus = _get_riemann_solver_slices(axis, n_nodes, nghost)
 
-        _left_nodes_ = node_dict[dim][minus]
-        _right_nodes_ = node_dict[dim][plus]
+        _nodes_ = node_dict[dim]
+        _left_nodes_ = _nodes_[minus]
+        _right_nodes_ = _nodes_[plus]
         _F_out_ = {"x": _F_, "y": _G_, "z": _H_}[dim]
+
+        if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+            fv_cons_to_prim(_nodes_, _nodes_, idx, hp, using_cupy, timer)
+        enforce_positive_nodes(_nodes_, _w_, idx, hp)
+
         if len(active_dims) == 1:
             _fnodes_ = _F_out_[..., na]
         else:
@@ -1177,7 +1185,7 @@ def update_MUSCL_fluxes(
         # Ensure faces are positive and primitive
         if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
             fv_cons_to_prim(_faces_, _faces_, idx, hp, using_cupy, timer)
-        _positivity_guard(_faces_, _w_, idx, hp)
+        enforce_positive_nodes(_faces_, _w_, idx, hp)
 
         # Solve Riemann problem at faces
         minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
@@ -1446,3 +1454,15 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
     nghost = max(nghost, mood_cost)
 
     return nghost
+
+
+if CUPY_AVAILABLE:
+    enforce_positive_nodes_elementwise_kernel = cp.ElementwiseKernel(
+        in_params="float64 qj, float64 q0, float64 qmin",
+        out_params="float64 qout",
+        operation="""
+            qout = (qj < qmin) ? q0 : qj;
+        """,
+        name="enforce_positive_nodes_elementwise_kernel",
+        no_return=True,
+    )
