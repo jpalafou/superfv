@@ -35,12 +35,14 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
 
     sim = HydroSolver(
         ic=partial(ics.sinus, vx=2.0, vy=1.0),
+        positivity_guard=False,
         rho_min=1e-10,
         P_min=1e-10,
         nx=N,
         ny=N,
         p=p,
         use_MOOD=True,
+        omit_vars_from_NAD=["vz"],
         rtol=-1e-5,
         detect_closing_troubles=False,
         cupy=True,
@@ -50,7 +52,9 @@ def run_superfv_sim(p, N, nsteps, **kwargs):
 
     # prime solver with untimed step
     sim.take_n_steps(
-        nsteps + 1, time_integrator=TimeIntegrator.SSPRK3, snapshot_mode=SnapshotMode.NONE
+        nsteps + 1,
+        time_integrator=TimeIntegrator.SSPRK3,
+        snapshot_mode=SnapshotMode.NONE,
     )
 
     step_history = sim.step_history[2:]
