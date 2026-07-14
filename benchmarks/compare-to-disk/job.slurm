@@ -12,6 +12,6 @@
 
 module purge
 module load anaconda3/2025.12
-conda activate superfv
+conda activate spd
 
 python benchmarks/compare-to-disk
