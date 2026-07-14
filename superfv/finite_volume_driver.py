@@ -96,7 +96,8 @@ def interpolate_cell_centers(
     """
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
     weights = _stencil_cache(Stencil.CONSERVATIVE_INTERP_CENTER, p, cupy)
-    na = cp.newaxis if cupy else np.newaxis
+    xp = cp if cupy else np
+    na = xp.newaxis
     ndim = len(active_dims)
 
     if _q_.ndim != 4:
@@ -114,13 +115,13 @@ def interpolate_cell_centers(
     if ndim == 1:
         stencil_sweep(_q_[..., na], weights, _qcc_[..., na], active_dims[0])
     elif ndim == 2:
-        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+        _qtemp1_ = xp.empty_like(_q_[..., na])
 
         stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qcc_[..., na], active_dims[1])
     elif ndim == 3:
-        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
-        _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+        _qtemp1_ = xp.empty_like(_q_[..., na])
+        _qtemp2_ = xp.empty_like(_q_[..., na])
 
         stencil_sweep(_q_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qtemp2_, active_dims[1])
@@ -141,7 +142,8 @@ def integrate_cell_averages(
     """
     cupy = CUPY_AVAILABLE and isinstance(_qcc_, cp.ndarray)
     weights = _stencil_cache(Stencil.TRANSVERSE_INTEGRATION, p, cupy)
-    na = cp.newaxis if cupy else np.newaxis
+    xp = cp if cupy else np
+    na = xp.newaxis
     ndim = len(active_dims)
 
     if _qcc_.ndim != 4:
@@ -159,13 +161,13 @@ def integrate_cell_averages(
     if ndim == 1:
         stencil_sweep(_qcc_[..., na], weights, _q_[..., na], active_dims[0])
     elif ndim == 2:
-        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+        _qtemp1_ = xp.empty_like(_q_[..., na])
 
         stencil_sweep(_qcc_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _q_[..., na], active_dims[1])
     elif ndim == 3:
-        _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
-        _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+        _qtemp1_ = xp.empty_like(_q_[..., na])
+        _qtemp2_ = xp.empty_like(_q_[..., na])
 
         stencil_sweep(_qcc_[..., na], weights, _qtemp1_, active_dims[0])
         stencil_sweep(_qtemp1_, weights, _qtemp2_, active_dims[1])
@@ -185,7 +187,8 @@ def interpolate_face_nodes(
 ):
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
     lr_stencil = _stencil_cache(Stencil.CONSERVATIVE_INTERP_LEFT_RIGHT, p, cupy)
-    na = cp.newaxis if cupy else np.newaxis
+    xp = cp if cupy else np
+    na = xp.newaxis
     ndim = len(active_dims)
 
     if dim not in active_dims:
@@ -225,7 +228,7 @@ def interpolate_face_nodes(
                     "The 5th dimension of _qj_ must be 2 two times the number of GL nodes."
                 )
 
-            _qtemp1_ = cp.empty((*base_shape, 2)) if cupy else np.empty((*base_shape, 2))
+            _qtemp1_ = xp.empty((*base_shape, 2))
 
             trans_dim = [d for d in active_dims if d != dim][0]
             stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
@@ -236,10 +239,8 @@ def interpolate_face_nodes(
                     "The 5th dimension of _qj_ must be 2 two times the number of GL nodes squared."
                 )
 
-            _qtemp1_ = cp.empty((*base_shape, 2)) if cupy else np.empty((*base_shape, 2))
-            _qtemp2_ = (
-                cp.empty((*base_shape, 2 * ngl)) if cupy else np.empty((*base_shape, 2 * ngl))
-            )
+            _qtemp1_ = xp.empty((*base_shape, 2))
+            _qtemp2_ = xp.empty((*base_shape, 2 * ngl))
 
             trans_dims = [d for d in active_dims if d != dim]
             trans_dim1 = trans_dims[0]
@@ -255,14 +256,14 @@ def interpolate_face_nodes(
             )
 
         if ndim == 2:
-            _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+            _qtemp1_ = xp.empty_like(_q_[..., na])
 
             trans_dim = [d for d in active_dims if d != dim][0]
             stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim)
             stencil_sweep(_qtemp1_, lr_stencil, _qj_, dim)
         elif ndim == 3:
-            _qtemp1_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
-            _qtemp2_ = cp.empty_like(_q_[..., na]) if cupy else np.empty_like(_q_[..., na])
+            _qtemp1_ = xp.empty_like(_q_[..., na])
+            _qtemp2_ = xp.empty_like(_q_[..., na])
 
             trans_dims = [d for d in active_dims if d != dim]
             trans_dim1 = trans_dims[0]
@@ -372,7 +373,8 @@ def integrate_transverse_nodes(
 ):
     cupy = CUPY_AVAILABLE and isinstance(_qj_, cp.ndarray)
     stencil = _stencil_cache(Stencil.TRANSVERSE_INTEGRATION, p, cupy)
-    na = cp.newaxis if cupy else np.newaxis
+    xp = cp if cupy else np
+    na = xp.newaxis
     ndim = len(active_dims)
 
     if dim not in active_dims:
@@ -395,7 +397,7 @@ def integrate_transverse_nodes(
         trans_dim = [d for d in active_dims if d != dim][0]
         stencil_sweep(_qj_, stencil, _qF_[..., na], trans_dim)
     elif ndim == 3:
-        _qtemp_ = cp.empty_like(_qj_) if cupy else np.empty_like(_qj_)
+        _qtemp_ = xp.empty_like(_qj_)
 
         trans_dims = [d for d in active_dims if d != dim]
         trans_dim1 = trans_dims[0]
@@ -469,15 +471,14 @@ def _fv_detect_shocks(
     """
     Detect shocks in `_q_` and write the result to `_has_shock_`.
     """
+    xp = cp if CUPY_AVAILABLE and isinstance(_q_, cp.ndarray) else np
+
     if not fv_params.shock_detection_params.use_shock_detection:
         raise ValueError("Shock detection is not enabled in the provided FV scheme.")
 
     # Allocate temporary arrays
     _q_ref_ = _q_.copy()
-    if CUPY_AVAILABLE and isinstance(_q_, cp.ndarray):
-        _eta_ = cp.empty_like(_q_)
-    else:
-        _eta_ = np.empty_like(_q_)
+    _eta_ = xp.empty_like(_q_)
 
     # Update `_q_ref_` with cs if detecting shocks from primitives or rho * cs otherwise
     for dim in active_dims:
@@ -636,10 +637,9 @@ def apply_zhang_shu_limiter(
     timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
-    timer is not None and timer.start("zhang_shu_limiter", cupy)  # TIMER START
-
     xp = cp if cupy else np
     na = xp.newaxis
+    timer is not None and timer.start("zhang_shu_limiter", cupy)  # TIMER START
 
     # Validate input
     if _q_.ndim != 4:
