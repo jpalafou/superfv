@@ -42,7 +42,8 @@ def stencil_sweep(
     modified = crop(axis, (lreach, -rreach), ndim=5)
 
     u_windows = np.lib.stride_tricks.sliding_window_view(u, window_shape=stencil_size, axis=axis)
-    contracted = np.einsum("...ik,ok->...io", u_windows, weights, optimize=True)
+    # Keep results independent of leading dimensions such as the number of variables.
+    contracted = np.einsum("...ik,ok->...io", u_windows, weights, optimize=False)
     out[modified] = contracted.reshape(*contracted.shape[:-2], ninterps * nouterps)
 
     return modified
