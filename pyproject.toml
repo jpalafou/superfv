@@ -27,8 +27,5 @@ test = ["pytest"]
 [tool.setuptools]
 packages = ["superfv", "teyssier"]
 
-[tool.mypy]
-mypy_path = "stubs"
-
 [tool.ruff.lint]
 ignore = ["E741"]
