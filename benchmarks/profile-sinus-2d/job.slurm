@@ -14,6 +14,6 @@ lscpu
 
 module purge
 module load anaconda3/2025.6
-conda activate superfv
+conda activate spd
 
 python benchmarks/profile-sinus-2d --cupy
