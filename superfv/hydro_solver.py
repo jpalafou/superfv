@@ -779,11 +779,11 @@ class HydroSolver:
         if base_scheme.mood_params.use_MOOD:
             nfluxes = 1 + len(base_scheme.mood_params.fallback_cascade)
             if "x" in active_dims:
-                arrays.add("_F_fallback_", self.xp.empty((nvars, nx + 1, _ny_, _nz_, nfluxes)))
+                arrays.add("_F_fallback_", self.xp.empty((nfluxes, nvars, nx + 1, _ny_, _nz_)))
             if "y" in active_dims:
-                arrays.add("_G_fallback_", self.xp.empty((nvars, _nx_, ny + 1, _nz_, nfluxes)))
+                arrays.add("_G_fallback_", self.xp.empty((nfluxes, nvars, _nx_, ny + 1, _nz_)))
             if "z" in active_dims:
-                arrays.add("_H_fallback_", self.xp.empty((nvars, _nx_, _ny_, nz + 1, nfluxes)))
+                arrays.add("_H_fallback_", self.xp.empty((nfluxes, nvars, _nx_, _ny_, nz + 1)))
 
             arrays.add("_unew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))
             arrays.add("_wnew_", self.xp.empty((nvars, _nx_, _ny_, _nz_)))

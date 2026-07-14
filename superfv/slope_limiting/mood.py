@@ -237,11 +237,11 @@ def init_mood(
 
     # Copy initial fluxes
     if "x" in active_dims:
-        _F_fallback_[..., 0] = _F_base_.copy()
+        _F_fallback_[0, ...] = _F_base_
     if "y" in active_dims:
-        _G_fallback_[..., 0] = _G_base_.copy()
+        _G_fallback_[0, ...] = _G_base_
     if "z" in active_dims:
-        _H_fallback_[..., 0] = _H_base_.copy()
+        _H_fallback_[0, ...] = _H_base_
 
 
 def map_cells_values_to_face_values(_cell_values_: ArrayLike, axis: int) -> ArrayLike:
@@ -393,7 +393,7 @@ def assign_blended_fluxes(
         _theta_ = get_face_mask(_blended_troubles_, dim, active_dims, nghost)
         F_in = {"x": F_fallback, "y": G_fallback, "z": H_fallback}[dim]
         F_out = {"x": F, "y": G, "z": H}[dim]
-        blend_fluxes(F_in[..., 0], F_in[..., 1], _theta_, F_out)
+        blend_fluxes(F_in[0, ...], F_in[1, ...], _theta_, F_out)
 
 
 def add_specified_fluxes(cascade_idx_arr: ArrayLike, F_i: ArrayLike, F_total: ArrayLike, i: int):
@@ -446,9 +446,9 @@ def assign_fluxes(
         F_out = {"x": F, "y": G, "z": H}[dim]
 
         cascade_face_mask = get_face_mask(_cascade_idx_, dim, active_dims, nghost)
-        combined_fluxes = xp.zeros_like(F_in[..., 0])
+        combined_fluxes = xp.zeros_like(F_in[0, ...])
         for i in range(i_max_computed + 1):
-            add_specified_fluxes(cascade_face_mask, F_in[..., i], combined_fluxes, i)
+            add_specified_fluxes(cascade_face_mask, F_in[i, ...], combined_fluxes, i)
         F_out[...] = combined_fluxes
 
 
@@ -552,9 +552,9 @@ def mood_loop(
             update_fv_fluxes(
                 _uold_,
                 _wold_,
-                _F_,
-                _G_,
-                _H_,
+                _F_fallback_[i_max, ...] if "x" in active_dims else np.array([]),
+                _G_fallback_[i_max, ...] if "y" in active_dims else np.array([]),
+                _H_fallback_[i_max, ...] if "z" in active_dims else np.array([]),
                 _theta_,
                 _qcc_,
                 _alpha_,
@@ -564,12 +564,6 @@ def mood_loop(
                 next_fallback_scheme,
                 hydro_params,
             )
-            if "x" in active_dims:
-                _F_fallback_[..., i_max] = _F_.copy()
-            if "y" in active_dims:
-                _G_fallback_[..., i_max] = _G_.copy()
-            if "z" in active_dims:
-                _H_fallback_[..., i_max] = _H_.copy()
             timer is not None and timer.stop("fallback_fluxes", using_cupy)  # TIMER STOP
             i_max_computed += 1
         elif i_max != i_max_computed:
@@ -580,9 +574,9 @@ def mood_loop(
         timer is not None and timer.start("assign_fluxes", using_cupy)  # TIMER START
         assign_fluxes(
             _cascade_idx_,
-            _F_fallback_[insert_slice(Finterior, 4, slice(None))] if using_x else np.array([]),
-            _G_fallback_[insert_slice(Ginterior, 4, slice(None))] if using_y else np.array([]),
-            _H_fallback_[insert_slice(Hinterior, 4, slice(None))] if using_z else np.array([]),
+            _F_fallback_[insert_slice(Finterior, 0, slice(None))] if using_x else np.array([]),
+            _G_fallback_[insert_slice(Ginterior, 0, slice(None))] if using_y else np.array([]),
+            _H_fallback_[insert_slice(Hinterior, 0, slice(None))] if using_z else np.array([]),
             _F_[Finterior] if using_x else np.array([]),
             _G_[Ginterior] if using_y else np.array([]),
             _H_[Hinterior] if using_z else np.array([]),
