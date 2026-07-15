@@ -8,6 +8,7 @@ import spd.initial_conditions as ic
 from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import HydroSolver, HydroSolverOutput, ics
+from superfv.hydro_solver import TimeIntegrator
 
 base_directory = Path("/scratch/gpfs/jp7427/FVvsSD/lecoanet/")
 dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
@@ -15,12 +16,12 @@ dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
 Re_base10 = 5
 Nref = 4096
 density_jump = 2
-t_sim_approx = 4
+t_sim_approx = 6
 
 gamma = 5.0 / 3.0
 NDOF = 2048
-p = 3
-which = "sd"  # 'sd', 'fv', or 'both'
+p = 7  # only used for FV and SD simulations
+which = "fv"  # "mh", "fv", or "sd"
 
 
 def nu_from_Re(Re: float) -> float:
@@ -78,6 +79,45 @@ def _grid_values_to_uniform_cell_averages(
     )
 
     return np.fft.ifft2(coarse_coeff * (nx * ny)).real
+
+
+def run_MUSCL_Hancock_sim(name, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kwargs):
+    dedalus = params_to_dedalus_filename(Re_base10, Nref, density_jump, t_sim_approx)
+    path = base_directory / f"MUSCL_Hancock_{name}_{NDOF=}_{dedalus.stem}"
+    t_exact = project_dedalus_to_t_exact(dedalus)
+    nu = nu_from_Re(10**Re_base10)
+
+    try:
+        out = HydroSolverOutput(path)
+        print(f"Loaded output from '{path}'")
+        return out
+    except Exception as e:
+        print(f"Failed to load output from '{path}' with: {e}")
+        if path.exists():
+            print(f"Path '{path}' exists. Returning early.")
+            return None
+
+    sim = HydroSolver(
+        ic=partial(ics.lecoanet_kelvin_helmholtz, density_jump=density_jump - 1.0),
+        passive_ics={"dye": ics.lecoanet_kelvin_helmholtz_dye},
+        gamma=gamma,
+        nu=nu,
+        Chi=nu,
+        nu_dye=nu,
+        rho_min=1e-10,
+        P_min=1e-10,
+        nx=NDOF,
+        ny=2 * NDOF,
+        xlims=(0.0, 1.0),
+        ylims=(0.0, 2.0),
+        p=1,
+        use_MUSCL=True,
+        cupy=True,
+        output_path=path,
+        **kwargs,
+    )
+    sim.run(t_exact, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+    return sim
 
 
 def run_superfv_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kwargs):
@@ -209,7 +249,16 @@ if __name__ == "__main__":
     if not reference_file.exists():
         raise FileNotFoundError(f"Reference file not found: {reference_file}")
 
-    if which in ["fv", "both"]:
+    if which == "mh":
+        run_MUSCL_Hancock_sim(
+            name="",
+            NDOF=NDOF,
+            Re_base10=Re_base10,
+            Nref=Nref,
+            density_jump=density_jump,
+            t_sim_approx=t_sim_approx,
+        )
+    elif which == "fv":
         run_superfv_sim(
             name="",
             p=p,
@@ -220,8 +269,7 @@ if __name__ == "__main__":
             t_sim_approx=t_sim_approx,
             rtol=1e-5,
         )
-
-    if which in ["sd", "both"]:
+    elif which == "sd":
         run_spd_sim(
             name="",
             p=p,
