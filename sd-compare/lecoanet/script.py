@@ -1,4 +1,3 @@
-import shutil
 from functools import partial
 from pathlib import Path
 from typing import Tuple
@@ -93,10 +92,9 @@ def run_superfv_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, 
         return out
     except Exception as e:
         print(f"Failed to load output from '{path}' with: {e}")
-
-    if path.exists():
-        print(f"Removing bad output at '{path}'")
-        shutil.rmtree(path)
+        if path.exists():
+            print(f"Path '{path}' exists. Returning early.")
+            return None
 
     sim = HydroSolver(
         ic=partial(ics.lecoanet_kelvin_helmholtz, density_jump=density_jump - 1.0),
@@ -168,8 +166,8 @@ def run_spd_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kw
     except Exception as e:
         print(f"Failed to load output from '{path}' with: {e}")
         if path.exists():
-            print(f"Removing bad output at '{path}'")
-            shutil.rmtree(path)
+            print(f"Path '{path}' exists. Returning early.")
+            return None
 
     sim.output()
     sim.perform_time_evolution(t_exact)
