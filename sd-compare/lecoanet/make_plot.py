@@ -5,6 +5,7 @@ from script import (
     run_MUSCL_Hancock_sim,
     run_spd_sim,
     run_superfv_sim,
+    spd_to_uniform_cell_averaged_dye,
 )
 
 Re_base10 = 5
@@ -72,7 +73,7 @@ def plot_sd(ax, sim):
 
     x_sd = sim.regular_faces()[0]
     y_sd = sim.regular_faces()[1]
-    z_sd = sim.transpose_to_fv(sim.regular_mesh(sim.dm.W_cv))[5]
+    z_sd = spd_to_uniform_cell_averaged_dye(sim)
     return ax.pcolormesh(x_sd, y_sd, z_sd)
 
 
