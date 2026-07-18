@@ -14,4 +14,6 @@ module purge
 module load anaconda3/2025.12
 conda activate spd
 
+export CUPY_ACCELERATORS=cutensor
+
 python sd-compare/lecoanet/script.py
