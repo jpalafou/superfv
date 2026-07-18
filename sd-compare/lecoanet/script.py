@@ -16,11 +16,11 @@ dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
 Re_base10 = 5
 Nref = 4096
 density_jump = 2
-t_sim_approx = 6
+t_sim_approx = 4
 
 gamma = 5.0 / 3.0
 NDOF = 2048
-p = 7  # only used for FV and SD simulations
+p = 3  # only used for FV and SD simulations
 which = "fv"  # "mh", "fv", or "sd"
 
 
@@ -182,7 +182,7 @@ def run_spd_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kw
         BC=(("periodic", "periodic"), ("periodic", "periodic")),
         init_fct=ic.KH_instability(density_jump=density_jump - 1.0),
         passives=["dye"],
-        cfl_coeff={3: 0.4, 7: 0.2}[p],
+        cfl_coeff={3: 0.8, 7: 0.5}[p],
         use_cupy=True,
         time_integrator="rk3",
         scheme="SDFB",
@@ -195,6 +195,7 @@ def run_spd_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kw
         riemann_solver_sd="hllc",
         riemann_solver_fv="hllc",
         folder=str(path),
+        profile=True,
         **kwargs,
     )
 
@@ -240,7 +241,7 @@ def superfv_to_uniform_cell_averaged_dye(sim):
 def spd_to_uniform_cell_averaged_dye(sim):
     W_sp = sim.ho_scheme.compute_sp_from_cv(sim.dm.W_cv)
     W_fv = sim.ho_scheme.compute_cv_from_sp_fv(W_sp)
-    return W_fv[sim._p_ + 1].T
+    return W_fv[sim._p_ + 1]
 
 
 if __name__ == "__main__":
