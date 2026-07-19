@@ -1,6 +1,6 @@
 from functools import partial
 from pathlib import Path
-from typing import Tuple
+from typing import Sequence, Tuple
 
 import h5py
 import numpy as np
@@ -16,7 +16,7 @@ dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
 Re_base10 = 5
 Nref = 4096
 density_jump = 2
-t_sim_approx = 4
+target_times = [2.0, 4.0, 6.0]
 
 gamma = 5.0 / 3.0
 NDOF = 2048
@@ -32,6 +32,19 @@ def params_to_dedalus_filename(
     Re_base10: int, Nref: int, density_jump: int, t_sim_approx: int
 ) -> Path:
     return dataset_directory / f"{Re_base10}_{Nref}_{density_jump}_{t_sim_approx}.h5"
+
+
+def _target_times_label(targets: Sequence[float]) -> str:
+    return "targets=" + "-".join(f"{t:g}" for t in targets)
+
+
+def _case_label(
+    Re_base10: int,
+    Nref: int,
+    density_jump: int,
+    targets: Sequence[float],
+) -> str:
+    return f"{Re_base10}_{Nref}_{density_jump}_{_target_times_label(targets)}"
 
 
 def project_dedalus_to_t_exact(filename: Path) -> float:
@@ -81,10 +94,17 @@ def _grid_values_to_uniform_cell_averages(
     return np.fft.ifft2(coarse_coeff * (nx * ny)).real
 
 
-def run_MUSCL_Hancock_sim(name, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kwargs):
-    dedalus = params_to_dedalus_filename(Re_base10, Nref, density_jump, t_sim_approx)
-    path = base_directory / f"MUSCL_Hancock_{name}_{NDOF=}_{dedalus.stem}"
-    t_exact = project_dedalus_to_t_exact(dedalus)
+def run_MUSCL_Hancock_sim(
+    name,
+    NDOF,
+    Re_base10,
+    Nref,
+    density_jump,
+    target_times,
+    **kwargs,
+):
+    case_label = _case_label(Re_base10, Nref, density_jump, target_times)
+    path = base_directory / f"MUSCL_Hancock_{name}_{NDOF=}_{case_label}"
     nu = nu_from_Re(10**Re_base10)
 
     try:
@@ -116,14 +136,22 @@ def run_MUSCL_Hancock_sim(name, NDOF, Re_base10, Nref, density_jump, t_sim_appro
         output_path=path,
         **kwargs,
     )
-    sim.run(t_exact, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+    sim.run(list(target_times), time_integrator=TimeIntegrator.MUSCL_HANCOCK)
     return sim
 
 
-def run_superfv_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kwargs):
-    dedalus = params_to_dedalus_filename(Re_base10, Nref, density_jump, t_sim_approx)
-    path = base_directory / f"FV_{name}_{p=}_{NDOF=}_{dedalus.stem}"
-    t_exact = project_dedalus_to_t_exact(dedalus)
+def run_superfv_sim(
+    name,
+    p,
+    NDOF,
+    Re_base10,
+    Nref,
+    density_jump,
+    target_times,
+    **kwargs,
+):
+    case_label = _case_label(Re_base10, Nref, density_jump, target_times)
+    path = base_directory / f"FV_{name}_{p=}_{NDOF=}_{case_label}"
     nu = nu_from_Re(10**Re_base10)
 
     try:
@@ -156,16 +184,22 @@ def run_superfv_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, 
         output_path=path,
         **kwargs,
     )
-    sim.run(
-        t_exact,
-    )
+    sim.run(list(target_times))
     return sim
 
 
-def run_spd_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kwargs):
-    dedalus = params_to_dedalus_filename(Re_base10, Nref, density_jump, t_sim_approx)
-    path = base_directory / f"SD_{name}_{p=}_{NDOF=}_{dedalus.stem}"
-    t_exact = project_dedalus_to_t_exact(dedalus)
+def run_spd_sim(
+    name,
+    p,
+    NDOF,
+    Re_base10,
+    Nref,
+    density_jump,
+    target_times,
+    **kwargs,
+):
+    case_label = _case_label(Re_base10, Nref, density_jump, target_times)
+    path = base_directory / f"SD_{name}_{p=}_{NDOF=}_{case_label}"
     nu = nu_from_Re(10**Re_base10)
     Nelements = NDOF // (p + 1)
 
@@ -210,8 +244,9 @@ def run_spd_sim(name, p, NDOF, Re_base10, Nref, density_jump, t_sim_approx, **kw
             return None
 
     sim.output()
-    sim.perform_time_evolution(t_exact)
-    sim.output()
+    for t in target_times:
+        sim.perform_time_evolution(t)
+        sim.output()
 
     return sim
 
@@ -233,22 +268,41 @@ def project_dedalus_to_uniform_cell_averaged_dye(
     return _grid_values_to_uniform_cell_averages(c, nx, ny)
 
 
-def superfv_to_uniform_cell_averaged_dye(sim):
+def load_spd_output(sim, nout: int):
+    folder = Path(sim.folder)
+
+    outputs = np.loadtxt(folder / "outputs.out")
+    outputs = np.atleast_2d(outputs)
+
+    times_by_nout = {int(row[1]): float(row[0]) for row in outputs}
+    if nout not in times_by_nout:
+        raise ValueError(f"Output {nout} not found in {folder / 'outputs.out'}.")
+    sim.time = times_by_nout[nout]
+    sim.noutput = nout
+
+    file = folder / f"Output_{nout:05d}"
+    if sim.comms.size > 1:
+        file = folder / f"Output_{nout:05d}_{sim.comms.rank}"
+
+    sim.dm.W_cv[...] = np.load(f"{file}.npy")
+    sim.convert_solution(W=True, call_timer=False)
+
+    sim.noutput += 1
+
+
+def superfv_to_uniform_cell_averaged_dye(sim, nout: int):
     idx = sim.params.variable_index_map
-    return sim.snapshot_history[-1].w[idx("dye")].squeeze()
+    return sim.snapshot_history[nout].w[idx("dye")].squeeze()
 
 
-def spd_to_uniform_cell_averaged_dye(sim):
+def spd_to_uniform_cell_averaged_dye(sim, nout: int):
+    load_spd_output(sim, nout)
     W_sp = sim.ho_scheme.compute_sp_from_cv(sim.dm.W_cv)
     W_fv = sim.ho_scheme.compute_cv_from_sp_fv(W_sp)
     return W_fv[sim._p_ + 1]
 
 
 if __name__ == "__main__":
-    reference_file = params_to_dedalus_filename(Re_base10, Nref, density_jump, t_sim_approx)
-    if not reference_file.exists():
-        raise FileNotFoundError(f"Reference file not found: {reference_file}")
-
     if which == "mh":
         run_MUSCL_Hancock_sim(
             name="",
@@ -256,7 +310,7 @@ if __name__ == "__main__":
             Re_base10=Re_base10,
             Nref=Nref,
             density_jump=density_jump,
-            t_sim_approx=t_sim_approx,
+            target_times=target_times,
         )
     elif which == "fv":
         run_superfv_sim(
@@ -266,7 +320,7 @@ if __name__ == "__main__":
             Re_base10=Re_base10,
             Nref=Nref,
             density_jump=density_jump,
-            t_sim_approx=t_sim_approx,
+            target_times=target_times,
             rtol=1e-5,
         )
     elif which == "sd":
@@ -277,6 +331,6 @@ if __name__ == "__main__":
             Re_base10=Re_base10,
             Nref=Nref,
             density_jump=density_jump,
-            t_sim_approx=t_sim_approx,
+            target_times=target_times,
             tolerance=1e-5,
         )
