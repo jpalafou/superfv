@@ -14,10 +14,10 @@ Re_base10 = 5
 Nref = 4096
 density_jump = 2
 target_times = [2, 4, 6]
-nout = 1
-if not 1 <= nout <= len(target_times):
-    raise ValueError(f"nout must be between 1 and {len(target_times)}.")
-t_plot = target_times[nout - 1]
+t_plot = 4
+if t_plot not in target_times:
+    raise ValueError(f"t_plot must be one of {target_times}.")
+nout = target_times.index(t_plot) + 1
 
 NDOF = 2048
 
