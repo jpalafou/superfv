@@ -6,7 +6,7 @@ from enum import Enum
 from functools import partial
 from pathlib import Path
 from types import ModuleType
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -194,6 +194,7 @@ class HydroSolver:
         output_path: Optional[Union[str, Path]] = None,
         discard_after_writing: bool = True,
         overwrite: bool = False,
+        bonus_snapshot_routine: Optional[Callable[[Snapshot], None]] = None,
     ):
         """
         Initialize the HydroSolver with the specified parameters.
@@ -317,6 +318,9 @@ class HydroSolver:
             output_path: Optional path to save simulation outputs. If None, no outputs are saved.
             discard_after_writing: If True, discard arrays after writing to disk to save memory.
             overwrite: If True, overwrite existing output directory if it exists.
+            bonus_snapshot_routine: Optional callable function that takes a `Snapshot` object and
+                performs additional operations on it after a snapshot is taken. If None, no
+                additional operations are performed.
         """
         # Define the following attributes:
         self.arrays: ArrayManager
@@ -330,6 +334,7 @@ class HydroSolver:
         self.step_summary: StepSummary
         self.step_history: StepHistory
         self.snapshot_history: SnapshotHistory
+        self.bonus_snapshot_routine: Callable[[Snapshot], None]
         self.w0_func: MultivarField
 
         # Decide on active dimensions based on nx, ny, nz
@@ -339,6 +344,12 @@ class HydroSolver:
 
         # This is straightforward
         self.arrays = ArrayManager()
+
+        # Dynamically assign a bonus snapshot routine which defaults to a no-op
+        if bonus_snapshot_routine is None:
+            self.bonus_snapshot_routine = lambda snapshot: None  # default to no-op
+        else:
+            self.bonus_snapshot_routine = bonus_snapshot_routine
 
         # self.params requires many sub-parameters to be defined
         ic_params = InitialConditionParameters(
@@ -894,6 +905,8 @@ class HydroSolver:
             path=path,
         )
 
+        self.bonus_snapshot_routine(snapshot)
+
         if snapshot.path is not None:
             if len(self.step_history) > 1:
                 print()  # for better separation of snapshot logs in the terminal
@@ -901,6 +914,7 @@ class HydroSolver:
             with open(snapshot.path.parent / "output_times.txt", "a") as f:
                 f.write(f"{snapshot.path.name},{snapshot.t}\n")
             snapshot.dump(params.discard_after_writing)
+
         self.snapshot_history.append(snapshot)
         self._stop_timer("take_snapshot")  # TIMER STOP
 
