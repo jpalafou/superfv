@@ -222,7 +222,7 @@ def run_spd_sim(
         scheme="SDFB",
         fallback="MUSCL",
         slope_limiter="moncen",
-        limiting_variables=[0, 1, 2, 4, 5],
+        limiting_variables=[0, 4, 5],
         PAD=True,
         SED=True,
         blending=False,
