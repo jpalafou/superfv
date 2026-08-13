@@ -3,12 +3,15 @@ from pathlib import Path
 from typing import Sequence, Tuple
 
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 import spd.initial_conditions as ic
 from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import HydroSolver, HydroSolverOutput, ics
 from superfv.hydro_solver import TimeIntegrator
+from superfv.tools.device_management import CUPY_AVAILABLE
+from superfv.tools.snapshot import Snapshot
 
 base_directory = Path("/scratch/gpfs/jp7427/FVvsSD/lecoanet/")
 dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
@@ -16,12 +19,16 @@ dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
 Re_base10 = 5
 Nref = 4096
 density_jump = 2
-target_times = [2.0, 4.0, 6.0]
+target_times = [2.0, 4.0]
 
 gamma = 5.0 / 3.0
 NDOF = 2048
 p = 3  # only used for FV and SD simulations
 which = "fv"  # "mh", "fv", or "sd"
+
+
+if CUPY_AVAILABLE:
+    import cupy as cp
 
 
 def nu_from_Re(Re: float) -> float:
@@ -45,6 +52,41 @@ def _case_label(
     targets: Sequence[float],
 ) -> str:
     return f"{Re_base10}_{Nref}_{density_jump}_{_target_times_label(targets)}"
+
+
+def _as_numpy(a):
+    return cp.asnumpy(a) if CUPY_AVAILABLE and isinstance(a, cp.ndarray) else a
+
+
+def _save_density_plot(rho: np.ndarray, path: Path, t: float) -> None:
+    rho = np.squeeze(_as_numpy(rho))
+    fig, ax = plt.subplots(figsize=(5, 8))
+    im = ax.imshow(
+        rho.T,
+        origin="lower",
+        extent=(0.0, 1.0, 0.0, 2.0),
+        aspect="auto",
+        interpolation="nearest",
+    )
+    ax.set_title(f"density, t={t:.6g}")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    fig.savefig(path / f"density_t={t:.6g}.png", dpi=150)
+    plt.close(fig)
+
+
+def _superfv_density_plotter(snapshot: Snapshot) -> None:
+    _save_density_plot(snapshot.data.u[0], snapshot.path.parent, snapshot.t)
+
+
+def _plot_spd_density(sim) -> None:
+    if sim.rank != 0:
+        return
+    W_sp = sim.ho_scheme.compute_sp_from_cv(sim.dm.W_cv, call_timer=False)
+    W_fv = sim.ho_scheme.compute_cv_from_sp_fv(W_sp)
+    _save_density_plot(W_fv[sim._d_], Path(sim.folder), sim.time)
 
 
 def project_dedalus_to_t_exact(filename: Path) -> float:
@@ -134,9 +176,13 @@ def run_MUSCL_Hancock_sim(
         use_MUSCL=True,
         cupy=True,
         output_path=path,
+        bonus_snapshot_routine=_superfv_density_plotter,
         **kwargs,
     )
-    sim.run(list(target_times), time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+    sim.run(
+        list(target_times),
+        time_integrator=TimeIntegrator.MUSCL_HANCOCK,
+    )
     return sim
 
 
@@ -182,6 +228,7 @@ def run_superfv_sim(
         detect_closing_troubles=False,
         cupy=True,
         output_path=path,
+        bonus_snapshot_routine=_superfv_density_plotter,
         **kwargs,
     )
     sim.run(list(target_times))
@@ -232,6 +279,7 @@ def run_spd_sim(
         profile=True,
         **kwargs,
     )
+    sim.bonus_snapshot_routine = _plot_spd_density
 
     try:
         sim.load_output()
