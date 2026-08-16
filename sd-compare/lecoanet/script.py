@@ -284,17 +284,19 @@ def run_spd_sim(
     try:
         sim.load_output()
         print(f"Loaded output from '{path}'")
-        return sim
+        if sim.time >= target_times[-1]:
+            return sim
     except Exception as e:
         print(f"Failed to load output from '{path}' with: {e}")
         if path.exists():
             print(f"Path '{path}' exists. Returning early.")
             return None
-
-    sim.output()
-    for t in target_times:
-        sim.perform_time_evolution(t)
         sim.output()
+
+    for t in target_times:
+        if t > sim.time:
+            sim.perform_time_evolution(t)
+            sim.output()
 
     return sim
 
