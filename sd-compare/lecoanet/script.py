@@ -13,13 +13,13 @@ from superfv.hydro_solver import TimeIntegrator
 from superfv.tools.device_management import CUPY_AVAILABLE
 from superfv.tools.snapshot import Snapshot
 
-base_directory = Path("/scratch/gpfs/jp7427/FVvsSD/lecoanet/")
+base_directory = Path("/scratch/gpfs/jp7427/FVvsSD/lecoanet-large/")
 dataset_directory = Path("/scratch/gpfs/jp7427/FVvsSD/Lecoanet_dataset/")
 
 Re_base10 = 5
 Nref = 4096
 density_jump = 2
-target_times = [2.0, 4.0]
+target_times = [2.0, 4.0, 6.0]
 
 gamma = 5.0 / 3.0
 NDOF = 2048
@@ -86,7 +86,7 @@ def _plot_spd_density(sim) -> None:
         return
     W_sp = sim.ho_scheme.compute_sp_from_cv(sim.dm.W_cv, call_timer=False)
     W_fv = sim.ho_scheme.compute_cv_from_sp_fv(W_sp)
-    _save_density_plot(W_fv[sim._d_], Path(sim.folder), sim.time)
+    _save_density_plot(W_fv[sim._d_].T, Path(sim.folder), sim.time)
 
 
 def project_dedalus_to_t_exact(filename: Path) -> float:
