@@ -79,7 +79,8 @@ def compute_pp_theta(
         eps: Tolerance for divisions and root admissibility checks.
     """
     if CUPY_AVAILABLE and isinstance(u, cp.ndarray):
-        raise NotImplementedError("CUDA implementation for compute_pp_theta is not available.")
+        compute_pp_theta_kernel_helper(u, uj, theta, idx, rho_min, P_min, gamma, eps)
+        return
 
     na = np.newaxis
     irho = idx("rho")
@@ -224,6 +225,146 @@ if CUPY_AVAILABLE:
         "compute_theta_kernel",
     )
 
+    compute_pp_theta_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void compute_pp_theta_kernel(
+            const double* __restrict__ u,
+            double* __restrict__ uj,
+            double* __restrict__ theta,
+            const double rho_min,
+            const double P_min,
+            const double gamma,
+            const double eps,
+            const int irho,
+            const int imx,
+            const int imy,
+            const int imz,
+            const int iE,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const int ninterps
+        ) {
+            // u        has shape (nvars, nx, ny, nz)
+            // uj       has shape (nvars, nx, ny, nz, ninterps), and density is updated in-place
+            // theta    has shape (nvars, nx, ny, nz)
+
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long ncells = (long long)nx * ny * nz;
+            const double root_inf = 1.0e300;
+
+            for (long long cell = tid; cell < ncells; cell += stride) {
+                const long long rho_cell = (long long)irho * ncells + cell;
+                const long long mx_cell = (long long)imx * ncells + cell;
+                const long long my_cell = (long long)imy * ncells + cell;
+                const long long mz_cell = (long long)imz * ncells + cell;
+                const long long E_cell = (long long)iE * ncells + cell;
+
+                const long long rho_node = rho_cell * (long long)ninterps;
+                const long long mx_node = mx_cell * (long long)ninterps;
+                const long long my_node = my_cell * (long long)ninterps;
+                const long long mz_node = mz_cell * (long long)ninterps;
+                const long long E_node = E_cell * (long long)ninterps;
+
+                double rho_jmin = uj[rho_node];
+                for (int alpha = 1; alpha < ninterps; ++alpha) {
+                    const double rho_j = uj[rho_node + alpha];
+                    rho_jmin = (rho_j < rho_jmin) ? rho_j : rho_jmin;
+                }
+
+                const double rho_bar = u[rho_cell];
+                const double theta1 = (rho_jmin < rho_min)
+                    ? fmin((rho_bar - rho_min) / (rho_bar - rho_jmin + eps), 1.0)
+                    : 1.0;
+                const double mx_bar = u[mx_cell];
+                const double my_bar = u[my_cell];
+                const double mz_bar = u[mz_cell];
+                const double E_bar = u[E_cell];
+                const double momentum_bar_sq = mx_bar * mx_bar + my_bar * my_bar + mz_bar * mz_bar;
+
+                double theta2 = 1.0;
+                for (int alpha = 0; alpha < ninterps; ++alpha) {
+                    const double rho_hat = theta1 * (uj[rho_node + alpha] - rho_bar) + rho_bar;
+                    const double mx_hat = uj[mx_node + alpha];
+                    const double my_hat = uj[my_node + alpha];
+                    const double mz_hat = uj[mz_node + alpha];
+                    const double E_hat = uj[E_node + alpha];
+
+                    uj[rho_node + alpha] = rho_hat;
+
+                    const double P_hat = (gamma - 1.0) * (
+                        E_hat - 0.5 * (
+                            mx_hat * mx_hat + my_hat * my_hat + mz_hat * mz_hat
+                        ) / rho_hat
+                    );
+
+                    double t = 1.0;
+                    if (P_hat < P_min) {
+                        const double drho = rho_hat - rho_bar;
+                        const double dmx = mx_hat - mx_bar;
+                        const double dmy = my_hat - my_bar;
+                        const double dmz = mz_hat - mz_bar;
+                        const double dE = E_hat - E_bar;
+
+                        const double momentum_diff_sq = dmx * dmx + dmy * dmy + dmz * dmz;
+                        const double momentum_bar_dot_diff =
+                            mx_bar * dmx + my_bar * dmy + mz_bar * dmz;
+
+                        const double coeff_A =
+                            (gamma - 1.0) * (momentum_diff_sq - 2.0 * dE * drho);
+                        const double coeff_B =
+                            -2.0 * (gamma - 1.0) * (
+                                E_bar * drho + rho_bar * dE - momentum_bar_dot_diff
+                            ) + 2.0 * P_min * drho;
+                        const double coeff_C =
+                            (gamma - 1.0) * (momentum_bar_sq - 2.0 * E_bar * rho_bar)
+                            + 2.0 * P_min * rho_bar;
+
+                        const double discriminant =
+                            fmax(coeff_B * coeff_B - 4.0 * coeff_A * coeff_C, 0.0);
+                        const double sqrt_discriminant = sqrt(discriminant);
+
+                        double t_best = root_inf;
+                        if (fabs(coeff_A) > eps) {
+                            const double denom = 2.0 * coeff_A;
+                            double t_lower = (-coeff_B - sqrt_discriminant) / denom;
+                            double t_upper = (-coeff_B + sqrt_discriminant) / denom;
+
+                            if (t_lower >= -eps && t_lower <= 1.0 + eps) {
+                                t_lower = fmin(fmax(t_lower, 0.0), 1.0);
+                                t_best = fmin(t_best, t_lower);
+                            }
+                            if (t_upper >= -eps && t_upper <= 1.0 + eps) {
+                                t_upper = fmin(fmax(t_upper, 0.0), 1.0);
+                                t_best = fmin(t_best, t_upper);
+                            }
+                        } else if (fabs(coeff_B) > eps) {
+                            double t_linear = -coeff_C / coeff_B;
+                            if (t_linear >= -eps && t_linear <= 1.0 + eps) {
+                                t_linear = fmin(fmax(t_linear, 0.0), 1.0);
+                                t_best = t_linear;
+                            }
+                        }
+
+                        t = (t_best < root_inf) ? t_best : 0.0;
+                    }
+
+                    theta2 = fmin(theta2, t);
+                }
+
+                for (int var = 0; var < nvars; ++var) {
+                    theta[(long long)var * ncells + cell] = theta2;
+                }
+            }
+        }
+        """,
+        "compute_pp_theta_kernel",
+    )
+
     def compute_theta_kernel_helper(
         w: cp.ndarray,
         wj: cp.ndarray,
@@ -272,4 +413,63 @@ if CUPY_AVAILABLE:
             (blocks_per_grid,),
             (threads_per_block,),
             (w, wj, M, m, Mj, mj, theta, eps, nvars, nx, ny, nz, ninterps),
+        )
+
+    def compute_pp_theta_kernel_helper(
+        u: cp.ndarray,
+        uj: cp.ndarray,
+        theta: cp.ndarray,
+        idx: VariableIndexMap,
+        rho_min: float,
+        P_min: float,
+        gamma: float,
+        eps: float,
+    ):
+        if not u.flags.c_contiguous or u.ndim != 4:
+            raise ValueError("Array `u` must be a C-contiguous, 4-dimensional array.")
+        if not uj.flags.c_contiguous or uj.ndim != 5 or uj.shape[:4] != u.shape:
+            raise ValueError(
+                "Array `uj` must be a C-contiguous, 5-dimensional array of shape "
+                "(nvars, nx, ny, nz, ninterps)."
+            )
+        if not theta.flags.c_contiguous or theta.shape != u.shape:
+            raise ValueError("Array `theta` must be a C-contiguous array of the same shape as `u`.")
+        if u.dtype != cp.float64 or uj.dtype != cp.float64 or theta.dtype != cp.float64:
+            raise ValueError("All input arrays must have dtype float64.")
+
+        nvars, nx, ny, nz = u.shape
+        _, _, _, _, ninterps = uj.shape
+        irho = idx("rho")
+        imx = idx("mx")
+        imy = idx("my")
+        imz = idx("mz")
+        iE = idx("E")
+        if max(irho, imx, imy, imz, iE) >= nvars:
+            raise ValueError("Index map contains a conservative variable outside `u`.")
+
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
+        blocks_per_grid = (nx * ny * nz + threads_per_block - 1) // threads_per_block
+
+        compute_pp_theta_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                u,
+                uj,
+                theta,
+                rho_min,
+                P_min,
+                gamma,
+                eps,
+                irho,
+                imx,
+                imy,
+                imz,
+                iE,
+                nvars,
+                nx,
+                ny,
+                nz,
+                ninterps,
+            ),
         )
