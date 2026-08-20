@@ -9,6 +9,8 @@ from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
+from superfv.slope_limiting.zhang_and_shu import ZhangShuLimiter
+
 from . import initial_conditions as ics
 from .axes import DIM_TO_AXIS, XYZ_TUPLE
 from .boundary_conditions import BC, PatchBC
@@ -154,6 +156,7 @@ class HydroSolver:
         PAD_bounds: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         # Zhang-Shu params
         use_ZS: bool = False,
+        ZS_type: ZhangShuLimiter = "mpp",
         adaptive_dt: bool = False,
         adaptive_dt_tol: float = 1e-15,
         theta_denom_tol: float = 1e-15,
@@ -282,6 +285,10 @@ class HydroSolver:
 
         Slope limiting parameters (Zhang-Shu):
             use_ZS: If True, enable Zhang-Shu limiter.
+            ZS_type: Type of Zhang-Shu limiter specified by the `ZhangShuLimiter` enum.
+                "mpp": Use the maximum-principle-preserving Zhang-Shu limiter.
+                "rho_P_pp": Use the positivity-preserving Zhang-Shu limiter for density and
+                    pressure.
             adaptive_dt: If True, enable adaptive time stepping based on Zhang-Shu limiter.
             adaptive_dt_tol: Tolerance for adaptive time stepping.
             theta_denom_tol: Tolerance for denominator in theta calculation.
@@ -408,7 +415,7 @@ class HydroSolver:
         null_SED = SmoothExtremaDetectionParameters(False)
         null_MUSCL = MUSCL_Parameters(False, "none", null_SED)
         null_PAD = PhysicalAdmissibilityDetectionParameters(False, {})
-        null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
+        null_ZS = ZhangShuParameters(False, "mpp", False, null_SED, null_PAD, [])
         null_NAD = NumericalAdmissibilityDetectionParameters(False, 0.0, 0.0, null_SED, [])
         null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0, False)
         null_shock = ShockDetectionParameters(False, null_PAD)
@@ -486,6 +493,7 @@ class HydroSolver:
             ),
             zhang_shu_params=ZhangShuParameters(
                 use_ZS=use_ZS,
+                limiter_type=ZS_type,
                 adaptive_dt=adaptive_dt,
                 SED_params=SED_params if use_ZS else null_SED,
                 PAD_params=PAD_params if use_ZS else null_PAD,

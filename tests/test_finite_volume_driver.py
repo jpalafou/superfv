@@ -63,7 +63,7 @@ hydro_params = HydroParameters(
 null_SED = SmoothExtremaDetectionParameters(False)
 null_PAD = PhysicalAdmissibilityDetectionParameters(False, {})
 null_MUSCL = MUSCL_Parameters(False, "none", null_SED)
-null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
+null_ZS = ZhangShuParameters(False, "mpp", False, null_SED, null_PAD, [])
 null_MOOD = MOOD_Parameters(
     False,
     NumericalAdmissibilityDetectionParameters(False, xp.nan, xp.nan, null_SED, []),
@@ -147,6 +147,7 @@ for p in [3, 7]:
                             muscl_params=null_MUSCL,
                             zhang_shu_params=ZhangShuParameters(
                                 True,
+                                "mpp",
                                 False,
                                 SmoothExtremaDetectionParameters(use_SED),
                                 null_PAD,

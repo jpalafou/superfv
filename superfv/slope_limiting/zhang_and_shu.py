@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.variable_index_map import VariableIndexMap
+
+ZhangShuLimiter = Literal["mpp", "rho_P_pp"]
 
 
 def compute_theta(

@@ -5,6 +5,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 
+from superfv.slope_limiting.zhang_and_shu import ZhangShuLimiter
+
 from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, SourceTerm, UnivarField
 from .riemann_solvers import RiemannSolver
@@ -63,6 +65,7 @@ class PhysicalAdmissibilityDetectionParameters:
 @dataclass(frozen=True, slots=True)
 class ZhangShuParameters:
     use_ZS: bool
+    limiter_type: ZhangShuLimiter
     adaptive_dt: bool
     SED_params: SmoothExtremaDetectionParameters
     PAD_params: PhysicalAdmissibilityDetectionParameters
