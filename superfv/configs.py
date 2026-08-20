@@ -65,7 +65,7 @@ class PhysicalAdmissibilityDetectionParameters:
 @dataclass(frozen=True, slots=True)
 class ZhangShuParameters:
     use_ZS: bool
-    limiter_type: ZhangShuLimiter
+    ZS_limiter: ZhangShuLimiter
     adaptive_dt: bool
     SED_params: SmoothExtremaDetectionParameters
     PAD_params: PhysicalAdmissibilityDetectionParameters

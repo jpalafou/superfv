@@ -157,8 +157,10 @@ def compute_pp_theta(
     t = np.where(P_qhat < P_min, t, 1.0)
 
     theta2 = np.min(t, axis=-1)
-    uj[irho] = rho_hat
     theta[...] = theta2[na, ...]
+
+    # Copy the theta1-limited value of density from _qj_ to the node arrays
+    uj[irho] = rho_hat
 
 
 def zhang_shu_operator(wj: ArrayLike, w: ArrayLike, theta: ArrayLike):

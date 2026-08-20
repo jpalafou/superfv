@@ -23,7 +23,7 @@ from .slope_limiting import apply_global_bounds, compute_dmp
 from .slope_limiting.muscl import compute_MUSCL_slopes, reconstruct_MUSCL_faces
 from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import compute_alpha
-from .slope_limiting.zhang_and_shu import compute_theta
+from .slope_limiting.zhang_and_shu import compute_pp_theta, compute_theta
 from .stencils import (
     conservative_interpolation,
     finite_difference,
@@ -705,6 +705,94 @@ def apply_zhang_shu_limiter(
     timer is not None and timer.stop("zhang_shu_limiter", cupy)  # TIMER STOP
 
 
+def apply_zhang_shu_pp_limiter(
+    _q_: ArrayLike,
+    _x_nodes_: ArrayLike,
+    _y_nodes_: ArrayLike,
+    _z_nodes_: ArrayLike,
+    _qcc_: ArrayLike,
+    _theta_: ArrayLike,
+    _alpha_: ArrayLike,
+    idx: VariableIndexMap,
+    primitives: bool,
+    gamma: float,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    p: int,
+    params: ZhangShuParameters,
+    timer: Optional[MultiTimer] = None,
+):
+    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    xp = cp if cupy else np
+    na = xp.newaxis
+    timer is not None and timer.start("zhang_shu_limiter", cupy)  # TIMER START
+
+    if primitives:
+        raise NotImplementedError(
+            "Zhang-Shu positivity-preserving limiter is not implemented for primitive variables."
+        )
+    if "rho" not in params.PAD_params.bounds or "P" not in params.PAD_params.bounds:
+        raise ValueError(
+            "Zhang-Shu positivity-preserving limiter requires bounds for 'rho' and 'P' in PAD_params."
+        )
+
+    rho_min = params.PAD_params.bounds["rho"][0]
+    P_min = params.PAD_params.bounds["P"][0]
+
+    # Validate input
+    if _q_.ndim != 4:
+        raise ValueError("_q_ must be 4D.")
+    if _q_.shape != _qcc_.shape:
+        raise ValueError("_q_ and _qcc_ must have the same shape.")
+    if _theta_.shape != _q_.shape:
+        raise ValueError("_theta_ must have the same shape as _q_.")
+    if _alpha_.shape != _q_.shape:
+        raise ValueError("_alpha_ must have the same shape as _q_.")
+
+    # Gather node arrays into dict
+    node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {
+        dim: nodes
+        for dim, nodes in zip(("x", "y", "z"), (_x_nodes_, _y_nodes_, _z_nodes_))
+        if dim in active_dims
+    }
+
+    # 1) Gather all node arrays to get nodal minima and maxima
+    if p > 1:
+        interpolate_cell_centers(_q_, _qcc_, active_dims, p)  # no timer
+        _qj_ = xp.concatenate([_qcc_[..., na]] + [node_dict[dim] for dim in active_dims], axis=4)
+    else:
+        _qj_ = xp.concatenate([node_dict[dim] for dim in active_dims], axis=4)
+
+    # 2) Update _theta_ with the Zhang-Shu PP limiter
+    compute_pp_theta(_q_, _qj_, _theta_, idx, rho_min, P_min, gamma, params.theta_denom_tol)
+
+    # Copy the theta1-limited value of density from _qj_ to the node arrays
+    irho = idx("rho")
+    offset = 1 if p > 1 else 0
+    for dim in active_dims:
+        n_nodes = node_dict[dim].shape[4]
+        node_dict[dim][irho] = _qj_[irho, ..., offset : offset + n_nodes]
+        offset += n_nodes
+
+    # 3) Relax _theta_ with smooth extrema detection and omit variables from limiting
+    if params.SED_params.use_SED:
+        raise NotImplementedError(
+            "Zhang-Shu positivity-preserving limiter with smooth extrema detection is not implemented."
+        )
+
+    if "omitted" in idx.group_var_map:
+        _theta_[idx("omitted")] = 1.0
+
+    # Apply limiter to node arrays
+    if "x" in active_dims:
+        _apply_zhang_shu_limiter_to_node_array(_x_nodes_, _q_, _theta_)
+    if "y" in active_dims:
+        _apply_zhang_shu_limiter_to_node_array(_y_nodes_, _q_, _theta_)
+    if "z" in active_dims:
+        _apply_zhang_shu_limiter_to_node_array(_z_nodes_, _q_, _theta_)
+
+    timer is not None and timer.stop("zhang_shu_limiter", cupy)  # TIMER STOP
+
+
 def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
     if fv_params.flux_quadrature == "gauss_legendre":
         n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_params.p)
@@ -945,9 +1033,8 @@ def update_weno_fluxes(
 
         node_dict[dim] = _nodes_
 
-    # Optionally apply slope-limiting to the nodes
-    if fv.zhang_shu_params.use_ZS:
-        # a priori slope limiting
+    # Optionally apply a priori slope-limiting to the nodes
+    if fv.zhang_shu_params.use_ZS and fv.zhang_shu_params.ZS_limiter == "mpp":
         apply_zhang_shu_limiter(
             _u_ if fv.flux_recipe == "cons_lim_prim" else _w_,
             node_dict["x"] if "x" in active_dims else np.array([]),
@@ -958,6 +1045,23 @@ def update_weno_fluxes(
             _alpha_,
             idx,
             False if fv.flux_recipe == "cons_lim_prim" else True,
+            active_dims,
+            fv.p,
+            fv.zhang_shu_params,
+            timer,
+        )
+    elif fv.zhang_shu_params.use_ZS and fv.zhang_shu_params.ZS_limiter == "rho_P_pp":
+        apply_zhang_shu_pp_limiter(
+            _u_ if fv.flux_recipe == "cons_lim_prim" else _w_,
+            node_dict["x"] if "x" in active_dims else np.array([]),
+            node_dict["y"] if "y" in active_dims else np.array([]),
+            node_dict["z"] if "z" in active_dims else np.array([]),
+            _qcc_,
+            _theta_,
+            _alpha_,
+            idx,
+            False if fv.flux_recipe == "cons_lim_prim" else True,
+            hydro_params.gamma,
             active_dims,
             fv.p,
             fv.zhang_shu_params,

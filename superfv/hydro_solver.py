@@ -493,7 +493,7 @@ class HydroSolver:
             ),
             zhang_shu_params=ZhangShuParameters(
                 use_ZS=use_ZS,
-                limiter_type=ZS_limiter,
+                ZS_limiter=ZS_limiter,
                 adaptive_dt=adaptive_dt,
                 SED_params=SED_params if use_ZS else null_SED,
                 PAD_params=PAD_params if use_ZS else null_PAD,
