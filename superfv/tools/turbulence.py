@@ -2,6 +2,7 @@ from typing import Literal, Tuple
 
 import numpy as np
 
+from superfv.hydro import cons_to_prim
 from superfv.mesh import UniformFiniteVolumeMesh
 
 from .variable_index_map import VariableIndexMap
@@ -83,12 +84,13 @@ def turbulent_power_specta(
 
 
 def compute_velocity_rms(sim):
-    idx = sim.variable_index_map
+    idx = sim.params.variable_index_map
+    hp = sim.params.hydro
     xp = sim.xp
 
     u = sim.arrays["u"]
     w = xp.empty_like(u)
-    sim.conservatives_to_primitives(u, w)
+    cons_to_prim(u, w, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
     v = xp.sqrt(xp.mean(xp.sum(xp.square(w[idx("v")]), axis=0))).item()
 
@@ -96,13 +98,7 @@ def compute_velocity_rms(sim):
 
 
 def compute_turbulence_crossing_time(sim):
-    mesh = sim.mesh
-
-    Lx = mesh.xlim[1] - mesh.xlim[0]
-    Ly = mesh.ylim[1] - mesh.ylim[0]
-    Lz = mesh.zlim[1] - mesh.zlim[0]
-    L = max(Lx, Ly, Lz)
-
+    boxlen = sim.mesh.boxlen
     sigma = compute_velocity_rms(sim)
 
-    return L / sigma
+    return boxlen / sigma
