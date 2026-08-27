@@ -80,3 +80,29 @@ def turbulent_power_specta(
     E_k = E_shell / widths
 
     return k_centers, E_k
+
+
+def compute_velocity_rms(sim):
+    idx = sim.variable_index_map
+    xp = sim.xp
+
+    u = sim.arrays["u"]
+    w = xp.empty_like(u)
+    sim.conservatives_to_primitives(u, w)
+
+    v = xp.sqrt(xp.mean(xp.sum(xp.square(w[idx("v")]), axis=0))).item()
+
+    return v
+
+
+def compute_turbulence_crossing_time(sim):
+    mesh = sim.mesh
+
+    Lx = mesh.xlim[1] - mesh.xlim[0]
+    Ly = mesh.ylim[1] - mesh.ylim[0]
+    Lz = mesh.zlim[1] - mesh.zlim[0]
+    L = max(Lx, Ly, Lz)
+
+    sigma = compute_velocity_rms(sim)
+
+    return L / sigma

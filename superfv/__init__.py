@@ -8,7 +8,7 @@ from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import CUPY_AVAILABLE
 from .tools.run_helper import run_multiple_simulations
-from .tools.turbulent_power_spectra import turbulent_power_specta
+from .tools.turbulence import turbulent_power_specta
 
 __all__ = [
     # global variables
