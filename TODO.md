@@ -3,3 +3,5 @@ stop passing `dim` to hydro kernels, etc. make the first arg normal by default a
 improve HydroSolver doc string; list out what each literal means in a few words
 
 the raising of exceptions in configs.py is stressful to me. i feel exceptions should be raised in the source code where they are relevant.
+
+`# If limiting conservatives, then all PAD bounds must be in primitives` this warning is confusing
