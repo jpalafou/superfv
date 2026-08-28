@@ -28,9 +28,9 @@ init_params = dict(
 # Loop parameters
 resolutions = [32, 64, 128]
 
-musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
+musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="pp2d")
 apriori = dict(ZS=True, lazy_primitives="adaptive")
-aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
+aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="pp2d")
 aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
 aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
 aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)

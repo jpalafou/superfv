@@ -3,17 +3,7 @@ from functools import partial
 import numpy as np
 import pytest
 
-from superfv import (
-    BC,
-    CUPY_AVAILABLE,
-    FallbackCascade,
-    FluxQuadrature,
-    HydroSolver,
-    LazyPrimitiveMode,
-    MUSCL_SlopeLimiter,
-    TimeIntegrator,
-    ics,
-)
+from superfv import CUPY_AVAILABLE, HydroSolver, ics
 from superfv.axes import DIM_TO_AXIS
 from superfv.tools.norms import linf_norm
 
@@ -27,25 +17,25 @@ from superfv.tools.norms import linf_norm
             p=3,
             use_ZS=True,
             adaptive_dt=True,
-            lazy_primitive_mode=LazyPrimitiveMode.FULL,
-            flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+            lazy_primitive_mode="full",
+            flux_quadrature="gauss_legendre",
         ),
         dict(
             p=7,
             use_ZS=True,
             adaptive_dt=True,
-            lazy_primitive_mode=LazyPrimitiveMode.FULL,
-            flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+            lazy_primitive_mode="full",
+            flux_quadrature="gauss_legendre",
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, max_revs=3),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, max_revs=7),
+        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
+        dict(p=7, use_MOOD=True, fallback_cascade="full", max_revs=7),
     ],
 )
 def test_sedov(scheme):
     sim = HydroSolver(
         ic=partial(ics.sedov, h=1 / 64, gamma=1.4, P0=1e-5),
-        bcx=(BC.REFLECTIVE, BC.FREE),
-        bcy=(BC.REFLECTIVE, BC.FREE),
+        bcx=("reflective", "free"),
+        bcy=("reflective", "free"),
         gamma=1.4,
         nx=64,
         ny=64,
@@ -53,31 +43,31 @@ def test_sedov(scheme):
         **scheme,
     )
     if scheme.get("use_MUSCL", False):
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK, print_frequency=1)
+        sim.take_n_steps(10, time_integrator="muscl_hancock", print_frequency=1)
     else:
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3, print_frequency=1)
+        sim.take_n_steps(10, time_integrator="ssprk3", print_frequency=1)
 
 
 @pytest.mark.parametrize(
     "scheme",
     [
         dict(p=0),
-        dict(p=1, use_MUSCL=True, MUSCL_limiter=MUSCL_SlopeLimiter.PP2D),
+        dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d"),
         dict(
             p=3,
             use_ZS=True,
             adaptive_dt=True,
-            lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE,
-            flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+            lazy_primitive_mode="adaptive",
+            flux_quadrature="gauss_legendre",
         ),
         dict(
             p=7,
             use_ZS=True,
             adaptive_dt=True,
-            lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE,
-            flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE,
+            lazy_primitive_mode="adaptive",
+            flux_quadrature="gauss_legendre",
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, rtol=0, max_revs=64),
+        dict(p=7, use_MOOD=True, fallback_cascade="full", rtol=0, max_revs=64),
     ],
 )
 def test_preservation_of_maximum_principle(scheme):
@@ -94,9 +84,9 @@ def test_preservation_of_maximum_principle(scheme):
             **scheme,
         )
     if scheme.get("use_MUSCL", False):
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+        sim.take_n_steps(10, time_integrator="muscl_hancock")
     else:
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.SSPRK3)
+        sim.take_n_steps(10, time_integrator="ssprk3")
 
     assert min(sim.step_history.get_history("rho_min")) > 1 - 1e-14
     assert min(sim.step_history.get_history("rho_min")) < 2 + 1e-14
@@ -109,9 +99,9 @@ def test_preservation_of_maximum_principle(scheme):
         dict(p=1, use_MUSCL=True),
         dict(p=3),
         dict(p=7),
-        dict(p=3, flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE),
-        dict(p=7, flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, max_revs=3),
+        dict(p=3, flux_quadrature="gauss_legendre"),
+        dict(p=7, flux_quadrature="gauss_legendre"),
+        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
     ],
 )
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])
@@ -136,19 +126,11 @@ def test_forward_backwards_advection_symmetry(scheme, dim1_dim2):
 
     sim1.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
     sim2.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
 
     def double_flip(x, dim1, dim2):
@@ -171,9 +153,9 @@ def test_forward_backwards_advection_symmetry(scheme, dim1_dim2):
         dict(p=1, use_MUSCL=True),
         dict(p=3),
         dict(p=7),
-        dict(p=3, flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE),
-        dict(p=7, flux_quadrature=FluxQuadrature.GAUSS_LEGENDRE),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, max_revs=3),
+        dict(p=3, flux_quadrature="gauss_legendre"),
+        dict(p=7, flux_quadrature="gauss_legendre"),
+        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
     ],
 )
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])
@@ -196,19 +178,11 @@ def test_rotational_advection_symmetry(scheme, dim1_dim2):
 
     sim1.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
     sim2.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
 
     def reflect_for_opposite_rotation(x, dim1):

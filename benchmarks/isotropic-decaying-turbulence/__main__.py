@@ -25,9 +25,9 @@ init_params = dict(
 M_max_values = [0.01, 0.1, 1, 10, 20, 30, 40, 50]
 seeds = range(1, 31)
 
-musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="PP2D")
+musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="pp2d")
 apriori = dict(ZS=True, lazy_primitives="adaptive")
-aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="PP2D")
+aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="pp2d")
 aposteriori.update(dict(limiting_vars=("rho", "vx", "vy")))
 aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
 aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)

@@ -8,7 +8,6 @@ from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BC, apply_bc
 from superfv.configs import (
     BoundaryConditionParameters,
-    FluxRecipe,
     FV_SchemeParameters,
     HydroParameters,
     MOOD_Parameters,
@@ -112,9 +111,9 @@ def apply_troubles_bc(
     nghost: int,
     bc_params: BoundaryConditionParameters,
 ):
-    none = (BC.NONE, BC.NONE)
-    periodic = (BC.PERIODIC, BC.PERIODIC)
-    zeros = (BC.ZEROS, BC.ZEROS)
+    none: Tuple[BC, BC] = ("none", "none")
+    periodic: Tuple[BC, BC] = ("periodic", "periodic")
+    zeros: Tuple[BC, BC] = ("zeros", "zeros")
     apply_bc(
         _troubles_,
         nghost,
@@ -152,8 +151,8 @@ def detect_troubled_cells(
     _troubles_[...] = 0.0
 
     # Assign _qold_ and _qnew_, the NAD arrays
-    _qold_ = _uold_ if base_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _wold_
-    _qnew_ = _unew_ if base_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _wnew_
+    _qold_ = _uold_ if base_scheme.flux_recipe == "cons_lim_prim" else _wold_
+    _qnew_ = _unew_ if base_scheme.flux_recipe == "cons_lim_prim" else _wnew_
 
     # Update smooth extrema
     if mood_params.NAD_params.use_NAD and mood_params.NAD_params.SED_params.use_SED:

@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from enum import Enum
 from functools import cached_property, lru_cache
 from typing import Literal, Optional
 
@@ -16,11 +15,7 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
 
-class RiemannSolver(Enum):
-    UPWIND = 0
-    LLF = 1
-    HLLC = 2
-    HLLC_TEYSSIER = 3
+RiemannSolver = Literal["upwind", "llf", "hllc", "hllc_teyssier"]
 
 
 class RiemmannSolverBase(ABC):
@@ -558,13 +553,13 @@ class HLLC_Teyssier_RiemannSolver(RiemmannSolverBase):
 @lru_cache(maxsize=None)
 def get_riemann_solver(solver_type: RiemannSolver, npassives: int) -> RiemmannSolverBase:
     match solver_type:
-        case RiemannSolver.UPWIND:
+        case "upwind":
             return UpwindRiemannSolver(npassives)
-        case RiemannSolver.LLF:
+        case "llf":
             return LLF_RiemannSolver(npassives)
-        case RiemannSolver.HLLC:
+        case "hllc":
             return HLLC_RiemannSolver(npassives)
-        case RiemannSolver.HLLC_TEYSSIER:
+        case "hllc_teyssier":
             return HLLC_Teyssier_RiemannSolver(npassives)
         case _:
             raise ValueError(f"Unknown Riemann solver type: {solver_type}")

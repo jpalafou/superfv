@@ -3,7 +3,6 @@ from typing import Literal, Tuple
 import numpy as np
 import pytest
 
-from superfv import BC, FluxQuadrature, FluxRecipe, LazyPrimitiveMode
 from superfv.axes import DIM_TO_AXIS
 from superfv.configs import (
     BoundaryConditionParameters,
@@ -11,7 +10,6 @@ from superfv.configs import (
     HydroParameters,
     MOOD_Parameters,
     MUSCL_Parameters,
-    MUSCL_SlopeLimiter,
     NumericalAdmissibilityParameters,
     PhysicalAdmissibilityParameters,
     ShockDetectionParameters,
@@ -28,7 +26,6 @@ from superfv.finite_volume_driver import (
 )
 from superfv.hydro import prim_to_cons
 from superfv.mesh import UniformFiniteVolumeMesh
-from superfv.riemann_solvers import RiemannSolver
 from superfv.tools.device_management import xp
 from superfv.tools.slicing import replace_slice
 from superfv.tools.variable_index_map import VariableIndexMap
@@ -66,16 +63,12 @@ hydro_params = HydroParameters(
 
 unlimited_FV_configs = []
 for p in range(8):
-    for flux_recipe in [
-        FluxRecipe.CONS_LIM_PRIM,
-        FluxRecipe.CONS_PRIM_LIM,
-        FluxRecipe.PRIM_PRIM_LIM,
-    ]:
-        for flux_quad in [FluxQuadrature.TRANSVERSE, FluxQuadrature.GAUSS_LEGENDRE]:
+    for flux_recipe in ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]:
+        for flux_quad in ["transverse", "gauss_legendre"]:
             for lazy_prim in [
-                LazyPrimitiveMode.NONE,
-                LazyPrimitiveMode.FULL,
-                LazyPrimitiveMode.ADAPTIVE,
+                "none",
+                "full",
+                "adaptive",
             ]:
                 unlimited_FV_configs.append(
                     FV_SchemeParameters(
@@ -85,9 +78,9 @@ for p in range(8):
                         flux_quadrature=flux_quad,
                         lazy_primitive_mode=lazy_prim,
                         positivity_guard=True,
-                        riemann_solver=RiemannSolver.HLLC,
+                        riemann_solver="hllc",
                         muscl_params=MUSCL_Parameters(
-                            False, MUSCL_SlopeLimiter.NONE, SmoothExtremaDetectionParameters(False)
+                            False, "none", SmoothExtremaDetectionParameters(False)
                         ),
                         zhang_shu_params=ZhangShuParameters(
                             False,
@@ -106,31 +99,25 @@ for p in range(8):
                             -1,
                             False,
                         ),
-                        shock_detection_params=ShockDetectionParameters(
-                            lazy_prim == LazyPrimitiveMode.ADAPTIVE
-                        ),
+                        shock_detection_params=ShockDetectionParameters(lazy_prim == "adaptive"),
                     )
                 )
 
 
 muscl_configs = []
-for flux_recipe in [
-    FluxRecipe.CONS_LIM_PRIM,
-    FluxRecipe.CONS_PRIM_LIM,
-    FluxRecipe.PRIM_PRIM_LIM,
-]:
-    for name in ["MUSCL", "MUSCL-Hancock"]:
-        for limiter in [MUSCL_SlopeLimiter.NONE]:
+for flux_recipe in ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]:
+    for name in ["muscl", "MUSCL-Hancock"]:
+        for limiter in ["none"]:
             for use_SED in [False, True]:
                 muscl_configs.append(
                     FV_SchemeParameters(
                         name=name,
                         p=1,
                         flux_recipe=flux_recipe,
-                        flux_quadrature=FluxQuadrature.TRANSVERSE,
-                        lazy_primitive_mode=LazyPrimitiveMode.FULL,
+                        flux_quadrature="transverse",
+                        lazy_primitive_mode="full",
                         positivity_guard=True,
-                        riemann_solver=RiemannSolver.HLLC,
+                        riemann_solver="hllc",
                         muscl_params=MUSCL_Parameters(
                             True, limiter, SmoothExtremaDetectionParameters(use_SED)
                         ),
@@ -159,15 +146,15 @@ for flux_recipe in [
 ZS_configs = []
 for p in [3, 7]:
     for flux_recipe in [
-        FluxRecipe.CONS_LIM_PRIM,
-        FluxRecipe.CONS_PRIM_LIM,
-        FluxRecipe.PRIM_PRIM_LIM,
+        "cons_lim_prim",
+        "cons_prim_lim",
+        "prim_prim_lim",
     ]:
-        for flux_quad in [FluxQuadrature.TRANSVERSE, FluxQuadrature.GAUSS_LEGENDRE]:
+        for flux_quad in ["transverse", "gauss_legendre"]:
             for lazy_prim in [
-                LazyPrimitiveMode.NONE,
-                LazyPrimitiveMode.FULL,
-                LazyPrimitiveMode.ADAPTIVE,
+                "none",
+                "full",
+                "adaptive",
             ]:
                 for use_SED in [False, True]:
                     ZS_configs.append(
@@ -178,10 +165,10 @@ for p in [3, 7]:
                             flux_quadrature=flux_quad,
                             lazy_primitive_mode=lazy_prim,
                             positivity_guard=True,
-                            riemann_solver=RiemannSolver.HLLC,
+                            riemann_solver="hllc",
                             muscl_params=MUSCL_Parameters(
                                 False,
-                                MUSCL_SlopeLimiter.NONE,
+                                "none",
                                 SmoothExtremaDetectionParameters(False),
                             ),
                             zhang_shu_params=ZhangShuParameters(
@@ -206,7 +193,7 @@ for p in [3, 7]:
                                 False,
                             ),
                             shock_detection_params=ShockDetectionParameters(
-                                lazy_prim == LazyPrimitiveMode.ADAPTIVE
+                                lazy_prim == "adaptive"
                             ),
                         )
                     )
@@ -219,7 +206,7 @@ for p in [3, 7]:
 def test_fv_rhs_is_finite(
     base_scheme: FV_SchemeParameters, active_dims: Tuple[Literal["x", "y", "z"], ...]
 ):
-    if len(active_dims) == 1 and base_scheme.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+    if len(active_dims) == 1 and base_scheme.flux_quadrature == "gauss_legendre":
         pytest.skip("Gauss-Legendre quadrature is not implemented for 1D fluxes.")
 
     print(f"{base_scheme=}")
@@ -237,9 +224,9 @@ def test_fv_rhs_is_finite(
     )
 
     bc_params = BoundaryConditionParameters(
-        bcx=(BC.FREE, BC.FREE) if "x" in active_dims else (BC.NONE, BC.NONE),
-        bcy=(BC.FREE, BC.FREE) if "y" in active_dims else (BC.NONE, BC.NONE),
-        bcz=(BC.FREE, BC.FREE) if "z" in active_dims else (BC.NONE, BC.NONE),
+        bcx=("free", "free") if "x" in active_dims else ("none", "none"),
+        bcy=("free", "free") if "y" in active_dims else ("none", "none"),
+        bcz=("free", "free") if "z" in active_dims else ("none", "none"),
     )
 
     # Allocate arrays

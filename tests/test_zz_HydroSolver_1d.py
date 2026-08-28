@@ -3,18 +3,8 @@ from functools import partial
 import numpy as np
 import pytest
 
-from superfv import (
-    BC,
-    CUPY_AVAILABLE,
-    FallbackCascade,
-    HydroSolver,
-    LazyPrimitiveMode,
-    TimeIntegrator,
-    ics,
-)
+from superfv import CUPY_AVAILABLE, HydroSolver, ics
 from superfv.axes import DIM_TO_AXIS
-from superfv.configs import FluxRecipe
-from superfv.riemann_solvers import RiemannSolver
 from superfv.tools.norms import linf_norm
 from teyssier import cons_to_prim, weno
 
@@ -25,26 +15,26 @@ from teyssier import cons_to_prim, weno
         dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=1, use_ZS=True, adaptive_dt=True),
-        dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
-        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
-        dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, max_revs=3),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, max_revs=7),
+        dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
+        dict(p=7, use_MOOD=True, fallback_cascade="full", max_revs=7),
     ],
 )
 def test_sedov(scheme):
     sim = HydroSolver(
         ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
-        bcx=(BC.REFLECTIVE, BC.FREE),
+        bcx=("reflective", "free"),
         gamma=1.4,
         nx=100,
         cupy=CUPY_AVAILABLE,
         **scheme,
     )
     if scheme.get("use_MUSCL", False):
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+        sim.take_n_steps(10, time_integrator="muscl_hancock")
     else:
-        sim.take_n_steps(10, time_integrator=TimeIntegrator.MATCH_P_UP_TO_SSPRK3)
+        sim.take_n_steps(10, time_integrator="match_p_up_to_ssprk3")
 
 
 @pytest.mark.parametrize(
@@ -52,13 +42,13 @@ def test_sedov(scheme):
     [
         dict(p=0),
         dict(p=1, use_MUSCL=True),
-        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
     ],
 )
 def test_sedov_with_passive_scalar(scheme):
     sim = HydroSolver(
         ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
-        bcx=(BC.REFLECTIVE, BC.FREE),
+        bcx=("reflective", "free"),
         gamma=1.4,
         nx=100,
         cupy=CUPY_AVAILABLE,
@@ -67,7 +57,7 @@ def test_sedov_with_passive_scalar(scheme):
     sim_with_passive = HydroSolver(
         ic=partial(ics.sedov, h=1 / 100, gamma=1.4, P0=1e-5),
         passive_ics={"passive1": lambda x, y, z, t, xp: xp.where(xp.abs(x - 0.5) < 0.25, 1, 0)},
-        bcx=(BC.REFLECTIVE, BC.FREE),
+        bcx=("reflective", "free"),
         gamma=1.4,
         nx=100,
         cupy=CUPY_AVAILABLE,
@@ -76,19 +66,11 @@ def test_sedov_with_passive_scalar(scheme):
 
     sim.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
     sim_with_passive.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
 
     idx = sim.params.variable_index_map
@@ -107,12 +89,12 @@ def test_sedov_with_passive_scalar(scheme):
         dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=1, use_ZS=True, adaptive_dt=True),
-        dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
-        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
-        dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.ADAPTIVE),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FIRST_ORDER, rtol=0, max_revs=1),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.MUSCL0, rtol=0, max_revs=2),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, rtol=0, max_revs=64),
+        dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=7, use_MOOD=True, fallback_cascade="first_order", rtol=0, max_revs=1),
+        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", rtol=0, max_revs=2),
+        dict(p=7, use_MOOD=True, fallback_cascade="full", rtol=0, max_revs=64),
     ],
 )
 def test_preservation_of_maximum_principle(scheme):
@@ -128,9 +110,9 @@ def test_preservation_of_maximum_principle(scheme):
             **scheme,
         )
     if scheme.get("use_MUSCL", False):
-        sim.run(1.0, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+        sim.run(1.0, time_integrator="muscl_hancock")
     else:
-        sim.run(1.0, time_integrator=TimeIntegrator.MATCH_P_UP_TO_SSPRK3)
+        sim.run(1.0, time_integrator="match_p_up_to_ssprk3")
 
     assert min(sim.step_history.get_history("rho_min")) > 1 - 1e-14
     assert min(sim.step_history.get_history("rho_min")) < 2 + 1e-14
@@ -143,9 +125,9 @@ def test_preservation_of_maximum_principle(scheme):
         dict(p=1, use_MUSCL=True),
         dict(p=3),
         dict(p=7),
-        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.FULL),
-        dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode=LazyPrimitiveMode.FULL),
-        dict(p=7, use_MOOD=True, fallback_cascade=FallbackCascade.FULL, max_revs=7),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="full"),
+        dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="full"),
+        dict(p=7, use_MOOD=True, fallback_cascade="full", max_revs=7),
     ],
 )
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
@@ -169,19 +151,11 @@ def test_forward_backwards_advection_symmetry(scheme, dim):
 
     sim1.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
     sim2.take_n_steps(
         10,
-        time_integrator=(
-            TimeIntegrator.MUSCL_HANCOCK
-            if scheme.get("use_MUSCL", False)
-            else TimeIntegrator.SSPRK3
-        ),
+        time_integrator=("muscl_hancock" if scheme.get("use_MUSCL", False) else "ssprk3"),
     )
 
     idx = sim1.params.variable_index_map
@@ -209,16 +183,16 @@ def test_compare_with_teyssier_code(p, ic_type_t_sim):
             ic_type
         ],
         sampling_p=0,
-        bcx=(BC.FREE, BC.FREE),
+        bcx=("free", "free"),
         nx=N,
         p=p,
-        riemann_solver=RiemannSolver.HLLC_TEYSSIER,
-        flux_recipe=FluxRecipe.PRIM_PRIM_LIM,
+        riemann_solver="hllc_teyssier",
+        flux_recipe="prim_prim_lim",
         use_ZS=True,
         rho_min=-np.inf,
         P_min=-np.inf,
     )
-    sim.run(t_sim, time_integrator=TimeIntegrator.MATCH_P_UP_TO_RK4, allow_overshoot=True)
+    sim.run(t_sim, time_integrator="match_p_up_to_rk4", allow_overshoot=True)
 
     _, ut = weno(
         t_sim,

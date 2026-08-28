@@ -3,7 +3,7 @@ from functools import partial
 import cupy as cp
 import matplotlib.pyplot as plt
 
-from superfv import BC, HydroSolver, MUSCL_SlopeLimiter, TimeIntegrator, ics
+from superfv import HydroSolver, ics
 from superfv.tools.run_helper import run_multiple_simulations
 
 N = 768
@@ -31,13 +31,13 @@ init_params = dict(
     ylims=(0, 1),
     nx=N // 4,
     ny=N,
-    bcy=(BC.REFLECTIVE, BC.REFLECTIVE),
+    bcy=("reflective", "reflective"),
     cupy=True,
 )
 run_params = dict(t=1.95)
 
 schemes = {
-    "MUSCL-Hancock": dict(p=1, use_MUSCL=True, MUSCL_limiter=MUSCL_SlopeLimiter.PP2D),
+    "MUSCL-Hancock": dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d"),
     "MM4_rtol=0": dict(p=3, use_MOOD=True, rtol=0),
     "MM8_rtol=0": dict(p=7, use_MOOD=True, rtol=0),
     "MM4_rtol=1e-7": dict(p=3, use_MOOD=True, rtol=1e-7),
@@ -77,13 +77,7 @@ run_multiple_simulations(
         name: (
             scheme_params | init_params,
             run_params
-            | dict(
-                time_integrator=(
-                    TimeIntegrator.MUSCL_HANCOCK
-                    if name == "MUSCL-Hancock"
-                    else TimeIntegrator.SSPRK3
-                )
-            ),
+            | dict(time_integrator=("muscl_hancock" if name == "MUSCL-Hancock" else "ssprk3")),
         )
         for name, scheme_params in schemes.items()
     },

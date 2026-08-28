@@ -2,13 +2,7 @@ from functools import partial
 
 import numpy as np
 
-from superfv import (
-    HydroSolver,
-    HydroSolverOutput,
-    MUSCL_SlopeLimiter,
-    TimeIntegrator,
-    ics,
-)
+from superfv import HydroSolver, HydroSolverOutput, ics
 
 path = "/scratch/gpfs/jp7427/superfv/reference-solutions/pp2d"
 
@@ -24,12 +18,12 @@ sim = HydroSolver(
     ny=64,
     p=1,
     use_MUSCL=True,
-    MUSCL_limiter=MUSCL_SlopeLimiter.PP2D,
+    MUSCL_limiter="pp2d",
     cupy=True,
     output_path=path if ref_sim is None else None,
     overwrite=True,
 )
-sim.take_n_steps(100, time_integrator=TimeIntegrator.MUSCL_HANCOCK)
+sim.take_n_steps(100, time_integrator="muscl_hancock")
 
 if ref_sim is not None:
     print("Measuring error between simulation and solution saved to disk...")

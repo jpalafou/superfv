@@ -4,7 +4,7 @@ from itertools import product
 import matplotlib.pyplot as plt
 import pandas
 
-from superfv import HydroSolver, TimeIntegrator, ics, run_multiple_simulations
+from superfv import HydroSolver, ics, run_multiple_simulations
 from superfv.tools.norms import linf_norm
 
 base_path = "/scratch/gpfs/jp7427/superfv/sinus2d-convergence"
@@ -13,7 +13,7 @@ overwrite = True
 N_list = [16, 32, 64, 128, 256]
 schemes = {"FV2": dict(p=1), "FV4": dict(p=3), "FV8": dict(p=7)}
 init_params = dict(ic=partial(ics.sinus, vx=2.0, vy=1.0), cupy=True)
-run_params = dict(t=1.0, time_integrator=TimeIntegrator.MATCH_P_UP_TO_RK4)
+run_params = dict(t=1.0, time_integrator="match_p_up_to_rk4")
 
 
 def get_CFL(N: int, p: int) -> float:

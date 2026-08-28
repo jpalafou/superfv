@@ -3,9 +3,8 @@ from __future__ import annotations
 import pickle
 import warnings
 from dataclasses import dataclass, replace
-from enum import Enum
 from pathlib import Path
-from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 
 from .boundary_conditions import BC, PatchBC
 from .field import MultivarField, SourceTerm, UnivarField
@@ -13,6 +12,19 @@ from .riemann_solvers import RiemannSolver
 from .slope_limiting.muscl import MUSCL_SlopeLimiter
 from .tools.device_management import CUPY_AVAILABLE
 from .tools.variable_index_map import VariableIndexMap
+
+LazyPrimitiveMode = Literal["full", "none", "adaptive"]
+FluxRecipe = Literal["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]
+FluxQuadrature = Literal["transverse", "gauss_legendre", "none"]
+
+
+def validate_literal_membership(value: Any, literal: Any, field_name: str) -> None:
+    choices = get_args(literal)
+    if value not in choices:
+        raise ValueError(
+            f"{field_name} must be one of {', '.join(repr(choice) for choice in choices)}; "
+            f"got {value!r}."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +38,9 @@ class MUSCL_Parameters:
     use_MUSCL: bool
     MUSCL_limiter: MUSCL_SlopeLimiter
     SED_params: SmoothExtremaDetectionParameters
+
+    def __post_init__(self):
+        validate_literal_membership(self.MUSCL_limiter, MUSCL_SlopeLimiter, "MUSCL_limiter")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,31 +133,6 @@ class MOOD_Parameters:
                 raise ValueError("PAD cannot be used if MOOD is not used.")
 
 
-class FallbackCascade(Enum):
-    FULL = 0
-    MUSCL = 1
-    MUSCL0 = 2
-    FIRST_ORDER = 3
-
-
-class LazyPrimitiveMode(Enum):
-    FULL = 0
-    NONE = 1
-    ADAPTIVE = 2
-
-
-class FluxRecipe(Enum):
-    CONS_LIM_PRIM = 0
-    CONS_PRIM_LIM = 1
-    PRIM_PRIM_LIM = 2
-
-
-class FluxQuadrature(Enum):
-    TRANSVERSE = 0
-    GAUSS_LEGENDRE = 1
-    NONE = 2
-
-
 @dataclass(frozen=True, slots=True)
 class FV_SchemeParameters:
     name: str
@@ -158,19 +148,26 @@ class FV_SchemeParameters:
     shock_detection_params: ShockDetectionParameters
 
     def __post_init__(self):
+        validate_literal_membership(self.flux_recipe, FluxRecipe, "flux_recipe")
+        validate_literal_membership(self.flux_quadrature, FluxQuadrature, "flux_quadrature")
+        validate_literal_membership(
+            self.lazy_primitive_mode, LazyPrimitiveMode, "lazy_primitive_mode"
+        )
+        validate_literal_membership(self.riemann_solver, RiemannSolver, "riemann_solver")
+
         # Non-negative polynomial degree
         if self.p < 0:
             raise ValueError("Polynomial degree p must be non-negative.")
 
-        # Couple shock detection with LazyPrimitiveMode.ADAPTIVE
-        if self.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE:
+        # Couple shock detection with adaptive lazy primitives.
+        if self.lazy_primitive_mode == "adaptive":
             if not self.shock_detection_params.use_shock_detection:
                 raise ValueError(
-                    "Shock detection must be enabled when lazy_primitive_mode is ADAPTIVE."
+                    'Shock detection must be enabled when lazy_primitive_mode is "adaptive".'
                 )
         elif self.shock_detection_params.use_shock_detection:
             warnings.warn(
-                "Disabling shock detection since lazy_primitive_mode is not ADAPTIVE.",
+                'Disabling shock detection since lazy_primitive_mode is not "adaptive".',
                 UserWarning,
             )
             object.__setattr__(self, "shock_detection_params", ShockDetectionParameters(False, 0.0))
@@ -198,12 +195,12 @@ class FV_SchemeParameters:
             object.__setattr__(self, "p", 1)
 
         # p < 2 non lazy primitive warning
-        if self.p < 2 and self.lazy_primitive_mode != LazyPrimitiveMode.FULL:
+        if self.p < 2 and self.lazy_primitive_mode != "full":
             warnings.warn(
-                "Changing lazy_primitive_mode to FULL since FV scheme is second-order or lower.",
+                'Changing lazy_primitive_mode to "full" since FV scheme is second-order or lower.',
                 UserWarning,
             )
-            object.__setattr__(self, "lazy_primitive_mode", LazyPrimitiveMode.FULL)
+            object.__setattr__(self, "lazy_primitive_mode", "full")
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +231,8 @@ class MeshParameters:
     ndim: int
 
     def __post_init__(self):
+        for i, dim in enumerate(self.active_dims):
+            validate_literal_membership(dim, Literal["x", "y", "z"], f"active_dims[{i}]")
         if self.ndim != len(self.active_dims):
             raise ValueError("ndim must be equal to the length of active_dims")
 
@@ -263,42 +262,46 @@ class BoundaryConditionParameters:
     sampling_p: Optional[int] = None
 
     def __post_init__(self):
-        if bool(self.bcx[0] == BC.PERIODIC) != bool(self.bcx[1] == BC.PERIODIC):
-            raise ValueError("Both lower and upper BCs in x must be PERIODIC or neither.")
-        if bool(self.bcy[0] == BC.PERIODIC) != bool(self.bcy[1] == BC.PERIODIC):
-            raise ValueError("Both lower and upper BCs in y must be PERIODIC or neither.")
-        if bool(self.bcz[0] == BC.PERIODIC) != bool(self.bcz[1] == BC.PERIODIC):
-            raise ValueError("Both lower and upper BCs in z must be PERIODIC or neither.")
+        for name, bcs in [("bcx", self.bcx), ("bcy", self.bcy), ("bcz", self.bcz)]:
+            for i, bc in enumerate(bcs):
+                validate_literal_membership(bc, BC, f"{name}[{i}]")
 
-        if self.bcx[0] == BC.DIRICHLET or self.bcx[0] == BC.PATCH:
+        if bool(self.bcx[0] == "periodic") != bool(self.bcx[1] == "periodic"):
+            raise ValueError('Both lower and upper BCs in x must be "periodic" or neither.')
+        if bool(self.bcy[0] == "periodic") != bool(self.bcy[1] == "periodic"):
+            raise ValueError('Both lower and upper BCs in y must be "periodic" or neither.')
+        if bool(self.bcz[0] == "periodic") != bool(self.bcz[1] == "periodic"):
+            raise ValueError('Both lower and upper BCs in z must be "periodic" or neither.')
+
+        if self.bcx[0] == "dirichlet" or self.bcx[0] == "patch":
             if self.bcx_callable_lower is None:
                 raise ValueError(
-                    "bcx_callable_lower must be provided for DIRICHLET or PATCH BC in x."
+                    'bcx_callable_lower must be provided for "dirichlet" or "patch" BC in x.'
                 )
-        if self.bcx[1] == BC.DIRICHLET or self.bcx[1] == BC.PATCH:
+        if self.bcx[1] == "dirichlet" or self.bcx[1] == "patch":
             if self.bcx_callable_upper is None:
                 raise ValueError(
-                    "bcx_callable_upper must be provided for DIRICHLET or PATCH BC in x."
+                    'bcx_callable_upper must be provided for "dirichlet" or "patch" BC in x.'
                 )
-        if self.bcy[0] == BC.DIRICHLET or self.bcy[0] == BC.PATCH:
+        if self.bcy[0] == "dirichlet" or self.bcy[0] == "patch":
             if self.bcy_callable_lower is None:
                 raise ValueError(
-                    "bcy_callable_lower must be provided for DIRICHLET or PATCH BC in y."
+                    'bcy_callable_lower must be provided for "dirichlet" or "patch" BC in y.'
                 )
-        if self.bcy[1] == BC.DIRICHLET or self.bcy[1] == BC.PATCH:
+        if self.bcy[1] == "dirichlet" or self.bcy[1] == "patch":
             if self.bcy_callable_upper is None:
                 raise ValueError(
-                    "bcy_callable_upper must be provided for DIRICHLET or PATCH BC in y."
+                    'bcy_callable_upper must be provided for "dirichlet" or "patch" BC in y.'
                 )
-        if self.bcz[0] == BC.DIRICHLET or self.bcz[0] == BC.PATCH:
+        if self.bcz[0] == "dirichlet" or self.bcz[0] == "patch":
             if self.bcz_callable_lower is None:
                 raise ValueError(
-                    "bcz_callable_lower must be provided for DIRICHLET or PATCH BC in z."
+                    'bcz_callable_lower must be provided for "dirichlet" or "patch" BC in z.'
                 )
-        if self.bcz[1] == BC.DIRICHLET or self.bcz[1] == BC.PATCH:
+        if self.bcz[1] == "dirichlet" or self.bcz[1] == "patch":
             if self.bcz_callable_upper is None:
                 raise ValueError(
-                    "bcz_callable_upper must be provided for DIRICHLET or PATCH BC in z."
+                    'bcz_callable_upper must be provided for "dirichlet" or "patch" BC in z.'
                 )
 
 
@@ -375,7 +378,7 @@ class SolverParameters:
 
         # If limiting conservatives, then all PAD bounds must be in primitives
         if (
-            self.fv_scheme.flux_recipe == FluxRecipe.CONS_LIM_PRIM
+            self.fv_scheme.flux_recipe == "cons_lim_prim"
             and self.fv_scheme.zhang_shu_params.use_ZS
             and self.fv_scheme.zhang_shu_params.PAD_params.use_PAD
             and any(
@@ -384,20 +387,20 @@ class SolverParameters:
             )
         ):
             raise ValueError(
-                "All variables with PAD bounds must be in primitives when using CONS_LIM_PRIM flux recipe."
+                'All variables with PAD bounds must be in primitives when using "cons_lim_prim" flux recipe.'
             )
 
         # PP2D MUSCL slopes can only be used in 2D
         if (
             self.fv_scheme.muscl_params.use_MUSCL
-            and self.fv_scheme.muscl_params.MUSCL_limiter == MUSCL_SlopeLimiter.PP2D
+            and self.fv_scheme.muscl_params.MUSCL_limiter == "pp2d"
             and self.mesh.ndim != 2
         ):
             raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
 
         # No flux quadarture in 1D
-        if self.mesh.ndim == 1 and self.fv_scheme.flux_quadrature != FluxQuadrature.NONE:
-            raise ValueError("Flux quadrature must be NONE for 1D simulations.")
+        if self.mesh.ndim == 1 and self.fv_scheme.flux_quadrature != "none":
+            raise ValueError('Flux quadrature must be "none" for 1D simulations.')
 
 
 def dummy_function(*args: Any, **kwargs: Any) -> None:

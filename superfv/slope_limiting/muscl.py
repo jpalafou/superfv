@@ -1,4 +1,3 @@
-from enum import Enum
 from functools import lru_cache
 from typing import Literal, Tuple
 
@@ -10,12 +9,7 @@ from superfv.slope_limiting import gather_neighbor_slices
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices
 
-
-class MUSCL_SlopeLimiter(Enum):
-    MINMOD = 0
-    MONCEN = 1
-    PP2D = 2
-    NONE = 3
+MUSCL_SlopeLimiter = Literal["minmod", "moncen", "pp2d", "none"]
 
 
 def compute_1d_limited_slopes(
@@ -54,7 +48,7 @@ def compute_1d_limited_slopes(
 
     # write slopes to `out` array
     match limiter:
-        case MUSCL_SlopeLimiter.MINMOD:
+        case "minmod":
             dlft = u[inner] - u[left]
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
@@ -65,7 +59,7 @@ def compute_1d_limited_slopes(
                 if alpha is None:
                     raise ValueError("alpha array must be provided when use_SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
-        case MUSCL_SlopeLimiter.MONCEN:
+        case "moncen":
             dlft = u[inner] - u[left]
             drgt = u[right] - u[inner]
             dcen = 0.5 * (dlft + drgt)
@@ -76,9 +70,9 @@ def compute_1d_limited_slopes(
                 if alpha is None:
                     raise ValueError("alpha array must be provided when use_SED is True.")
                 out[inner] = np.where(alpha[inner] < 1, out[inner], dcen)
-        case MUSCL_SlopeLimiter.PP2D:
+        case "pp2d":
             raise ValueError("Oops, use the `compute_PP2D_slopes` function instead.")
-        case MUSCL_SlopeLimiter.NONE:
+        case "none":
             out[inner] = 0.5 * (u[right] - u[left])
         case _:
             raise ValueError(f"Unknown limiter: {limiter}.")
@@ -192,7 +186,7 @@ def compute_MUSCL_slopes(
             SED=use_SED,
         )
         return
-    if limiter == MUSCL_SlopeLimiter.PP2D:
+    if limiter == "pp2d":
         if len(active_dims) != 2:
             raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
         Sx = np.empty_like(u)
@@ -450,13 +444,13 @@ if CUPY_AVAILABLE:
         name = ""
         body = ""
         match limiter:
-            case MUSCL_SlopeLimiter.NONE:
+            case "none":
                 body += unlimited_device_function
-            case MUSCL_SlopeLimiter.MINMOD:
+            case "minmod":
                 body += minmod_device_function
-            case MUSCL_SlopeLimiter.MONCEN:
+            case "moncen":
                 body += moncen_device_function
-            case MUSCL_SlopeLimiter.PP2D:
+            case "pp2d":
                 body += unlimited_device_function  # keeps limited_slope defined
             case _:
                 raise ValueError(f"Unknown MUSCL slope limiter: {limiter}")
@@ -464,14 +458,14 @@ if CUPY_AVAILABLE:
 
         spec = MUSCL_kernel_body
         if x == "slopes":
-            name = f"MUSCL_slopes_kernel_{limiter.name}"
+            name = f"MUSCL_slopes_kernel_{limiter}"
             spec = spec.replace("MUSCL_kernel", name)
             spec = spec.replace("OUTPUT_ARG", "slopes")
             spec = spec.replace("OUTPUT_COMMENT", "// slopes   (nvars, nx, ny, nz)")
             spec = spec.replace("OUTPUT_ASSIGNMENT1", "slopes[i] = myslope;")
             spec = spec.replace("OUTPUT_ASSIGNMENT2", "")
         elif x == "faces":
-            name = f"MUSCL_faces_kernel_{limiter.name}"
+            name = f"MUSCL_faces_kernel_{limiter}"
             spec = spec.replace("MUSCL_kernel", name)
             spec = spec.replace("OUTPUT_ARG", "faces")
             spec = spec.replace("OUTPUT_COMMENT", "// faces    (nvars, nx, ny, nz, 2)")
@@ -502,7 +496,7 @@ if CUPY_AVAILABLE:
             raise ValueError("u must be a 4D array with shape " "(nvars, nx, ny, nz)")
         if output not in ("slopes", "faces"):
             raise ValueError("output must be either 'slopes' or 'faces'")
-        if limiter == MUSCL_SlopeLimiter.PP2D and len(active_dims) != 2:
+        if limiter == "pp2d" and len(active_dims) != 2:
             raise ValueError("PP2D slope limiter requires exactly two active dimensions.")
         if output == "slopes" and slopes_or_faces.shape != u.shape:
             raise ValueError("slopes must have the same shape as u")
@@ -541,7 +535,7 @@ if CUPY_AVAILABLE:
                 "x" in active_dims,
                 "y" in active_dims,
                 "z" in active_dims,
-                limiter == MUSCL_SlopeLimiter.PP2D,
+                limiter == "pp2d",
                 eps,
                 SED,
                 nvars,

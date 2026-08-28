@@ -2,7 +2,6 @@ import pickle
 import shutil
 import time
 import warnings
-from enum import Enum
 from functools import partial
 from pathlib import Path
 from types import ModuleType
@@ -15,7 +14,6 @@ from .axes import DIM_TO_AXIS, XYZ_TUPLE
 from .boundary_conditions import BC, PatchBC
 from .configs import (
     BoundaryConditionParameters,
-    FallbackCascade,
     FluxQuadrature,
     FluxRecipe,
     FV_SchemeParameters,
@@ -34,6 +32,7 @@ from .configs import (
     SolverParameters,
     ZhangShuParameters,
     pickle_SolverParameters,
+    validate_literal_membership,
 )
 from .field import MultivarField, SourceTerm, UnivarField
 from .finite_volume_driver import (
@@ -54,27 +53,16 @@ from .tools.step_history import MultiTimer, StepHistory, StepSummary, SubstepSum
 from .tools.variable_index_map import VariableIndexMap
 from .tools.yaml_helper import yaml_dump
 
-
-class TimeIntegrator(Enum):
-    MUSCL_HANCOCK = 0
-    FORWARD_EULER = 1
-    SSPRK2 = 2
-    SSPRK3 = 3
-    RK4 = 4
-    MATCH_P_UP_TO_SSPRK3 = 5
-    MATCH_P_UP_TO_RK4 = 6
-
-
-class SnapshotMode(Enum):
-    TARGET = 0
-    EVERY = 1
-    NONE = 2
-
-
-class LogArrayAction(Enum):
-    SUBSTEP_ADD = 0
-    SUBSTEP_AVERAGE = 1
-    RESET = 2
+TimeIntegrator = Literal[
+    "muscl_hancock",
+    "forward_euler",
+    "ssprk2",
+    "ssprk3",
+    "rk4",
+    "match_p_up_to_ssprk3",
+    "match_p_up_to_rk4",
+]
+SnapshotMode = Literal["target", "every", "none"]
 
 
 class HydroSolver:
@@ -117,7 +105,7 @@ class HydroSolver:
         self,
         # Hydro params
         gamma: float = 1.4,
-        riemann_solver: RiemannSolver = RiemannSolver.HLLC,
+        riemann_solver: RiemannSolver = "hllc",
         CFL: float = 0.8,
         nu: float = 0.0,
         Chi: float = 0.0,
@@ -135,9 +123,9 @@ class HydroSolver:
         # Source term params
         source: Optional[SourceTerm] = None,
         # BC params
-        bcx: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
-        bcy: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
-        bcz: Tuple[BC, BC] = (BC.PERIODIC, BC.PERIODIC),
+        bcx: Tuple[BC, BC] = ("periodic", "periodic"),
+        bcy: Tuple[BC, BC] = ("periodic", "periodic"),
+        bcz: Tuple[BC, BC] = ("periodic", "periodic"),
         bcx_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
         bcx_callable_upper: Optional[Union[MultivarField, PatchBC]] = None,
         bcy_callable_lower: Optional[Union[MultivarField, PatchBC]] = None,
@@ -153,15 +141,15 @@ class HydroSolver:
         zlims: Tuple[float, float] = (0.0, 1.0),
         # Finite volume scheme params
         p: int = 0,
-        flux_recipe: FluxRecipe = FluxRecipe.CONS_PRIM_LIM,
-        flux_quadrature: FluxQuadrature = FluxQuadrature.TRANSVERSE,
-        lazy_primitive_mode: LazyPrimitiveMode = LazyPrimitiveMode.FULL,
+        flux_recipe: FluxRecipe = "cons_prim_lim",
+        flux_quadrature: FluxQuadrature = "transverse",
+        lazy_primitive_mode: LazyPrimitiveMode = "full",
         # SED params
         use_SED: bool = True,
         clip_zero_tol: float = 1e-15,
         # MUSCL params
         use_MUSCL: bool = False,
-        MUSCL_limiter: MUSCL_SlopeLimiter = MUSCL_SlopeLimiter.MONCEN,
+        MUSCL_limiter: MUSCL_SlopeLimiter = "moncen",
         # PAD params
         PAD_bounds: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         # Zhang-Shu params
@@ -180,7 +168,7 @@ class HydroSolver:
         delta: bool = False,
         # MOOD params
         use_MOOD: bool = False,
-        fallback_cascade: FallbackCascade = FallbackCascade.MUSCL,
+        fallback_cascade: Literal["full", "muscl", "muscl0", "first_order"] = "muscl",
         fallback_riemann_solver: Optional[RiemannSolver] = None,
         max_revs: int = 1,
         blend_troubles: bool = False,
@@ -201,8 +189,8 @@ class HydroSolver:
 
         Hydro parameters:
             gamma: Adiabatic index for the ideal gas equation of state.
-            riemann_solver: Riemann solver specified by the `RiemannSolver` enum. Possible values
-                include RiemannSolver.UPWIND, RiemannSolver.LLF, and RiemannSolver.HLLC.
+            riemann_solver: Riemann solver literal. Possible values include "upwind", "llf",
+                and "hllc".
             CFL: CFL number for time step calculation.
             nu: Kinematic viscosity for viscous fluxes. If 0.0, viscous fluxes are not computed.
             Chi: Thermal conductivity for thermal fluxes. If 0.0, thermal fluxes are not computed.
@@ -236,8 +224,8 @@ class HydroSolver:
 
         Boundary condition parameters:
             bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
-                `BC` enums (lower, upper). Possible values include BC.PERIODIC, BC.DIRICHLET,
-                BC.FREE, BC.SYMMETRIC, BC.REFLECTIVE, BC.PATCH, and BC.IC.
+                boundary condition literals (lower, upper). Possible values include "periodic",
+                "dirichlet", "free", "symmetric", "reflective", "patch", and "ic".
             bcx_callable_lower, bcx_callable_upper, bcy_callable_lower,
             bcy_callable_upper, bcz_callable_lower, bcz_callable_upper: Optional callable functions
                 for Dirichlet boundary conditions. Each should take (idx, x, y, z, t, xp=xp) and
@@ -250,13 +238,12 @@ class HydroSolver:
 
         Finite volume scheme parameters:
             p: Polynomial degree for the base finite volume scheme.
-            flux_recipe: Flux recipe specified by the `FluxRecipe` enum. Possible values include
-                FluxRecipe.CONS_LIM_PRIM, FluxRecipe.CONS_PRIM_LIM, and FluxRecipe.PRIM_PRIM_LIM.
-            flux_quadrature: Flux quadrature specified by the `FluxQuadrature` enum. Possible
-                values include FluxQuadrature.TRANSVERSE and FluxQuadrature.GAUSS_LEGENDRE.
-            lazy_primitive_mode: Lazy primitive mode specified by the `LazyPrimitiveMode` enum.
-                Possible values include LazyPrimitiveMode.FULL, LazyPrimitiveMode.NONE, and
-                LazyPrimitiveMode.ADAPTIVE, which uses the shock detection threshold `eta_max`
+            flux_recipe: Flux recipe literal. Possible values include "cons_lim_prim",
+                "cons_prim_lim", and "prim_prim_lim".
+            flux_quadrature: Flux quadrature literal. Possible values include "transverse" and
+                "gauss_legendre".
+            lazy_primitive_mode: Lazy primitive mode literal. Possible values include "full",
+                "none", and "adaptive", which uses the shock detection threshold `eta_max`
                 to determine when to use high-order primitive cell averages.
 
         Slope limiting parameters (smooth extrema detection):
@@ -265,10 +252,8 @@ class HydroSolver:
 
         Slope limiting parameters (MUSCL):
             use_MUSCL: If True, enable MUSCL scheme.
-            MUSCL_limiter: Slope limiter specified by the `MUSCL_SlopeLimiter` enum.
-                Possible values include MUSCL_SlopeLimiter.MINMOD, MUSCL_SlopeLimiter.MONCEN,
-                MUSCL_SlopeLimiter.PP2D (can only be used in 2D), and
-                MUSCL_SlopeLimiter.NONE (no slope limiting).
+            MUSCL_limiter: Slope limiter literal. Possible values include "minmod", "moncen",
+                "pp2d" (can only be used in 2D), and "none" (no slope limiting).
 
         Slope limiting parameters (physical admissibility detection):
             PAD_bounds: Optional dictionary specifying lower and upper bounds for physical
@@ -295,11 +280,10 @@ class HydroSolver:
 
         Slope limiting parameters (MOOD):
             use_MOOD: If True, enable MOOD scheme.
-            fallback_cascade: Fallback cascade specified by the `FallbackCascade` enum. Possible
-                values include FallbackCascade.FULL (which falls back to progressively lower-order
-                schemes from `p` to 0 in increments of 1), FallbackCascade.MUSCL (which falls back
-                to MUSCL), FallbackCascade.FIRST_ORDER (which falls back to first-order),
-                and FallbackCascade.MUSCL0 (which falls back first to MUSCL and then first-order).
+            fallback_cascade: Fallback cascade literal. Possible values include "full" (which
+                falls back to progressively lower-order schemes from `p` to 0 in increments of 1),
+                "muscl" (which falls back to MUSCL), "first_order" (which falls back to
+                first-order), and "muscl0" (which falls back first to MUSCL and then first-order).
             fallback_riemann_solver: Riemann solver to use in the fallback schemes in MOOD.
                 If None, defaults to the provided `riemann_solver` for the base scheme.
             max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
@@ -337,10 +321,16 @@ class HydroSolver:
         self.bonus_snapshot_routine: Callable[[Snapshot], None]
         self.w0_func: MultivarField
 
+        validate_literal_membership(
+            fallback_cascade,
+            Literal["full", "muscl", "muscl0", "first_order"],
+            "fallback_cascade",
+        )
+
         # Decide on active dimensions based on nx, ny, nz
         active_dims = self._compute_active_dims(nx, ny, nz)
         if len(active_dims) == 1:
-            flux_quadrature = FluxQuadrature.NONE  # No flux quadrature in 1D, so force it to NONE
+            flux_quadrature = "none"  # No flux quadrature in 1D.
 
         # This is straightforward
         self.arrays = ArrayManager()
@@ -389,7 +379,7 @@ class HydroSolver:
 
         # Such as the fallback scheme cascade
         null_SED = SmoothExtremaDetectionParameters(False)
-        null_MUSCL = MUSCL_Parameters(False, MUSCL_SlopeLimiter.NONE, null_SED)
+        null_MUSCL = MUSCL_Parameters(False, "none", null_SED)
         null_PAD = PhysicalAdmissibilityParameters(False, {})
         null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
         null_NAD = NumericalAdmissibilityParameters(False, 0.0, 0.0, null_SED, [])
@@ -400,7 +390,7 @@ class HydroSolver:
         if use_MOOD:
             if fallback_riemann_solver is None:
                 fallback_riemann_solver = riemann_solver
-            if fallback_cascade == FallbackCascade.FULL:
+            if fallback_cascade == "full":
                 for reduced_p in range(p - 1, -1, -1):
                     fallback_cascade_list.append(
                         FV_SchemeParameters(
@@ -417,7 +407,7 @@ class HydroSolver:
                             shock_detection_params=null_shock,
                         )
                     )
-            if fallback_cascade in (FallbackCascade.MUSCL, FallbackCascade.MUSCL0):
+            if fallback_cascade in ("muscl", "muscl0"):
                 fallback_cascade_list.append(
                     FV_SchemeParameters(
                         name="fallback_MUSCL",
@@ -433,7 +423,7 @@ class HydroSolver:
                         shock_detection_params=null_shock,
                     )
                 )
-            if fallback_cascade in (FallbackCascade.MUSCL0, FallbackCascade.FIRST_ORDER):
+            if fallback_cascade in ("muscl0", "first_order"):
                 fallback_cascade_list.append(
                     FV_SchemeParameters(
                         name="fallback_p0",
@@ -502,7 +492,7 @@ class HydroSolver:
                 detect_closing_troubles=detect_closing_troubles,
             ),
             shock_detection_params=ShockDetectionParameters(
-                lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE, eta_max
+                lazy_primitive_mode == "adaptive", eta_max
             ),
         )
 
@@ -657,34 +647,34 @@ class HydroSolver:
     def _enable_ic_bc_or_none_if_inactive(self):
         bc = self.params.bc
 
-        # set BC to NONE if the corresponding dimension is inactive and disable those callable BCs
+        # Set BC to "none" if the corresponding dimension is inactive.
         if "x" not in self.params.mesh.active_dims:
-            bc.bcx = (BC.NONE, BC.NONE)
+            bc.bcx = ("none", "none")
             bc.bcx_callable_lower = None
             bc.bcx_callable_upper = None
         if "y" not in self.params.mesh.active_dims:
-            bc.bcy = (BC.NONE, BC.NONE)
+            bc.bcy = ("none", "none")
             bc.bcy_callable_lower = None
             bc.bcy_callable_upper = None
         if "z" not in self.params.mesh.active_dims:
-            bc.bcz = (BC.NONE, BC.NONE)
+            bc.bcz = ("none", "none")
             bc.bcz_callable_lower = None
             bc.bcz_callable_upper = None
 
-        # set BC to DIRICHLET with the primitive IC if BC is IC
+        # Set BC to "dirichlet" with the primitive IC if BC is "ic".
         for dim in ["x", "y", "z"]:
             bcdim0 = getattr(bc, f"bc{dim}")[0]
             bcdim1 = getattr(bc, f"bc{dim}")[1]
 
-            if bcdim0 != BC.IC and bcdim1 != BC.IC:
+            if bcdim0 != "ic" and bcdim1 != "ic":
                 continue
 
             new_bcdim = [bcdim0, bcdim1]
-            if bcdim0 == BC.IC:
-                new_bcdim[0] = BC.DIRICHLET
+            if bcdim0 == "ic":
+                new_bcdim[0] = "dirichlet"
                 setattr(bc, f"bc{dim}_callable_lower", self.w0_func)
-            if bcdim1 == BC.IC:
-                new_bcdim[1] = BC.DIRICHLET
+            if bcdim1 == "ic":
+                new_bcdim[1] = "dirichlet"
                 setattr(bc, f"bc{dim}_callable_upper", self.w0_func)
             setattr(bc, f"bc{dim}", tuple(new_bcdim))
 
@@ -1079,7 +1069,7 @@ class HydroSolver:
         Step_summary.substeps.append(substep_summary)
         self._reset_substep_summary()
 
-    def _update_log_arrays(self, action: LogArrayAction):
+    def _update_log_arrays(self, action: Literal["substep_add", "substep_average", "reset"]):
         params = self.params
         base_scheme = params.fv_scheme
         active_dims = params.mesh.active_dims
@@ -1089,7 +1079,7 @@ class HydroSolver:
         interior = get_interior_view(active_dims, nghost)
 
         match action:
-            case LogArrayAction.SUBSTEP_ADD:
+            case "substep_add":
                 if base_scheme.shock_detection_params.use_shock_detection:
                     arrays["has_shock_log"] += arrays["_has_shock_"][interior]
                 if base_scheme.zhang_shu_params.use_ZS:
@@ -1097,7 +1087,7 @@ class HydroSolver:
                 if base_scheme.mood_params.use_MOOD:
                     arrays["troubles_log"] += arrays["_troubles_"][interior]
                     arrays["cascade_idx_log"] += arrays["_cascade_idx_"][interior]
-            case LogArrayAction.SUBSTEP_AVERAGE:
+            case "substep_average":
                 n_substeps = max(1, len(self.step_summary.substeps))
 
                 if base_scheme.shock_detection_params.use_shock_detection:
@@ -1107,7 +1097,7 @@ class HydroSolver:
                 if base_scheme.mood_params.use_MOOD:
                     arrays["troubles_log"] /= n_substeps
                     arrays["cascade_idx_log"] /= n_substeps
-            case LogArrayAction.RESET:
+            case "reset":
                 if base_scheme.shock_detection_params.use_shock_detection:
                     arrays["has_shock_log"][...] = 0.0
                 if base_scheme.zhang_shu_params.use_ZS:
@@ -1115,26 +1105,28 @@ class HydroSolver:
                 if base_scheme.mood_params.use_MOOD:
                     arrays["troubles_log"][...] = 0.0
                     arrays["cascade_idx_log"][...] = 0.0
+            case _:
+                raise ValueError(f"Unsupported log array action: {action}")
 
     def _close_substep(self):
         self._summarize_substep()
-        self._update_log_arrays(LogArrayAction.SUBSTEP_ADD)
+        self._update_log_arrays("substep_add")
 
     def _update_unew(self, t: float, u: ArrayLike, dt: float, time_integrator: TimeIntegrator):
         params = self.params
         unew = self.arrays["unew"]
 
         match time_integrator:
-            case TimeIntegrator.MUSCL_HANCOCK:
+            case "muscl_hancock":
                 if not params.fv_scheme.muscl_params.use_MUSCL:
                     raise ValueError("MUSCL-Hancock time integrator requires a MUSCL FV scheme.")
 
                 unew[...] = u + self.f(t, u, dt, hancock=True) * dt
                 self._close_substep()
-            case TimeIntegrator.FORWARD_EULER:
+            case "forward_euler":
                 unew[...] = u + self.f(t, u, dt) * dt
                 self._close_substep()
-            case TimeIntegrator.SSPRK2:
+            case "ssprk2":
                 k0 = self.f(t, u, dt)  # TEMP ARRAY
                 unew[...] = u + dt * k0
                 self._close_substep()
@@ -1142,7 +1134,7 @@ class HydroSolver:
                 k1 = self.f(t + dt, unew, dt)  # TEMP ARRAY
                 unew[...] = 0.5 * u + 0.5 * (unew + dt * k1)
                 self._close_substep()
-            case TimeIntegrator.SSPRK3:
+            case "ssprk3":
                 k0 = self.f(t, u, dt)  # TEMP ARRAY
                 unew[...] = u + dt * k0
                 self._close_substep()
@@ -1153,7 +1145,7 @@ class HydroSolver:
                 k2 = self.f(t + 0.5 * dt, u + 0.25 * dt * k0 + 0.25 * dt * k1, dt)  # TEMP ARRAY
                 unew[...] = u + (1 / 6) * dt * (k0 + k1 + 4 * k2)
                 self._close_substep()
-            case TimeIntegrator.RK4:
+            case "rk4":
                 k0 = self.f(t, u, dt)  # TEMP ARRAY
                 self._close_substep()
 
@@ -1170,30 +1162,34 @@ class HydroSolver:
                 raise ValueError(f"Unsupported time integrator: {time_integrator}")
 
     def _open_step(self):
-        self._update_log_arrays(LogArrayAction.RESET)
+        self._update_log_arrays("reset")
         self._start_timer("take_step")  # TIMER START
 
     def _close_step(self, take_snapshot: bool):
         self._stop_timer("take_step")  # TIMER STOP
-        self._update_log_arrays(LogArrayAction.SUBSTEP_AVERAGE)
+        self._update_log_arrays("substep_average")
         self._summarize_step(take_snapshot)
 
     def _start_wall_timer(self):
         self.t_wall_start = time.time()
         self._progress_line_len = 0
 
-    def _select_time_integrator(self, time_integrator: TimeIntegrator):
+    def _select_time_integrator(self, time_integrator: TimeIntegrator) -> TimeIntegrator:
         p = self.params.fv_scheme.p
-        if time_integrator == TimeIntegrator.MATCH_P_UP_TO_SSPRK3:
-            return {0: TimeIntegrator.FORWARD_EULER, 1: TimeIntegrator.SSPRK2}.get(
-                p, TimeIntegrator.SSPRK3
-            )
-        elif time_integrator == TimeIntegrator.MATCH_P_UP_TO_RK4:
-            return {
-                0: TimeIntegrator.FORWARD_EULER,
-                1: TimeIntegrator.SSPRK2,
-                2: TimeIntegrator.SSPRK3,
-            }.get(p, TimeIntegrator.RK4)
+        if time_integrator == "match_p_up_to_ssprk3":
+            if p == 0:
+                return "forward_euler"
+            if p == 1:
+                return "ssprk2"
+            return "ssprk3"
+        elif time_integrator == "match_p_up_to_rk4":
+            if p == 0:
+                return "forward_euler"
+            if p == 1:
+                return "ssprk2"
+            if p == 2:
+                return "ssprk3"
+            return "rk4"
         else:
             return time_integrator
 
@@ -1321,20 +1317,22 @@ class HydroSolver:
     def take_n_steps(
         self,
         n: int,
-        time_integrator: TimeIntegrator = TimeIntegrator.MATCH_P_UP_TO_SSPRK3,
-        snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
+        time_integrator: TimeIntegrator = "match_p_up_to_ssprk3",
+        snapshot_mode: SnapshotMode = "target",
         print_update: bool = True,
         print_frequency: int = 100,
     ):
         self._start_wall_timer()
 
+        validate_literal_membership(time_integrator, TimeIntegrator, "time_integrator")
+        validate_literal_membership(snapshot_mode, SnapshotMode, "snapshot_mode")
         time_integrator = self._select_time_integrator(time_integrator)
         print_frequency = max(1, print_frequency)
 
         for i in range(1, n + 1):
             take_snapshot_this_step = (
-                snapshot_mode == SnapshotMode.TARGET and i == n
-            ) or snapshot_mode == SnapshotMode.EVERY
+                snapshot_mode == "target" and i == n
+            ) or snapshot_mode == "every"
 
             self._open_step()
             self._take_step(time_integrator)
@@ -1351,14 +1349,16 @@ class HydroSolver:
     def run(
         self,
         t: Union[float, List[float]],
-        time_integrator: TimeIntegrator = TimeIntegrator.MATCH_P_UP_TO_SSPRK3,
-        snapshot_mode: SnapshotMode = SnapshotMode.TARGET,
+        time_integrator: TimeIntegrator = "match_p_up_to_ssprk3",
+        snapshot_mode: SnapshotMode = "target",
         allow_overshoot: bool = False,
         print_update: bool = True,
         print_frequency: int = 100,
     ):
         self._start_wall_timer()
 
+        validate_literal_membership(time_integrator, TimeIntegrator, "time_integrator")
+        validate_literal_membership(snapshot_mode, SnapshotMode, "snapshot_mode")
         time_integrator = self._select_time_integrator(time_integrator)
         print_frequency = max(1, print_frequency)
 
@@ -1379,9 +1379,9 @@ class HydroSolver:
                 time_integrator, dt_min=None if allow_overshoot else target_times[0] - self.t
             )
 
-            take_snapshot_this_step = snapshot_mode == SnapshotMode.EVERY
+            take_snapshot_this_step = snapshot_mode == "every"
             if self.t >= target_times[0]:
-                if snapshot_mode == SnapshotMode.TARGET:
+                if snapshot_mode == "target":
                     take_snapshot_this_step = True
                 target_times.pop(0)
             self._close_step(take_snapshot_this_step)

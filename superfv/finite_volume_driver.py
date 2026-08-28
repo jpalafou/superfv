@@ -11,11 +11,8 @@ from .axes import DIM_TO_AXIS, XYZ_TUPLE
 from .boundary_conditions import apply_bc
 from .configs import (
     BoundaryConditionParameters,
-    FluxQuadrature,
-    FluxRecipe,
     FV_SchemeParameters,
     HydroParameters,
-    LazyPrimitiveMode,
     ZhangShuParameters,
 )
 from .hydro import cons_to_prim, prim_to_cs
@@ -560,18 +557,18 @@ def update_fv_workspace(
     fv_cons_to_prim(_qcc_, _qcc_, idx, hp, using_cupy, timer)
 
     # 2) Compute primitive finite-volume averages
-    if fv.lazy_primitive_mode == LazyPrimitiveMode.FULL:
+    if fv.lazy_primitive_mode == "full":
         fv_cons_to_prim(_u_, _w_, idx, hp, using_cupy, timer)
         return
 
-    if fv.lazy_primitive_mode == LazyPrimitiveMode.NONE:
+    if fv.lazy_primitive_mode == "none":
         integrate_cell_averages(_qcc_, _w_, active_dims, fv.p, timer)
 
         # Ensure density is always transformed in the lazy way
         _w_[idx("rho"), ...] = _u_[idx("rho"), ...]
         return
 
-    if fv.lazy_primitive_mode == LazyPrimitiveMode.ADAPTIVE:
+    if fv.lazy_primitive_mode == "adaptive":
         integrate_cell_averages(_qcc_, _w_, active_dims, fv.p, timer)
 
         # Allocate some more temp arrays
@@ -584,10 +581,10 @@ def update_fv_workspace(
         # Detect shocks and flag them in _has_shock_
         prim_to_cs(_w1_, _cs_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
         _fv_detect_shocks(
-            _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_,
+            _u_ if fv.flux_recipe == "cons_lim_prim" else _w_,
             _cs_,
             _has_shock_,
-            False if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else True,
+            False if fv.flux_recipe == "cons_lim_prim" else True,
             idx,
             active_dims,
             fv,
@@ -710,7 +707,7 @@ def apply_zhang_shu_limiter(
 
 
 def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
-    if fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE:
+    if fv_params.flux_quadrature == "gauss_legendre":
         n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_params.p)
         return n_gauss_legendre ** (ndim - 1)
     else:
@@ -932,10 +929,10 @@ def update_weno_fluxes(
     fv = fv_params
     hp = hydro_params
     nghost = mesh.nghost
-    use_GL = fv_params.flux_quadrature == FluxQuadrature.GAUSS_LEGENDRE
+    use_GL = fv_params.flux_quadrature == "gauss_legendre"
 
     # 1) Interpolate nodes at each face
-    _q_ = _w_ if fv.flux_recipe == FluxRecipe.PRIM_PRIM_LIM else _u_
+    _q_ = _w_ if fv.flux_recipe == "prim_prim_lim" else _u_
 
     node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
     n_nodes = _get_n_nodes_per_face(len(active_dims), fv)
@@ -944,7 +941,7 @@ def update_weno_fluxes(
         _nodes_ = xp.empty(_w_.shape + (2 * n_nodes,))  # TEMP ARRAY
         interpolate_face_nodes(_q_, _nodes_, dim, active_dims, fv.p, use_GL, timer)
 
-        if fv.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+        if fv.flux_recipe == "cons_prim_lim":
             fv_cons_to_prim(_nodes_, _nodes_, idx, hp, using_cupy, timer)
 
         node_dict[dim] = _nodes_
@@ -953,7 +950,7 @@ def update_weno_fluxes(
     if fv.zhang_shu_params.use_ZS:
         # a priori slope limiting
         apply_zhang_shu_limiter(
-            _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_,
+            _u_ if fv.flux_recipe == "cons_lim_prim" else _w_,
             node_dict["x"] if "x" in active_dims else np.array([]),
             node_dict["y"] if "y" in active_dims else np.array([]),
             node_dict["z"] if "z" in active_dims else np.array([]),
@@ -961,7 +958,7 @@ def update_weno_fluxes(
             _theta_,
             _alpha_,
             idx,
-            False if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else True,
+            False if fv.flux_recipe == "cons_lim_prim" else True,
             active_dims,
             fv.p,
             fv.zhang_shu_params,
@@ -978,7 +975,7 @@ def update_weno_fluxes(
         _right_nodes_ = _nodes_[plus]
         _F_out_ = {"x": _F_, "y": _G_, "z": _H_}[dim]
 
-        if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+        if fv.flux_recipe == "cons_lim_prim":
             fv_cons_to_prim(_nodes_, _nodes_, idx, hp, using_cupy, timer)
         if fv.positivity_guard:
             enforce_positive_nodes(_nodes_, _w_, idx, hp)
@@ -1115,7 +1112,7 @@ def update_MUSCL_fluxes(
         raise ValueError("update_fluxes_with_muscl_scheme should only be called for MUSCL schemes.")
 
     # 1) Compute slopes from either conservatives or primitives
-    _q_ = _u_ if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM else _w_
+    _q_ = _u_ if fv.flux_recipe == "cons_lim_prim" else _w_
 
     if fv.muscl_params.SED_params.use_SED:
         compute_alpha(_q_, _alpha_, active_dims, fv.muscl_params.SED_params.clip_zero_tol)
@@ -1154,7 +1151,7 @@ def update_MUSCL_fluxes(
                 gamma=hydro_params.gamma,
                 isothermal=hydro_params.isothermal,
                 iso_cs=hydro_params.iso_cs,
-                primitives=fv.flux_recipe != FluxRecipe.CONS_LIM_PRIM,
+                primitives=fv.flux_recipe != "cons_lim_prim",
             )
             _predictor_q_ -= 0.5 * _jvp_ * hancock_dt / h
 
@@ -1184,7 +1181,7 @@ def update_MUSCL_fluxes(
             )
 
         # Ensure faces are positive and primitive
-        if fv.flux_recipe == FluxRecipe.CONS_LIM_PRIM:
+        if fv.flux_recipe == "cons_lim_prim":
             fv_cons_to_prim(_faces_, _faces_, idx, hp, using_cupy, timer)
         if fv.positivity_guard:
             enforce_positive_nodes(_faces_, _w_, idx, hp)
@@ -1401,16 +1398,16 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
 
     # Cost of update_fv_workspace
     match fv_scheme.lazy_primitive_mode:
-        case LazyPrimitiveMode.NONE:
+        case "none":
             w_workspace_setup_cost = cell_center_reach + transverse_reach
-        case LazyPrimitiveMode.ADAPTIVE:
+        case "adaptive":
             w_workspace_setup_cost = cell_center_reach + transverse_reach + 2
-        case LazyPrimitiveMode.FULL:
+        case "full":
             w_workspace_setup_cost = 0
 
     # Cost of interpolating primitive node faces
     face_node_cost = left_right_reach
-    if fv_scheme.flux_recipe == FluxRecipe.PRIM_PRIM_LIM:
+    if fv_scheme.flux_recipe == "prim_prim_lim":
         face_node_cost += w_workspace_setup_cost
     nghost = face_node_cost
 
@@ -1418,13 +1415,13 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
     ZS_cost = 0
     if fv_scheme.zhang_shu_params.use_ZS:
         ZS_cost = 3 if fv_scheme.zhang_shu_params.SED_params.use_SED else 1
-        if fv_scheme.flux_recipe == FluxRecipe.CONS_PRIM_LIM:
+        if fv_scheme.flux_recipe == "cons_prim_lim":
             ZS_cost = max(ZS_cost, w_workspace_setup_cost)
     nghost += ZS_cost
 
     # Flux integral cost
     riemann_cost = 1
-    if fv_scheme.flux_quadrature == FluxQuadrature.TRANSVERSE:
+    if fv_scheme.flux_quadrature == "transverse":
         transverse_cost = transverse_reach
     else:
         transverse_cost = 0

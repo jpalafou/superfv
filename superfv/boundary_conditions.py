@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Callable, Dict, Literal, Optional, Tuple, Union, cast
 
 import numpy as np
@@ -18,17 +17,18 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
 
-class BC(Enum):
-    PERIODIC = 0
-    DIRICHLET = 1
-    FREE = 2
-    SYMMETRIC = 3
-    REFLECTIVE = 4
-    ZEROS = 5
-    ONES = 6
-    PATCH = 7
-    NONE = 8
-    IC = 9  # gets switched to DIRICHLET in the solver
+BC = Literal[
+    "periodic",
+    "dirichlet",
+    "free",
+    "symmetric",
+    "reflective",
+    "zeros",
+    "ones",
+    "patch",
+    "none",
+    "ic",  # gets switched to "dirichlet" in the solver
+]
 
 
 MESH_REGION_LOOKUP: Dict[
@@ -89,14 +89,14 @@ def apply_bc(
                 bcz_callable_upper,
             ][2 * i + j]
 
-            if mode == BC.NONE or nghost == 0:
+            if mode == "none" or nghost == 0:
                 continue
 
             context = BCcontext(
                 axis=i + 1,
                 lower=(j == 0),
                 nghost=nghost,
-                f=cast(MultivarField, bc_callable) if mode == BC.DIRICHLET else None,
+                f=cast(MultivarField, bc_callable) if mode == "dirichlet" else None,
                 variable_index_map=variable_index_map,
                 mesh=mesh,
                 t=t,
@@ -105,21 +105,21 @@ def apply_bc(
             )
 
             match mode:
-                case BC.PERIODIC:
+                case "periodic":
                     apply_periodic_bc(_u_, context)
-                case BC.DIRICHLET:
+                case "dirichlet":
                     apply_dirichlet_bc(_u_, context)
-                case BC.FREE:
+                case "free":
                     apply_free_bc(_u_, context)
-                case BC.SYMMETRIC:
+                case "symmetric":
                     apply_symmetric_bc(_u_, context)
-                case BC.REFLECTIVE:
+                case "reflective":
                     apply_reflective_bc(_u_, context)
-                case BC.ZEROS:
+                case "zeros":
                     apply_uniform_bc(_u_, context, 0.0)
-                case BC.ONES:
+                case "ones":
                     apply_uniform_bc(_u_, context, 1.0)
-                case BC.PATCH:
+                case "patch":
                     patch = cast(PatchBC, bc_callable)
                     patch(_u_, context)
                 case _:

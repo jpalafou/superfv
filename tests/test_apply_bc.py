@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from superfv.axes import DIM_TO_AXIS
-from superfv.boundary_conditions import BC, apply_bc
+from superfv.boundary_conditions import apply_bc
 from superfv.hydro import prim_to_cons
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.tools.norms import linf_norm
@@ -10,7 +10,7 @@ from superfv.tools.slicing import crop
 from superfv.tools.variable_index_map import VariableIndexMap
 
 
-@pytest.mark.parametrize("bc_type", [BC.PERIODIC, BC.FREE, BC.SYMMETRIC, BC.ZEROS, BC.ONES])
+@pytest.mark.parametrize("bc_type", ["periodic", "free", "symmetric", "zeros", "ones"])
 def test_boundary_conditions_numpy_pad_equivalence(bc_type):
     """
     Test that the custom boundary condition application function produces the same
@@ -25,11 +25,11 @@ def test_boundary_conditions_numpy_pad_equivalence(bc_type):
 
     # baseline case: apply boundary conditions with np pad
     pad_kwargs = {
-        BC.PERIODIC: {"mode": "wrap"},
-        BC.FREE: {"mode": "edge"},
-        BC.SYMMETRIC: {"mode": "symmetric"},
-        BC.ZEROS: {"mode": "constant", "constant_values": 0},
-        BC.ONES: {"mode": "constant", "constant_values": 1},
+        "periodic": {"mode": "wrap"},
+        "free": {"mode": "edge"},
+        "symmetric": {"mode": "symmetric"},
+        "zeros": {"mode": "constant", "constant_values": 0},
+        "ones": {"mode": "constant", "constant_values": 1},
     }
     np_padded = np.pad(u, [(0,), (nghost,), (nghost,), (nghost,)], **(pad_kwargs[bc_type]))
 
@@ -67,16 +67,16 @@ def test_reflective_boundary_conditions(ref_slab):
         _u_ref,
         nghost,
         bcx=(
-            BC.REFLECTIVE if ref_slab == "xl" else BC.FREE,
-            BC.REFLECTIVE if ref_slab == "xr" else BC.FREE,
+            "reflective" if ref_slab == "xl" else "free",
+            "reflective" if ref_slab == "xr" else "free",
         ),
         bcy=(
-            BC.REFLECTIVE if ref_slab == "yl" else BC.FREE,
-            BC.REFLECTIVE if ref_slab == "yr" else BC.FREE,
+            "reflective" if ref_slab == "yl" else "free",
+            "reflective" if ref_slab == "yr" else "free",
         ),
         bcz=(
-            BC.REFLECTIVE if ref_slab == "zl" else BC.FREE,
-            BC.REFLECTIVE if ref_slab == "zr" else BC.FREE,
+            "reflective" if ref_slab == "zl" else "free",
+            "reflective" if ref_slab == "zr" else "free",
         ),
         variable_index_map=idx,
     )
@@ -85,16 +85,16 @@ def test_reflective_boundary_conditions(ref_slab):
         _u_sym,
         nghost,
         bcx=(
-            BC.SYMMETRIC if ref_slab == "xl" else BC.FREE,
-            BC.SYMMETRIC if ref_slab == "xr" else BC.FREE,
+            "symmetric" if ref_slab == "xl" else "free",
+            "symmetric" if ref_slab == "xr" else "free",
         ),
         bcy=(
-            BC.SYMMETRIC if ref_slab == "yl" else BC.FREE,
-            BC.SYMMETRIC if ref_slab == "yr" else BC.FREE,
+            "symmetric" if ref_slab == "yl" else "free",
+            "symmetric" if ref_slab == "yr" else "free",
         ),
         bcz=(
-            BC.SYMMETRIC if ref_slab == "zl" else BC.FREE,
-            BC.SYMMETRIC if ref_slab == "zr" else BC.FREE,
+            "symmetric" if ref_slab == "zl" else "free",
+            "symmetric" if ref_slab == "zr" else "free",
         ),
     )
 
@@ -219,9 +219,9 @@ def test_dirichlet_boundary_condition_fv_averages(dims, sampling_p):
     apply_bc(
         _u_,
         nghost,
-        bcx=(BC.DIRICHLET, BC.DIRICHLET) if "x" in dims else (BC.NONE, BC.NONE),
-        bcy=(BC.DIRICHLET, BC.DIRICHLET) if "y" in dims else (BC.NONE, BC.NONE),
-        bcz=(BC.DIRICHLET, BC.DIRICHLET) if "z" in dims else (BC.NONE, BC.NONE),
+        bcx=("dirichlet", "dirichlet") if "x" in dims else ("none", "none"),
+        bcy=("dirichlet", "dirichlet") if "y" in dims else ("none", "none"),
+        bcz=("dirichlet", "dirichlet") if "z" in dims else ("none", "none"),
         bcx_callable_lower=sinus if "x" in dims else None,
         bcx_callable_upper=sinus if "x" in dims else None,
         bcy_callable_lower=sinus if "y" in dims else None,

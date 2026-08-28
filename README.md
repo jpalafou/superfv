@@ -33,8 +33,8 @@ pip install .
 Initialize a `HydroSolver` object with the desired parameters:
 
 ```python
-from superfv import HydroSolver, ics, BC
-sim = HydroSolver(ic=ics.square, nx=64, bcx=(BC.PERIODIC, BC.PERIODIC))
+from superfv import HydroSolver, ics
+sim = HydroSolver(ic=ics.square, nx=64, bcx=("periodic", "periodic"))
 ```
 
 Documentation for `HydroSolver.__init__` includes a complete list of arguments and their purpose.
@@ -64,11 +64,10 @@ sim = HydroSolver(ic=ics.square, nx=64, output_path="myfolder/outputs")
 Otherwise, they are stored in memory. You can supply multiple target times that will trigger snapshots:
 
 ```python
-from superfv import SnapshotMode
-sim.run(t=[0.2, 0.4, 0.6, 0.8, 1.0], snapshot_mode=SnapshotMode.TARGET,  allow_overshoot=False)
+sim.run(t=[0.2, 0.4, 0.6, 0.8, 1.0], snapshot_mode="target",  allow_overshoot=False)
 ```
 
-Snapshots after the initial snapshot can be turned off entirely with `SnapshotMode.NONE`, and, if memory permits, a snapshot can be taken at every step with `SnapshotMode.EVERY`.
+Snapshots after the initial snapshot can be turned off entirely with `"none"`, and, if memory permits, a snapshot can be taken at every step with `"every"`.
 
 ## Example
 
