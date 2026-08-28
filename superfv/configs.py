@@ -44,7 +44,7 @@ class MUSCL_Parameters:
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalAdmissibilityParameters:
+class PhysicalAdmissibilityDetectionParameters:
     use_PAD: bool
     bounds: Dict[str, Tuple[Optional[float], Optional[float]]]
 
@@ -62,7 +62,7 @@ class ZhangShuParameters:
     use_ZS: bool
     adaptive_dt: bool
     SED_params: SmoothExtremaDetectionParameters
-    PAD_params: PhysicalAdmissibilityParameters
+    PAD_params: PhysicalAdmissibilityDetectionParameters
     omit_vars: List[str]
     adaptive_dt_tol: float = 1e-15
     theta_denom_tol: float = 1e-15
@@ -92,7 +92,7 @@ class ShockDetectionParameters:
 
 
 @dataclass(frozen=True, slots=True)
-class NumericalAdmissibilityParameters:
+class NumericalAdmissibilityDetectionParameters:
     use_NAD: bool
     rtol: float
     atol: float
@@ -109,8 +109,8 @@ class NumericalAdmissibilityParameters:
 @dataclass(frozen=True, slots=True)
 class MOOD_Parameters:
     use_MOOD: bool
-    NAD_params: NumericalAdmissibilityParameters
-    PAD_params: PhysicalAdmissibilityParameters
+    NAD_params: NumericalAdmissibilityDetectionParameters
+    PAD_params: PhysicalAdmissibilityDetectionParameters
     fallback_cascade: List[FV_SchemeParameters]
     max_revs: int
     blend_troubles: bool

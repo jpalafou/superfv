@@ -11,7 +11,7 @@ from superfv.configs import (
     FV_SchemeParameters,
     HydroParameters,
     MOOD_Parameters,
-    NumericalAdmissibilityParameters,
+    NumericalAdmissibilityDetectionParameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.finite_volume_driver import (
@@ -67,7 +67,7 @@ def numerical_admissibility_detection(
     _alpha_: np.ndarray,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    params: NumericalAdmissibilityParameters,
+    params: NumericalAdmissibilityDetectionParameters,
 ):
     """
     Update `_troubles_` based on NAD criteria compute from `_qold_` and `_qnew_` with

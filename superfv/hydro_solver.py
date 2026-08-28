@@ -24,8 +24,8 @@ from .configs import (
     MOOD_Parameters,
     MUSCL_Parameters,
     MUSCL_SlopeLimiter,
-    NumericalAdmissibilityParameters,
-    PhysicalAdmissibilityParameters,
+    NumericalAdmissibilityDetectionParameters,
+    PhysicalAdmissibilityDetectionParameters,
     RiemannSolver,
     ShockDetectionParameters,
     SmoothExtremaDetectionParameters,
@@ -380,9 +380,9 @@ class HydroSolver:
         # Such as the fallback scheme cascade
         null_SED = SmoothExtremaDetectionParameters(False)
         null_MUSCL = MUSCL_Parameters(False, "none", null_SED)
-        null_PAD = PhysicalAdmissibilityParameters(False, {})
+        null_PAD = PhysicalAdmissibilityDetectionParameters(False, {})
         null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
-        null_NAD = NumericalAdmissibilityParameters(False, 0.0, 0.0, null_SED, [])
+        null_NAD = NumericalAdmissibilityDetectionParameters(False, 0.0, 0.0, null_SED, [])
         null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0, False)
         null_shock = ShockDetectionParameters(False)
 
@@ -461,7 +461,7 @@ class HydroSolver:
                 SED_params=SmoothExtremaDetectionParameters(
                     use_SED and use_ZS and p > 0, clip_zero_tol
                 ),
-                PAD_params=PhysicalAdmissibilityParameters(
+                PAD_params=PhysicalAdmissibilityDetectionParameters(
                     bool(updated_PAD_bounds) and use_ZS and p > 0, updated_PAD_bounds
                 ),
                 omit_vars=omit_vars_from_ZS or [],
@@ -471,7 +471,7 @@ class HydroSolver:
             ),
             mood_params=MOOD_Parameters(
                 use_MOOD=use_MOOD and p > 0,
-                NAD_params=NumericalAdmissibilityParameters(
+                NAD_params=NumericalAdmissibilityDetectionParameters(
                     use_NAD=use_NAD and use_MOOD and p > 0,
                     rtol=rtol,
                     atol=atol,
@@ -482,7 +482,7 @@ class HydroSolver:
                     delta=delta,
                     include_corners=include_corners,
                 ),
-                PAD_params=PhysicalAdmissibilityParameters(
+                PAD_params=PhysicalAdmissibilityDetectionParameters(
                     bool(updated_PAD_bounds) and use_MOOD and p > 0, updated_PAD_bounds
                 ),
                 fallback_cascade=fallback_cascade_list,

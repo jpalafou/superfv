@@ -10,8 +10,8 @@ from superfv.configs import (
     HydroParameters,
     MOOD_Parameters,
     MUSCL_Parameters,
-    NumericalAdmissibilityParameters,
-    PhysicalAdmissibilityParameters,
+    NumericalAdmissibilityDetectionParameters,
+    PhysicalAdmissibilityDetectionParameters,
     ShockDetectionParameters,
     SmoothExtremaDetectionParameters,
     ZhangShuParameters,
@@ -86,15 +86,15 @@ for p in range(8):
                             False,
                             False,
                             SmoothExtremaDetectionParameters(False),
-                            PhysicalAdmissibilityParameters(False, {}),
+                            PhysicalAdmissibilityDetectionParameters(False, {}),
                             [],
                         ),
                         mood_params=MOOD_Parameters(
                             False,
-                            NumericalAdmissibilityParameters(
+                            NumericalAdmissibilityDetectionParameters(
                                 False, xp.nan, xp.nan, SmoothExtremaDetectionParameters(False), []
                             ),
-                            PhysicalAdmissibilityParameters(False, {}),
+                            PhysicalAdmissibilityDetectionParameters(False, {}),
                             [],
                             -1,
                             False,
@@ -125,15 +125,15 @@ for flux_recipe in ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]:
                             False,
                             False,
                             SmoothExtremaDetectionParameters(False),
-                            PhysicalAdmissibilityParameters(False, {}),
+                            PhysicalAdmissibilityDetectionParameters(False, {}),
                             [],
                         ),
                         mood_params=MOOD_Parameters(
                             False,
-                            NumericalAdmissibilityParameters(
+                            NumericalAdmissibilityDetectionParameters(
                                 False, xp.nan, xp.nan, SmoothExtremaDetectionParameters(False), []
                             ),
-                            PhysicalAdmissibilityParameters(False, {}),
+                            PhysicalAdmissibilityDetectionParameters(False, {}),
                             [],
                             -1,
                             False,
@@ -175,19 +175,19 @@ for p in [3, 7]:
                                 True,
                                 False,
                                 SmoothExtremaDetectionParameters(use_SED),
-                                PhysicalAdmissibilityParameters(False, {}),
+                                PhysicalAdmissibilityDetectionParameters(False, {}),
                                 [],
                             ),
                             mood_params=MOOD_Parameters(
                                 False,
-                                NumericalAdmissibilityParameters(
+                                NumericalAdmissibilityDetectionParameters(
                                     False,
                                     xp.nan,
                                     xp.nan,
                                     SmoothExtremaDetectionParameters(False),
                                     [],
                                 ),
-                                PhysicalAdmissibilityParameters(False, {}),
+                                PhysicalAdmissibilityDetectionParameters(False, {}),
                                 [],
                                 -1,
                                 False,
