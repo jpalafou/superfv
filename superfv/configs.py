@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pickle
-import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union, get_args
@@ -16,6 +15,8 @@ from .tools.variable_index_map import VariableIndexMap
 LazyPrimitiveMode = Literal["full", "none", "adaptive"]
 FluxRecipe = Literal["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]
 FluxQuadrature = Literal["transverse", "gauss_legendre", "none"]
+
+MAX_POLYNOMIAL_DEGREE = 7
 
 
 def validate_literal_membership(value: Any, literal: Any, field_name: str) -> None:
@@ -155,24 +156,19 @@ class FV_SchemeParameters:
         )
         validate_literal_membership(self.riemann_solver, RiemannSolver, "riemann_solver")
 
-        # Non-negative polynomial degree
-        if self.p < 0:
-            raise ValueError("Polynomial degree p must be non-negative.")
+        if self.p < 0 or self.p > MAX_POLYNOMIAL_DEGREE:
+            raise ValueError(f"Polynomial degree p must be between 0 and {MAX_POLYNOMIAL_DEGREE}.")
 
-        # Couple shock detection with adaptive lazy primitives.
         if self.lazy_primitive_mode == "adaptive":
             if not self.shock_detection_params.use_shock_detection:
                 raise ValueError(
                     'Shock detection must be enabled when lazy_primitive_mode is "adaptive".'
                 )
         elif self.shock_detection_params.use_shock_detection:
-            warnings.warn(
-                'Disabling shock detection since lazy_primitive_mode is not "adaptive".',
-                UserWarning,
+            raise ValueError(
+                'Shock detection can only be enabled when lazy_primitive_mode is "adaptive".'
             )
-            object.__setattr__(self, "shock_detection_params", ShockDetectionParameters(False, 0.0))
 
-        # Unique limiter choice
         if (
             sum(
                 [
@@ -187,20 +183,17 @@ class FV_SchemeParameters:
                 "Only one of MUSCL, Zhang-Shu, or MOOD limiting can be enabled at a time."
             )
 
-        # MUSCL p != 1 warning
         if self.muscl_params.use_MUSCL and self.p != 1:
-            warnings.warn(
-                f"Changing p from {self.p} to 1 since MUSCL limiting is enabled.", UserWarning
-            )
-            object.__setattr__(self, "p", 1)
+            raise ValueError("MUSCL limiting requires polynomial degree p == 1.")
 
-        # p < 2 non lazy primitive warning
+        if self.zhang_shu_params.use_ZS and self.p == 0:
+            raise ValueError("Zhang-Shu limiting requires polynomial degree p > 0.")
+
+        if self.mood_params.use_MOOD and self.p == 0:
+            raise ValueError("MOOD limiting requires polynomial degree p > 0.")
+
         if self.p < 2 and self.lazy_primitive_mode != "full":
-            warnings.warn(
-                'Changing lazy_primitive_mode to "full" since FV scheme is second-order or lower.',
-                UserWarning,
-            )
-            object.__setattr__(self, "lazy_primitive_mode", "full")
+            raise ValueError('lazy_primitive_mode must be "full" when polynomial degree p < 2.')
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,9 +391,26 @@ class SolverParameters:
         ):
             raise ValueError("PP2D MUSCL slopes can only be used in 2D.")
 
-        # No flux quadarture in 1D
+        # "none" flux quadrature in 1D and only 1D
         if self.mesh.ndim == 1 and self.fv_scheme.flux_quadrature != "none":
             raise ValueError('Flux quadrature must be "none" for 1D simulations.')
+        elif self.mesh.ndim != 1 and self.fv_scheme.flux_quadrature == "none":
+            raise ValueError('Flux quadrature cannot be "none" for 2D or 3D simulations.')
+
+        if self.fv_scheme.riemann_solver == "hllc_teyssier":
+            if self.mesh.ndim != 1:
+                raise ValueError("The HLLC Teyssier Riemann solver only supports 1D simulations.")
+            if "passives" in self.variable_index_map.group_var_map:
+                raise ValueError(
+                    "The HLLC Teyssier Riemann solver does not support passive scalars."
+                )
+            if self.cupy:
+                raise ValueError("The HLLC Teyssier Riemann solver does not support CuPy.")
+
+        if self.hydro.dissipation and self.fv_scheme.flux_quadrature == "gauss_legendre":
+            raise ValueError(
+                "Gauss-Legendre flux quadrature cannot be used with dissipative fluxes."
+            )
 
 
 def dummy_function(*args: Any, **kwargs: Any) -> None:

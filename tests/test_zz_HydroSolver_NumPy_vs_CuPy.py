@@ -151,6 +151,8 @@ def test_square_with_unlimited_schemes(scheme, dims):
 def test_square_with_limited_schemes(scheme, dims):
     if not CUPY_AVAILABLE:
         pytest.skip("Cupy is not available, skipping test.")
+    if len(dims) == 1 and scheme.get("flux_quadrature") == "gauss_legendre":
+        pytest.skip("Flux quadrature is not supported for 1D simulations, skipping test.")
 
     sim_np = HydroSolver(
         ic=partial(

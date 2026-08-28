@@ -65,11 +65,7 @@ unlimited_FV_configs = []
 for p in range(8):
     for flux_recipe in ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]:
         for flux_quad in ["transverse", "gauss_legendre"]:
-            for lazy_prim in [
-                "none",
-                "full",
-                "adaptive",
-            ]:
+            for lazy_prim in ["full"] if p < 2 else ["none", "full", "adaptive"]:
                 unlimited_FV_configs.append(
                     FV_SchemeParameters(
                         name=f"FV{p+1}",

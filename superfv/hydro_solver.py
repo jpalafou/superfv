@@ -240,8 +240,10 @@ class HydroSolver:
             p: Polynomial degree for the base finite volume scheme.
             flux_recipe: Flux recipe literal. Possible values include "cons_lim_prim",
                 "cons_prim_lim", and "prim_prim_lim".
-            flux_quadrature: Flux quadrature literal. Possible values include "transverse" and
-                "gauss_legendre".
+            flux_quadrature: Flux quadrature literal. Possible values include "transverse",
+                "gauss_legendre", and "none". In 1D, the flux quadrature is automatically
+                set to "none". In 2D and 3D, the flux quadrature must be either "transverse"
+                or "gauss_legendre".
             lazy_primitive_mode: Lazy primitive mode literal. Possible values include "full",
                 "none", and "adaptive", which uses the shock detection threshold `eta_max`
                 to determine when to use high-order primitive cell averages.
@@ -268,7 +270,8 @@ class HydroSolver:
             theta_denom_tol: Tolerance for denominator in theta calculation.
 
         Slope limiting parameters (shock detection):
-            eta_max: Maximum allowed shock detection parameter.
+            eta_max: Maximum allowed shock detection parameter. Shock detection is enabled by
+                setting `lazy_primitive_mode="adaptive"`.
 
         Slope limiting parameters (MOOD, numerical admissibility detection):
             use_NAD: If True, enable numerical admissibility detection.
@@ -326,11 +329,11 @@ class HydroSolver:
             Literal["full", "muscl", "muscl0", "first_order"],
             "fallback_cascade",
         )
+        validate_literal_membership(flux_quadrature, FluxQuadrature, "flux_quadrature")
 
-        # Decide on active dimensions based on nx, ny, nz
         active_dims = self._compute_active_dims(nx, ny, nz)
         if len(active_dims) == 1:
-            flux_quadrature = "none"  # No flux quadrature in 1D.
+            flux_quadrature = "none"
 
         # This is straightforward
         self.arrays = ArrayManager()
@@ -398,7 +401,7 @@ class HydroSolver:
                             p=reduced_p,
                             flux_recipe=flux_recipe,
                             flux_quadrature=flux_quadrature,
-                            lazy_primitive_mode=lazy_primitive_mode,
+                            lazy_primitive_mode="full" if reduced_p < 2 else lazy_primitive_mode,
                             positivity_guard=False,
                             riemann_solver=fallback_riemann_solver,
                             muscl_params=null_MUSCL,
@@ -414,7 +417,7 @@ class HydroSolver:
                         p=1,
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
-                        lazy_primitive_mode=lazy_primitive_mode,
+                        lazy_primitive_mode="full",
                         positivity_guard=False,
                         riemann_solver=fallback_riemann_solver,
                         muscl_params=MUSCL_Parameters(True, MUSCL_limiter, null_SED),
@@ -430,7 +433,7 @@ class HydroSolver:
                         p=0,
                         flux_recipe=flux_recipe,
                         flux_quadrature=flux_quadrature,
-                        lazy_primitive_mode=lazy_primitive_mode,
+                        lazy_primitive_mode="full",
                         positivity_guard=False,
                         riemann_solver=fallback_riemann_solver,
                         muscl_params=null_MUSCL,
@@ -449,20 +452,16 @@ class HydroSolver:
             positivity_guard=positivity_guard,
             riemann_solver=riemann_solver,
             muscl_params=MUSCL_Parameters(
-                use_MUSCL=use_MUSCL and p > 0,
+                use_MUSCL=use_MUSCL,
                 MUSCL_limiter=MUSCL_limiter,
-                SED_params=SmoothExtremaDetectionParameters(
-                    use_SED and use_MUSCL and p > 0, clip_zero_tol
-                ),
+                SED_params=SmoothExtremaDetectionParameters(use_SED and use_MUSCL, clip_zero_tol),
             ),
             zhang_shu_params=ZhangShuParameters(
-                use_ZS=use_ZS and p > 0,
+                use_ZS=use_ZS,
                 adaptive_dt=adaptive_dt,
-                SED_params=SmoothExtremaDetectionParameters(
-                    use_SED and use_ZS and p > 0, clip_zero_tol
-                ),
+                SED_params=SmoothExtremaDetectionParameters(use_SED and use_ZS, clip_zero_tol),
                 PAD_params=PhysicalAdmissibilityDetectionParameters(
-                    bool(updated_PAD_bounds) and use_ZS and p > 0, updated_PAD_bounds
+                    bool(updated_PAD_bounds) and use_ZS, updated_PAD_bounds
                 ),
                 omit_vars=omit_vars_from_ZS or [],
                 adaptive_dt_tol=adaptive_dt_tol,
@@ -470,20 +469,20 @@ class HydroSolver:
                 include_corners=include_corners,
             ),
             mood_params=MOOD_Parameters(
-                use_MOOD=use_MOOD and p > 0,
+                use_MOOD=use_MOOD,
                 NAD_params=NumericalAdmissibilityDetectionParameters(
-                    use_NAD=use_NAD and use_MOOD and p > 0,
+                    use_NAD=use_NAD and use_MOOD,
                     rtol=rtol,
                     atol=atol,
                     SED_params=SmoothExtremaDetectionParameters(
-                        use_SED and use_NAD and use_MOOD and p > 0, clip_zero_tol
+                        use_SED and use_NAD and use_MOOD, clip_zero_tol
                     ),
                     omit_vars=omit_vars_from_NAD or [],
                     delta=delta,
                     include_corners=include_corners,
                 ),
                 PAD_params=PhysicalAdmissibilityDetectionParameters(
-                    bool(updated_PAD_bounds) and use_MOOD and p > 0, updated_PAD_bounds
+                    bool(updated_PAD_bounds) and use_MOOD, updated_PAD_bounds
                 ),
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,

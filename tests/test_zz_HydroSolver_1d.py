@@ -188,7 +188,7 @@ def test_compare_with_teyssier_code(p, ic_type_t_sim):
         p=p,
         riemann_solver="hllc_teyssier",
         flux_recipe="prim_prim_lim",
-        use_ZS=True,
+        use_ZS=p > 0,
         rho_min=-np.inf,
         P_min=-np.inf,
     )
