@@ -107,6 +107,11 @@ class VariableIndexMap:
             else:
                 raise KeyError(f"Member '{member}' not found as variable or group.")
 
+    def is_var_in_group(self, var_name: str, group_name: str) -> bool:
+        if var_name not in self.var_idx_map or group_name not in self.group_var_map:
+            return False
+        return any(var_name == member for member in self._retrieve_vars_from_group(group_name))
+
     def __contains__(self, name: str) -> bool:
         return name in self.all_names
 

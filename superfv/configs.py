@@ -332,17 +332,16 @@ class SolverParameters:
 
         # PAD bound dicts must contain variables only in the "primitive" group
         def _check_PAD_bounds_in_primitives(PAD_params):
-            valid_vars = set([])
-            valid_vars.update(self.variable_index_map.group_var_map.get("primitives", []))
-            valid_vars.update(self.variable_index_map.group_var_map.get("passives", []))
-            valid_vars.update(["vx", "vy", "vz"])
             if PAD_params.use_PAD:
                 for var in PAD_params.bounds.keys():
                     if var not in self.variable_index_map.var_idx_map:
                         raise ValueError(
                             f"PAD_bounds variable {var} is not in the variable index map."
                         )
-                    if var not in valid_vars:
+                    if not (
+                        self.variable_index_map.is_var_in_group(var, "primitives")
+                        or self.variable_index_map.is_var_in_group(var, "passives")
+                    ):
                         raise ValueError(f"PAD_bounds variable {var} is not primitive.")
 
         if (
@@ -361,23 +360,18 @@ class SolverParameters:
         # Omit vars lists must contain variables in the "primitive" or "conservative" groups
         def _check_omit_vars_in_groups(omit_vars):
             if self.fv_scheme.flux_recipe == "cons_lim_prim":
-                valid_vars = set([])
-                valid_vars.update(self.variable_index_map.group_var_map.get("conservatives", []))
-                valid_vars.update(self.variable_index_map.group_var_map.get("passives", []))
-                valid_vars.update(["mx", "my", "mz"])
                 valid_group_name = "conservatives"
             else:
-                valid_vars = set([])
-                valid_vars.update(self.variable_index_map.group_var_map.get("primitives", []))
-                valid_vars.update(self.variable_index_map.group_var_map.get("passives", []))
-                valid_vars.update(["vx", "vy", "vz"])
                 valid_group_name = "primitives"
             for var in omit_vars:
                 if var not in self.variable_index_map.var_idx_map:
                     raise ValueError(
                         f"`omit_vars` variable {var} is not in the variable index map."
                     )
-                if var not in valid_vars:
+                if not (
+                    self.variable_index_map.is_var_in_group(var, valid_group_name)
+                    or self.variable_index_map.is_var_in_group(var, "passives")
+                ):
                     raise ValueError(
                         f"`omit_vars` variable {var} is not in the {valid_group_name} group."
                     )

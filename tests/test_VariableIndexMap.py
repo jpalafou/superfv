@@ -150,6 +150,39 @@ def test_hydro_groups():
     assert idx.nvars == 5
 
 
+def test_name_based_nested_group_membership():
+    idx = VariableIndexMap(
+        {
+            "rho": 0,
+            "vx": 1,
+            "vy": 2,
+            "vz": 3,
+            "P": 4,
+            "E": 4,
+            "mx": 1,
+            "my": 2,
+            "mz": 3,
+        },
+        {
+            "v": ["vx", "vy", "vz"],
+            "m": ["mx", "my", "mz"],
+            "primitives": ["rho", "v", "P"],
+            "conservatives": ["rho", "m", "E"],
+        },
+    )
+
+    assert idx.is_var_in_group("vx", "primitives")
+    assert idx.is_var_in_group("mx", "conservatives")
+    assert not idx.is_var_in_group("mx", "primitives")
+    assert not idx.is_var_in_group("vx", "conservatives")
+    assert idx.is_var_in_group("P", "primitives")
+    assert idx.is_var_in_group("E", "conservatives")
+    assert not idx.is_var_in_group("E", "primitives")
+    assert not idx.is_var_in_group("P", "conservatives")
+    assert not idx.is_var_in_group("not_a_var", "primitives")
+    assert not idx.is_var_in_group("rho", "not_a_group")
+
+
 def test_add_var_duplicate_raises():
     idx = VariableIndexMap({}, {})
     idx.add_var("u", 0)
