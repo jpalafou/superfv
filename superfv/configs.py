@@ -42,6 +42,8 @@ class MUSCL_Parameters:
 
     def __post_init__(self):
         validate_literal_membership(self.MUSCL_limiter, MUSCL_SlopeLimiter, "MUSCL_limiter")
+        if not self.use_MUSCL and self.SED_params.use_SED:
+            raise ValueError("SED cannot be used if MUSCL limiting is not used.")
 
 
 @dataclass(frozen=True, slots=True)
