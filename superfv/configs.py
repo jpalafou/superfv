@@ -321,67 +321,57 @@ class SolverParameters:
         ):
             raise ValueError('nu_dye > 0 requires a passive variable named "dye".')
 
-        # PAD bound dicts cannot contain variables not in the variable index map
+        # PAD bound dicts must contain variables only in the "primitive" group
+        def _check_PAD_bounds_in_primitives(PAD_params):
+            valid_vars = set([])
+            valid_vars.update(self.variable_index_map.group_var_map.get("primitives", []))
+            valid_vars.update(self.variable_index_map.group_var_map.get("passives", []))
+            valid_vars.update(["vx", "vy", "vz"])
+            if PAD_params.use_PAD:
+                for var in PAD_params.bounds.keys():
+                    if var not in self.variable_index_map.var_idx_map:
+                        raise ValueError(
+                            f"PAD_bounds variable {var} is not in the variable index map."
+                        )
+                    if var not in valid_vars:
+                        raise ValueError(f"PAD_bounds variable {var} is not primitive.")
+
         if (
             self.fv_scheme.zhang_shu_params.use_ZS
             and self.fv_scheme.zhang_shu_params.PAD_params.use_PAD
-            and any(
-                v not in self.variable_index_map.var_idx_map
-                for v in self.fv_scheme.zhang_shu_params.PAD_params.bounds.keys()
-            )
         ):
-            raise ValueError(
-                "All variables in zhang_shu_params.PAD_params.bounds must be in the variable index map."
-            )
-        if (
-            self.fv_scheme.mood_params.use_MOOD
-            and self.fv_scheme.mood_params.PAD_params.use_PAD
-            and any(
-                v not in self.variable_index_map.var_idx_map
-                for v in self.fv_scheme.mood_params.PAD_params.bounds.keys()
-            )
-        ):
-            raise ValueError(
-                "All variables in mood_params.PAD_params.bounds must be in the variable index map."
-            )
+            _check_PAD_bounds_in_primitives(self.fv_scheme.zhang_shu_params.PAD_params)
+        if self.fv_scheme.mood_params.use_MOOD and self.fv_scheme.mood_params.PAD_params.use_PAD:
+            _check_PAD_bounds_in_primitives(self.fv_scheme.mood_params.PAD_params)
 
-        # Omit vars lists cannot contain variables not in the variable index map
-        if (
-            self.fv_scheme.zhang_shu_params.use_ZS
-            and self.fv_scheme.zhang_shu_params.omit_vars
-            and any(
-                v not in self.variable_index_map.var_idx_map
-                for v in self.fv_scheme.zhang_shu_params.omit_vars
-            )
-        ):
-            raise ValueError(
-                "All variables in zhang_shu_params.omit_vars must be in the variable index map."
-            )
-        if (
-            self.fv_scheme.mood_params.use_MOOD
-            and self.fv_scheme.mood_params.NAD_params.omit_vars
-            and any(
-                v not in self.variable_index_map.var_idx_map
-                for v in self.fv_scheme.mood_params.NAD_params.omit_vars
-            )
-        ):
-            raise ValueError(
-                "All variables in mood_params.NAD_params.omit_vars must be in the variable index map."
-            )
+        # Omit vars lists must contain variables in the "primitive" or "conservative" groups
+        def _check_omit_vars_in_groups(omit_vars):
+            if self.fv_scheme.flux_recipe == "cons_lim_prim":
+                valid_vars = set([])
+                valid_vars.update(self.variable_index_map.group_var_map.get("conservatives", []))
+                valid_vars.update(self.variable_index_map.group_var_map.get("passives", []))
+                valid_vars.update(["mx", "my", "mz"])
+                valid_group_name = "conservatives"
+            else:
+                valid_vars = set([])
+                valid_vars.update(self.variable_index_map.group_var_map.get("primitives", []))
+                valid_vars.update(self.variable_index_map.group_var_map.get("passives", []))
+                valid_vars.update(["vx", "vy", "vz"])
+                valid_group_name = "primitives"
+            for var in omit_vars:
+                if var not in self.variable_index_map.var_idx_map:
+                    raise ValueError(
+                        f"`omit_vars` variable {var} is not in the variable index map."
+                    )
+                if var not in valid_vars:
+                    raise ValueError(
+                        f"`omit_vars` variable {var} is not in the {valid_group_name} group."
+                    )
 
-        # If limiting conservatives, then all PAD bounds must be in primitives
-        if (
-            self.fv_scheme.flux_recipe == "cons_lim_prim"
-            and self.fv_scheme.zhang_shu_params.use_ZS
-            and self.fv_scheme.zhang_shu_params.PAD_params.use_PAD
-            and any(
-                v not in self.variable_index_map.group_var_map["primitives"]
-                for v in self.fv_scheme.zhang_shu_params.PAD_params.bounds.keys()
-            )
-        ):
-            raise ValueError(
-                'All variables with PAD bounds must be in primitives when using "cons_lim_prim" flux recipe.'
-            )
+        if self.fv_scheme.zhang_shu_params.use_ZS:
+            _check_omit_vars_in_groups(self.fv_scheme.zhang_shu_params.omit_vars)
+        if self.fv_scheme.mood_params.use_MOOD and self.fv_scheme.mood_params.NAD_params.use_NAD:
+            _check_omit_vars_in_groups(self.fv_scheme.mood_params.NAD_params.omit_vars)
 
         # PP2D MUSCL slopes can only be used in 2D
         if (
