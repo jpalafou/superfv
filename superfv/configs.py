@@ -209,7 +209,7 @@ class FV_SchemeParameters:
 class HydroParameters:
     gamma: float
     CFL: float
-    dissipation: bool = False
+    diffusion: bool = False
     nu: float = 0.0
     Chi: float = 0.0
     nu_dye: float = 0.0
@@ -411,10 +411,8 @@ class SolverParameters:
             if self.cupy:
                 raise ValueError("The HLLC Teyssier Riemann solver does not support CuPy.")
 
-        if self.hydro.dissipation and self.fv_scheme.flux_quadrature == "gauss_legendre":
-            raise ValueError(
-                "Gauss-Legendre flux quadrature cannot be used with dissipative fluxes."
-            )
+        if self.hydro.diffusion and self.fv_scheme.flux_quadrature == "gauss_legendre":
+            raise ValueError("Gauss-Legendre flux quadrature cannot be used with diffusive fluxes.")
 
 
 def dummy_function(*args: Any, **kwargs: Any) -> None:

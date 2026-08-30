@@ -2,6 +2,4 @@ stop passing `dim` to hydro kernels, etc. make the first arg normal by default a
 
 improve HydroSolver doc string; list out what each literal means in a few words
 
-Romain says 'dissipation' is not the right name for 'diffusion'
-
 Probably need a way to check nested membership i.e. is "vx" in "primitives"?

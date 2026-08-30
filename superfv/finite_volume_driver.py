@@ -996,7 +996,7 @@ def update_weno_fluxes(
         )
 
         # Compute viscuous fluxes
-        if hydro_params.dissipation:
+        if hydro_params.diffusion:
             add_viscuous_fluxes(
                 _w_,
                 _fnodes_,
@@ -1199,7 +1199,7 @@ def update_MUSCL_fluxes(
         )
 
         # Compute viscuous fluxes
-        if hydro_params.dissipation:
+        if hydro_params.diffusion:
             add_viscuous_fluxes(
                 _w_,
                 _F_out_,
@@ -1364,7 +1364,7 @@ def compute_fv_dt(
     max_speed = xp.max(sum_of_s_over_h).item()
     dt = hp.CFL / max_speed
 
-    if hp.dissipation:
+    if hp.diffusion:
         inv_h2 = sum(1.0 / getattr(mesh, f"h{dim}") ** 2 for dim in mesh.active_dims)
         dt_nu = hp.CFL / (2.0 * hp.nu * inv_h2)
         dt = min(dt, dt_nu)

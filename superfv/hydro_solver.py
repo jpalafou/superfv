@@ -364,14 +364,14 @@ class HydroSolver:
             sampling_p=sampling_p if sampling_p is not None else p,
         )
 
-        dissipation = nu > 0.0 or Chi > 0.0 or nu_dye > 0.0
+        diffusion = nu > 0.0 or Chi > 0.0 or nu_dye > 0.0
         hydro_params = HydroParameters(
             gamma=gamma,
             CFL=CFL,
             nu=nu,
             Chi=Chi,
             nu_dye=nu_dye,
-            dissipation=dissipation,
+            diffusion=diffusion,
             dt_min=dt_min,
             rho_min=rho_min,
             P_min=P_min,
@@ -502,7 +502,7 @@ class HydroSolver:
             nghost=compute_fv_nghost(
                 fv_scheme_params,
                 len(active_dims),
-                viscosity=hydro_params.dissipation,
+                viscosity=hydro_params.diffusion,
             ),
             xlims=xlims,
             ylims=ylims,
