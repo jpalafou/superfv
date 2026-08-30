@@ -89,7 +89,14 @@ class ZhangShuParameters:
 @dataclass(frozen=True, slots=True)
 class ShockDetectionParameters:
     use_shock_detection: bool
+    PAD_params: PhysicalAdmissibilityDetectionParameters
     eta_max: float = 0.025
+
+    def __post_init__(self):
+        if not self.use_shock_detection and self.PAD_params.use_PAD:
+            raise ValueError(
+                "Physical admissibility detection cannot be used if shock detection is not used."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +350,11 @@ class SolverParameters:
             _check_PAD_bounds_in_primitives(self.fv_scheme.zhang_shu_params.PAD_params)
         if self.fv_scheme.mood_params.use_MOOD and self.fv_scheme.mood_params.PAD_params.use_PAD:
             _check_PAD_bounds_in_primitives(self.fv_scheme.mood_params.PAD_params)
+        if (
+            self.fv_scheme.shock_detection_params.use_shock_detection
+            and self.fv_scheme.shock_detection_params.PAD_params.use_PAD
+        ):
+            _check_PAD_bounds_in_primitives(self.fv_scheme.shock_detection_params.PAD_params)
 
         # Omit vars lists must contain variables in the "primitive" or "conservative" groups
         def _check_omit_vars_in_groups(omit_vars):

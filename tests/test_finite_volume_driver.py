@@ -60,6 +60,18 @@ hydro_params = HydroParameters(
     CFL=0.8,
 )
 
+null_SED = SmoothExtremaDetectionParameters(False)
+null_PAD = PhysicalAdmissibilityDetectionParameters(False, {})
+null_MUSCL = MUSCL_Parameters(False, "none", null_SED)
+null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
+null_MOOD = MOOD_Parameters(
+    False,
+    NumericalAdmissibilityDetectionParameters(False, xp.nan, xp.nan, null_SED, []),
+    null_PAD,
+    [],
+    -1,
+    False,
+)
 
 unlimited_FV_configs = []
 for p in range(8):
@@ -75,27 +87,12 @@ for p in range(8):
                         lazy_primitive_mode=lazy_prim,
                         positivity_guard=True,
                         riemann_solver="hllc",
-                        muscl_params=MUSCL_Parameters(
-                            False, "none", SmoothExtremaDetectionParameters(False)
+                        muscl_params=null_MUSCL,
+                        zhang_shu_params=null_ZS,
+                        mood_params=null_MOOD,
+                        shock_detection_params=ShockDetectionParameters(
+                            lazy_prim == "adaptive", null_PAD
                         ),
-                        zhang_shu_params=ZhangShuParameters(
-                            False,
-                            False,
-                            SmoothExtremaDetectionParameters(False),
-                            PhysicalAdmissibilityDetectionParameters(False, {}),
-                            [],
-                        ),
-                        mood_params=MOOD_Parameters(
-                            False,
-                            NumericalAdmissibilityDetectionParameters(
-                                False, xp.nan, xp.nan, SmoothExtremaDetectionParameters(False), []
-                            ),
-                            PhysicalAdmissibilityDetectionParameters(False, {}),
-                            [],
-                            -1,
-                            False,
-                        ),
-                        shock_detection_params=ShockDetectionParameters(lazy_prim == "adaptive"),
                     )
                 )
 
@@ -117,24 +114,9 @@ for flux_recipe in ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]:
                         muscl_params=MUSCL_Parameters(
                             True, limiter, SmoothExtremaDetectionParameters(use_SED)
                         ),
-                        zhang_shu_params=ZhangShuParameters(
-                            False,
-                            False,
-                            SmoothExtremaDetectionParameters(False),
-                            PhysicalAdmissibilityDetectionParameters(False, {}),
-                            [],
-                        ),
-                        mood_params=MOOD_Parameters(
-                            False,
-                            NumericalAdmissibilityDetectionParameters(
-                                False, xp.nan, xp.nan, SmoothExtremaDetectionParameters(False), []
-                            ),
-                            PhysicalAdmissibilityDetectionParameters(False, {}),
-                            [],
-                            -1,
-                            False,
-                        ),
-                        shock_detection_params=ShockDetectionParameters(False),
+                        zhang_shu_params=null_ZS,
+                        mood_params=null_MOOD,
+                        shock_detection_params=ShockDetectionParameters(False, null_PAD),
                     )
                 )
 
@@ -162,34 +144,17 @@ for p in [3, 7]:
                             lazy_primitive_mode=lazy_prim,
                             positivity_guard=True,
                             riemann_solver="hllc",
-                            muscl_params=MUSCL_Parameters(
-                                False,
-                                "none",
-                                SmoothExtremaDetectionParameters(False),
-                            ),
+                            muscl_params=null_MUSCL,
                             zhang_shu_params=ZhangShuParameters(
                                 True,
                                 False,
                                 SmoothExtremaDetectionParameters(use_SED),
-                                PhysicalAdmissibilityDetectionParameters(False, {}),
+                                null_PAD,
                                 [],
                             ),
-                            mood_params=MOOD_Parameters(
-                                False,
-                                NumericalAdmissibilityDetectionParameters(
-                                    False,
-                                    xp.nan,
-                                    xp.nan,
-                                    SmoothExtremaDetectionParameters(False),
-                                    [],
-                                ),
-                                PhysicalAdmissibilityDetectionParameters(False, {}),
-                                [],
-                                -1,
-                                False,
-                            ),
+                            mood_params=null_MOOD,
                             shock_detection_params=ShockDetectionParameters(
-                                lazy_prim == "adaptive"
+                                lazy_prim == "adaptive", null_PAD
                             ),
                         )
                     )

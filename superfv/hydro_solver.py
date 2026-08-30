@@ -387,7 +387,7 @@ class HydroSolver:
         null_ZS = ZhangShuParameters(False, False, null_SED, null_PAD, [])
         null_NAD = NumericalAdmissibilityDetectionParameters(False, 0.0, 0.0, null_SED, [])
         null_MOOD = MOOD_Parameters(False, null_NAD, null_PAD, [], 0, False)
-        null_shock = ShockDetectionParameters(False)
+        null_shock = ShockDetectionParameters(False, null_PAD)
 
         fallback_cascade_list: List[FV_SchemeParameters] = []
         if use_MOOD:
@@ -443,6 +443,10 @@ class HydroSolver:
                     )
                 )
 
+        SED_params = SmoothExtremaDetectionParameters(use_SED, clip_zero_tol)
+        PAD_params = PhysicalAdmissibilityDetectionParameters(
+            bool(updated_PAD_bounds), updated_PAD_bounds
+        )
         fv_scheme_params = FV_SchemeParameters(
             name="base_scheme",
             p=p,
@@ -454,15 +458,13 @@ class HydroSolver:
             muscl_params=MUSCL_Parameters(
                 use_MUSCL=use_MUSCL,
                 MUSCL_limiter=MUSCL_limiter,
-                SED_params=SmoothExtremaDetectionParameters(use_SED and use_MUSCL, clip_zero_tol),
+                SED_params=SED_params if use_MUSCL else null_SED,
             ),
             zhang_shu_params=ZhangShuParameters(
                 use_ZS=use_ZS,
                 adaptive_dt=adaptive_dt,
-                SED_params=SmoothExtremaDetectionParameters(use_SED and use_ZS, clip_zero_tol),
-                PAD_params=PhysicalAdmissibilityDetectionParameters(
-                    bool(updated_PAD_bounds) and use_ZS, updated_PAD_bounds
-                ),
+                SED_params=SED_params if use_ZS else null_SED,
+                PAD_params=PAD_params if use_ZS else null_PAD,
                 omit_vars=omit_vars_from_ZS or [],
                 adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=theta_denom_tol,
@@ -474,16 +476,12 @@ class HydroSolver:
                     use_NAD=use_NAD and use_MOOD,
                     rtol=rtol,
                     atol=atol,
-                    SED_params=SmoothExtremaDetectionParameters(
-                        use_SED and use_NAD and use_MOOD, clip_zero_tol
-                    ),
+                    SED_params=SED_params if use_NAD and use_MOOD else null_SED,
                     omit_vars=omit_vars_from_NAD or [],
                     delta=delta,
                     include_corners=include_corners,
                 ),
-                PAD_params=PhysicalAdmissibilityDetectionParameters(
-                    bool(updated_PAD_bounds) and use_MOOD, updated_PAD_bounds
-                ),
+                PAD_params=PAD_params if use_MOOD else null_PAD,
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,
                 blend_troubles=blend_troubles,
@@ -491,7 +489,9 @@ class HydroSolver:
                 detect_closing_troubles=detect_closing_troubles,
             ),
             shock_detection_params=ShockDetectionParameters(
-                lazy_primitive_mode == "adaptive", eta_max
+                lazy_primitive_mode == "adaptive",
+                PAD_params if lazy_primitive_mode == "adaptive" else null_PAD,
+                eta_max,
             ),
         )
 

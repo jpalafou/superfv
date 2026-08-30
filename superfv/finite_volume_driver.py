@@ -591,12 +591,8 @@ def update_fv_workspace(
         )
 
         # Flag PAD violations as shocks
-        if fv.mood_params.PAD_params.use_PAD:
-            raise NotImplementedError(
-                "Adaptive primitive mode with MOOD PAD is not implemented yet."
-            )
-        if fv.zhang_shu_params.PAD_params.use_PAD:
-            for v, (lb, ub) in fv.zhang_shu_params.PAD_params.bounds.items():
+        if fv.shock_detection_params.PAD_params.use_PAD:
+            for v, (lb, ub) in fv.shock_detection_params.PAD_params.bounds.items():
                 if lb is not None:
                     xp.maximum(_has_shock_, _w_[idx(v)] < lb, out=_has_shock_)
                 if ub is not None:
