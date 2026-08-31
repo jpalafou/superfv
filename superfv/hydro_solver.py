@@ -189,8 +189,11 @@ class HydroSolver:
 
         Hydro parameters:
             gamma: Adiabatic index for the ideal gas equation of state.
-            riemann_solver: Riemann solver literal. Possible values include "upwind", "llf",
-                and "hllc".
+            riemann_solver: Riemann solver literal.
+                "upwind": Upwind density/passive advection with zero momentum and energy fluxes.
+                "llf": Local Lax-Friedrichs solver; robust and diffusive.
+                "hllc": Contact-resolving HLLC solver; default for Euler runs.
+                "hllc_teyssier": 1D HLLC variant adapted from teyssier/; no passives or CuPy.
             CFL: CFL number for time step calculation.
             nu: Kinematic viscosity for viscous fluxes. If 0.0, viscous fluxes are not computed.
             Chi: Thermal conductivity for thermal fluxes. If 0.0, thermal fluxes are not computed.
@@ -224,8 +227,17 @@ class HydroSolver:
 
         Boundary condition parameters:
             bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
-                boundary condition literals (lower, upper). Possible values include "periodic",
-                "dirichlet", "free", "symmetric", "reflective", "patch", and "ic".
+                boundary condition literals (lower, upper).
+                "periodic": Wrap ghost cells from the opposite side; both sides must be periodic.
+                "dirichlet": Fill ghost cells from the corresponding boundary callable.
+                "free": Copy the adjacent interior value; useful for outflow boundaries.
+                "symmetric": Mirror interior values into ghost cells.
+                "reflective": Mirror interior values and flip the normal velocity.
+                "zeros": Fill conservative ghost cells with 0.
+                "ones": Fill conservative ghost cells with 1.
+                "patch": Let a `PatchBC` callable mutate the boundary region directly.
+                "none": Leave the boundary untouched; used internally for inactive dimensions.
+                "ic": Use the initial condition as a Dirichlet boundary.
             bcx_callable_lower, bcx_callable_upper, bcy_callable_lower,
             bcy_callable_upper, bcz_callable_lower, bcz_callable_upper: Optional callable functions
                 for Dirichlet boundary conditions. Each should take (idx, x, y, z, t, xp=xp) and
@@ -238,15 +250,18 @@ class HydroSolver:
 
         Finite volume scheme parameters:
             p: Polynomial degree for the base finite volume scheme.
-            flux_recipe: Flux recipe literal. Possible values include "cons_lim_prim",
-                "cons_prim_lim", and "prim_prim_lim".
-            flux_quadrature: Flux quadrature literal. Possible values include "transverse",
-                "gauss_legendre", and "none". In 1D, the flux quadrature is automatically
-                set to "none". In 2D and 3D, the flux quadrature must be either "transverse"
-                or "gauss_legendre".
-            lazy_primitive_mode: Lazy primitive mode literal. Possible values include "full",
-                "none", and "adaptive", which uses the shock detection threshold `eta_max`
-                to determine when to use high-order primitive cell averages.
+            flux_recipe: Flux recipe literal.
+                "cons_lim_prim": Reconstruct and limit conservatives, then convert faces to primitives.
+                "cons_prim_lim": Reconstruct conservatives, convert face nodes, then limit primitives.
+                "prim_prim_lim": Reconstruct and limit primitive finite-volume averages directly.
+            flux_quadrature: Flux quadrature literal.
+                "transverse": Use transverse face-node integration in 2D and 3D runs.
+                "gauss_legendre": Use Gauss-Legendre face quadrature in 2D and 3D runs.
+                "none": Use no face quadrature; required and selected automatically in 1D.
+            lazy_primitive_mode: Lazy primitive mode literal.
+                "full": Convert conservative averages to primitive averages everywhere.
+                "none": Compute high-order primitive averages everywhere.
+                "adaptive": Use high-order primitive averages only near shocks or shock-PAD failures.
 
         Slope limiting parameters (smooth extrema detection):
             use_SED: If True, enable smooth extrema detection.
@@ -254,8 +269,11 @@ class HydroSolver:
 
         Slope limiting parameters (MUSCL):
             use_MUSCL: If True, enable MUSCL scheme.
-            MUSCL_limiter: Slope limiter literal. Possible values include "minmod", "moncen",
-                "pp2d" (can only be used in 2D), and "none" (no slope limiting).
+            MUSCL_limiter: Slope limiter literal.
+                "minmod": Most diffusive TVD limiter.
+                "moncen": Monotonized central limiter; less diffusive default.
+                "pp2d": Positivity-preserving 2D limiter; requires exactly two active dimensions.
+                "none": Use unlimited centered slopes.
 
         Slope limiting parameters (physical admissibility detection):
             PAD_bounds: Optional dictionary specifying lower and upper bounds for physical
@@ -283,12 +301,14 @@ class HydroSolver:
 
         Slope limiting parameters (MOOD):
             use_MOOD: If True, enable MOOD scheme.
-            fallback_cascade: Fallback cascade literal. Possible values include "full" (which
-                falls back to progressively lower-order schemes from `p` to 0 in increments of 1),
-                "muscl" (which falls back to MUSCL), "first_order" (which falls back to
-                first-order), and "muscl0" (which falls back first to MUSCL and then first-order).
-            fallback_riemann_solver: Riemann solver to use in the fallback schemes in MOOD.
-                If None, defaults to the provided `riemann_solver` for the base scheme.
+            fallback_cascade: Fallback cascade literal.
+                "full": Fall back through progressively lower polynomial degrees down to p=0.
+                "muscl": Fall back to a MUSCL scheme.
+                "muscl0": Fall back to MUSCL, then to first-order.
+                "first_order": Fall back directly to p=0.
+            fallback_riemann_solver: Riemann solver to use in the fallback schemes in MOOD. Takes
+                the same values as `riemann_solver`. If None, defaults to the same value as
+                `riemann_solver`.
             max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
                 number of fallback schemes in the cascade.
             blend_troubles: If True, blend troubled cells in MOOD scheme.
@@ -1321,6 +1341,26 @@ class HydroSolver:
         print_update: bool = True,
         print_frequency: int = 100,
     ):
+        """
+        Advance the solution by a fixed number of time steps.
+
+        Args:
+            n: Number of time steps to take.
+            time_integrator: Time integration scheme literal.
+                "muscl_hancock": MUSCL-Hancock predictor-corrector; requires `use_MUSCL=True`.
+                "forward_euler": First-order explicit Euler.
+                "ssprk2": Second-order strong-stability-preserving Runge-Kutta.
+                "ssprk3": Third-order strong-stability-preserving Runge-Kutta.
+                "rk4": Classical fourth-order Runge-Kutta.
+                "match_p_up_to_ssprk3": Pick Euler, SSPRK2, or SSPRK3 from polynomial degree.
+                "match_p_up_to_rk4": Pick Euler, SSPRK2, SSPRK3, or RK4 from polynomial degree.
+            snapshot_mode: Snapshot cadence literal.
+                "target": Snapshot only the final requested step.
+                "every": Snapshot every step.
+                "none": Do not add snapshots after the initial condition.
+            print_update: If True, print progress updates.
+            print_frequency: Print every `print_frequency` steps when `print_update=True`.
+        """
         self._start_wall_timer()
 
         validate_literal_membership(time_integrator, TimeIntegrator, "time_integrator")
@@ -1354,6 +1394,27 @@ class HydroSolver:
         print_update: bool = True,
         print_frequency: int = 100,
     ):
+        """
+        Advance the solution to one or more target times.
+
+        Args:
+            t: Target time, or sorted list of target times.
+            time_integrator: Time integration scheme literal.
+                "muscl_hancock": MUSCL-Hancock predictor-corrector; requires `use_MUSCL=True`.
+                "forward_euler": First-order explicit Euler.
+                "ssprk2": Second-order strong-stability-preserving Runge-Kutta.
+                "ssprk3": Third-order strong-stability-preserving Runge-Kutta.
+                "rk4": Classical fourth-order Runge-Kutta.
+                "match_p_up_to_ssprk3": Pick Euler, SSPRK2, or SSPRK3 from polynomial degree.
+                "match_p_up_to_rk4": Pick Euler, SSPRK2, SSPRK3, or RK4 from polynomial degree.
+            snapshot_mode: Snapshot cadence literal.
+                "target": Snapshot each requested target time.
+                "every": Snapshot every step.
+                "none": Do not add snapshots after the initial condition.
+            allow_overshoot: If True, allow the final step to pass a target time.
+            print_update: If True, print progress updates.
+            print_frequency: Print every `print_frequency` steps when `print_update=True`.
+        """
         self._start_wall_timer()
 
         validate_literal_membership(time_integrator, TimeIntegrator, "time_integrator")
