@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 import numpy as np
 
+from superfv.axes import get_transverse_dims
 from superfv.tools.step_history import MultiTimer
 
 from .hydro import prim_to_cons, prim_to_cs, prim_to_flux
@@ -44,7 +45,7 @@ class RiemmannSolverBase(ABC):
         in_params = (
             "float64 rhol, float64 rhor, float64 v1l, float64 v1r, float64 v2l, float64 v2r, "
             "float64 v3l, float64 v3r, float64 Pl, float64 Pr, "
-            "float64 gamma, bool isothermal, float64 iso_cs, int32 dim"
+            "float64 gamma, bool isothermal, float64 iso_cs"
         )
         for i in range(npassives):
             in_params += f", float64 passl{i}, float64 passr{i}"
@@ -77,31 +78,31 @@ class RiemmannSolverBase(ABC):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ):
+        dim_trans1, dim_trans2 = get_transverse_dims(dim, ("x", "y", "z"))
         if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
             self.cuda_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
-                wl[idx("vx")],
-                wr[idx("vx")],
-                wl[idx("vy")],
-                wr[idx("vy")],
-                wl[idx("vz")],
-                wr[idx("vz")],
+                wl[idx(f"v{dim}")],
+                wr[idx(f"v{dim}")],
+                wl[idx(f"v{dim_trans1}")],
+                wr[idx(f"v{dim_trans1}")],
+                wl[idx(f"v{dim_trans2}")],
+                wr[idx(f"v{dim_trans2}")],
                 wl[idx("P")],
                 wr[idx("P")],
                 gamma,
                 isothermal,
                 iso_cs,
-                {"x": 1, "y": 2, "z": 3}[dim],
                 *[
                     x
                     for v in idx.group_var_map.get("passives", [])
                     for x in (wl[idx(v)], wr[idx(v)])
                 ],
                 fluxes[idx("rho")],
-                fluxes[idx("mx")],
-                fluxes[idx("my")],
-                fluxes[idx("mz")],
+                fluxes[idx(f"m{dim}")],
+                fluxes[idx(f"m{dim_trans1}")],
+                fluxes[idx(f"m{dim_trans2}")],
                 fluxes[idx("E")],
                 *[fluxes[idx(v)] for v in idx.group_var_map.get("passives", [])],
             )
@@ -141,29 +142,16 @@ class UpwindRiemannSolver(RiemmannSolverBase):
 
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         body = """
-        double vl;
-        double vr;
-        if (dim == 1) {
-            vl = v1l;
-            vr = v1r;
-        } else if (dim == 2) {
-            vl = v2l;
-            vr = v2r;
-        } else {
-            vl = v3l;
-            vr = v3r;
-        }
+        double v1 = fabs(v1l) > fabs(v1r) ? v1l : v1r;
 
-        double v = fabs(vl) > fabs(vr) ? vl : vr;
-
-        Frho = v * (v > 0 ? rhol : rhor);
+        Frho = v1 * (v1 > 0 ? rhol : rhor);
         Fm1 = 0.0;
         Fm2 = 0.0;
         Fm3 = 0.0;
         FE = 0.0;
         """
         for i in range(npassives):
-            body += f"\nFpass{i} = Frho * (v > 0 ? passl{i} : passr{i});"
+            body += f"\nFpass{i} = Frho * (v1 > 0 ? passl{i} : passr{i});"
         return body
 
 
@@ -202,21 +190,10 @@ class LLF_RiemannSolver(RiemmannSolverBase):
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         body = """
         // Compute maximum wave speed
-        double vl, vr;
-        if (dim == 1) {
-            vl = v1l;
-            vr = v1r;
-        } else if (dim == 2) {
-            vl = v2l;
-            vr = v2r;
-        } else {
-            vl = v3l;
-            vr = v3r;
-        }
         double csl = isothermal ? iso_cs : sqrt(max(gamma * Pl / rhol, 0.0));
         double csr = isothermal ? iso_cs : sqrt(max(gamma * Pr / rhor, 0.0));
-        double sl = csl + fabs(vl);
-        double sr = csr + fabs(vr);
+        double sl = csl + fabs(v1l);
+        double sr = csr + fabs(v1r);
         double smax = fmax(sl, sr);
 
         // Compute left and right conservative variables
@@ -232,26 +209,18 @@ class LLF_RiemannSolver(RiemmannSolverBase):
         double Er = Pr / (gamma - 1.0) + KEr;
 
         // Compute left and right fluxes
-        double Flrho = rhol * vl;
-        double Frrho = rhor * vr;
+        double Flrho = rhol * v1l;
+        double Frrho = rhor * v1r;
         double Fm1l = Flrho * v1l;
         double Fm1r = Frrho * v1r;
         double Fm2l = Flrho * v2l;
         double Fm2r = Frrho * v2r;
         double Fm3l = Flrho * v3l;
         double Fm3r = Frrho * v3r;
-        if (dim == 1) {
-            Fm1l += Pl;
-            Fm1r += Pr;
-        } else if (dim == 2) {
-            Fm2l += Pl;
-            Fm2r += Pr;
-        } else {
-            Fm3l += Pl;
-            Fm3r += Pr;
-        }
-        double FEl = vl * (El + Pl);
-        double FEr = vr * (Er + Pr);
+        Fm1l += Pl;
+        Fm1r += Pr;
+        double FEl = v1l * (El + Pl);
+        double FEr = v1r * (Er + Pr);
 
         // Compute LLF flux
         Frho = 0.5 * (Flrho + Frrho - smax * (rhor - rhol));
@@ -264,8 +233,8 @@ class LLF_RiemannSolver(RiemmannSolverBase):
             body += f"""
             double conspassl{i} = rhol * passl{i};
             double conspassr{i} = rhor * passr{i};
-            double Fpassl{i} = conspassl{i} * vl;
-            double Fpassr{i} = conspassr{i} * vr;
+            double Fpassl{i} = conspassl{i} * v1l;
+            double Fpassr{i} = conspassr{i} * v1r;
             Fpass{i} = 0.5 * (Fpassl{i} + Fpassr{i} - smax * (conspassr{i} - conspassl{i}));
             """
         return body
@@ -372,19 +341,6 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
 
     def cuda_elementwise_kernel_body(self, npassives: int):
         body = """
-        double vl;
-        double vr;
-        if (dim == 1) {
-            vl = v1l;
-            vr = v1r;
-        } else if (dim == 2) {
-            vl = v2l;
-            vr = v2r;
-        } else {
-            vl = v3l;
-            vr = v3r;
-        }
-
         double Kl = 0.5 * rhol * (v1l * v1l + v2l * v2l + v3l * v3l);
         double Kr = 0.5 * rhor * (v1r * v1r + v2r * v2r + v3r * v3r);
 
@@ -395,19 +351,19 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
         double cr = isothermal ? iso_cs : sqrt(max(gamma * Pr / rhor, 0.0));
         double cmax = fmax(cl, cr);
 
-        double sl = fmin(vl, vr) - cmax;
-        double sr = fmax(vl, vr) + cmax;
+        double sl = fmin(v1l, v1r) - cmax;
+        double sr = fmax(v1l, v1r) + cmax;
 
-        double rcl = rhol * (vl - sl);
-        double rcr = rhor * (sr - vr);
+        double rcl = rhol * (v1l - sl);
+        double rcr = rhor * (sr - v1r);
         double vP_star_denom = rcl + rcr;
         double vP_star_denom_safe = (
             fabs(vP_star_denom) > 1e-15
                 ? vP_star_denom
                 : (vP_star_denom >= 0 ? 1e-15 : -1e-15)
         );
-        double vstar = (rcr * vr + rcl * vl + (Pl - Pr)) / vP_star_denom_safe;
-        double Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (vl - vr)) / vP_star_denom_safe;
+        double vstar = (rcr * v1r + rcl * v1l + (Pl - Pr)) / vP_star_denom_safe;
+        double Pstar = (rcr * Pl + rcl * Pr + rcl * rcr * (v1l - v1r)) / vP_star_denom_safe;
 
         double rhoE_star_denoml = sl - vstar;
         double rhoE_star_denomr = sr - vstar;
@@ -421,10 +377,10 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
                 ? rhoE_star_denomr
                 : (rhoE_star_denomr >= 0 ? 1e-15 : -1e-15)
         );
-        double rhostarl = rhol * (sl - vl) / rhoE_star_denoml_safe;
-        double rhostarr = rhor * (sr - vr) / rhoE_star_denomr_safe;
-        double Estarl = ((sl - vl) * El - Pl * vl + Pstar * vstar) / rhoE_star_denoml_safe;
-        double Estarr = ((sr - vr) * Er - Pr * vr + Pstar * vstar) / rhoE_star_denomr_safe;
+        double rhostarl = rhol * (sl - v1l) / rhoE_star_denoml_safe;
+        double rhostarr = rhor * (sr - v1r) / rhoE_star_denomr_safe;
+        double Estarl = ((sl - v1l) * El - Pl * v1l + Pstar * vstar) / rhoE_star_denoml_safe;
+        double Estarr = ((sr - v1r) * Er - Pr * v1r + Pstar * vstar) / rhoE_star_denomr_safe;
 
         double rhogdv;
         double vgdv;
@@ -433,7 +389,7 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
 
         if (sl > 0) {
             rhogdv = rhol;
-            vgdv = vl;
+            vgdv = v1l;
             Pgdv = Pl;
             Egdv = El;
         } else if (vstar > 0) {
@@ -448,25 +404,15 @@ class HLLC_RiemannSolver(RiemmannSolverBase):
             Egdv = Estarr;
         } else {
             rhogdv = rhor;
-            vgdv = vr;
+            vgdv = v1r;
             Pgdv = Pr;
             Egdv = Er;
         }
 
         Frho = rhogdv * vgdv;
-        if (dim == 1) {
-            Fm1 = Frho * vgdv + Pgdv;
-            Fm2 = Frho * (vstar > 0 ? v2l : v2r);
-            Fm3 = Frho * (vstar > 0 ? v3l : v3r);
-        } else if (dim == 2) {
-            Fm1 = Frho * (vstar > 0 ? v1l : v1r);
-            Fm2 = Frho * vgdv + Pgdv;
-            Fm3 = Frho * (vstar > 0 ? v3l : v3r);
-        } else {
-            Fm1 = Frho * (vstar > 0 ? v1l : v1r);
-            Fm2 = Frho * (vstar > 0 ? v2l : v2r);
-            Fm3 = Frho * vgdv + Pgdv;
-        }
+        Fm1 = Frho * vgdv + Pgdv;
+        Fm2 = Frho * (vstar > 0 ? v2l : v2r);
+        Fm3 = Frho * (vstar > 0 ? v3l : v3r);
         FE = vgdv * (Egdv + Pgdv);
         """
         for i in range(npassives):
