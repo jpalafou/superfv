@@ -82,6 +82,7 @@ class ZhangShuParameters:
                 raise ValueError("SED cannot be used if the Zhang-Shu limiter is not used.")
             if self.PAD_params.use_PAD:
                 raise ValueError("PAD cannot be used if the Zhang-Shu limiter is not used.")
+            return
 
         if self.adaptive_dt and not self.PAD_params.use_PAD:
             raise ValueError(
