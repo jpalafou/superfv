@@ -1,6 +1,6 @@
 from functools import lru_cache
 from itertools import product
-from typing import List, Literal, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 
@@ -8,6 +8,7 @@ from superfv.axes import DIM_TO_AXIS
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, merge_slices
+from superfv.tools.variable_index_map import VariableIndexMap
 
 
 def gather_neighbor_slices(
@@ -106,6 +107,48 @@ def compute_dmp(
         m[inner_slice] = np.min(stacked, axis=0)
 
     return inner_slice
+
+
+def check_global_bounds(
+    PAD_bounds: Dict[str, Tuple[Optional[float], Optional[float]]],
+    omit_vars: List[str],
+    idx: VariableIndexMap,
+    primitives: bool,
+) -> set[str]:
+    limited_vars = {
+        var
+        for var in idx.var_idx_map
+        if idx.is_var_in_group(var, "primitives" if primitives else "conservatives")
+        or idx.is_var_in_group(var, "passives")
+    }
+    bound_vars = set(PAD_bounds)
+    omitted_vars = set(omit_vars)
+    missing_vars = limited_vars - bound_vars - omitted_vars
+
+    if missing_vars:
+        missing = ", ".join(sorted(missing_vars, key=lambda var: (idx(var), var)))
+        raise ValueError(
+            "Global Zhang-Shu bounds require each limited variable to appear in "
+            f"PAD_bounds or omit_vars_from_ZS. Missing: {missing}."
+        )
+
+    return limited_vars
+
+
+def apply_global_bounds(
+    M_arr: ArrayLike,
+    m_arr: ArrayLike,
+    PAD_bounds: Dict[str, Tuple[Optional[float], Optional[float]]],
+    omit_vars: List[str],
+    idx: VariableIndexMap,
+    primitives: bool,
+):
+    check_global_bounds(PAD_bounds, omit_vars, idx, primitives)
+    M_arr[...] = np.inf
+    m_arr[...] = -np.inf
+    for v, (lb, ub) in PAD_bounds.items():
+        M_arr[idx(v)] = np.inf if ub is None else ub
+        m_arr[idx(v)] = -np.inf if lb is None else lb
 
 
 if CUPY_AVAILABLE:

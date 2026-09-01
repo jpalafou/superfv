@@ -11,7 +11,6 @@ from superfv.configs import (
     FV_SchemeParameters,
     HydroParameters,
     MOOD_Parameters,
-    NumericalAdmissibilityDetectionParameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.finite_volume_driver import (
@@ -22,7 +21,7 @@ from superfv.finite_volume_driver import (
 )
 from superfv.hydro import cons_to_prim
 from superfv.mesh import UniformFiniteVolumeMesh
-from superfv.slope_limiting import compute_dmp
+from superfv.slope_limiting import apply_global_bounds, compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
 from superfv.tools.device_management import CUPY_AVAILABLE, ArrayLike
 from superfv.tools.slicing import crop, insert_slice, merge_slices, replace_slice
@@ -67,35 +66,45 @@ def numerical_admissibility_detection(
     _alpha_: np.ndarray,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
-    params: NumericalAdmissibilityDetectionParameters,
+    params: MOOD_Parameters,
+    primitives: bool,
 ):
     """
     Update `_troubles_` based on NAD criteria compute from `_qold_` and `_qnew_` with
     optional relaxation from the smooth extrema detector `_alpha_`. Renders a single
     ghost cell layer along each active dimension of the output array invalid.
     """
+    NAD_params = params.NAD_params
+    rtol = NAD_params.rtol
+    atol = NAD_params.atol
+
     _NAD_troubles_ = np.zeros_like(_qold_, dtype=bool)
     _dmp_M_ = np.empty_like(_qold_)
     _dmp_m_ = np.empty_like(_qold_)
 
-    # Update DMP
-    compute_dmp(_qold_, _dmp_M_, _dmp_m_, active_dims, params.include_corners)
+    # Update DMP or apply global bounds
+    if NAD_params.use_global_bounds:
+        apply_global_bounds(
+            _dmp_M_, _dmp_m_, params.PAD_params.bounds, NAD_params.omit_vars, idx, primitives
+        )
+    else:
+        compute_dmp(_qold_, _dmp_M_, _dmp_m_, active_dims, NAD_params.include_corners)
 
     # compute lower and upper bounds for NAD
-    if params.delta:
+    if NAD_params.delta:
         _delta_ = _dmp_M_ - _dmp_m_  # TEMP ARRAY
-        _lower_ = _dmp_m_ - params.rtol * _delta_ - params.atol  # TEMP ARRAY
-        _upper_ = _dmp_M_ + params.rtol * _delta_ + params.atol  # TEMP ARRAY
+        _lower_ = _dmp_m_ - rtol * _delta_ - atol  # TEMP ARRAY
+        _upper_ = _dmp_M_ + rtol * _delta_ + atol  # TEMP ARRAY
     else:
-        _lower_ = _dmp_m_ - params.rtol * np.abs(_dmp_m_) - params.atol  # TEMP ARRAY
-        _upper_ = _dmp_M_ + params.rtol * np.abs(_dmp_M_) + params.atol  # TEMP ARRAY
+        _lower_ = _dmp_m_ - rtol * np.abs(_dmp_m_) - atol  # TEMP ARRAY
+        _upper_ = _dmp_M_ + rtol * np.abs(_dmp_M_) + atol  # TEMP ARRAY
 
     # Detect NAD violations
     _NAD_troubles_ |= _qnew_ < _lower_
     _NAD_troubles_ |= _qnew_ > _upper_
 
     # SED relaxation
-    if params.SED_params.use_SED:
+    if NAD_params.SED_params.use_SED:
         _NAD_troubles_ &= _alpha_ < 1.0
 
     # Omit variables from detection
@@ -143,20 +152,23 @@ def detect_troubled_cells(
     xp = cp if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray) else np
 
     mood_params = base_scheme.mood_params
+    NAD_params = mood_params.NAD_params
+    PAD_params = mood_params.PAD_params
     n_cascade = len(mood_params.fallback_cascade)
     active_dims = mesh.active_dims
     interior = get_interior_view(active_dims, mesh.nghost)
+    primitives = base_scheme.flux_recipe != "cons_lim_prim"
 
     # Reset troubled cells
     _troubles_[...] = 0.0
 
     # Assign _qold_ and _qnew_, the NAD arrays
-    _qold_ = _uold_ if base_scheme.flux_recipe == "cons_lim_prim" else _wold_
-    _qnew_ = _unew_ if base_scheme.flux_recipe == "cons_lim_prim" else _wnew_
+    _qold_ = _wold_ if primitives else _uold_
+    _qnew_ = _wnew_ if primitives else _unew_
 
     # Update smooth extrema
-    if mood_params.NAD_params.use_NAD and mood_params.NAD_params.SED_params.use_SED:
-        compute_alpha(_qold_, _alpha_, active_dims, mood_params.NAD_params.SED_params.clip_zero_tol)
+    if NAD_params.use_NAD and NAD_params.SED_params.use_SED:
+        compute_alpha(_qold_, _alpha_, active_dims, NAD_params.SED_params.clip_zero_tol)
 
     if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray):
         # Detect troubled cells with CuPy using a custom kernel
@@ -164,14 +176,14 @@ def detect_troubled_cells(
         _m_ = cp.empty_like(_qold_)
 
         # NAD mask
-        omit_vars_idxs = [idx(v) for v in mood_params.NAD_params.omit_vars]
+        omit_vars_idxs = [idx(v) for v in NAD_params.omit_vars]
         NAD_mask = cp.array(
             [int(i not in omit_vars_idxs) for i in range(idx.nvars)], dtype=np.int32
         )
 
         # PAD bounds
         physical_bounds = cp.empty((idx.nvars, 2), dtype=np.float64)
-        idx_bound_map = {idx(v): (lb, ub) for v, (lb, ub) in mood_params.PAD_params.bounds.items()}
+        idx_bound_map = {idx(v): (lb, ub) for v, (lb, ub) in PAD_params.bounds.items()}
         for i in range(idx.nvars):
             lb = idx_bound_map[i][0] if i in idx_bound_map else None
             ub = idx_bound_map[i][1] if i in idx_bound_map else None
@@ -179,7 +191,10 @@ def detect_troubled_cells(
             physical_bounds[i, 0] = lb if lb is not None else -cp.inf
             physical_bounds[i, 1] = ub if ub is not None else cp.inf
 
-        compute_dmp(_qold_, _M_, _m_, active_dims, mood_params.NAD_params.include_corners)
+        if mood_params.NAD_params.use_global_bounds:
+            apply_global_bounds(_M_, _m_, PAD_params.bounds, NAD_params.omit_vars, idx, primitives)
+        else:
+            compute_dmp(_qold_, _M_, _m_, active_dims, NAD_params.include_corners)
 
         detect_troubles_kernel_helper(
             _qnew_,
@@ -190,22 +205,22 @@ def detect_troubled_cells(
             _wnew_,
             physical_bounds,
             _troubles_,
-            mood_params.NAD_params.use_NAD,
-            mood_params.NAD_params.SED_params.use_SED,
-            mood_params.PAD_params.use_PAD,
-            mood_params.NAD_params.delta,
-            mood_params.NAD_params.rtol,
-            mood_params.NAD_params.atol,
+            NAD_params.use_NAD,
+            NAD_params.SED_params.use_SED,
+            PAD_params.use_PAD,
+            NAD_params.delta,
+            NAD_params.rtol,
+            NAD_params.atol,
         )
     else:
         # Detect troubled cells with NumPy
-        if mood_params.NAD_params.use_NAD:
+        if NAD_params.use_NAD:
             numerical_admissibility_detection(
-                _qold_, _qnew_, _troubles_, _alpha_, idx, active_dims, mood_params.NAD_params
+                _qold_, _qnew_, _troubles_, _alpha_, idx, active_dims, mood_params, primitives
             )
 
-        if mood_params.PAD_params.use_PAD:
-            for v, (lb, ub) in mood_params.PAD_params.bounds.items():
+        if PAD_params.use_PAD and not NAD_params.use_global_bounds:
+            for v, (lb, ub) in PAD_params.bounds.items():
                 if lb is not None:
                     np.maximum(_troubles_, _wnew_[idx(v)] < lb, out=_troubles_)
                 if ub is not None:

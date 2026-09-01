@@ -19,7 +19,7 @@ from .hydro import cons_to_prim, prim_to_cs
 from .mesh import UniformFiniteVolumeMesh
 from .quadrature import perform_quadrature
 from .riemann_solvers import solve_riemann_problem
-from .slope_limiting import compute_dmp
+from .slope_limiting import apply_global_bounds, compute_dmp
 from .slope_limiting.muscl import compute_MUSCL_slopes, reconstruct_MUSCL_faces
 from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import compute_alpha
@@ -664,8 +664,11 @@ def apply_zhang_shu_limiter(
     else:
         _qj_ = xp.concatenate([node_dict[dim] for dim in active_dims], axis=4)
 
-    # 2) Update _M_ and _m_ with discrete maximum principle
-    compute_dmp(_q_, _M_, _m_, active_dims, params.include_corners)
+    # 2) Update _M_ and _m_ with discrete maximum principle or global bounds
+    if params.use_global_bounds:
+        apply_global_bounds(_M_, _m_, params.PAD_params.bounds, params.omit_vars, idx, primitives)
+    else:
+        compute_dmp(_q_, _M_, _m_, active_dims, params.include_corners)
 
     # 3) Update _Mj_ and _mj_ with nodal maxima and minima and _theta_ with the Zhang-Shu limiter
     compute_theta(

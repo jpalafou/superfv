@@ -176,6 +176,7 @@ class HydroSolver:
         detect_closing_troubles: bool = True,
         # Shared Zhang-Shu / MOOD params
         include_corners: bool = True,
+        use_global_bounds: bool = False,
         # Solver params
         cupy: bool = False,
         profile: bool = False,
@@ -318,6 +319,9 @@ class HydroSolver:
         Slope limiting parameters (shared between Zhang-Shu and MOOD):
             include_corners: If True, include corner cells when computing the discrete maximum
                 principle.
+            use_global_bounds: If True, set M and m to global bounds determined by the provided
+                `PAD_bounds` in Zhang-Shu and MOOD schemes. Cannot be used with SED. Turns off
+                PAD in MOOD schemes.
 
         Solver parameters:
             cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
@@ -489,6 +493,7 @@ class HydroSolver:
                 adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=theta_denom_tol,
                 include_corners=include_corners,
+                use_global_bounds=use_global_bounds,
             ),
             mood_params=MOOD_Parameters(
                 use_MOOD=use_MOOD,
@@ -500,6 +505,7 @@ class HydroSolver:
                     omit_vars=omit_vars_from_NAD or [],
                     delta=delta,
                     include_corners=include_corners,
+                    use_global_bounds=use_global_bounds,
                 ),
                 PAD_params=PAD_params if use_MOOD else null_PAD,
                 fallback_cascade=fallback_cascade_list,

@@ -70,6 +70,7 @@ class ZhangShuParameters:
     adaptive_dt_tol: float = 1e-15
     theta_denom_tol: float = 1e-15
     include_corners: bool = True
+    use_global_bounds: bool = False
 
     def __post_init__(self):
         if not self.use_ZS:
@@ -86,6 +87,14 @@ class ZhangShuParameters:
             raise ValueError(
                 "Physical admissibility detection must be enabled when adaptive_dt is True."
             )
+
+        if self.use_global_bounds:
+            if not self.PAD_params.use_PAD:
+                raise ValueError(
+                    "Physical admissibility detection must be enabled when use_global_bounds is True."
+                )
+            if self.SED_params.use_SED:
+                raise ValueError("SED cannot be used when use_global_bounds is True.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +119,7 @@ class NumericalAdmissibilityDetectionParameters:
     omit_vars: List[str]
     delta: bool = False
     include_corners: bool = True
+    use_global_bounds: bool = False
 
     def __post_init__(self):
         if not self.use_NAD and self.SED_params.use_SED:
@@ -141,6 +151,12 @@ class MOOD_Parameters:
                 raise ValueError("NAD cannot be used if MOOD is not used.")
             if self.PAD_params.use_PAD:
                 raise ValueError("PAD cannot be used if MOOD is not used.")
+
+        if self.NAD_params.use_NAD and self.NAD_params.use_global_bounds:
+            if not self.PAD_params.use_PAD:
+                raise ValueError("PAD must be enabled when use_global_bounds is True in NAD.")
+            if self.NAD_params.SED_params.use_SED:
+                raise ValueError("SED cannot be used when use_global_bounds is True in NAD.")
 
 
 @dataclass(frozen=True, slots=True)
