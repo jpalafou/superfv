@@ -8,7 +8,7 @@ def run_multiple_simulations(
     configs: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]],
     base_path: str,
     overwrite: bool = False,
-    skip_errors: bool = True,
+    skip_errors: bool = False,
     postprocess: Optional[Callable[[str, Union[HydroSolver, HydroSolverOutput]], None]] = None,
 ):
     """
@@ -18,9 +18,10 @@ def run_multiple_simulations(
     Args:
         configs: A dictionary mapping simulation names to tuples of the form
             `(init_params, run_params)`, where `init_params` is a dictionary of
-            parameters to pass to the solver initialization and `run_params` is
-            a dictionary of parameters to pass to the `run` method, or to
-            `take_n_steps` when it contains `n`.
+            parameters to pass to the solver initialization (`HydroSolver(..., **init_params)`)
+            and `run_params` is a dictionary of parameters to pass to the `run` method
+            (`sim.run(..., **run_params)`), or to `take_n_steps` when it contains `n`
+            (`sim.take_n_steps(..., **run_params)`).
         base_path: The directory to save all simulation outputs to. Each simulation
             will be saved to a subdirectory of `base_path` with the name of the
             simulation provieed in `configs`.
@@ -49,8 +50,8 @@ def run_multiple_simulations(
         sim_path = os.path.join(base_path, name)
         error_path = os.path.join(sim_path, "error.txt")
 
-        if os.path.exists(sim_path) and not overwrite and skip_errors:
-            print(f"Output exists for {name}, skipping...")
+        if os.path.exists(error_path) and skip_errors:
+            print(f"Skipping simulation '{name}' because an error file exists at '{error_path}'.")
             continue
 
         if not overwrite:
@@ -60,21 +61,19 @@ def run_multiple_simulations(
                 if postprocess is not None:
                     postprocess(name, output)
 
-                print(f"Output exists for {name}, skipping...")
+                print(f"Loaded existing output for simulation '{name}' from '{sim_path}'.")
 
                 continue
-
             except FileNotFoundError:
                 pass
 
-        print(f"Running simulation with config `{name}`:")
+        print(f"Running simulation with config '{name}':")
         print("\t__init__ parameters:")
         for argument, value in init_params.items():
             print(f"\t\t{argument}: {value}")
         print("\trun parameters:")
         for argument, value in run_params.items():
-            print(f"\t\t{argument}: {value}")
-        print("...")
+            print(f"\t\t{argument}: {value}\n")
 
         sim = HydroSolver(**(init_params | dict(output_path=sim_path, overwrite=True)))
 
@@ -84,15 +83,16 @@ def run_multiple_simulations(
             else:
                 sim.run(**run_params)
         except RuntimeError as e:
-            print(f"Failed: {e}\n\n")
+            print(f"Failed: {e}\n")
             with open(error_path, "w") as f:
                 f.write(str(e))
+            print(f"Error message written to `{error_path}`.\n")
             continue
 
         if postprocess is not None:
             postprocess(name, sim)
 
-        print(f"Successfully completed {name}!\n\n")
+        print(f"Simulation '{name}' completed successfully and output saved to `{sim_path}`.\n\n")
 
         # clean up error file if it exists
         if os.path.exists(error_path):
