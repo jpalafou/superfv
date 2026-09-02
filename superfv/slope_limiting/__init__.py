@@ -111,7 +111,6 @@ def compute_dmp(
 
 def check_global_bounds(
     PAD_bounds: Dict[str, Tuple[Optional[float], Optional[float]]],
-    omit_vars: List[str],
     idx: VariableIndexMap,
     primitives: bool,
 ) -> set[str]:
@@ -122,14 +121,14 @@ def check_global_bounds(
         or idx.is_var_in_group(var, "passives")
     }
     bound_vars = set(PAD_bounds)
-    omitted_vars = set(omit_vars)
+    omitted_vars = {var for var in idx.group_var_map.get("omitted", []) if var in limited_vars}
     missing_vars = limited_vars - bound_vars - omitted_vars
 
     if missing_vars:
         missing = ", ".join(sorted(missing_vars, key=lambda var: (idx(var), var)))
         raise ValueError(
             "Global Zhang-Shu bounds require each limited variable to appear in "
-            f"PAD_bounds or omit_vars_from_ZS. Missing: {missing}."
+            f"PAD_bounds or omit_vars. Missing: {missing}."
         )
 
     return limited_vars
@@ -139,11 +138,10 @@ def apply_global_bounds(
     M_arr: ArrayLike,
     m_arr: ArrayLike,
     PAD_bounds: Dict[str, Tuple[Optional[float], Optional[float]]],
-    omit_vars: List[str],
     idx: VariableIndexMap,
     primitives: bool,
 ):
-    check_global_bounds(PAD_bounds, omit_vars, idx, primitives)
+    check_global_bounds(PAD_bounds, idx, primitives)
     M_arr[...] = np.inf
     m_arr[...] = -np.inf
     for v, (lb, ub) in PAD_bounds.items():

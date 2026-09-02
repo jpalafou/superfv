@@ -84,9 +84,7 @@ def numerical_admissibility_detection(
 
     # Update DMP or apply global bounds
     if NAD_params.use_global_bounds:
-        apply_global_bounds(
-            _dmp_M_, _dmp_m_, params.PAD_params.bounds, NAD_params.omit_vars, idx, primitives
-        )
+        apply_global_bounds(_dmp_M_, _dmp_m_, params.PAD_params.bounds, idx, primitives)
     else:
         compute_dmp(_qold_, _dmp_M_, _dmp_m_, active_dims, NAD_params.include_corners)
 
@@ -108,8 +106,8 @@ def numerical_admissibility_detection(
         _NAD_troubles_ &= _alpha_ < 1.0
 
     # Omit variables from detection
-    if "omit_NAD" in idx.group_var_map:
-        _NAD_troubles_[idx("omit_NAD")] = False
+    if "omitted" in idx.group_var_map:
+        _NAD_troubles_[idx("omitted")] = False
 
     # Update troubled cells
     np.maximum(_troubles_, np.any(_NAD_troubles_, axis=0), out=_troubles_)
@@ -192,7 +190,7 @@ def detect_troubled_cells(
             physical_bounds[i, 1] = ub if ub is not None else cp.inf
 
         if mood_params.NAD_params.use_global_bounds:
-            apply_global_bounds(_M_, _m_, PAD_params.bounds, NAD_params.omit_vars, idx, primitives)
+            apply_global_bounds(_M_, _m_, PAD_params.bounds, idx, primitives)
         else:
             compute_dmp(_qold_, _M_, _m_, active_dims, NAD_params.include_corners)
 

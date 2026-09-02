@@ -139,19 +139,20 @@ class MOOD_Parameters:
     detect_closing_troubles: bool = True
 
     def __post_init__(self):
-        if self.use_MOOD and self.blend_troubles and len(self.fallback_cascade) != 1:
-            raise ValueError(
-                "fallback_cascade must have exactly one scheme when blend_troubles is True."
-            )
-
-        if self.use_MOOD and self.max_revs < len(self.fallback_cascade):
-            raise ValueError("max_revs must be at least the length of fallback_cascade.")
-
         if not self.use_MOOD:
             if self.NAD_params.use_NAD:
                 raise ValueError("NAD cannot be used if MOOD is not used.")
             if self.PAD_params.use_PAD:
                 raise ValueError("PAD cannot be used if MOOD is not used.")
+            return
+
+        if self.blend_troubles and len(self.fallback_cascade) != 1:
+            raise ValueError(
+                "fallback_cascade must have exactly one scheme when blend_troubles is True."
+            )
+
+        if self.max_revs < len(self.fallback_cascade):
+            raise ValueError("max_revs must be at least the length of fallback_cascade.")
 
         if self.NAD_params.use_NAD and self.NAD_params.use_global_bounds:
             if not self.PAD_params.use_PAD:

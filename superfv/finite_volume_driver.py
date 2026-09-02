@@ -666,7 +666,7 @@ def apply_zhang_shu_limiter(
 
     # 2) Update _M_ and _m_ with discrete maximum principle or global bounds
     if params.use_global_bounds:
-        apply_global_bounds(_M_, _m_, params.PAD_params.bounds, params.omit_vars, idx, primitives)
+        apply_global_bounds(_M_, _m_, params.PAD_params.bounds, idx, primitives)
     else:
         compute_dmp(_q_, _M_, _m_, active_dims, params.include_corners)
 
@@ -691,8 +691,8 @@ def apply_zhang_shu_limiter(
             _alpha_ *= _physical_
         xp.maximum(_theta_, _alpha_ >= 1, out=_theta_)
 
-    if "omit_ZS" in idx.group_var_map:
-        _theta_[idx("omit_ZS")] = 1.0
+    if "omitted" in idx.group_var_map:
+        _theta_[idx("omitted")] = 1.0
 
     # Apply limiter to node arrays
     if "x" in active_dims:

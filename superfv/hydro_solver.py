@@ -154,7 +154,6 @@ class HydroSolver:
         PAD_bounds: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         # Zhang-Shu params
         use_ZS: bool = False,
-        omit_vars_from_ZS: Optional[List[str]] = None,
         adaptive_dt: bool = False,
         adaptive_dt_tol: float = 1e-15,
         theta_denom_tol: float = 1e-15,
@@ -164,7 +163,6 @@ class HydroSolver:
         use_NAD: bool = True,
         rtol: float = 1e-5,
         atol: float = 0.0,
-        omit_vars_from_NAD: Optional[List[str]] = None,
         delta: bool = False,
         # MOOD params
         use_MOOD: bool = False,
@@ -175,6 +173,7 @@ class HydroSolver:
         skip_trouble_counts: bool = False,
         detect_closing_troubles: bool = True,
         # Shared Zhang-Shu / MOOD params
+        omit_vars: Optional[List[str]] = None,
         include_corners: bool = True,
         use_global_bounds: bool = False,
         # Solver params
@@ -283,7 +282,6 @@ class HydroSolver:
 
         Slope limiting parameters (Zhang-Shu):
             use_ZS: If True, enable Zhang-Shu limiter.
-            omit_vars_from_ZS: Optional list of variable names to omit from Zhang-Shu limiter.
             adaptive_dt: If True, enable adaptive time stepping based on Zhang-Shu limiter.
             adaptive_dt_tol: Tolerance for adaptive time stepping.
             theta_denom_tol: Tolerance for denominator in theta calculation.
@@ -296,8 +294,6 @@ class HydroSolver:
             use_NAD: If True, enable numerical admissibility detection.
             rtol: Relative tolerance for numerical admissibility detection.
             atol: Absolute tolerance for numerical admissibility detection.
-            omit_vars_from_NAD: Optional list of variable names to omit from numerical
-                admissibility detection.
             delta: If True, enable delta-based numerical admissibility detection.
 
         Slope limiting parameters (MOOD):
@@ -317,11 +313,15 @@ class HydroSolver:
             detect_closing_troubles: If True, detect closing troubled cells in MOOD scheme.
 
         Slope limiting parameters (shared between Zhang-Shu and MOOD):
+            omit_vars: Optional list of variable names to omit from Zhang-Shu limiter or NAD. Note
+                that PAD may still be active in other parts of the code, such as the Zhang-Shu
+                adaptive time step check or MOOD troubled cell detection.
             include_corners: If True, include corner cells when computing the discrete maximum
                 principle.
             use_global_bounds: If True, set M and m to global bounds determined by the provided
-                `PAD_bounds` in Zhang-Shu and MOOD schemes. Cannot be used with SED. Turns off
-                PAD in MOOD schemes.
+                `PAD_bounds` in Zhang-Shu or MOOD schemes. Cannot be used with SED and turns off
+                PAD in MOOD schemes. Expects all simulation variables to be included in either
+                `PAD_bounds` or `omit_vars`.
 
         Solver parameters:
             cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
@@ -489,7 +489,7 @@ class HydroSolver:
                 adaptive_dt=adaptive_dt,
                 SED_params=SED_params if use_ZS else null_SED,
                 PAD_params=PAD_params if use_ZS else null_PAD,
-                omit_vars=omit_vars_from_ZS or [],
+                omit_vars=omit_vars or [],
                 adaptive_dt_tol=adaptive_dt_tol,
                 theta_denom_tol=theta_denom_tol,
                 include_corners=include_corners,
@@ -502,7 +502,7 @@ class HydroSolver:
                     rtol=rtol,
                     atol=atol,
                     SED_params=SED_params if use_NAD and use_MOOD else null_SED,
-                    omit_vars=omit_vars_from_NAD or [],
+                    omit_vars=omit_vars or [],
                     delta=delta,
                     include_corners=include_corners,
                     use_global_bounds=use_global_bounds,
@@ -621,11 +621,11 @@ class HydroSolver:
 
         if fv_scheme_params.zhang_shu_params.omit_vars:
             for v in fv_scheme_params.zhang_shu_params.omit_vars:
-                idx.add_var_to_group(v, "omit_ZS")
+                idx.add_var_to_group(v, "omitted")
 
         if fv_scheme_params.mood_params.NAD_params.omit_vars:
             for v in fv_scheme_params.mood_params.NAD_params.omit_vars:
-                idx.add_var_to_group(v, "omit_NAD")
+                idx.add_var_to_group(v, "omitted")
 
         return idx
 
