@@ -3,7 +3,7 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 
-from .mesh import xyz_tup
+from .axes import XYZ_TUPLE
 from .tools.device_management import ArrayLike
 from .tools.variable_index_map import VariableIndexMap
 
@@ -23,7 +23,7 @@ def parse_xyz(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Tuple[Literal["x", "y
     """
     if not x.shape == y.shape == z.shape:
         raise ValueError("x, y, and z must have the same shape.")
-    return tuple([dim for dim, size in zip(xyz_tup, x.shape) if size > 1])
+    return tuple([dim for dim, size in zip(XYZ_TUPLE, x.shape) if size > 1])
 
 
 def _uninitialized(

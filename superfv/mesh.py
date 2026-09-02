@@ -12,8 +12,6 @@ from .stencils import conservative_interpolation as ci
 from .sweep import stencil_sweep
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike
 
-xyz_tup: Tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
-
 if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 

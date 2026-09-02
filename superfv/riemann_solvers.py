@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 import numpy as np
 
-from superfv.axes import get_transverse_dims
+from superfv.axes import XYZ_TUPLE, get_transverse_dims
 from superfv.tools.step_history import MultiTimer
 
 from .hydro import prim_to_cons, prim_to_cs, prim_to_flux
@@ -79,7 +79,7 @@ class RiemmannSolverBase(ABC):
         iso_cs: float = 1.0,
     ):
         if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
-            dim_trans1, dim_trans2 = get_transverse_dims(dim, ("x", "y", "z"))
+            dim_trans1, dim_trans2 = get_transverse_dims(dim, XYZ_TUPLE)
             self.cuda_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
