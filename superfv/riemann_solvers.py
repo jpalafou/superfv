@@ -78,8 +78,8 @@ class RiemmannSolverBase(ABC):
         isothermal: bool = False,
         iso_cs: float = 1.0,
     ):
-        dim_trans1, dim_trans2 = get_transverse_dims(dim, ("x", "y", "z"))
         if CUPY_AVAILABLE and isinstance(wl, cp.ndarray):
+            dim_trans1, dim_trans2 = get_transverse_dims(dim, ("x", "y", "z"))
             self.cuda_kernel(
                 wl[idx("rho")],
                 wr[idx("rho")],
