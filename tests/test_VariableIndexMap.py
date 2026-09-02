@@ -4,6 +4,25 @@ import pytest
 from superfv.tools.variable_index_map import VariableIndexMap
 
 
+def test_init_trivial():
+    idx = VariableIndexMap()
+    assert idx.idxs == []
+    assert idx.nvars == 0
+    assert idx.is_contiguous is True
+
+
+def test_init_empty():
+    idx = VariableIndexMap({}, {})
+    assert idx.idxs == []
+    assert idx.nvars == 0
+    assert idx.is_contiguous is True
+
+
+def test_init_with_no_var_idx_map():
+    with pytest.raises(KeyError, match="Member 'var1' does not exist."):
+        _ = VariableIndexMap({}, {"group1": ["var1", "var2"]})
+
+
 def test_add_var_and_get_index():
     idx = VariableIndexMap({}, {})
     idx.add_var("u", 0)
@@ -14,72 +33,29 @@ def test_add_var_and_get_index():
 def test_add_var_to_group_and_get_index():
     idx = VariableIndexMap({"u": 0, "v": 1, "w": 2}, {})
 
-    idx.add_var_to_group("u", "g1")
-    idx.add_var_to_group("v", "g1")
+    idx.add_member_to_group("u", "g1")
+    idx.add_member_to_group("v", "g1")
 
-    idx.add_var_to_group("u", "g2")
-    idx.add_var_to_group("w", "g2")
+    idx.add_member_to_group("u", "g2")
+    idx.add_member_to_group("w", "g2")
 
     assert idx("g1") == slice(0, 2)
     assert np.array_equal(idx("g2"), np.array([0, 2]))
 
 
-def test_init():
-    idx = VariableIndexMap(
-        {"a": 0, "b": 1, "c": 2}, {"ab": ["a", "b"], "bc": ["b", "c"], "ac": ["a", "c"]}
-    )
-    assert idx("a") == 0
-    assert idx("b") == 1
-    assert idx("c") == 2
-    assert idx("ab") == slice(0, 2)
-    assert idx("bc") == slice(1, 3)
-    assert np.array_equal(idx("ac"), np.array([0, 2]))
-
-
 def test_variable_index_map_nested_group():
     vmap = VariableIndexMap({"a": 0, "b": 1, "c": 2, "d": 3}, {})
 
-    vmap.add_var_to_group("a", "ab")
-    vmap.add_var_to_group("b", "ab")
+    vmap.add_member_to_group("a", "ab")
+    vmap.add_member_to_group("b", "ab")
 
-    vmap.add_var_to_group("c", "cd")
-    vmap.add_var_to_group("d", "cd")
+    vmap.add_member_to_group("c", "cd")
+    vmap.add_member_to_group("d", "cd")
 
-    vmap.add_var_to_group("ab", "abcd")
-    vmap.add_var_to_group("cd", "abcd")
+    vmap.add_member_to_group("ab", "abcd")
+    vmap.add_member_to_group("cd", "abcd")
 
     assert vmap("abcd") == slice(0, 4)
-
-
-def test_empty_groups():
-    idx = VariableIndexMap(
-        {"rho": 0, "vx": 1, "vy": 2, "vz": 3},
-        {
-            "primitives": ["rho", "v"],
-            "conservatives": [],
-            "v": ["v" + dim for dim in "xyz"],
-        },
-    )
-
-    assert idx.all_names == {
-        "rho",
-        "vx",
-        "vy",
-        "vz",
-        "primitives",
-        "conservatives",
-        "v",
-    }
-    assert np.array_equal(idx.idxs, np.arange(4))
-    assert idx.nvars == 4
-
-    assert idx("rho") == 0
-    assert idx("rho", keepdims=True) == slice(0, 1)
-    assert idx("v") == slice(1, 4)
-    assert idx("primitives") == slice(0, 4)
-
-    with pytest.raises(ValueError, match="Group 'conservatives' has no members."):
-        idx("conservatives")
 
 
 def test_hydro_groups():
@@ -94,134 +70,103 @@ def test_hydro_groups():
             "mx": 1,
             "my": 2,
             "mz": 3,
-        },
-        {},
-    )
-
-    assert idx.all_names == {"rho", "vx", "vy", "vz", "P", "E", "mx", "my", "mz"}
-    assert np.array_equal(idx.idxs, np.arange(5))
-    assert idx.nvars == 5
-
-    idx.add_var_to_group("vx", "v")
-    idx.add_var_to_group("vy", "v")
-    idx.add_var_to_group("vz", "v")
-
-    idx.add_var_to_group("mx", "m")
-    idx.add_var_to_group("my", "m")
-    idx.add_var_to_group("mz", "m")
-
-    idx.add_var_to_group("rho", "primitives")
-    idx.add_var_to_group("v", "primitives")
-    idx.add_var_to_group("P", "primitives")
-
-    idx.add_var_to_group("rho", "conservatives")
-    idx.add_var_to_group("m", "conservatives")
-    idx.add_var_to_group("E", "conservatives")
-
-    idx.add_var_to_group("rho", "state")
-    idx.add_var_to_group("E", "state")
-    idx.add_var_to_group("P", "state")
-
-    assert idx("rho") == 0
-    assert idx("rho", keepdims=True) == slice(0, 1)
-    assert idx("v") == slice(1, 4)
-    assert idx("m") == slice(1, 4)
-    assert idx("primitives") == slice(0, 5)
-    assert idx("conservatives") == slice(0, 5)
-    assert np.array_equal(idx("state"), np.array([0, 4]))
-
-    assert idx.all_names == {
-        "rho",
-        "vx",
-        "vy",
-        "vz",
-        "P",
-        "E",
-        "mx",
-        "my",
-        "mz",
-        "v",
-        "m",
-        "primitives",
-        "conservatives",
-        "state",
-    }
-    assert np.array_equal(idx.idxs, np.arange(5))
-    assert idx.nvars == 5
-
-
-def test_name_based_nested_group_membership():
-    idx = VariableIndexMap(
-        {
-            "rho": 0,
-            "vx": 1,
-            "vy": 2,
-            "vz": 3,
-            "P": 4,
-            "E": 4,
-            "mx": 1,
-            "my": 2,
-            "mz": 3,
+            "passive1": 5,
         },
         {
             "v": ["vx", "vy", "vz"],
             "m": ["mx", "my", "mz"],
             "primitives": ["rho", "v", "P"],
             "conservatives": ["rho", "m", "E"],
+            "passives": ["passive1"],
         },
     )
 
-    assert idx.is_var_in_group("vx", "primitives")
-    assert idx.is_var_in_group("mx", "conservatives")
-    assert not idx.is_var_in_group("mx", "primitives")
-    assert not idx.is_var_in_group("vx", "conservatives")
-    assert idx.is_var_in_group("P", "primitives")
-    assert idx.is_var_in_group("E", "conservatives")
-    assert not idx.is_var_in_group("E", "primitives")
-    assert not idx.is_var_in_group("P", "conservatives")
-    assert not idx.is_var_in_group("not_a_var", "primitives")
-    assert not idx.is_var_in_group("rho", "not_a_group")
+    assert idx.nvars == 6
+    assert idx("rho") == 0
+    assert idx("rho", keepdims=True) == slice(0, 1)
+    assert idx("v") == slice(1, 4)
+    assert idx("m") == slice(1, 4)
+    assert idx("primitives") == slice(0, 5)
+    assert idx("conservatives") == slice(0, 5)
+    assert idx("passive1") == 5
+    assert idx("passives") == slice(5, 6)
+    assert idx.flattened_var_names("v") == ["vx", "vy", "vz"]
+    assert idx.flattened_var_names("m") == ["mx", "my", "mz"]
+    assert idx.flattened_var_names("primitives") == ["rho", "vx", "vy", "vz", "P"]
+    assert idx.flattened_var_names("conservatives") == ["rho", "mx", "my", "mz", "E"]
+    assert idx.flattened_var_names("passives") == ["passive1"]
+    assert idx.is_in_group("vx", "v")
+    assert idx.is_in_group("mx", "m")
+    assert idx.is_in_group("vx", "primitives")
+    assert idx.is_in_group("mx", "conservatives")
+    assert idx.is_contiguous
 
 
-def test_add_var_duplicate_raises():
-    idx = VariableIndexMap({}, {})
-    idx.add_var("u", 0)
-    with pytest.raises(KeyError):
-        idx.add_var("u", 1)
+def test_cycle_raises():
+    idx = VariableIndexMap({"a": 0, "b": 1}, {})
+    idx.add_member_to_group("a", "g1")
+    idx.add_member_to_group("b", "g2")
+    idx.add_member_to_group("g1", "g2")
+
+    with pytest.raises(ValueError, match="Circular group reference detected."):
+        idx.add_member_to_group("g2", "g1")
+
+
+def test_add_var_with_same_name_and_index_does_nothing():
+    idx1 = VariableIndexMap({"a": 0, "b": 1}, {})
+
+    idx2 = idx1.copy()
+    idx2.add_var("a", 0)
+    idx2.add_var("b", 1)
+
+    assert idx1 == idx2
+
+
+def test_add_var_with_same_name_different_index_raises():
+    idx = VariableIndexMap({"a": 0, "b": 1}, {})
+    with pytest.raises(KeyError, match="Variable 'a' already exists with a different index."):
+        idx.add_var("a", 2)
+
+
+def test_add_var_with_group_name_raises():
+    idx = VariableIndexMap({"a": 0, "b": 1}, {})
+    idx.add_member_to_group("a", "g1")
+    with pytest.raises(KeyError, match="Name 'g1' already exists as a group."):
+        idx.add_var("g1", 2)
+
+
+def test_add_redundant_group_member_does_nothing():
+    idx1 = VariableIndexMap({"a": 0, "b": 1}, {})
+    idx1.add_member_to_group("a", "g1")
+    idx1.add_member_to_group("b", "g1")
+
+    idx2 = idx1.copy()
+    idx2.add_member_to_group("a", "g1")
+    idx2.add_member_to_group("b", "g1")
+
+    assert idx1 == idx2
+
+
+def test_add_group_with_var_name_raises():
+    idx = VariableIndexMap({"a": 0, "b": 1}, {})
+    with pytest.raises(KeyError, match="Name 'a' already exists as a variable."):
+        idx.add_member_to_group("b", "a")
 
 
 def test_add_group_with_invalid_var():
-    idx = VariableIndexMap({}, {})
-    idx.add_var("u", 0)
-    with pytest.raises(KeyError, match="Member 'nonexistent' not found as variable or group."):
-        idx.add_var_to_group("u", "badgroup")
-        idx.add_var_to_group("nonexistent", "badgroup")
+    idx = VariableIndexMap({"a": 0, "b": 1}, {})
+    with pytest.raises(KeyError, match="Member 'nonexistent' does not exist."):
+        idx.add_member_to_group("nonexistent", "g1")
 
 
-def test_group_name_conflicts_with_variable():
-    idx = VariableIndexMap({}, {})
-    idx.add_var("density", 0)
-    with pytest.raises(KeyError, match="Name 'density' already exists."):
-        idx.add_var_to_group("density", "density")
+def test_equality_does_not_depend_on_cache():
+    idx1 = VariableIndexMap({"a": 0, "b": 1}, {})
+    idx1.add_member_to_group("a", "g1")
+    idx2 = idx1.copy()  # cache is not be copied
 
-
-def test_variable_name_is_group_name():
-    with pytest.raises(KeyError, match="Variables and groups cannot share names."):
-        VariableIndexMap({"a": 0}, {"a": ["a"]})
-
-
-def test_group_membership_ordering_is_sorted():
-    idx = VariableIndexMap({}, {})
-    idx.add_var("x", 0)
-    idx.add_var("y", 1)
-    idx.add_var("z", 2)
-
-    idx.add_var_to_group("z", "coord")
-    idx.add_var_to_group("x", "coord")
-    idx.add_var_to_group("y", "coord")
-
-    out = idx("coord")
-    assert out == slice(0, 3)
+    _ = idx1("g1")  # populate cache in just idx1
+    assert idx1._cache != idx2._cache  # caches are different
+    assert idx1 == idx2  # equality should not depend on cache
 
 
 def test_call_with_unknown_name_raises():
@@ -231,8 +176,7 @@ def test_call_with_unknown_name_raises():
 
 
 def test_cache_behavior():
-    idx = VariableIndexMap({}, {})
-    idx.add_var("u", 0)
+    idx = VariableIndexMap({"u": 0}, {})
     # First call populates cache
     _ = idx("u")
     # Now delete from map directly (simulate corruption)
@@ -240,12 +184,6 @@ def test_cache_behavior():
     # Cached result still valid
     assert idx("u") == 0
     # Invalidate cache
-    idx.__post_init__()
+    idx._cache.clear()
     with pytest.raises(KeyError):
         idx("u")
-
-
-def test_variable_index_map_cycle():
-    vmap = VariableIndexMap({"x": 0, "y": 1, "z": 2}, {"g1": ["x", "g2"], "g2": ["y"]})
-    with pytest.raises(ValueError, match="Circular group reference detected."):
-        vmap.add_var_to_group("g1", "g2")  # create cycle

@@ -1,28 +1,62 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
+Index = Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]
 
-@dataclass
+
 class VariableIndexMap:
-    var_idx_map: Dict[str, int]
-    group_var_map: Dict[str, List[str]]
-    _cache: Dict[Tuple[str, bool], Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]] = field(
-        default_factory=dict
-    )
+    def __init__(
+        self,
+        var_idx_map: Optional[Dict[str, int]] = None,
+        group_var_map: Optional[Dict[str, List[str]]] = None,
+    ):
+        self.var_idx_map: Dict[str, int] = {}
+        self.group_var_map: Dict[str, List[str]] = {}
+        self._cache: Dict[Tuple[str, bool], Index] = {}
 
-    @property
-    def var_names(self) -> Set[str]:
-        return set(self.var_idx_map.keys())
+        for var, idx in (var_idx_map or {}).items():
+            self.var_idx_map[var] = idx
 
-    @property
-    def group_names(self) -> Set[str]:
-        return set(self.group_var_map.keys())
+        for group, members in (group_var_map or {}).items():
+            if not members:
+                raise ValueError(f"Group '{group}' has no members.")
+            self.group_var_map[group] = members
 
-    @property
-    def all_names(self) -> Set[str]:
-        return self.var_names | self.group_names
+        self._validate_groups()
+
+    def _validate_groups(self):
+        for group_name in self.group_var_map:
+            if group_name in self.var_idx_map:
+                raise KeyError(f"Name '{group_name}' already exists as a variable.")
+            for member in self.group_var_map[group_name]:
+                if member not in self.var_idx_map and member not in self.group_var_map:
+                    raise KeyError(f"Member '{member}' does not exist.")
+        self._check_for_cycles()
+
+    def _check_for_cycles(self):
+        for group in self.group_var_map:
+            self.flattened_var_names(group)
+
+    def flattened_var_names(self, group_name: str) -> List[str]:
+        if group_name in self.group_var_map:
+            return list(self._iter_group_vars(group_name, set()))
+        raise KeyError(f"Group name '{group_name}' not found.")
+
+    def _iter_group_vars(self, group_name: str, visiting: Set[str]) -> Iterator[str]:
+        if group_name not in self.group_var_map:
+            raise KeyError(f"Group name '{group_name}' not found.")
+        if group_name in visiting:
+            raise ValueError("Circular group reference detected.")
+        for member in self.group_var_map[group_name]:
+            if member in self.var_idx_map:
+                yield member
+            else:
+                yield from self._iter_group_vars(member, visiting | {group_name})
+
+    def _reset_cache(self):
+        self._cache.clear()
 
     @property
     def idxs(self) -> List[int]:
@@ -32,36 +66,46 @@ class VariableIndexMap:
     def nvars(self) -> int:
         return len(self.idxs)
 
-    def __post_init__(self):
-        # check that no group names are also variable names
-        if self.var_names & self.group_names:
-            raise KeyError("Variables and groups cannot share names.")
-
-        # check that no group contains a non-existent variable
-        for group in self.group_var_map.keys():
-            gen = self._retrieve_vars_from_group(group)
-            _ = list(gen)
-
-        # clear cache
-        self._cache.clear()
+    @property
+    def is_contiguous(self) -> bool:
+        if min(self.idxs, default=0) != 0:
+            return False
+        if self.idxs != list(range(self.nvars)):
+            return False
+        return True
 
     def add_var(self, name: str, idx: int):
-        if name in self.all_names:
-            raise KeyError(f"Name '{name}' already exists.")
+        if name in self.var_idx_map:
+            if idx == self.var_idx_map[name]:
+                return
+            else:
+                raise KeyError(f"Variable '{name}' already exists with a different index.")
+        if name in self.group_var_map:
+            raise KeyError(f"Name '{name}' already exists as a group.")
         self.var_idx_map[name] = idx
-        self.__post_init__()
 
-    def add_var_to_group(self, var_name: str, group_name: str):
-        if group_name not in self.group_var_map:
-            if group_name in self.var_idx_map:
-                raise KeyError(f"Name '{group_name}' already exists.")
-            self.group_var_map[group_name] = []
-        self.group_var_map[group_name].append(var_name)
-        self.__post_init__()
+        self._reset_cache()
 
-    def __call__(
-        self, name: str, keepdims: bool = False
-    ) -> Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]:
+    def add_member_to_group(self, member_name: str, group_name: str):
+        self._add_member_to_group(member_name, group_name, recurse=True)
+
+    def _add_member_to_group(self, member_name: str, group_name: str, recurse: bool = True):
+        # test for circular references on a copy
+        if recurse:
+            test_copy = self.copy()
+            test_copy._add_member_to_group(member_name, group_name, recurse=False)
+
+        if group_name in self.group_var_map:
+            if member_name in self.group_var_map[group_name]:
+                return  # Redundant addition, do nothing
+            self.group_var_map[group_name].append(member_name)
+        else:
+            self.group_var_map[group_name] = [member_name]
+
+        self._validate_groups()
+        self._reset_cache()
+
+    def __call__(self, name: str, keepdims: bool = False) -> Index:
         cache_key = (name, keepdims)
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -70,9 +114,7 @@ class VariableIndexMap:
         self._cache[cache_key] = result
         return result
 
-    def _compute(
-        self, name: str, keepdims: bool
-    ) -> Union[int, slice, np.ndarray[Any, np.dtype[np.int_]]]:
+    def _compute(self, name: str, keepdims: bool) -> Index:
         # Single variable
         if name in self.var_idx_map:
             idx = self.var_idx_map[name]
@@ -82,40 +124,24 @@ class VariableIndexMap:
         if name in self.group_var_map:
             if not self.group_var_map[name]:
                 raise ValueError(f"Group '{name}' has no members.")
-            idxs = sorted(set(self.var_idx_map[v] for v in self._retrieve_vars_from_group(name)))
+            idxs = sorted({self.var_idx_map[v] for v in self.flattened_var_names(name)})
             # Return a slice if contiguous, otherwise an index array
             if idxs == list(range(idxs[0], idxs[-1] + 1)):
                 return slice(idxs[0], idxs[-1] + 1)
-            return np.array(idxs)
+            return np.array(idxs, dtype=np.int_)
 
         raise KeyError(f"Name '{name}' not found.")
 
-    def _retrieve_vars_from_group(
-        self, group_name: str, _visiting: Optional[set] = None
-    ) -> Iterator[str]:
-        if _visiting is None:
-            _visiting = set()
-
-        if group_name in _visiting:
-            raise ValueError("Circular group reference detected.")
-
-        for member in self.group_var_map[group_name]:
-            if member in self.var_idx_map:
-                yield member
-            elif member in self.group_var_map:
-                yield from self._retrieve_vars_from_group(member, _visiting | {group_name})
-            else:
-                raise KeyError(f"Member '{member}' not found as variable or group.")
-
-    def is_var_in_group(self, var_name: str, group_name: str) -> bool:
-        if var_name not in self.var_idx_map or group_name not in self.group_var_map:
-            return False
-        return any(var_name == member for member in self._retrieve_vars_from_group(group_name))
-
-    def __contains__(self, name: str) -> bool:
-        return name in self.all_names
+    def is_in_group(self, member_name: str, group_name: str) -> bool:
+        return member_name in self.flattened_var_names(group_name)
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, VariableIndexMap):
-            return NotImplemented
+            raise NotImplementedError(f"Comparison of VariableIndexMap with {type(other)}")
         return self.var_idx_map == other.var_idx_map and self.group_var_map == other.group_var_map
+
+    def copy(self) -> "VariableIndexMap":
+        new_map = VariableIndexMap()
+        new_map.var_idx_map = self.var_idx_map.copy()
+        new_map.group_var_map = {k: v.copy() for k, v in self.group_var_map.items()}
+        return new_map
