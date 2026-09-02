@@ -617,15 +617,15 @@ class HydroSolver:
             for v in ic_params.passive_ics.keys():
                 if v not in idx.var_idx_map:
                     idx.add_var(v, idx.nvars)
-                idx.add_var_to_group(v, "passives")
+                idx.add_member_to_group(v, "passives")
 
         if fv_scheme_params.zhang_shu_params.omit_vars:
             for v in fv_scheme_params.zhang_shu_params.omit_vars:
-                idx.add_var_to_group(v, "omitted")
+                idx.add_member_to_group(v, "omitted")
 
         if fv_scheme_params.mood_params.NAD_params.omit_vars:
             for v in fv_scheme_params.mood_params.NAD_params.omit_vars:
-                idx.add_var_to_group(v, "omitted")
+                idx.add_member_to_group(v, "omitted")
 
         return idx
 

@@ -225,7 +225,7 @@ def apply_reflective_bc(_u_: ArrayLike, context: BCcontext):
     dim = AXIS_TO_DIM[axis]
 
     velocity = "v" + dim
-    if velocity not in idx.var_names:
+    if velocity not in idx.var_idx_map:
         raise ValueError(
             "VariableIndexMap must contain 'v' variable for reflective boundary conditions."
         )

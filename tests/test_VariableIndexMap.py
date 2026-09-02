@@ -30,7 +30,7 @@ def test_add_var_and_get_index():
     assert idx("u", keepdims=True) == slice(0, 1)
 
 
-def test_add_var_to_group_and_get_index():
+def test_add_member_to_group_and_get_index():
     idx = VariableIndexMap({"u": 0, "v": 1, "w": 2}, {})
 
     idx.add_member_to_group("u", "g1")

@@ -94,9 +94,9 @@ def test_conservative_to_primitive_invertability(trial, gamma, euler_slicer):
 def test_teyssier_prim_to_cons(euler_slicer):
     idx = euler_slicer
 
-    idx.add_var_to_group("rho", "test")
-    idx.add_var_to_group("vx", "test")
-    idx.add_var_to_group("P", "test")
+    idx.add_member_to_group("rho", "test")
+    idx.add_member_to_group("vx", "test")
+    idx.add_member_to_group("P", "test")
 
     N = 64
 
@@ -119,9 +119,9 @@ def test_teyssier_prim_to_cons(euler_slicer):
 def test_teyssier_cons_to_prim(euler_slicer):
     idx = euler_slicer
 
-    idx.add_var_to_group("rho", "test")
-    idx.add_var_to_group("mx", "test")
-    idx.add_var_to_group("E", "test")
+    idx.add_member_to_group("rho", "test")
+    idx.add_member_to_group("mx", "test")
+    idx.add_member_to_group("E", "test")
 
     N = 64
 
@@ -144,9 +144,9 @@ def test_teyssier_cons_to_prim(euler_slicer):
 def test_teyssier_compute_fluxes(euler_slicer):
     idx = euler_slicer
 
-    idx.add_var_to_group("rho", "test")
-    idx.add_var_to_group("vx", "test")
-    idx.add_var_to_group("P", "test")
+    idx.add_member_to_group("rho", "test")
+    idx.add_member_to_group("vx", "test")
+    idx.add_member_to_group("P", "test")
 
     N = 64
 

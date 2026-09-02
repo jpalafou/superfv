@@ -117,8 +117,8 @@ def check_global_bounds(
     limited_vars = {
         var
         for var in idx.var_idx_map
-        if idx.is_var_in_group(var, "primitives" if primitives else "conservatives")
-        or idx.is_var_in_group(var, "passives")
+        if idx.is_in_group(var, "primitives" if primitives else "conservatives")
+        or idx.is_in_group(var, "passives")
     }
     bound_vars = set(PAD_bounds)
     omitted_vars = {var for var in idx.group_var_map.get("omitted", []) if var in limited_vars}

@@ -357,8 +357,8 @@ class SolverParameters:
                             f"PAD_bounds variable {var} is not in the variable index map."
                         )
                     if not (
-                        self.variable_index_map.is_var_in_group(var, "primitives")
-                        or self.variable_index_map.is_var_in_group(var, "passives")
+                        self.variable_index_map.is_in_group(var, "primitives")
+                        or self.variable_index_map.is_in_group(var, "passives")
                     ):
                         raise ValueError(f"PAD_bounds variable {var} is not primitive.")
 
@@ -387,8 +387,8 @@ class SolverParameters:
                         f"`omit_vars` variable {var} is not in the variable index map."
                     )
                 if not (
-                    self.variable_index_map.is_var_in_group(var, valid_group_name)
-                    or self.variable_index_map.is_var_in_group(var, "passives")
+                    self.variable_index_map.is_in_group(var, valid_group_name)
+                    or self.variable_index_map.is_in_group(var, "passives")
                 ):
                     raise ValueError(
                         f"`omit_vars` variable {var} is not in the {valid_group_name} group."

@@ -91,7 +91,7 @@ def _prim_to_cons_np(w: np.ndarray, u: np.ndarray, idx: VariableIndexMap, gamma:
     u[idx("mz")] = rho * vz
     u[idx("E")] = KE + P / (gamma - 1)
 
-    if "passives" in idx:
+    if "passives" in idx.group_var_map:
         u[idx("passives")] = rho * w[idx("passives")]
 
 
@@ -180,7 +180,7 @@ def _cons_to_prim_np(
     w[idx("vz")] = vz
     w[idx("P")] = rho * iso_cs**2 if isothermal else (gamma - 1) * (E - KE)
 
-    if "passives" in idx:
+    if "passives" in idx.group_var_map:
         w[idx("passives")] = u[idx("passives")] / rho
 
     return w
@@ -281,5 +281,5 @@ def prim_to_flux(
     f[idx("m" + d3)] = rho * v1 * v3
     f[idx("E")] = (KE + P / (gamma - 1) + P) * v1
 
-    if "passives" in idx:
+    if "passives" in idx.group_var_map:
         f[idx("passives")] = rho * v1 * w[idx("passives")]

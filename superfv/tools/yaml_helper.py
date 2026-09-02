@@ -53,12 +53,12 @@ def _serialize_partial(data: partial) -> str:
 
 
 def _prepare_for_yaml(data: Any) -> Any:
+    if isinstance(data, VariableIndexMap):
+        return {
+            "var_idx_map": _prepare_for_yaml(data.var_idx_map),
+            "group_var_map": _prepare_for_yaml(data.group_var_map),
+        }
     if is_dataclass(data) and not isinstance(data, type):
-        if isinstance(data, VariableIndexMap):
-            return {
-                "var_idx_map": _prepare_for_yaml(data.var_idx_map),
-                "group_var_map": _prepare_for_yaml(data.group_var_map),
-            }
         return {
             field.name: _prepare_for_yaml(getattr(data, field.name))
             for field in fields(data)

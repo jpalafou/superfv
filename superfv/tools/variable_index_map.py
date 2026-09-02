@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -73,6 +72,10 @@ class VariableIndexMap:
         if self.idxs != list(range(self.nvars)):
             return False
         return True
+
+    @property
+    def all_names(self) -> Set[str]:
+        return set(self.var_idx_map.keys()).union(set(self.group_var_map.keys()))
 
     def add_var(self, name: str, idx: int):
         if name in self.var_idx_map:

@@ -81,7 +81,7 @@ def sinus(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMaps
-    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
+    if {"rho", "vx", "vy", "vz"} <= set(idx.var_idx_map):
         # advection case
         r = xp.zeros_like(x)
         if "x" in dims:
@@ -96,10 +96,10 @@ def sinus(
         out[idx("vz")] = vz
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
-    if "P" in idx.var_names:
+    if "P" in idx.var_idx_map:
         out[idx("P")] = P
     return out
 
@@ -144,7 +144,7 @@ def square(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
+    if {"rho", "vx", "vy", "vz"} <= set(idx.var_idx_map):
         # advection case
         r = xp.ones_like(x).astype(bool)
         if "x" in dims:
@@ -163,10 +163,10 @@ def square(
         out[idx("vz")] = vz
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
-    if "P" in idx.var_names:
+    if "P" in idx.var_idx_map:
         out[idx("P")] = P
     return out
 
@@ -210,7 +210,7 @@ def composite(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
+    if {"rho", "vx", "vy", "vz"} <= set(idx.var_idx_map):
         # advection case
         r = {"x": x, "y": y, "z": z}[dim]
         u = xp.zeros_like(r)
@@ -247,10 +247,10 @@ def composite(
         out[idx("vz")] = vz
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
-    if "P" in idx.var_names:
+    if "P" in idx.var_idx_map:
         out[idx("P")] = P
     return out
 
@@ -294,7 +294,7 @@ def slotted_disk(
 
     out = xp.zeros((len(idx.idxs), *x.shape))
 
-    if {"rho", "vx", "vy", "vz"} <= idx.var_names:
+    if {"rho", "vx", "vy", "vz"} <= set(idx.var_idx_map):
         # angular velocity
         omega = 1.0
         theta = -omega * t if rotation == "ccw" else omega * t
@@ -315,10 +315,10 @@ def slotted_disk(
         out[idx(f"v{dim2}")] = x0 if rotation == "ccw" else -x0
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
-    if "P" in idx.var_names:
+    if "P" in idx.var_idx_map:
         out[idx("P")] = P
 
     return out
@@ -369,7 +369,7 @@ def sod_shock_tube_1d(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim1]
         orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dim1]
         out[idx("rho")] = xp.where(r < pos1, rhol, rhor)
@@ -379,7 +379,7 @@ def sod_shock_tube_1d(
         out[idx("P")] = xp.where(r < pos1, pl, pr)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -423,7 +423,7 @@ def velocity_ramp(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim1]
         orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dim1]
         out[idx("rho")] = rho0
@@ -433,7 +433,7 @@ def velocity_ramp(
         out[idx("P")] = P0
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -484,12 +484,12 @@ def sedov(
     P_blast_cell = (gamma - 1) * 1 / ((2 * h) ** len(dims))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         out[idx("rho")] = rho0
         out[idx("P")] = xp.where(inside_blast_cell, P_blast_cell, P0)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -526,7 +526,7 @@ def toro1(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = xp.where(r < 0.3, 1.0, 0.125)
@@ -534,7 +534,7 @@ def toro1(
         out[idx("P")] = xp.where(r < 0.3, 1.0, 0.1)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -571,7 +571,7 @@ def toro2(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = 1
@@ -579,7 +579,7 @@ def toro2(
         out[idx("P")] = 0.4
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -616,14 +616,14 @@ def toro3(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = 1
         out[idx("P")] = xp.where(r < 0.5, 1000, 0.01)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -660,7 +660,7 @@ def shu_osher(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim]
 
         density_wave = 1 + 0.2 * xp.sin(2 * np.pi * 8 * r)
@@ -669,7 +669,7 @@ def shu_osher(
         out[idx("P")] = xp.where(r < 0.125, 10.33333, 1)
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -706,14 +706,14 @@ def interacting_blast_wave_1d(
     out = xp.zeros((len(idx.idxs), *x.shape))
 
     # Validate variables in VariableIndexMap
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names != {}:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim]
 
         out[idx("rho")] = 1
         out[idx("P")] = xp.where(r < 0.1, 1000, np.where(r < 0.9, 0.01, 100))
     else:
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
         )
     return out
@@ -742,7 +742,7 @@ def kelvin_helmholtz_2d(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Kelvin-Helmholtz initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
@@ -813,7 +813,7 @@ def lecoanet_kelvin_helmholtz(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Kelvin-Helmholtz initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
@@ -900,7 +900,7 @@ def double_mach_reflection(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Double Mach reflection initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
@@ -962,9 +962,9 @@ def decaying_isotropic_turbulence(
         seed_fine: Random number seed for high-wavenumber modes. If None, use random
             seed. Ignored if fine_factor <= 1.
     """
-    if not {"rho", "vx", "vy", "vz"} <= idx.var_names:
+    if not {"rho", "vx", "vy", "vz"} <= set(idx.var_idx_map):
         raise NotImplementedError(
-            f"Initial condition not implemented for variables: {idx.var_names}. "
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
             "Required variables: {'rho', 'vx', 'vy', 'vz'}."
         )
 
@@ -1109,7 +1109,7 @@ def decaying_isotropic_turbulence(
     out[idx("vx")] = vx
     out[idx("vy")] = vy
     out[idx("vz")] = vz
-    if "P" in idx.var_names:
+    if "P" in idx.var_idx_map:
         out[idx("P")] = xp.ones_like(x, dtype=float)
     return out
 
@@ -1144,7 +1144,7 @@ def gresho_vortex(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Gresho vortex initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
@@ -1211,7 +1211,7 @@ def entropy_wave(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Entropy wave initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
@@ -1269,7 +1269,7 @@ def rayleigh_taylor(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Rayleigh-Taylor initial condition requires all hydro variables.")
 
     dims = parse_xyz(x, y, z)
@@ -1335,7 +1335,7 @@ def velocity_shear_diffusion(
     Returns:
         ArrayLike: Array with the initial conditions for the hydro variables.
     """
-    if {"rho", "vx", "vy", "vz", "P"} - idx.var_names:
+    if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map):
         raise ValueError("Velocity shear diffusion initial condition requires all hydro variables.")
     if sigma0 <= 0:
         raise ValueError("sigma0 must be positive.")
