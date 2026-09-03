@@ -156,7 +156,7 @@ class HydroSolver:
         PAD_bounds: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
         # Zhang-Shu params
         use_ZS: bool = False,
-        ZS_type: ZhangShuLimiter = "mpp",
+        ZS_limiter: ZhangShuLimiter = "mpp",
         adaptive_dt: bool = False,
         adaptive_dt_tol: float = 1e-15,
         theta_denom_tol: float = 1e-15,
@@ -285,7 +285,7 @@ class HydroSolver:
 
         Slope limiting parameters (Zhang-Shu):
             use_ZS: If True, enable Zhang-Shu limiter.
-            ZS_type: Type of Zhang-Shu limiter specified by the `ZhangShuLimiter` enum.
+            ZS_limiter: Type of Zhang-Shu limiter specified by the `ZhangShuLimiter` enum.
                 "mpp": Use the maximum-principle-preserving Zhang-Shu limiter.
                 "rho_P_pp": Use the positivity-preserving Zhang-Shu limiter for density and
                     pressure.
@@ -493,7 +493,7 @@ class HydroSolver:
             ),
             zhang_shu_params=ZhangShuParameters(
                 use_ZS=use_ZS,
-                limiter_type=ZS_type,
+                limiter_type=ZS_limiter,
                 adaptive_dt=adaptive_dt,
                 SED_params=SED_params if use_ZS else null_SED,
                 PAD_params=PAD_params if use_ZS else null_PAD,
