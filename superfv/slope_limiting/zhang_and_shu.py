@@ -445,11 +445,11 @@ if CUPY_AVAILABLE:
 
         nvars, nx, ny, nz = u.shape
         _, _, _, _, ninterps = uj.shape
-        irho = idx("rho")
-        imx = idx("mx")
-        imy = idx("my")
-        imz = idx("mz")
-        iE = idx("E")
+        irho = idx.var_idx_map["rho"]
+        imx = idx.var_idx_map["mx"]
+        imy = idx.var_idx_map["my"]
+        imz = idx.var_idx_map["mz"]
+        iE = idx.var_idx_map["E"]
         if max(irho, imx, imy, imz, iE) >= nvars:
             raise ValueError("Index map contains a conservative variable outside `u`.")
 

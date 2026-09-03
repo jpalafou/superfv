@@ -738,6 +738,11 @@ def apply_zhang_shu_pp_limiter(
     rho_min = params.PAD_params.bounds["rho"][0]
     P_min = params.PAD_params.bounds["P"][0]
 
+    if rho_min is None or P_min is None:
+        raise ValueError(
+            "Zhang-Shu positivity-preserving limiter requires lower bounds for 'rho' and 'P' in PAD_params."
+        )
+
     # Validate input
     if _q_.ndim != 4:
         raise ValueError("_q_ must be 4D.")
