@@ -16,7 +16,6 @@ base_path = "/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/"
 run_params = dict(allow_overshoot=True)
 init_params = dict(
     isothermal=True,
-    PAD_bounds={"rho": (0, None)},
     use_SED=False,
     cupy=True,
 )
@@ -26,7 +25,7 @@ M_max_values = [0.01, 0.1, 1, 10, 20, 30, 40, 50]
 seeds = range(1, 31)
 
 musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive")
+apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive", adaptive_dt=True)
 aposteriori = dict(
     use_MOOD=True,
     lazy_primitive_mode="full",
@@ -44,8 +43,8 @@ configs = {
     "MUSCL-RK3": musclhancock | dict(CFL=0.5),
     "ZS3": dict(p=3, flux_quadrature="gauss_legendre", **apriori),
     "ZS7": dict(p=7, flux_quadrature="gauss_legendre", **apriori),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "ZS3t": dict(p=3, **apriori, adaptive_dt=False),
+    "ZS7t": dict(p=7, **apriori, adaptive_dt=False),
     "MM3/3revs/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_3revs),
     "MM7/3revs/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_3revs),
     "MM3/3revs/rtol_1e-3": dict(p=3, rtol=1e-3, **aposteriori_3revs),

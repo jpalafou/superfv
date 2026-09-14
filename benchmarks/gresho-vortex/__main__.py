@@ -15,7 +15,6 @@ N = 96
 gamma = 5 / 3
 init_params = dict(
     gamma=gamma,
-    PAD_bounds={"rho": (0, None), "P": (0, None)},
     nx=N,
     ny=N,
     cupy=True,
@@ -29,7 +28,7 @@ v0_values = [5.0]
 M_max_values = [0.1, 0.01, 0.001]
 
 musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive")
+apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive", adaptive_dt=True)
 aposteriori = dict(use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d")
 aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
 aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)

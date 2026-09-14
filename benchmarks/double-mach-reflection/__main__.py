@@ -68,14 +68,13 @@ init_params = dict(
     bcx_callable_lower=dirichlet_x0,
     bcy_callable_lower=patch_bc,
     bcy_callable_upper=dirichlet_y1,
-    PAD_bounds={"rho": (0, None), "P": (0, None)},
     cupy=True,
 )
 run_params = dict(t=np.linspace(0, 0.2, 11)[1:].tolist(), allow_overshoot=True)
 
 # loop parameters
 musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive")
+apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive", adaptive_dt=True)
 aposteriori = dict(use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d")
 aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
 aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
@@ -87,8 +86,8 @@ configs = {
     "MUSCL-RK3-minmod": musclhancock | dict(MUSCL_limiter="minmod"),
     "ZS3": dict(p=3, flux_quadrature="gauss_legendre", **apriori),
     "ZS7": dict(p=7, flux_quadrature="gauss_legendre", **apriori),
-    "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
-    "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
+    "ZS3t": dict(p=3, **apriori, adaptive_dt=False),
+    "ZS7t": dict(p=7, **apriori, adaptive_dt=False),
     "MM3/1rev/rtol_1e-3": dict(p=3, rtol=1e-3, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-3": dict(p=7, rtol=1e-3, **aposteriori_1rev),
     "MM3/1rev/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_1rev),
