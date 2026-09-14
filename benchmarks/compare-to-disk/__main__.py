@@ -27,6 +27,9 @@ sim.take_n_steps(100, time_integrator="muscl_hancock")
 
 if ref_sim is not None:
     print("Measuring error between simulation and solution saved to disk...")
-    idx = sim.idx
-    E_error = sim.snapshot_history[-1].u[idx("E")] - ref_sim.snapshot_history[-1].u[idx("E")]
+    sim_idx = sim.params.variable_index_map
+    ref_idx = ref_sim.params.variable_index_map
+    E_error = (
+        sim.snapshot_history[-1].u[sim_idx("E")] - ref_sim.snapshot_history[-1].u[ref_idx("E")]
+    )
     print(f"Energy error: {np.max(np.abs(E_error)).item():.6e}")

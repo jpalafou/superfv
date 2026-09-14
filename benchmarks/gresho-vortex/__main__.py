@@ -2,12 +2,12 @@ import os
 from functools import partial
 from itertools import product
 
+import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 
-from superfv import OutputLoader, plot_2d_slice
+from superfv import run_multiple_simulations
 from superfv.initial_conditions import gresho_vortex
-from superfv.tools.run_helper import run_multiple_simulations
 
 base_path = "/scratch/gpfs/jp7427/out/gresho-vortex/"
 
@@ -15,40 +15,45 @@ N = 96
 gamma = 5 / 3
 init_params = dict(
     gamma=gamma,
-    PAD={"rho": (0, None), "P": (0, None)},
+    PAD_bounds={"rho": (0, None), "P": (0, None)},
     nx=N,
     ny=N,
     cupy=True,
 )
 
-run_params = dict(T=[0.2, 0.4, 0.6, 0.8, 1.0])
+run_params = dict(t=[0.2, 0.4, 0.6, 0.8, 1.0])
 
 # loop parameters
 v0_values = [5.0]
 
 M_max_values = [0.1, 0.01, 0.001]
 
-musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(ZS=True, lazy_primitives="adaptive")
-aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="pp2d")
-aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
-aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
+musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
+apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive")
+aposteriori = dict(use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d")
+aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
+aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
+aposteriori_3revs = dict(fallback_cascade="muscl0", max_revs=3, **aposteriori)
 
 configs = {
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock | dict(CFL=0.5),
-    "ZS3/no_v": dict(p=3, GL=True, limiting_vars=("rho",), **apriori),
-    "ZS7/no_v": dict(p=7, GL=True, limiting_vars=("rho",), **apriori),
-    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
+    "ZS3/no_v": dict(
+        p=3, flux_quadrature="gauss_legendre", omit_vars=["vx", "vy", "vz", "P"], **apriori
+    ),
+    "ZS7/no_v": dict(
+        p=7, flux_quadrature="gauss_legendre", omit_vars=["vx", "vy", "vz", "P"], **apriori
+    ),
+    "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-5": dict(p=7, rtol=1e-5, **aposteriori_1rev),
 }
 
 
 def compute_M(idx, mesh, w, v0):
-    x, y, _ = mesh.get_cell_centers()
+    x, y = map(cp.asnumpy, mesh.Centers[:2])
+
     rho = w[idx("rho")]
     vx = w[idx("vx")] - v0
     vy = w[idx("vy")]
@@ -76,7 +81,7 @@ def compute_M_func(M_max, v0):
     return f
 
 
-def makeplot(name, _):
+def makeplot(name, sim):
     plot_path = f"out/gresho-vortex-plots/{name}.pdf"
     dir_name = os.path.dirname(plot_path)
     if not os.path.exists(dir_name):
@@ -88,19 +93,18 @@ def makeplot(name, _):
     v0 = float(name.split("v0_")[1].split("/")[0])
     M_max = float(name.split("M_max_")[1].rstrip("/"))
 
-    # load saved data
-    sim = OutputLoader(os.path.join(base_path, name))
+    idx = sim.params.variable_index_map
+    x_faces, y_faces = map(cp.asnumpy, sim.mesh.faces[:2])
 
-    plot_2d_slice(
-        sim,
-        ax,
-        "w",
-        multivar_func=compute_M_func(M_max, v0),
+    image = ax.pcolormesh(
+        x_faces,
+        y_faces,
+        compute_M_func(M_max, v0)(idx, sim.mesh, sim.snapshot_history[-1].w)[:, :, 0].T,
         cmap="jet",
         vmin=0,
         vmax=1,
-        colorbar=True,
     )
+    fig.colorbar(image, ax=ax)
     fig.savefig(plot_path, bbox_inches="tight")
 
 
@@ -113,8 +117,15 @@ run_multiple_simulations(
                 **config,
             ),
             dict(
-                muscl_hancock=False if name == "MUSCL-RK3" else True,
-                time_degree=2 if name == "MUSCL-RK3" else None,
+                time_integrator=(
+                    "ssprk3"
+                    if "RK3" in name
+                    else (
+                        "muscl_hancock"
+                        if config.get("use_MUSCL", False)
+                        else "match_p_up_to_ssprk3"
+                    )
+                ),
                 **run_params,
             ),
         )

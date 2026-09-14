@@ -3,9 +3,9 @@ from itertools import product
 
 import numpy as np
 
-from superfv import EulerSolver
+from superfv import HydroSolver, run_multiple_simulations
+from superfv.hydro import cons_to_prim
 from superfv.initial_conditions import decaying_isotropic_turbulence
-from superfv.tools.run_helper import run_multiple_simulations
 
 N = 128
 fine_factor = 8  # how much larger is the reference solution
@@ -16,8 +16,8 @@ base_path = "/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/"
 run_params = dict(allow_overshoot=True)
 init_params = dict(
     isothermal=True,
-    PAD={"rho": (0, None)},
-    SED=False,
+    PAD_bounds={"rho": (0, None)},
+    use_SED=False,
     cupy=True,
 )
 
@@ -25,64 +25,69 @@ init_params = dict(
 M_max_values = [0.01, 0.1, 1, 10, 20, 30, 40, 50]
 seeds = range(1, 31)
 
-musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(ZS=True, lazy_primitives="adaptive")
-aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="pp2d")
-aposteriori.update(dict(limiting_vars=("rho", "vx", "vy")))
-aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
-aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
+musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
+apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive")
+aposteriori = dict(
+    use_MOOD=True,
+    lazy_primitive_mode="full",
+    MUSCL_limiter="pp2d",
+    omit_vars=["vz", "P"],
+)
+aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
+aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
+aposteriori_3revs = dict(fallback_cascade="muscl0", max_revs=3, **aposteriori)
 
 
 configs = {
     "ref": musclhancock,
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock | dict(CFL=0.5),
-    "ZS3": dict(p=3, GL=True, **apriori),
-    "ZS7": dict(p=7, GL=True, **apriori),
+    "ZS3": dict(p=3, flux_quadrature="gauss_legendre", **apriori),
+    "ZS7": dict(p=7, flux_quadrature="gauss_legendre", **apriori),
     "ZS3t": dict(p=3, adaptive_dt=False, **apriori),
     "ZS7t": dict(p=7, adaptive_dt=False, **apriori),
-    "MM3/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_3revs),
-    "MM7/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_3revs),
-    "MM3/3revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_3revs),
-    "MM7/3revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_3revs),
-    "MM3/3revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_3revs),
-    "MM7/3revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_3revs),
-    "MM3/2revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_2revs),
-    "MM7/2revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_2revs),
-    "MM3/2revs/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_2revs),
-    "MM7/2revs/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_2revs),
-    "MM3/2revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_2revs),
-    "MM7/2revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_2revs),
-    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM3/1rev/rtol_1e-3": dict(p=3, NAD_rtol=1e-3, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-3": dict(p=7, NAD_rtol=1e-3, **aposteriori_1rev),
-    "MM3/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
-    "MM3/1rev/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori_1rev),
-    "MM7/1rev/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori_1rev),
+    "MM3/3revs/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_3revs),
+    "MM7/3revs/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_3revs),
+    "MM3/3revs/rtol_1e-3": dict(p=3, rtol=1e-3, **aposteriori_3revs),
+    "MM7/3revs/rtol_1e-3": dict(p=7, rtol=1e-3, **aposteriori_3revs),
+    "MM3/3revs/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_3revs),
+    "MM7/3revs/rtol_1e-5": dict(p=7, rtol=1e-5, **aposteriori_3revs),
+    "MM3/2revs/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_2revs),
+    "MM7/2revs/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_2revs),
+    "MM3/2revs/rtol_1e-3": dict(p=3, rtol=1e-3, **aposteriori_2revs),
+    "MM7/2revs/rtol_1e-3": dict(p=7, rtol=1e-3, **aposteriori_2revs),
+    "MM3/2revs/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_2revs),
+    "MM7/2revs/rtol_1e-5": dict(p=7, rtol=1e-5, **aposteriori_2revs),
+    "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-3": dict(p=3, rtol=1e-3, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-3": dict(p=7, rtol=1e-3, **aposteriori_1rev),
+    "MM3/1rev/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-5": dict(p=7, rtol=1e-5, **aposteriori_1rev),
+    "MM3/1rev/rtol_0": dict(p=3, rtol=0, **aposteriori_1rev),
+    "MM7/1rev/rtol_0": dict(p=7, rtol=0, **aposteriori_1rev),
     "MUSCL-RK4": musclhancock | dict(CFL=0.5),
-    "ZS3-RK4": dict(p=3, GL=True, **apriori),
-    "ZS7-RK4": dict(p=7, GL=True, **apriori),
-    "MM3-RK4/3revs/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_3revs),
-    "MM7-RK4/3revs/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_3revs),
-    "MM3-RK4/3revs/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_3revs),
-    "MM7-RK4/3revs/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_3revs),
-    "MM3-RK4/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM7-RK4/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM3-RK4/1rev/rtol_1e-5": dict(p=3, NAD_rtol=1e-5, **aposteriori_1rev),
-    "MM7-RK4/1rev/rtol_1e-5": dict(p=7, NAD_rtol=1e-5, **aposteriori_1rev),
+    "ZS3-RK4": dict(p=3, flux_quadrature="gauss_legendre", **apriori),
+    "ZS7-RK4": dict(p=7, flux_quadrature="gauss_legendre", **apriori),
+    "MM3-RK4/3revs/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_3revs),
+    "MM7-RK4/3revs/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_3revs),
+    "MM3-RK4/3revs/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_3revs),
+    "MM7-RK4/3revs/rtol_1e-5": dict(p=7, rtol=1e-5, **aposteriori_3revs),
+    "MM3-RK4/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
+    "MM7-RK4/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
+    "MM3-RK4/1rev/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_1rev),
+    "MM7-RK4/1rev/rtol_1e-5": dict(p=7, rtol=1e-5, **aposteriori_1rev),
 }
 
 
 def compute_velocity_rms(sim):
-    idx = sim.variable_index_map
+    idx = sim.idx
     xp = sim.xp
 
     u = sim.arrays["u"]
     w = xp.empty_like(u)
-    sim.conservatives_to_primitives(u, w)
+    hp = sim.params.hydro
+    cons_to_prim(u, w, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
     v = xp.sqrt(xp.mean(xp.sum(xp.square(w[idx("v")]), axis=0))).item()
 
@@ -92,9 +97,9 @@ def compute_velocity_rms(sim):
 def compute_turbulence_crossing_time(sim):
     mesh = sim.mesh
 
-    Lx = mesh.xlim[1] - mesh.xlim[0]
-    Ly = mesh.ylim[1] - mesh.ylim[0]
-    Lz = mesh.zlim[1] - mesh.zlim[0]
+    Lx = mesh.xlims[1] - mesh.xlims[0]
+    Ly = mesh.ylims[1] - mesh.ylims[0]
+    Lz = mesh.zlims[1] - mesh.zlims[0]
     L = max(Lx, Ly, Lz)
 
     sigma = compute_velocity_rms(sim)
@@ -114,7 +119,7 @@ def compute_reference_dt(sim):
 # precompute crossing times and max_steps
 simtimes = {}
 for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds):
-    dummy_sim = EulerSolver(
+    dummy_sim = HydroSolver(
         ic=partial(
             decaying_isotropic_turbulence,
             seed=seed,
@@ -154,11 +159,20 @@ run_multiple_simulations(
                 **config,
             ),
             dict(
-                T=np.linspace(0, simtimes[f"{name}_{M_max}_{seed}"][0], 4).tolist(),
-                max_steps=simtimes[f"{name}_{M_max}_{seed}"][1] if M_max >= 1 else None,
-                muscl_hancock=False if "RK3" in name or "RK4" in name else True,
-                time_degree=2 if "RK3" in name else 3 if "RK4" in name else None,
-                q_max=3 if "RK4" in name else 2,
+                t=np.linspace(0, simtimes[f"{name}_{M_max}_{seed}"][0], 4)[1:].tolist(),
+                time_integrator=(
+                    "rk4"
+                    if "RK4" in name
+                    else (
+                        "ssprk3"
+                        if "RK3" in name
+                        else (
+                            "muscl_hancock"
+                            if config.get("use_MUSCL", False)
+                            else "match_p_up_to_ssprk3"
+                        )
+                    )
+                ),
                 **run_params,
             ),
         )
