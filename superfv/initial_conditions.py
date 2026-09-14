@@ -675,6 +675,54 @@ def shu_osher(
     return out
 
 
+def modified_shu_osher(
+    idx: VariableIndexMap,
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    t: float,
+    *,
+    xp: ModuleType,
+) -> ArrayLike:
+    """
+    Returns array for the modified Shu-Osher shock/turbulence interaction problem.
+
+    The problem is defined on [-5, 5], with a discontinuity at -4.5.
+
+    Args:
+        idx: VariableIndexMap object with indices for hydro variables.
+        x: x-coordinate array. Has shape (nx, ny, nz).
+        y: y-coordinate array. Has shape (nx, ny, nz).
+        z: z-coordinate array. Has shape (nx, ny, nz).
+        t: Optional time variable.
+        xp: NumPy namespace module (e.g., `np` or `cupy`).
+
+    Returns:
+        ArrayLike: Array with the initial conditions for the hydro variables.
+    """
+    dims = parse_xyz(x, y, z)
+    if len(dims) != 1:
+        raise ValueError("Modified Shu-Osher initial condition is only defined in 1D.")
+    dim = dims[0]
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+
+    # Validate variables in VariableIndexMap
+    if {"rho", "vx", "vy", "vz", "P"} <= set(idx.var_idx_map):
+        r = {"x": x, "y": y, "z": z}[dim]
+
+        density_wave = 1 + 0.1 * xp.sin(20 * np.pi * r)
+        out[idx("rho")] = xp.where(r < -4.5, 1.515695, density_wave)
+        out[idx("v" + dim)] = xp.where(r < -4.5, 0.523346, 0)
+        out[idx("P")] = xp.where(r < -4.5, 1.80500, 1)
+    else:
+        raise NotImplementedError(
+            f"Initial condition not implemented for variables: {idx.var_idx_map}. "
+            "Required variables: {'rho', 'vx', 'vy', 'vz', 'P'}."
+        )
+    return out
+
+
 def interacting_blast_wave_1d(
     idx: VariableIndexMap,
     x: ArrayLike,
