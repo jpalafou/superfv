@@ -9,6 +9,16 @@ from superfv import run_multiple_simulations
 from superfv.initial_conditions import entropy_wave
 from superfv.tools.norms import linf_norm
 
+
+def choose_CFL(p: int, N: int) -> float:
+    cfl = 0.8
+    if p <= 3:
+        return cfl
+    h = 1 / N
+    cfl *= h ** ((p - 3) / (3 + 1))
+    return cfl
+
+
 base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence-2d/"
 plot_path = "benchmarks/entropy-wave-convergence-2d/entropy-wave-convergence-2d.pdf"
 overwrite = False
@@ -27,7 +37,7 @@ init_params = dict(
 resolutions = [32, 64, 128]
 
 musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive", adaptive_dt=True)
+apriori = dict(use_ZS=True, adaptive_dt=True, flux_quadrature="gauss_legendre")
 aposteriori = dict(use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d")
 aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
 aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
@@ -36,14 +46,10 @@ aposteriori_3revs = dict(fallback_cascade="muscl0", max_revs=3, **aposteriori)
 configs = {
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock,
-    "ZS3": dict(p=3, flux_quadrature="gauss_legendre", **apriori),
-    "ZS7": dict(p=7, flux_quadrature="gauss_legendre", **apriori),
-    "ZS3lazy": dict(
-        p=3, flux_quadrature="gauss_legendre", **(apriori | dict(lazy_primitive_mode="full"))
-    ),
-    "ZS7lazy": dict(
-        p=7, flux_quadrature="gauss_legendre", **(apriori | dict(lazy_primitive_mode="full"))
-    ),
+    "ZS3": dict(p=3, lazy_primitive_mode="adaptive", **apriori),
+    "ZS7": dict(p=7, lazy_primitive_mode="adaptive", **apriori),
+    "ZS3lazy": dict(p=3, **apriori),
+    "ZS7lazy": dict(p=7, **apriori),
     "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
     "MM3/1rev/rtol_0": dict(p=3, rtol=0, **aposteriori_1rev),
@@ -150,15 +156,13 @@ if os.path.exists(plot_path):
 run_multiple_simulations(
     {
         f"{name}/N_{N}/": (
-            dict(nx=N, ny=N, **init_params, **config),
+            dict(nx=N, ny=N, CFL=choose_CFL(config["p"], N), **init_params, **config),
             dict(
                 time_integrator=(
                     "ssprk3"
                     if "RK3" in name
                     else (
-                        "muscl_hancock"
-                        if config.get("use_MUSCL", False)
-                        else "match_p_up_to_ssprk3"
+                        "muscl_hancock" if config.get("use_MUSCL", False) else "match_p_up_to_rk4"
                     )
                 ),
                 **run_params,
