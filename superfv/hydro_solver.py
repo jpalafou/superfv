@@ -259,9 +259,10 @@ class HydroSolver:
                 "gauss_legendre": Use Gauss-Legendre face quadrature in 2D and 3D runs.
                 "none": Use no face quadrature; required and selected automatically in 1D.
             lazy_primitive_mode: Lazy primitive mode literal.
-                "full": Convert conservative averages to primitive averages everywhere.
+                "full": Convert conservative averages to 'lazy' primitive averages everywhere.
                 "none": Compute high-order primitive averages everywhere.
-                "adaptive": Use high-order primitive averages only near shocks or shock-PAD failures.
+                "adaptive": Use lazy primitive averages only near shocks or shock-PAD failures,
+                    otherwise use high-order primitive averages.
 
         Slope limiting parameters (smooth extrema detection):
             use_SED: If True, enable smooth extrema detection.
@@ -1005,6 +1006,7 @@ class HydroSolver:
                 u,
                 arrays["_u_"],
                 arrays["_w_"],
+                arrays["_w1_"],
                 arrays["_has_shock_"] if use_shock_detection else np.array([]),
                 t,
                 idx,
@@ -1018,6 +1020,7 @@ class HydroSolver:
             update_fv_fluxes(
                 arrays["_u_"],
                 arrays["_w_"],
+                arrays["_w1_"],
                 arrays["_F_"] if "x" in active_dims else np.array([]),
                 arrays["_G_"] if "y" in active_dims else np.array([]),
                 arrays["_H_"] if "z" in active_dims else np.array([]),
@@ -1042,6 +1045,7 @@ class HydroSolver:
                 mood_loop(
                     arrays["_u_"],
                     arrays["_w_"],
+                    arrays["_w1_"],
                     arrays["_unew_"],
                     arrays["_wnew_"],
                     arrays["_alpha_"],

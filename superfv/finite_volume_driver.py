@@ -503,6 +503,7 @@ def update_fv_workspace(
     u: ArrayLike,
     _u_: ArrayLike,
     _w_: ArrayLike,
+    _w1_: ArrayLike,
     _has_shock_: ArrayLike,
     t: float,
     idx: VariableIndexMap,
@@ -520,7 +521,11 @@ def update_fv_workspace(
         Is not modified.
     _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Array to which u is written with boundary
         conditions applied to ghost cells along active dimensions.
-    _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells.
+    _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells according
+        to the strategy specified by `fv_params.lazy_primitive_mode`.
+    _w1_: _u_.shape - Array to which primitive cell averages are written with the second-order
+        approximation. If `fv_params.p < 2` or `fv_params.lazy_primitive_mode == "full"`, this
+        array is not written to and can be empty.
     _has_shock_: _u_[:1, ...].shape - Array to which shock detection results are written if shock
         detection and adaptive primitive mode are enabled. Otherwise, can be an empty array.
     t: Current simulation time, used for time-dependent boundary conditions.
@@ -561,6 +566,8 @@ def update_fv_workspace(
         fv_cons_to_prim(_u_, _w_, idx, hp, using_cupy, timer)
         return
 
+    fv_cons_to_prim(_u_, _w1_, idx, hp, using_cupy, timer)
+
     if fv.lazy_primitive_mode == "none":
         integrate_cell_averages(_qcc_, _w_, active_dims, fv.p, timer)
 
@@ -571,12 +578,8 @@ def update_fv_workspace(
     if fv.lazy_primitive_mode == "adaptive":
         integrate_cell_averages(_qcc_, _w_, active_dims, fv.p, timer)
 
-        # Allocate some more temp arrays
-        _w1_ = xp.empty_like(_u_)
-        _cs_ = xp.empty_like(_u_[idx("rho")])
-
-        # Get lazy primitives
-        fv_cons_to_prim(_u_, _w1_, idx, hp, using_cupy, timer)
+        # Allocate a temp array for sound speed
+        _cs_ = xp.empty_like(_u_[idx("rho")])  # TEMP ARRAY
 
         # Detect shocks and flag them in _has_shock_
         prim_to_cs(_w1_, _cs_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
@@ -598,7 +601,7 @@ def update_fv_workspace(
                 if ub is not None:
                     xp.maximum(_has_shock_, _w_[idx(v)] > ub, out=_has_shock_)
 
-        _w_[...] = xp.where(_has_shock_, _w_, _w1_)
+        _w_[...] = xp.where(_has_shock_, _w1_, _w_)
 
         # Ensure density is always transformed in the lazy way
         _w_[idx("rho"), ...] = _u_[idx("rho"), ...]
@@ -882,6 +885,7 @@ def add_viscuous_fluxes(
 def update_weno_fluxes(
     _u_: ArrayLike,
     _w_: ArrayLike,
+    _w1_: ArrayLike,
     _F_: ArrayLike,
     _G_: ArrayLike,
     _H_: ArrayLike,
@@ -900,8 +904,11 @@ def update_weno_fluxes(
 
     _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Input array of conservative cell averages
         with ghost cells along active dimensions. Is not modified.
-    _w_: _u_.shape - Input array of primitive cell averages with ghost cells.
-        Should represent the same physical state as _u_. Is not modified.
+    _w_: _u_.shape - Input array of primitive cell averages with ghost cells. Should represent the
+        same physical state as _u_. Is not modified.
+    _w1_: _u_.shape - Input array of lazy primitive cell averages with ghost cells. Should
+        represent the same physical state as _u_. Only used if `fv_params.p > 1` and
+        `fv_params.lazy_primitive_mode != "full"`. Is not modified.
     _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
         "x" is in active_dims.
     _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
@@ -977,7 +984,8 @@ def update_weno_fluxes(
         if fv.flux_recipe == "cons_lim_prim":
             fv_cons_to_prim(_nodes_, _nodes_, idx, hp, using_cupy, timer)
         if fv.positivity_guard:
-            enforce_positive_nodes(_nodes_, _w_, idx, hp)
+            _wfallback_ = _w1_ if fv.p > 1 and fv.lazy_primitive_mode != "full" else _w_
+            enforce_positive_nodes(_nodes_, _wfallback_, idx, hp)
 
         if len(active_dims) == 1:
             _fnodes_ = _F_out_[..., na]
@@ -1081,8 +1089,8 @@ def update_MUSCL_fluxes(
 
     _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Input array of conservative cell averages
         with ghost cells along active dimensions. Is not modified.
-    _w_: _u_.shape - Input array of primitive cell averages with ghost cells.
-        Should represent the same physical state as _u_. Is not modified.
+    _w_: _u_.shape - Input array of primitive cell averages with ghost cells. Should represent the
+        same physical state as _u_. Is not modified.
     _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
         "x" is in active_dims.
     _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
@@ -1225,6 +1233,7 @@ def update_MUSCL_fluxes(
 def update_fv_fluxes(
     _u_: ArrayLike,
     _w_: ArrayLike,
+    _w1_: ArrayLike,
     _F_: ArrayLike,
     _G_: ArrayLike,
     _H_: ArrayLike,
@@ -1242,9 +1251,13 @@ def update_fv_fluxes(
     """
     Update the finite volume fluxes with a WENO or MUSCL scheme.
 
-    _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Array to which u is written with boundary
-        conditions applied to ghost cells along active dimensions.
-    _w_: _u_.shape - Array to which primitive cell averages are written with ghost cells.
+    _u_: shape (nvars, mesh._nx_, mesh._ny_, mesh._nz_) - Input array of conservative cell averages
+        with ghost cells along active dimensions. Is not modified.
+    _w_: _u_.shape - Input array of primitive cell averages with ghost cells. Should represent the
+        same physical state as _u_. Is not modified.
+    _w1_: _u_.shape - Input array of lazy primitive cell averages with ghost cells. Should
+        represent the same physical state as _u_. Only used if `fv_params.p > 1` and
+        `fv_params.lazy_primitive_mode != "full"`. Is not modified.
     _F_: shape (nvars, nx + 1, mesh._ny_, mesh._nz_) - Array to which the x-fluxes are written if
         "x" is in active_dims.
     _G_: shape (nvars, mesh._nx_, ny + 1, mesh._nz_) - Array to which the y-fluxes are written if
@@ -1287,6 +1300,7 @@ def update_fv_fluxes(
         update_weno_fluxes(
             _u_,
             _w_,
+            _w1_,
             _F_,
             _G_,
             _H_,

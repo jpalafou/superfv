@@ -194,6 +194,7 @@ def test_fv_rhs_is_finite(
     u = xp.full((idx.nvars, *mesh.shape), xp.nan)
     _u_ = xp.full((idx.nvars, *mesh._shape_), xp.nan)
     _w_ = _u_.copy()
+    _w1_ = _u_.copy()
     _has_shock_ = (
         xp.full((1, *mesh._shape_), -1, dtype=xp.int32)
         if base_scheme.shock_detection_params.use_shock_detection
@@ -235,6 +236,7 @@ def test_fv_rhs_is_finite(
             u,
             _u_,
             _w_,
+            _w1_,
             _has_shock_,
             0.0,
             idx,
@@ -246,6 +248,7 @@ def test_fv_rhs_is_finite(
         update_fv_fluxes(
             _u_,
             _w_,
+            _w1_,
             _F_,
             _G_,
             _H_,

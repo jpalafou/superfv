@@ -467,6 +467,7 @@ def assign_fluxes(
 def mood_loop(
     _uold_: ArrayLike,
     _wold_: ArrayLike,
+    _w1old_: ArrayLike,
     _unew_: ArrayLike,
     _wnew_: ArrayLike,
     _alpha_: ArrayLike,
@@ -564,6 +565,7 @@ def mood_loop(
             update_fv_fluxes(
                 _uold_,
                 _wold_,
+                _w1old_,
                 _F_fallback_[i_max, ...] if "x" in active_dims else np.array([]),
                 _G_fallback_[i_max, ...] if "y" in active_dims else np.array([]),
                 _H_fallback_[i_max, ...] if "z" in active_dims else np.array([]),
