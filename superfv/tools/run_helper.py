@@ -64,7 +64,8 @@ def run_multiple_simulations(
                 print(f"Loaded existing output for simulation '{name}' from '{sim_path}'.")
 
                 continue
-            except FileNotFoundError:
+            except FileNotFoundError as e:
+                print(f"Error loading output for simulation '{name}' from '{sim_path}': \n{e}\n")
                 pass
 
         print(f"Running simulation with config '{name}':")
