@@ -9,6 +9,22 @@ from superfv.tools.norms import linf_norm
 from teyssier import cons_to_prim, weno
 
 
+def test_run_rejects_empty_target_time_list():
+    sim = HydroSolver(ic=partial(ics.square, vx=1), nx=8)
+
+    with pytest.raises(ValueError, match="Target times must be non-empty."):
+        sim.run([], print_update=False)
+
+
+def test_run_does_not_mutate_target_time_list():
+    sim = HydroSolver(ic=partial(ics.square, vx=1), nx=8)
+    target_times = [0.01, 0.02]
+
+    sim.run(target_times, print_update=False)
+
+    assert target_times == [0.01, 0.02]
+
+
 @pytest.mark.parametrize(
     "scheme",
     [

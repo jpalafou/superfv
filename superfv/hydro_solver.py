@@ -1435,9 +1435,11 @@ class HydroSolver:
         if not isinstance(t, list):
             target_times = [t]
         else:
+            if not t:
+                raise ValueError("Target times must be non-empty.")
             if t != sorted(set(t)):
                 raise ValueError("Target times must be given in sorted order without duplicates.")
-            target_times = t
+            target_times = list(t)
         tstop = target_times[-1]
 
         if any(targets < 0 for targets in target_times):
