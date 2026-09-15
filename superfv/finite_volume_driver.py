@@ -469,6 +469,7 @@ def _fv_detect_shocks(
     Detect shocks in `_q_` and write the result to `_has_shock_`.
     """
     xp = cp if CUPY_AVAILABLE and isinstance(_q_, cp.ndarray) else np
+    na = xp.newaxis
 
     if not fv_params.shock_detection_params.use_shock_detection:
         raise ValueError("Shock detection is not enabled in the provided FV scheme.")
@@ -478,8 +479,10 @@ def _fv_detect_shocks(
     _eta_ = xp.empty_like(_q_)
 
     # Update `_q_ref_` with cs if detecting shocks from primitives or rho * cs otherwise
-    for dim in active_dims:
-        _q_ref_[idx("v" + dim)] = _cs_ if primitives else _q_[idx("rho")] * _cs_
+    if primitives:
+        _q_ref_[idx("v")] = _cs_[na, ...]
+    else:
+        _q_ref_[idx("m")] = _q_[idx("rho", keepdims=True)] * _cs_[na, ...]
 
     detect_shocks(
         _q_, _q_ref_, _eta_, _has_shock_, active_dims, fv_params.shock_detection_params.eta_max
