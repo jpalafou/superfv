@@ -88,6 +88,8 @@ configs = {
     "ZS7": dict(p=7, flux_quadrature="gauss_legendre", **apriori),
     "ZS3t": dict(p=3, **(apriori | dict(adaptive_dt=False))),
     "ZS7t": dict(p=7, **(apriori | dict(adaptive_dt=False))),
+    "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
     "MM3/1rev/rtol_1e-3": dict(p=3, rtol=1e-3, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-3": dict(p=7, rtol=1e-3, **aposteriori_1rev),
     "MM3/1rev/rtol_1e-5": dict(p=3, rtol=1e-5, **aposteriori_1rev),
