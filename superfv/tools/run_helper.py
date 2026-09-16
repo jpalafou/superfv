@@ -65,7 +65,7 @@ def run_multiple_simulations(
 
                 continue
             except FileNotFoundError as e:
-                print(f"Error loading output for simulation '{name}' from '{sim_path}': \n{e}\n")
+                print(f"Error loading output for simulation '{name}' from '{sim_path}':\n\t{e}\n")
                 pass
 
         print(f"Running simulation with config '{name}':")
@@ -84,7 +84,7 @@ def run_multiple_simulations(
             else:
                 sim.run(**run_params)
         except RuntimeError as e:
-            print(f"Failed: {e}\n")
+            print(f"\nFailed:\n\t{e}\n")
             with open(error_path, "w") as f:
                 f.write(str(e))
             print(f"Error message written to `{error_path}`.\n")
@@ -93,7 +93,7 @@ def run_multiple_simulations(
         if postprocess is not None:
             postprocess(name, sim)
 
-        print(f"Simulation '{name}' completed successfully and output saved to `{sim_path}`.\n\n")
+        print(f"Simulation '{name}' completed successfully and output saved to `{sim_path}`.\n")
 
         # clean up error file if it exists
         if os.path.exists(error_path):
