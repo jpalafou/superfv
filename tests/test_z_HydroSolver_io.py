@@ -1,6 +1,7 @@
 import os
 import pickle
 import shutil
+import sys
 from functools import partial
 from pathlib import Path
 
@@ -8,9 +9,38 @@ import numpy as np
 import pytest
 
 from superfv import HydroSolver, HydroSolverOutput, ics
+from superfv.boundary_conditions import apply_free_bc
 from superfv.configs import dummy_function
+from superfv.hydro_solver_output import (
+    dummy_multivar_field,
+    dummy_patch_bc,
+    dummy_source_term,
+    dummy_univar_field,
+)
 
 OUTPUT_PATH = Path("snapshot_test")
+
+
+def _main_module_bc(idx, x, y, z, t, *, xp):
+    return ics.square(idx, x, y, z, t, xp=xp, vx=1)
+
+
+def _main_module_passive(x, y, z, t, *, xp):
+    return xp.zeros_like(x)
+
+
+def _main_module_source(idx, u, *, xp):
+    return xp.zeros_like(u)
+
+
+def _main_module_patch(_u_, context):
+    apply_free_bc(_u_, context)
+
+
+def _mark_as_main_module(monkeypatch, *funcs):
+    for func in funcs:
+        monkeypatch.setattr(func, "__module__", "__main__")
+        monkeypatch.setattr(sys.modules["__main__"], func.__name__, func, raising=False)
 
 
 def test_fail_when_output_exists():
@@ -79,6 +109,92 @@ def test_local_ic_does_not_break_params_files(tmp_path):
     with open(output_path / "params.pkl", "rb") as f:
         params = pickle.load(f)
     assert params.ic.ic is dummy_function
+
+
+def test_local_passive_ic_does_not_break_params_files(tmp_path):
+    f0 = partial(ics.square, vx=1)
+
+    def local_passive_ic(x, y, z, t, *, xp):
+        return xp.zeros_like(x)
+
+    output_path = tmp_path / "snapshot_test"
+    _ = HydroSolver(
+        ic=f0,
+        passive_ics={"dye": local_passive_ic},
+        p=1,
+        nx=64,
+        use_MUSCL=True,
+        output_path=output_path,
+    )
+
+    assert (output_path / "params.yaml").exists()
+    with open(output_path / "params.pkl", "rb") as f:
+        params = pickle.load(f)
+    assert params.ic.passive_ics["dye"] is dummy_function
+
+
+def test_main_module_bc_is_preserved_when_loadable(tmp_path, monkeypatch):
+    f0 = partial(ics.square, vx=1)
+    _mark_as_main_module(monkeypatch, _main_module_bc)
+
+    output_path = tmp_path / "snapshot_test"
+    _ = HydroSolver(
+        ic=f0,
+        p=1,
+        nx=64,
+        use_MUSCL=True,
+        bcx=("dirichlet", "free"),
+        bcx_callable_lower=_main_module_bc,
+        output_path=output_path,
+    )
+
+    with open(output_path / "params.pkl", "rb") as f:
+        params = pickle.load(f)
+    assert params.bc.bcx_callable_lower is _main_module_bc
+
+
+def test_output_loads_legacy_main_module_callables(tmp_path, monkeypatch):
+    f0 = partial(ics.square, vx=1)
+    _mark_as_main_module(
+        monkeypatch,
+        _main_module_bc,
+        _main_module_passive,
+        _main_module_source,
+        _main_module_patch,
+    )
+
+    output_path = tmp_path / "snapshot_test"
+    sim = HydroSolver(
+        ic=f0,
+        passive_ics={"dye": _main_module_passive},
+        source=_main_module_source,
+        p=1,
+        nx=64,
+        use_MUSCL=True,
+        bcx=("patch", "dirichlet"),
+        bcx_callable_lower=_main_module_patch,
+        bcx_callable_upper=_main_module_bc,
+        output_path=output_path,
+    )
+    sim.run(0.01, print_update=False)
+
+    with open(output_path / "params.pkl", "wb") as f:
+        pickle.dump(sim.params, f)
+    for func in (
+        _main_module_bc,
+        _main_module_passive,
+        _main_module_source,
+        _main_module_patch,
+    ):
+        monkeypatch.delattr(sys.modules["__main__"], func.__name__)
+
+    output = HydroSolverOutput(output_path)
+
+    assert output.params is not None
+    assert output.params.ic.passive_ics["dye"] is dummy_univar_field
+    assert output.params.source is dummy_source_term
+    assert output.params.bc.bcx_callable_lower is dummy_patch_bc
+    assert output.params.bc.bcx_callable_upper is dummy_multivar_field
 
 
 @pytest.mark.parametrize("discard_after_writing", [True, False])
