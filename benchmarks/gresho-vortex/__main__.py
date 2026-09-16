@@ -38,10 +38,10 @@ configs = {
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock | dict(CFL=0.5),
     "ZS3/no_v": dict(
-        p=3, flux_quadrature="gauss_legendre", omit_vars=["vx", "vy", "vz", "P"], **apriori
+        p=3, flux_quadrature="gauss_legendre", omit_vars=["vx", "vy", "vz"], **apriori
     ),
     "ZS7/no_v": dict(
-        p=7, flux_quadrature="gauss_legendre", omit_vars=["vx", "vy", "vz", "P"], **apriori
+        p=7, flux_quadrature="gauss_legendre", omit_vars=["vx", "vy", "vz"], **apriori
     ),
     "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
     "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
