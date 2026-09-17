@@ -1,5 +1,6 @@
 from functools import partial
 from itertools import product
+from typing import Tuple
 
 import numpy as np
 
@@ -16,6 +17,7 @@ base_path = "/scratch/gpfs/jp7427/out/isotropic-decaying-turbulence/"
 run_params = dict(allow_overshoot=True)
 init_params = dict(
     isothermal=True,
+    PAD_bounds={"rho": (0.0, None)},
     use_SED=False,
     cupy=True,
 )
@@ -31,6 +33,7 @@ aposteriori = dict(
     lazy_primitive_mode="full",
     MUSCL_limiter="pp2d",
     omit_vars=["vz", "P"],
+    positivity_guard=False,
 )
 aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
 aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
@@ -116,9 +119,37 @@ def compute_reference_dt(sim):
 
 
 # precompute crossing times and max_steps
-simtimes = {}
-for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds):
+def precompute_simulation_times(M_max: float, seed: int, name: str, **kwargs) -> Tuple[float, int]:
     dummy_sim = HydroSolver(
+        ic=partial(
+            decaying_isotropic_turbulence,
+            seed=seed,
+            M=M_max,
+            slope=-5 / 3,
+            fine_factor=8 if name == "ref" else 1,
+            seed_fine=seed + 1,
+        ),
+        nx=N * fine_factor if name == "ref" else N,
+        ny=N * fine_factor if name == "ref" else N,
+        **init_params,
+        **kwargs,
+    )
+    t_cross = compute_turbulence_crossing_time(dummy_sim)
+    dt_ref = compute_reference_dt(dummy_sim)
+    max_steps = 10 * int(t_cross / dt_ref) if M_max > 1 else None
+
+    return t_cross, max_steps
+
+
+sim_configs = {}
+for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds):
+    if M_max < 1 and seed > 1:
+        continue
+
+    t_cross, max_steps = precompute_simulation_times(M_max, seed, name, **config)
+
+    key = f"{name}/M_max_{M_max}/seed_{seed:02d}/"
+    sim_init_params = dict(
         ic=partial(
             decaying_isotropic_turbulence,
             seed=seed,
@@ -132,52 +163,24 @@ for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds)
         **init_params,
         **config,
     )
-    t_cross = compute_turbulence_crossing_time(dummy_sim)
-    dt_ref = compute_reference_dt(dummy_sim)
-    max_steps = 10 * int(t_cross / dt_ref) if M_max > 1 else None
+    sim_run_params = dict(
+        t=np.linspace(0, t_cross, 4)[1:].tolist(),
+        time_integrator=(
+            "rk4"
+            if "RK4" in name
+            else (
+                "ssprk3"
+                if "RK3" in name
+                else ("muscl_hancock" if config.get("use_MUSCL", False) else "match_p_up_to_ssprk3")
+            )
+        ),
+        max_steps=max_steps,
+        **run_params,
+    )
 
-    key = f"{name}_{M_max}_{seed}"
-    simtimes[key] = (t_cross, max_steps)
+    sim_configs[key] = (sim_init_params, sim_run_params)
 
 
 run_multiple_simulations(
-    {
-        f"{name}/M_max_{M_max}/seed_{seed:02d}/": (
-            dict(
-                ic=partial(
-                    decaying_isotropic_turbulence,
-                    seed=seed,
-                    M=M_max,
-                    slope=-5 / 3,
-                    fine_factor=8 if name == "ref" else 1,
-                    seed_fine=seed + 1,
-                ),
-                nx=N * fine_factor if name == "ref" else N,
-                ny=N * fine_factor if name == "ref" else N,
-                **init_params,
-                **config,
-            ),
-            dict(
-                t=np.linspace(0, simtimes[f"{name}_{M_max}_{seed}"][0], 4)[1:].tolist(),
-                time_integrator=(
-                    "rk4"
-                    if "RK4" in name
-                    else (
-                        "ssprk3"
-                        if "RK3" in name
-                        else (
-                            "muscl_hancock"
-                            if config.get("use_MUSCL", False)
-                            else "match_p_up_to_ssprk3"
-                        )
-                    )
-                ),
-                **run_params,
-            ),
-        )
-        for (name, config), M_max, seed in product(configs.items(), M_max_values, seeds)
-        if M_max >= 1 or seed == 1
-    },
-    base_path,
-    overwrite=overwrite,
+    sim_configs, base_path=base_path, overwrite=overwrite, skip_errors=not overwrite
 )
