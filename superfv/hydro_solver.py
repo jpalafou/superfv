@@ -584,14 +584,15 @@ class HydroSolver:
                 )
         else:
             update["rho"] = (hydro_params.rho_min, None)
-        if "P" in PAD_bounds:
-            if PAD_bounds["P"][0] != hydro_params.P_min:
-                warnings.warn(
-                    f"PAD lower bound for 'P' is {PAD_bounds['P'][0]}, "
-                    f"which is different from the hydro parameter P_min={hydro_params.P_min}."
-                )
-        else:
-            update["P"] = (hydro_params.P_min, None)
+        if not hydro_params.isothermal:
+            if "P" in PAD_bounds:
+                if PAD_bounds["P"][0] != hydro_params.P_min:
+                    warnings.warn(
+                        f"PAD lower bound for 'P' is {PAD_bounds['P'][0]}, "
+                        f"which is different from the hydro parameter P_min={hydro_params.P_min}."
+                    )
+            else:
+                update["P"] = (hydro_params.P_min, None)
 
         return {**PAD_bounds, **update}
 
