@@ -620,12 +620,52 @@ def _apply_zhang_shu_limiter_to_node_array(nodes: ArrayLike, fallback: ArrayLike
     xp.add(nodes, fallback[..., na], out=nodes)  # theta * (wj - w) + w
 
 
+def reconstruct_centroid(
+    _u_: ArrayLike,
+    _w_: ArrayLike,
+    _qcc_: ArrayLike,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    fv_params: FV_SchemeParameters,
+    hydro_params: HydroParameters,
+    timer: Optional[MultiTimer] = None,
+):
+    """
+    Reconstruct the cell-centered primitive or conservative variables from the primitive or
+    conservative cell averages, depending on the specified `flux_recipe`.
+
+    Args:
+        _u_: Conservative cell averages with ghost cells with shape (nvars, _nx_, _ny_, _nz_).
+            Is not modified.
+        _w_: Primitive cell averages with ghost cells with same shape as `_u_`. Is not modified.
+        _qcc_: Array to which the reconstructed primitive cell-centered values are written. Has
+            the same shape as `_u_` and `_w_`.
+        idx: Index map for accessing variables in the arrays.
+        active_dims: Active dimensions of the mesh.
+        fv_params: Finite volume scheme parameters.
+        hydro_params: Hydrodynamic parameters.
+        timer: Optional timer for performance measurement.
+    """
+    using_cupy = CUPY_AVAILABLE and isinstance(_u_, cp.ndarray)
+
+    match fv_params.flux_recipe:
+        case "cons_lim_prim":
+            interpolate_cell_centers(_u_, _qcc_, active_dims, fv_params.p, timer)
+        case "cons_prim_lim":
+            interpolate_cell_centers(_u_, _qcc_, active_dims, fv_params.p, timer)
+            fv_cons_to_prim(_qcc_, _qcc_, idx, hydro_params, using_cupy, timer)
+        case "prim_prim_lim":
+            interpolate_cell_centers(_w_, _qcc_, active_dims, fv_params.p, timer)
+        case _:
+            raise ValueError(f"Unknown flux_recipe: {fv_params.flux_recipe}")
+
+
 def apply_zhang_shu_limiter(
     _q_: ArrayLike,
+    _qcc_: ArrayLike,
     _x_nodes_: ArrayLike,
     _y_nodes_: ArrayLike,
     _z_nodes_: ArrayLike,
-    _qcc_: ArrayLike,
     _theta_: ArrayLike,
     _alpha_: ArrayLike,
     idx: VariableIndexMap,
@@ -665,7 +705,6 @@ def apply_zhang_shu_limiter(
 
     # 1) Gather all node arrays to get nodal minima and maxima
     if p > 1:
-        interpolate_cell_centers(_q_, _qcc_, active_dims, p)  # no timer
         _qj_ = xp.concatenate([_qcc_[..., na]] + [node_dict[dim] for dim in active_dims], axis=4)
     else:
         _qj_ = xp.concatenate([node_dict[dim] for dim in active_dims], axis=4)
@@ -957,13 +996,17 @@ def update_weno_fluxes(
 
     # Optionally apply slope-limiting to the nodes
     if fv.zhang_shu_params.use_ZS:
+        # reconstruct cell center
+        if fv.p > 1:
+            reconstruct_centroid(_u_, _w_, _qcc_, idx, active_dims, fv, hp, timer)
+
         # a priori slope limiting
         apply_zhang_shu_limiter(
             _u_ if fv.flux_recipe == "cons_lim_prim" else _w_,
+            _qcc_,
             node_dict["x"] if "x" in active_dims else np.array([]),
             node_dict["y"] if "y" in active_dims else np.array([]),
             node_dict["z"] if "z" in active_dims else np.array([]),
-            _qcc_,
             _theta_,
             _alpha_,
             idx,
