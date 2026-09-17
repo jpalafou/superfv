@@ -765,20 +765,11 @@ def enforce_positive_nodes(
     xp = cp if use_cupy else np
     na = xp.newaxis
 
-    if use_cupy:
-        enforce_positive_nodes_elementwise_kernel(
-            wj[idx("rho"), ...], w1[idx("rho"), ..., na], hp.rho_min, wj[idx("rho"), ...]
-        )
-        enforce_positive_nodes_elementwise_kernel(
-            wj[idx("P"), ...], w1[idx("P"), ..., na], hp.P_min, wj[idx("P"), ...]
-        )
-        return
+    density = wj[idx("rho", keepdims=True)]
+    pressure = wj[idx("P", keepdims=True)]
 
-    density = wj[idx("rho")]
-    pressure = wj[idx("P")]
-
-    density[...] = np.where(density < hp.rho_min, w1[idx("rho"), ..., na], density)
-    pressure[...] = np.where(pressure < hp.P_min, w1[idx("P"), ..., na], pressure)
+    nonpositive_nodes = xp.logical_or(density < hp.rho_min, pressure < hp.P_min)
+    wj[...] = xp.where(nonpositive_nodes, w1[..., na], wj)
 
 
 @lru_cache(maxsize=None)
@@ -1512,15 +1503,3 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
     nghost = max(nghost, mood_cost)
 
     return nghost
-
-
-if CUPY_AVAILABLE:
-    enforce_positive_nodes_elementwise_kernel = cp.ElementwiseKernel(
-        in_params="float64 qj, float64 q0, float64 qmin",
-        out_params="float64 qout",
-        operation="""
-            qout = (qj < qmin) ? q0 : qj;
-        """,
-        name="enforce_positive_nodes_elementwise_kernel",
-        no_return=True,
-    )
