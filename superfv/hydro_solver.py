@@ -1403,6 +1403,7 @@ class HydroSolver:
         allow_overshoot: bool = False,
         print_update: bool = True,
         print_frequency: int = 100,
+        max_steps: Optional[int] = None,
     ):
         """
         Advance the solution to one or more target times.
@@ -1424,6 +1425,7 @@ class HydroSolver:
             allow_overshoot: If True, allow the final step to pass a target time.
             print_update: If True, print progress updates.
             print_frequency: Print every `print_frequency` steps when `print_update=True`.
+            max_steps: Maximum number of steps to take. If None, no limit is imposed.
         """
         self._start_wall_timer()
 
@@ -1458,9 +1460,11 @@ class HydroSolver:
                 target_times.pop(0)
             self._close_step(take_snapshot_this_step)
 
-            n = len(self.step_history) - 1
-            if print_update and n % print_frequency == 0:
+            n_steps = self.step_history[-1].step
+            if print_update and n_steps % print_frequency == 0:
                 self._print_message(self._build_message(stopping_t_sim=tstop))
+            if max_steps is not None and n_steps >= max_steps:
+                break
 
         if print_update:
             self._print_message(self._build_message(stopping_t_sim=tstop) + " (done)\n")
