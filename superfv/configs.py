@@ -428,6 +428,13 @@ class SolverParameters:
         if self.hydro.diffusion and self.fv_scheme.flux_quadrature == "gauss_legendre":
             raise ValueError("Gauss-Legendre flux quadrature cannot be used with diffusive fluxes.")
 
+        # positivity guard shouldn't be used with a posteriori scheme
+        if self.fv_scheme.mood_params.use_MOOD and self.fv_scheme.positivity_guard:
+            raise ValueError(
+                "Positivity guard cannot be used with a posteriori MOOD limiting schemes. "
+                "Set `positivity_guard=False`."
+            )
+
 
 def dummy_function(*args: Any, **kwargs: Any) -> None:
     raise RuntimeError(
