@@ -4,6 +4,7 @@ from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 
+from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.tools.slicing import crop, merge_slices
 from superfv.tools.step_history import MultiTimer
 
@@ -761,15 +762,16 @@ def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
 def enforce_positive_nodes(
     wj: ArrayLike, w1: ArrayLike, idx: VariableIndexMap, hp: HydroParameters
 ):
-    use_cupy = CUPY_AVAILABLE and isinstance(wj, cp.ndarray)
-    xp = cp if use_cupy else np
-    na = xp.newaxis
+    if CUPY_AVAILABLE and isinstance(wj, cp.ndarray):
+        enforce_positive_nodes_kernel_helper(wj, w1, idx, hp.rho_min, hp.P_min)
+        return
+    na = np.newaxis
 
     density = wj[idx("rho", keepdims=True)]
     pressure = wj[idx("P", keepdims=True)]
 
-    nonpositive_nodes = xp.logical_or(density < hp.rho_min, pressure < hp.P_min)
-    wj[...] = xp.where(nonpositive_nodes, w1[..., na], wj)
+    nonpositive_nodes = np.logical_or(density < hp.rho_min, pressure < hp.P_min)
+    wj[...] = np.where(nonpositive_nodes, w1[..., na], wj)
 
 
 @lru_cache(maxsize=None)
@@ -1503,3 +1505,85 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
     nghost = max(nghost, mood_cost)
 
     return nghost
+
+
+if CUPY_AVAILABLE:
+    enforce_positive_nodes_kernel = cp.RawKernel(
+        """
+        extern "C" __global__
+        void enforce_positive_nodes_kernel(
+            double* __restrict__ wj,
+            const double* __restrict__ w1,
+            const double rho_min,
+            const double P_min,
+            const int rho_idx,
+            const int P_idx,
+            const int nvars,
+            const int nx,
+            const int ny,
+            const int nz,
+            const int ninterps
+        ){
+            // wj   (nvars, nx, ny, nz, ninterps)
+            // w1   (nvars, nx, ny, nz)
+
+            const long long tid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+            const long long stride = (long long)blockDim.x * gridDim.x;
+
+            const long long nxyzterps = (long long) nx * ny * nz * ninterps;
+
+            for (long long ixyzterp = tid; ixyzterp < nxyzterps; ixyzterp += stride) {
+                long long t = ixyzterp;
+                int j = (int)(t % ninterps); t /= ninterps;
+                int iz = (int)(t % nz); t /= nz;
+                int iy = (int)(t % ny); t /= ny;
+                int ix = (int)(t % nx); t /= nx;
+
+                long long irho = ((((long long)rho_idx * nx + ix) * ny + iy) * nz + iz)
+                    * ninterps + j;
+                long long iP = ((((long long)P_idx * nx + ix) * ny + iy) * nz + iz)
+                    * ninterps + j;
+
+                if (wj[irho] < rho_min || wj[iP] < P_min) {
+                    for (int iv = 0; iv < nvars; iv++) {
+                        long long i = ((((long long)iv * nx + ix) * ny + iy) * nz + iz);
+                        wj[i * ninterps + j] = w1[i];
+                    }
+                }
+            }
+        }
+        """,
+        name="enforce_positive_nodes_kernel",
+    )
+
+    def enforce_positive_nodes_kernel_helper(
+        wj: ArrayLike, w1: ArrayLike, idx: VariableIndexMap, rho_min: float, P_min: float
+    ):
+        if not wj.flags.c_contiguous or not w1.flags.c_contiguous:
+            raise ValueError("Input arrays must be C-contiguous.")
+        if wj.dtype != cp.float64 or w1.dtype != cp.float64:
+            raise ValueError("Input arrays must be of type float64.")
+        if wj.ndim != 5 or w1.ndim != 4 or wj.shape[:4] != w1.shape:
+            raise ValueError("Input arrays must have the correct number of dimensions.")
+
+        nvars, nx, ny, nz, ninterps = wj.shape
+        threads_per_block = DEFAULT_THREADS_PER_BLOCK
+        blocks_per_grid = (nx * ny * nz * ninterps + threads_per_block - 1) // threads_per_block
+
+        enforce_positive_nodes_kernel(
+            (blocks_per_grid,),
+            (threads_per_block,),
+            (
+                wj,
+                w1,
+                rho_min,
+                P_min,
+                idx("rho"),
+                idx("P"),
+                nvars,
+                nx,
+                ny,
+                nz,
+                ninterps,
+            ),
+        )
