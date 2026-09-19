@@ -75,7 +75,9 @@ run_params = dict(t=np.linspace(0, 0.2, 11)[1:].tolist(), allow_overshoot=True)
 # loop parameters
 musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
 apriori = dict(use_ZS=True, lazy_primitive_mode="adaptive", adaptive_dt=True)
-aposteriori = dict(use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d")
+aposteriori = dict(
+    use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d", positivity_guard=False
+)
 aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
 aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
 aposteriori_3revs = dict(fallback_cascade="muscl0", max_revs=3, **aposteriori)
