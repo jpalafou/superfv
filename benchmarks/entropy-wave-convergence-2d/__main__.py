@@ -58,41 +58,59 @@ configs = {
 
 markersize = 8
 styles = {
-    "MUSCL-RK3": dict(color="grey", marker="s", mfc="none", markersize=markersize),
+    "MUSCL-RK3": dict(
+        color="grey", marker="s", mfc="none", markersize=markersize, label=r"MUSCL$+$SSPRK3"
+    ),
     "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none", markersize=markersize),
-    "ZS3": dict(color="blue", marker="o", mfc="none", markersize=markersize, label="LB4"),
+    "ZS3": dict(
+        color="blue",
+        marker="o",
+        mfc="none",
+        markersize=markersize,
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$",
+    ),
     "ZS3lazy": dict(
-        color="green", marker="o", mfc="none", markersize=markersize, label="LB4, lazy"
+        color="green",
+        marker="o",
+        mfc="none",
+        markersize=markersize,
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$, lazy",
     ),
     "MM3/1rev/rtol_1e-1": dict(
         color="blue",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM4, $\epsilon=10^{-1}$",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=10^{-1}$",
     ),
     "MM3/1rev/rtol_0": dict(
         color="green",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM4, $\epsilon=0$",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=0$",
     ),
-    "ZS7": dict(color="red", marker="o", mfc="none", markersize=markersize, label="LB8"),
+    "ZS7": dict(
+        color="red",
+        marker="o",
+        mfc="none",
+        markersize=markersize,
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$",
+    ),
     "ZS7lazy": dict(
         color="purple",
         linestyle="--",
         marker="o",
         mfc="none",
         markersize=markersize,
-        label="LB8, lazy",
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$, lazy",
     ),
     "MM7/1rev/rtol_1e-1": dict(
         color="red",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM8, $\epsilon=10^{-1}$",
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=10^{-1}$",
     ),
     "MM7/1rev/rtol_0": dict(
         color="purple",
@@ -100,7 +118,7 @@ styles = {
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM8, $\epsilon=0$",
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=0$",
     ),
 }
 
