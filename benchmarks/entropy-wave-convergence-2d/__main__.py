@@ -38,7 +38,9 @@ resolutions = [32, 64, 128]
 
 musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
 apriori = dict(use_ZS=True, adaptive_dt=True, flux_quadrature="gauss_legendre")
-aposteriori = dict(use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d")
+aposteriori = dict(
+    use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d", positivity_guard=False
+)
 aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
 aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
 aposteriori_3revs = dict(fallback_cascade="muscl0", max_revs=3, **aposteriori)
@@ -47,12 +49,12 @@ configs = {
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock,
     "ZS3": dict(p=3, lazy_primitive_mode="adaptive", **apriori),
-    "ZS7": dict(p=7, lazy_primitive_mode="adaptive", **apriori),
     "ZS3lazy": dict(p=3, **apriori),
-    "ZS7lazy": dict(p=7, **apriori),
     "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
     "MM3/1rev/rtol_0": dict(p=3, rtol=0, **aposteriori_1rev),
+    "ZS7": dict(p=7, lazy_primitive_mode="adaptive", **apriori),
+    "ZS7lazy": dict(p=7, **apriori),
+    "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
     "MM7/1rev/rtol_0": dict(p=7, rtol=0, **aposteriori_1rev),
 }
 
@@ -61,61 +63,59 @@ styles = {
     "MUSCL-RK3": dict(
         color="grey", marker="s", mfc="none", markersize=markersize, label=r"MUSCL$+$SSPRK3"
     ),
-    "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none", markersize=markersize),
+    "MUSCL-Hancock": dict(color="grey", marker=".", mfc="none", markersize=markersize),
     "ZS3": dict(
         color="blue",
-        marker="o",
+        marker="s",
         mfc="none",
         markersize=markersize,
         label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$",
     ),
     "ZS3lazy": dict(
-        color="green",
-        marker="o",
+        color="cyan",
+        marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$, lazy",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$, $\overline{\boldsymbol{W}}^{(1)}$",
     ),
     "MM3/1rev/rtol_1e-1": dict(
-        color="blue",
+        color="red",
         marker="s",
         mfc="none",
         markersize=markersize,
         label=r"$4^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=10^{-1}$",
     ),
     "MM3/1rev/rtol_0": dict(
-        color="green",
+        color="magenta",
         marker="s",
         mfc="none",
         markersize=markersize,
         label=r"$4^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=0$",
     ),
     "ZS7": dict(
-        color="red",
-        marker="o",
+        color="blue",
+        marker=".",
         mfc="none",
         markersize=markersize,
         label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$",
     ),
     "ZS7lazy": dict(
-        color="purple",
-        linestyle="--",
-        marker="o",
+        color="cyan",
+        marker=".",
         mfc="none",
         markersize=markersize,
-        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$, lazy",
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$, $\overline{\boldsymbol{W}}^{(1)}$",
     ),
     "MM7/1rev/rtol_1e-1": dict(
         color="red",
-        marker="s",
+        marker=".",
         mfc="none",
         markersize=markersize,
         label=r"$8^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=10^{-1}$",
     ),
     "MM7/1rev/rtol_0": dict(
-        color="purple",
-        linestyle="--",
-        marker="s",
+        color="magenta",
+        marker=".",
         mfc="none",
         markersize=markersize,
         label=r"$8^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=0$",
