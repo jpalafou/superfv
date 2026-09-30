@@ -3,11 +3,12 @@ from functools import partial
 from itertools import product
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from superfv import run_multiple_simulations
 from superfv.initial_conditions import entropy_wave
-from superfv.tools.norms import linf_norm
+from superfv.tools.norms import l1_norm, linf_norm
 
 
 def choose_CFL(p: int, N: int) -> float:
@@ -21,6 +22,7 @@ def choose_CFL(p: int, N: int) -> float:
 
 base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence-2d/"
 plot_path = "benchmarks/entropy-wave-convergence-2d/entropy-wave-convergence-2d.pdf"
+csv_path = "benchmarks/entropy-wave-convergence-2d/entropy-wave-convergence-2d.csv"
 overwrite = False
 
 gamma = 5 / 3
@@ -134,11 +136,19 @@ def plot_error(name, sim):
     idx = sim.params.variable_index_map
     vz0 = sim.snapshot_history[0].w[idx("vz")]
     vz1 = sim.snapshot_history[-1].w[idx("vz")]
-    error = linf_norm(vz1 - vz0)
+    error = vz1 - vz0
 
     # update dataframe
-    data.append(dict(name=name, N=sim.mesh.nx, error=error))
-    df = pd.DataFrame(data)
+    data.append(dict(name=name, N=sim.mesh.nx, L1=l1_norm(error), Linf=linf_norm(error)))
+    df = pd.DataFrame(data).sort_values(["name", "N"])
+    previous = df.groupby("name")[["N", "L1", "Linf"]].shift()
+    for norm in ("L1", "Linf"):
+        # Undefined rates (first resolution or zero error) are left blank.
+        valid = (previous[norm] > 0) & (df[norm] > 0)
+        df[f"{norm}_rate"] = np.log(previous[norm].where(valid) / df[norm].where(valid)) / np.log(
+            df["N"] / previous["N"]
+        )
+    df.to_csv(csv_path, index=False)
 
     # plot error curves of p over N
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -159,7 +169,7 @@ def plot_error(name, sim):
             style["label"] = name
         ax.plot(
             df_name["N"],
-            df_name["error"],
+            df_name["Linf"],
             **(dict(markersize=5, linewidth=2, alpha=0.7) | style),
         )
     ax.legend()
