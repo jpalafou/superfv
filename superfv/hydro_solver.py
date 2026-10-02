@@ -192,6 +192,7 @@ class HydroSolver:
             riemann_solver: Riemann solver literal.
                 "upwind": Upwind density/passive advection with zero momentum and energy fluxes.
                 "llf": Local Lax-Friedrichs solver; robust and diffusive.
+                "hll": Two-wave Harten-Lax-van Leer approximate Riemann solver.
                 "hllc": Contact-resolving HLLC solver; default for Euler runs.
                 "hllc_teyssier": 1D HLLC variant adapted from teyssier/; no passives or CuPy.
             CFL: CFL number for time step calculation.

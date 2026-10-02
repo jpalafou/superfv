@@ -16,7 +16,7 @@ if CUPY_AVAILABLE:
     import cupy as cp  # type: ignore
 
 
-RiemannSolver = Literal["upwind", "llf", "hllc", "hllc_teyssier"]
+RiemannSolver = Literal["upwind", "llf", "hll", "hllc", "hllc_teyssier"]
 
 
 class RiemmannSolverBase(ABC):
@@ -236,6 +236,94 @@ class LLF_RiemannSolver(RiemmannSolverBase):
             double Fpassl{i} = conspassl{i} * v1l;
             double Fpassr{i} = conspassr{i} * v1r;
             Fpass{i} = 0.5 * (Fpassl{i} + Fpassr{i} - smax * (conspassr{i} - conspassl{i}));
+            """
+        return body
+
+
+class HLL_RiemannSolver(RiemmannSolverBase):
+    """Two-wave Harten-Lax-van Leer approximate Riemann solver."""
+
+    def numpy_func(
+        self,
+        wl: np.ndarray,
+        wr: np.ndarray,
+        fluxes: np.ndarray,
+        dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ):
+        ul = np.empty_like(wl)
+        ur = np.empty_like(wr)
+        Fl = np.empty_like(wl)
+        Fr = np.empty_like(wr)
+        csl = np.empty_like(wl[idx("rho")])
+        csr = np.empty_like(wr[idx("rho")])
+
+        prim_to_cons(wl, ul, idx, gamma)
+        prim_to_cons(wr, ur, idx, gamma)
+        prim_to_flux(wl, Fl, idx, dim, gamma)
+        prim_to_flux(wr, Fr, idx, dim, gamma)
+        prim_to_cs(wl, csl, idx, gamma, isothermal, iso_cs)
+        prim_to_cs(wr, csr, idx, gamma, isothermal, iso_cs)
+
+        vl = wl[idx("v" + dim)]
+        vr = wr[idx("v" + dim)]
+        sl = np.minimum(vl - csl, vr - csr)
+        sr = np.maximum(vl + csl, vr + csr)
+        hll_flux = (sr * Fl - sl * Fr + sl * sr * (ur - ul)) / avoid0(sr - sl)
+        fluxes[...] = np.where(
+            (sl >= 0)[None, ...], Fl, np.where((sr <= 0)[None, ...], Fr, hll_flux)
+        )
+
+    def cuda_elementwise_kernel_body(self, npassives: int) -> str:
+        body = """
+        double cl = isothermal ? iso_cs : sqrt(max(gamma * Pl / rhol, 0.0));
+        double cr = isothermal ? iso_cs : sqrt(max(gamma * Pr / rhor, 0.0));
+        double sl = fmin(v1l - cl, v1r - cr);
+        double sr = fmax(v1l + cl, v1r + cr);
+        double denom = sr - sl;
+        double denom_safe = fabs(denom) > 1e-15
+            ? denom : (denom >= 0 ? 1e-15 : -1e-15);
+
+        double El = Pl / (gamma - 1.0)
+            + 0.5 * rhol * (v1l * v1l + v2l * v2l + v3l * v3l);
+        double Er = Pr / (gamma - 1.0)
+            + 0.5 * rhor * (v1r * v1r + v2r * v2r + v3r * v3r);
+        double F1l = rhol * v1l;
+        double F1r = rhor * v1r;
+        double F2l = rhol * v1l * v1l + Pl;
+        double F2r = rhor * v1r * v1r + Pr;
+        double F3l = rhol * v1l * v2l;
+        double F3r = rhor * v1r * v2r;
+        double F4l = rhol * v1l * v3l;
+        double F4r = rhor * v1r * v3r;
+        double FEl = v1l * (El + Pl);
+        double FEr = v1r * (Er + Pr);
+
+        if (sl >= 0.0) {
+            Frho = F1l; Fm1 = F2l; Fm2 = F3l; Fm3 = F4l; FE = FEl;
+        } else if (sr <= 0.0) {
+            Frho = F1r; Fm1 = F2r; Fm2 = F3r; Fm3 = F4r; FE = FEr;
+        } else {
+            Frho = (sr * F1l - sl * F1r + sl * sr * (rhor - rhol)) / denom_safe;
+            Fm1 = (sr * F2l - sl * F2r + sl * sr * (rhor * v1r - rhol * v1l)) / denom_safe;
+            Fm2 = (sr * F3l - sl * F3r + sl * sr * (rhor * v2r - rhol * v2l)) / denom_safe;
+            Fm3 = (sr * F4l - sl * F4r + sl * sr * (rhor * v3r - rhol * v3l)) / denom_safe;
+            FE = (sr * FEl - sl * FEr + sl * sr * (Er - El)) / denom_safe;
+        }
+        """
+        for i in range(npassives):
+            body += f"""
+            double UPl{i} = rhol * passl{i};
+            double UPr{i} = rhor * passr{i};
+            double F_Pl{i} = F1l * passl{i};
+            double F_Pr{i} = F1r * passr{i};
+            if (sl >= 0.0) Fpass{i} = F_Pl{i};
+            else if (sr <= 0.0) Fpass{i} = F_Pr{i};
+            else Fpass{i} = (sr * F_Pl{i} - sl * F_Pr{i}
+                + sl * sr * (UPr{i} - UPl{i})) / denom_safe;
             """
         return body
 
@@ -503,6 +591,8 @@ def get_riemann_solver(solver_type: RiemannSolver, npassives: int) -> RiemmannSo
             return UpwindRiemannSolver(npassives)
         case "llf":
             return LLF_RiemannSolver(npassives)
+        case "hll":
+            return HLL_RiemannSolver(npassives)
         case "hllc":
             return HLLC_RiemannSolver(npassives)
         case "hllc_teyssier":
