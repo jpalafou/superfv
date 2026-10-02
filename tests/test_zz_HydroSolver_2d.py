@@ -21,6 +21,14 @@ from superfv.tools.norms import linf_norm
             flux_quadrature="gauss_legendre",
         ),
         dict(
+            p=3,
+            use_ZS=True,
+            adaptive_dt=True,
+            lazy_primitive_mode="full",
+            flux_quadrature="gauss_legendre",
+            centroid=False,
+        ),
+        dict(
             p=7,
             use_ZS=True,
             adaptive_dt=True,
@@ -59,6 +67,14 @@ def test_sedov(scheme):
             adaptive_dt=True,
             lazy_primitive_mode="adaptive",
             flux_quadrature="gauss_legendre",
+        ),
+        dict(
+            p=3,
+            use_ZS=True,
+            adaptive_dt=True,
+            lazy_primitive_mode="full",
+            flux_quadrature="gauss_legendre",
+            centroid=False,
         ),
         dict(
             p=7,
