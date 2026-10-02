@@ -157,6 +157,7 @@ class HydroSolver:
         adaptive_dt: bool = False,
         adaptive_dt_tol: float = 1e-15,
         theta_denom_tol: float = 1e-15,
+        centroid: bool = True,
         # shock detection params
         eta_max: float = 0.025,
         # NAD params
@@ -287,6 +288,10 @@ class HydroSolver:
             adaptive_dt: If True, enable adaptive time stepping based on Zhang-Shu limiter.
             adaptive_dt_tol: Tolerance for adaptive time stepping.
             theta_denom_tol: Tolerance for denominator in theta calculation.
+            centroid: If True, include the reconstructed cell center in the limiter. If False,
+                use the algebraic interior value from Zhang and Shu (2011), section 5, instead.
+                For p > 1 in multiple dimensions, requires Gauss-Legendre flux quadrature.
+                This changes the limiter samples; CFL and smooth-extrema settings still apply.
 
         Slope limiting parameters (shock detection):
             eta_max: Maximum allowed shock detection parameter. Shock detection is enabled by
@@ -496,6 +501,7 @@ class HydroSolver:
                 theta_denom_tol=theta_denom_tol,
                 include_corners=include_corners,
                 use_global_bounds=use_global_bounds,
+                centroid=centroid,
             ),
             mood_params=MOOD_Parameters(
                 use_MOOD=use_MOOD,

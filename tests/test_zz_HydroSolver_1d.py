@@ -33,6 +33,7 @@ def test_run_does_not_mutate_target_time_list():
         dict(p=1, use_ZS=True, adaptive_dt=True),
         dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive", centroid=False),
         dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
         dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="muscl0", max_revs=3),
         dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", max_revs=7),
@@ -59,6 +60,7 @@ def test_sedov(scheme):
         dict(p=0),
         dict(p=1, use_MUSCL=True),
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive", centroid=False),
     ],
 )
 def test_sedov_with_passive_scalar(scheme):
@@ -107,6 +109,7 @@ def test_sedov_with_passive_scalar(scheme):
         dict(p=1, use_ZS=True, adaptive_dt=True),
         dict(p=2, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
+        dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive", centroid=False),
         dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="adaptive"),
         dict(
             p=7,

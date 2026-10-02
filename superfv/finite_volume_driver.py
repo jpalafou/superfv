@@ -661,6 +661,72 @@ def reconstruct_centroid(
             raise ValueError(f"Unknown flux_recipe: {fv_params.flux_recipe}")
 
 
+def reconstruct_zhang_shu_interior(
+    _q_: ArrayLike,
+    _w_: ArrayLike,
+    _qcc_: ArrayLike,
+    node_dict: Dict[Literal["x", "y", "z"], ArrayLike],
+    idx: VariableIndexMap,
+    mesh: UniformFiniteVolumeMesh,
+    fv_params: FV_SchemeParameters,
+    hydro_params: HydroParameters,
+):
+    """Write the interior value in Zhang and Shu (2011), eq. (5.3), for p > 1.
+
+    Use q* = (qbar - w1 * sum_d mu_d * (q_d^- + q_d^+)) / (1 - 2*w1),
+    with Gauss-Legendre face averages and mu_d proportional to max(|v_d| + c) / h_d.
+    Values are calculated in the variables being limited, including passive scalars.
+    """
+    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
+    xp = cp if cupy else np
+    ndim = len(mesh.active_dims)
+    interior = get_interior_view(mesh.active_dims, mesh.nghost)
+    p = fv_params.p
+
+    if ndim > 1 and fv_params.flux_quadrature != "gauss_legendre":
+        raise ValueError("The Zhang-Shu interior value requires Gauss-Legendre face quadrature.")
+
+    # The smallest Gauss-Lobatto rule exact through degree p has 2*N - 3 >= p.
+    n_lobatto = (p + 4) // 2
+    w1 = 1.0 / (n_lobatto * (n_lobatto - 1))
+    if ndim == 1:
+        dim = mesh.active_dims[0]
+
+        _qcc_[...] = _q_ - w1 * (node_dict[dim][..., 0] + node_dict[dim][..., 1])
+        _qcc_ /= 1.0 - 2.0 * w1
+        return
+    elif ndim == 2:
+        dim1 = mesh.active_dims[0]
+        dim2 = mesh.active_dims[1]
+        h1 = getattr(mesh, "h" + dim1)
+        h2 = getattr(mesh, "h" + dim2)
+        hp = hydro_params
+        weights = xp.tile(_gauss_legendre_weights_cache(p, ndim, cupy), 2)
+
+        cs = xp.empty_like(_w_[interior][idx("rho")])
+        _face_average1_ = xp.empty_like(_q_)
+        _face_average2_ = xp.empty_like(_q_)
+
+        prim_to_cs(_w_[interior], cs, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+
+        a1 = xp.max(xp.abs(_w_[interior][idx("v" + dim1)]) + cs) / h1
+        a2 = xp.max(xp.abs(_w_[interior][idx("v" + dim2)]) + cs) / h2
+        if a1 + a2 <= 0:
+            raise RuntimeError("a1 + a2 is non-positive.")
+
+        mu1 = a1 / (a1 + a2)
+        mu2 = a2 / (a1 + a2)
+
+        perform_quadrature(node_dict[dim1], weights, _face_average1_)
+        perform_quadrature(node_dict[dim2], weights, _face_average2_)
+
+        _qcc_[...] = _q_ - w1 * (mu1 * _face_average1_ + mu2 * _face_average2_)
+        _qcc_ /= 1.0 - 2.0 * w1
+        return
+    elif ndim == 3:
+        raise NotImplementedError("3D Zhang-Shu interior reconstruction is not implemented yet.")
+
+
 def apply_zhang_shu_limiter(
     _q_: ArrayLike,
     _qcc_: ArrayLike,
@@ -704,7 +770,7 @@ def apply_zhang_shu_limiter(
         if dim in active_dims
     }
 
-    # 1) Gather all node arrays to get nodal minima and maxima
+    # 1) Include the centroid or algebraic interior value in the nodal extrema.
     if p > 1:
         _qj_ = xp.concatenate([_qcc_[..., na]] + [node_dict[dim] for dim in active_dims], axis=4)
     else:
@@ -952,7 +1018,7 @@ def update_weno_fluxes(
         "z" is in active_dims.
     _theta_: _u_.shape - Array to which the Zhang-Shu limiter values are written if enabled in
         the FV scheme. Otherwise, can be an empty array.
-    _qcc_: _u_.shape - Scratch array for cell-centered values required if the Zhang-Shu limiter is
+    _qcc_: _u_.shape - Scratch array for the interior value required if the Zhang-Shu limiter is
         enabled in the FV scheme. Otherwise, can be an empty array.
     _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
         in the FV scheme. Must match _u_.shape if the Zhang-Shu limiter is enabled. Otherwise, can
@@ -989,9 +1055,21 @@ def update_weno_fluxes(
 
     # Optionally apply slope-limiting to the nodes
     if fv.zhang_shu_params.use_ZS:
-        # reconstruct cell center
+        # Reconstruct the selected interior value in the variables being limited.
         if fv.p > 1:
-            reconstruct_centroid(_u_, _w_, _qcc_, idx, active_dims, fv, hp, timer)
+            if fv.zhang_shu_params.centroid:
+                reconstruct_centroid(_u_, _w_, _qcc_, idx, active_dims, fv, hp, timer)
+            else:
+                reconstruct_zhang_shu_interior(
+                    _u_ if fv.flux_recipe == "cons_lim_prim" else _w_,
+                    _w_,
+                    _qcc_,
+                    node_dict,
+                    idx,
+                    mesh,
+                    fv,
+                    hp,
+                )
 
         # a priori slope limiting
         apply_zhang_shu_limiter(
@@ -1305,7 +1383,7 @@ def update_fv_fluxes(
         "z" is in active_dims.
     _theta_: _u_.shape - Array to which the Zhang-Shu limiter values are written if enabled in
         the FV scheme. Otherwise, can be an empty array.
-    _qcc_: _u_.shape - Scratch array for cell-centered values required if the Zhang-Shu limiter is
+    _qcc_: _u_.shape - Scratch array for the interior value required if the Zhang-Shu limiter is
         enabled in the FV scheme. Otherwise, can be an empty array.
     _alpha_: _u_.shape - Array to which the smooth extrema detection values are written if enabled
         in the FV scheme. Must match _u_.shape if the Zhang-Shu limiter is enabled. Otherwise, can

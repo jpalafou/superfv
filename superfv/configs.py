@@ -71,6 +71,7 @@ class ZhangShuParameters:
     theta_denom_tol: float = 1e-15
     include_corners: bool = True
     use_global_bounds: bool = False
+    centroid: bool = True
 
     def __post_init__(self):
         if not self.use_ZS:
@@ -414,6 +415,18 @@ class SolverParameters:
             raise ValueError('Flux quadrature must be "none" for 1D simulations.')
         elif self.mesh.ndim != 1 and self.fv_scheme.flux_quadrature == "none":
             raise ValueError('Flux quadrature cannot be "none" for 2D or 3D simulations.')
+
+        if (
+            self.fv_scheme.zhang_shu_params.use_ZS
+            and not self.fv_scheme.zhang_shu_params.centroid
+            and self.fv_scheme.p > 1
+            and self.mesh.ndim > 1
+            and self.fv_scheme.flux_quadrature != "gauss_legendre"
+        ):
+            raise ValueError(
+                'Zhang-Shu centroid=False requires flux_quadrature="gauss_legendre" '
+                "for multidimensional schemes with p > 1."
+            )
 
         if self.fv_scheme.riemann_solver == "hllc_teyssier":
             if self.mesh.ndim != 1:

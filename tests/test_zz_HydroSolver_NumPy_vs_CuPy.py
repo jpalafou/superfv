@@ -109,6 +109,13 @@ def test_square_with_unlimited_schemes(scheme, dims):
             flux_quadrature="gauss_legendre",
         ),
         dict(
+            p=3,
+            use_ZS=True,
+            adaptive_dt=True,
+            flux_quadrature="gauss_legendre",
+            centroid=False,
+        ),
+        dict(
             p=7,
             use_ZS=True,
             adaptive_dt=True,

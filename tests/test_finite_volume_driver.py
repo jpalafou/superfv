@@ -1,3 +1,4 @@
+from itertools import product
 from typing import Literal, Tuple
 
 import numpy as np
@@ -122,42 +123,34 @@ for flux_recipe in ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"]:
 
 
 ZS_configs = []
-for p in [3, 7]:
-    for flux_recipe in [
-        "cons_lim_prim",
-        "cons_prim_lim",
-        "prim_prim_lim",
-    ]:
-        for flux_quad in ["transverse", "gauss_legendre"]:
-            for lazy_prim in [
-                "none",
-                "full",
-                "adaptive",
-            ]:
-                for use_SED in [False, True]:
-                    ZS_configs.append(
-                        FV_SchemeParameters(
-                            name=f"FV{p+1}",
-                            p=p,
-                            flux_recipe=flux_recipe,
-                            flux_quadrature=flux_quad,
-                            lazy_primitive_mode=lazy_prim,
-                            positivity_guard=True,
-                            riemann_solver="hllc",
-                            muscl_params=null_MUSCL,
-                            zhang_shu_params=ZhangShuParameters(
-                                True,
-                                False,
-                                SmoothExtremaDetectionParameters(use_SED),
-                                null_PAD,
-                                [],
-                            ),
-                            mood_params=null_MOOD,
-                            shock_detection_params=ShockDetectionParameters(
-                                lazy_prim == "adaptive", null_PAD
-                            ),
-                        )
-                    )
+for p, flux_recipe, flux_quad, use_SED, centroid in product(
+    [3, 7],
+    ["cons_lim_prim", "cons_prim_lim", "prim_prim_lim"],
+    ["transverse", "gauss_legendre"],
+    [False, True],
+    [False, True],
+):
+    ZS_configs.append(
+        FV_SchemeParameters(
+            name=f"FV{p+1}",
+            p=p,
+            flux_recipe=flux_recipe,
+            flux_quadrature=flux_quad,
+            lazy_primitive_mode=lazy_prim,
+            positivity_guard=True,
+            riemann_solver="hllc",
+            muscl_params=null_MUSCL,
+            zhang_shu_params=ZhangShuParameters(
+                True,
+                False,
+                SmoothExtremaDetectionParameters(use_SED),
+                null_PAD,
+                [],
+            ),
+            mood_params=null_MOOD,
+            shock_detection_params=ShockDetectionParameters(lazy_prim == "adaptive", null_PAD),
+        )
+    )
 
 
 @pytest.mark.parametrize("base_scheme", unlimited_FV_configs + muscl_configs + ZS_configs)
