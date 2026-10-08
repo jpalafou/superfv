@@ -143,6 +143,7 @@ def run_MUSCL_Hancock_sim(
     Nref,
     density_jump,
     target_times,
+    read_only: bool = False,
     **kwargs,
 ):
     case_label = _case_label(Re_base10, Nref, density_jump, target_times)
@@ -157,6 +158,9 @@ def run_MUSCL_Hancock_sim(
         print(f"Failed to load output from '{path}' with: {e}")
         if path.exists():
             print(f"Path '{path}' exists. Returning early.")
+            return None
+        if read_only:
+            print("Read-only mode. Not running simulation. Returning None.")
             return None
 
     sim = HydroSolver(
@@ -194,6 +198,8 @@ def run_superfv_sim(
     Nref,
     density_jump,
     target_times,
+    limiting: bool = True,
+    read_only: bool = False,
     **kwargs,
 ):
     case_label = _case_label(Re_base10, Nref, density_jump, target_times)
@@ -208,6 +214,9 @@ def run_superfv_sim(
         print(f"Failed to load output from '{path}' with: {e}")
         if path.exists():
             print(f"Path '{path}' exists. Returning early.")
+            return None
+        if read_only:
+            print("Read-only mode. Not running simulation. Returning None.")
             return None
 
     sim = HydroSolver(
@@ -224,7 +233,7 @@ def run_superfv_sim(
         xlims=(0.0, 1.0),
         ylims=(0.0, 2.0),
         p=p,
-        use_MOOD=True,
+        use_MOOD=limiting,
         detect_closing_troubles=False,
         cupy=True,
         output_path=path,
@@ -243,6 +252,8 @@ def run_spd_sim(
     Nref,
     density_jump,
     target_times,
+    limiting: bool = True,
+    read_only: bool = False,
     **kwargs,
 ):
     case_label = _case_label(Re_base10, Nref, density_jump, target_times)
@@ -266,7 +277,8 @@ def run_spd_sim(
         cfl_coeff={3: 0.8, 7: 0.5}[p],
         use_cupy=True,
         time_integrator="rk3",
-        scheme="SDFB",
+        scheme="SDFB" if limiting else "SD",
+        FB=limiting,
         fallback="MUSCL",
         slope_limiter="moncen",
         limiting_variables=[0, 4, 5],
@@ -290,6 +302,9 @@ def run_spd_sim(
         print(f"Failed to load output from '{path}' with: {e}")
         if path.exists():
             print(f"Path '{path}' exists. Returning early.")
+            return None
+        if read_only:
+            print("Read-only mode. Not running simulation. Returning None.")
             return None
         sim.output()
 
