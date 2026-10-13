@@ -3,8 +3,7 @@ from functools import partial
 import cupy as cp
 import matplotlib.pyplot as plt
 
-from superfv import HydroSolver, ics
-from superfv.tools.run_helper import run_multiple_simulations
+from superfv import HydroSolver, ics, run_multiple_simulations
 
 N = 768
 P0 = 1.0
@@ -59,12 +58,14 @@ def plot_density(name: str, sim: HydroSolver):
 
     fig, ax = plt.subplots()
     ax.set_aspect("equal")
-    x_faces, y_faces, _ = sim.mesh.faces
+    x_faces, y_faces = map(cp.asnumpy, sim.mesh.faces[:2])
+
+    idx = sim.params.variable_index_map
 
     ax.pcolormesh(
-        cp.asnumpy(x_faces),
-        cp.asnumpy(y_faces),
-        sim.snapshot_history[-1].u[sim.idx("rho"), :, :, 0].T,
+        x_faces,
+        y_faces,
+        sim.snapshot_history[-1].u[idx("rho"), :, :, 0].T,
     )
     cbar = fig.colorbar(ax.collections[0], ax=ax)
     cbar.set_label(r"$\rho$")

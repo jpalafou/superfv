@@ -27,8 +27,8 @@ from superfv.tools.norms import linf_norm
             lazy_primitive_mode="full",
             flux_quadrature="gauss_legendre",
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
-        dict(p=7, use_MOOD=True, fallback_cascade="full", max_revs=7),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="muscl0", max_revs=3),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", max_revs=7),
     ],
 )
 def test_sedov(scheme):
@@ -67,7 +67,9 @@ def test_sedov(scheme):
             lazy_primitive_mode="adaptive",
             flux_quadrature="gauss_legendre",
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade="full", rtol=0, max_revs=64),
+        dict(
+            p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", rtol=0, max_revs=64
+        ),
     ],
 )
 def test_preservation_of_maximum_principle(scheme):
@@ -101,7 +103,7 @@ def test_preservation_of_maximum_principle(scheme):
         dict(p=7),
         dict(p=3, flux_quadrature="gauss_legendre"),
         dict(p=7, flux_quadrature="gauss_legendre"),
-        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="muscl0", max_revs=3),
     ],
 )
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])
@@ -155,7 +157,7 @@ def test_forward_backwards_advection_symmetry(scheme, dim1_dim2):
         dict(p=7),
         dict(p=3, flux_quadrature="gauss_legendre"),
         dict(p=7, flux_quadrature="gauss_legendre"),
-        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="muscl0", max_revs=3),
     ],
 )
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])

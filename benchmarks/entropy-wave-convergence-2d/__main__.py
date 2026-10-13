@@ -3,24 +3,34 @@ from functools import partial
 from itertools import product
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
+from superfv import run_multiple_simulations
 from superfv.initial_conditions import entropy_wave
-from superfv.tools.norms import linf_norm
-from superfv.tools.run_helper import run_multiple_simulations
+from superfv.tools.norms import l1_norm, linf_norm
+
+
+def choose_CFL(p: int, N: int) -> float:
+    cfl = 0.8
+    if p <= 3:
+        return cfl
+    h = 1 / N
+    cfl *= h ** ((p - 3) / (3 + 1))
+    return cfl
+
 
 base_path = "/scratch/gpfs/jp7427/out/entropy-wave-convergence-2d/"
 plot_path = "benchmarks/entropy-wave-convergence-2d/entropy-wave-convergence-2d.pdf"
+csv_path = "benchmarks/entropy-wave-convergence-2d/entropy-wave-convergence-2d.csv"
 overwrite = False
 
 gamma = 5 / 3
-run_params = dict(T=1.0, reduce_CFL=True, q_max=3)
+run_params = dict(t=1.0)
 init_params = dict(
     ic=partial(entropy_wave, gamma=gamma),
     gamma=gamma,
-    PAD={"rho": (0, None), "P": (0, None)},
-    SED=True,
-    log_limiter_scalars=False,
+    use_SED=True,
     skip_trouble_counts=True,
     cupy=True,
 )
@@ -28,71 +38,89 @@ init_params = dict(
 # Loop parameters
 resolutions = [32, 64, 128]
 
-musclhancock = dict(p=1, MUSCL=True, MUSCL_limiter="pp2d")
-apriori = dict(ZS=True, lazy_primitives="adaptive")
-aposteriori = dict(MOOD=True, lazy_primitives="full", MUSCL_limiter="pp2d")
-aposteriori_1rev = dict(cascade="muscl", max_MOOD_iters=1, **aposteriori)
-aposteriori_2revs = dict(cascade="muscl0", max_MOOD_iters=2, **aposteriori)
-aposteriori_3revs = dict(cascade="muscl0", max_MOOD_iters=3, **aposteriori)
+musclhancock = dict(p=1, use_MUSCL=True, MUSCL_limiter="pp2d")
+apriori = dict(use_ZS=True, adaptive_dt=True, flux_quadrature="gauss_legendre")
+aposteriori = dict(
+    use_MOOD=True, lazy_primitive_mode="full", MUSCL_limiter="pp2d", positivity_guard=False
+)
+aposteriori_1rev = dict(fallback_cascade="muscl", max_revs=1, **aposteriori)
+aposteriori_2revs = dict(fallback_cascade="muscl0", max_revs=2, **aposteriori)
+aposteriori_3revs = dict(fallback_cascade="muscl0", max_revs=3, **aposteriori)
 
 configs = {
     "MUSCL-Hancock": musclhancock,
     "MUSCL-RK3": musclhancock,
-    "ZS3": dict(p=3, GL=True, **apriori),
-    "ZS7": dict(p=7, GL=True, **apriori),
-    "ZS3lazy": dict(p=3, GL=True, **(apriori | dict(lazy_primitives="full"))),
-    "ZS7lazy": dict(p=7, GL=True, **(apriori | dict(lazy_primitives="full"))),
-    "MM3/1rev/rtol_1e-1": dict(p=3, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM7/1rev/rtol_1e-1": dict(p=7, NAD_rtol=1e-1, **aposteriori_1rev),
-    "MM3/1rev/rtol_0": dict(p=3, NAD_rtol=0, **aposteriori_1rev),
-    "MM7/1rev/rtol_0": dict(p=7, NAD_rtol=0, **aposteriori_1rev),
+    "ZS3": dict(p=3, lazy_primitive_mode="adaptive", **apriori),
+    "ZS3lazy": dict(p=3, **apriori),
+    "MM3/1rev/rtol_1e-1": dict(p=3, rtol=1e-1, **aposteriori_1rev),
+    "MM3/1rev/rtol_0": dict(p=3, rtol=0, **aposteriori_1rev),
+    "ZS7": dict(p=7, lazy_primitive_mode="adaptive", **apriori),
+    "ZS7lazy": dict(p=7, **apriori),
+    "MM7/1rev/rtol_1e-1": dict(p=7, rtol=1e-1, **aposteriori_1rev),
+    "MM7/1rev/rtol_0": dict(p=7, rtol=0, **aposteriori_1rev),
 }
 
 markersize = 8
 styles = {
-    "MUSCL-RK3": dict(color="grey", marker="s", mfc="none", markersize=markersize),
-    "MUSCL-Hancock": dict(color="grey", marker="o", mfc="none", markersize=markersize),
-    "ZS3": dict(color="blue", marker="o", mfc="none", markersize=markersize, label="ZS4"),
-    "ZS3lazy": dict(
-        color="green", marker="o", mfc="none", markersize=markersize, label="ZS4, lazy"
+    "MUSCL-RK3": dict(
+        color="grey", marker="s", mfc="none", markersize=markersize, label=r"MUSCL$+$SSPRK3"
     ),
-    "MM3/1rev/rtol_1e-1": dict(
+    "MUSCL-Hancock": dict(color="grey", marker=".", mfc="none", markersize=markersize),
+    "ZS3": dict(
         color="blue",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM4, $\epsilon=10^{-1}$",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$",
     ),
-    "MM3/1rev/rtol_0": dict(
-        color="green",
+    "ZS3lazy": dict(
+        color="cyan",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM4, $\epsilon=0$",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ priori}$, $\overline{\boldsymbol{W}}^{(1)}$",
     ),
-    "ZS7": dict(color="red", marker="o", mfc="none", markersize=markersize, label="ZS8"),
-    "ZS7lazy": dict(
-        color="purple",
-        linestyle="--",
-        marker="o",
-        mfc="none",
-        markersize=markersize,
-        label="ZS8, lazy",
-    ),
-    "MM7/1rev/rtol_1e-1": dict(
+    "MM3/1rev/rtol_1e-1": dict(
         color="red",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM8, $\epsilon=10^{-1}$",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=10^{-1}$",
     ),
-    "MM7/1rev/rtol_0": dict(
-        color="purple",
-        linestyle="--",
+    "MM3/1rev/rtol_0": dict(
+        color="magenta",
         marker="s",
         mfc="none",
         markersize=markersize,
-        label=r"MM8, $\epsilon=0$",
+        label=r"$4^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=0$",
+    ),
+    "ZS7": dict(
+        color="blue",
+        marker=".",
+        mfc="none",
+        markersize=markersize,
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$",
+    ),
+    "ZS7lazy": dict(
+        color="cyan",
+        marker=".",
+        mfc="none",
+        markersize=markersize,
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ priori}$, $\overline{\boldsymbol{W}}^{(1)}$",
+    ),
+    "MM7/1rev/rtol_1e-1": dict(
+        color="red",
+        marker=".",
+        mfc="none",
+        markersize=markersize,
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=10^{-1}$",
+    ),
+    "MM7/1rev/rtol_0": dict(
+        color="magenta",
+        marker=".",
+        mfc="none",
+        markersize=markersize,
+        label=r"$8^{\mathrm{th}}$-order $\mathit{a\ posteriori}, \epsilon=0$",
     ),
 }
 
@@ -105,14 +133,22 @@ def plot_error(name, sim):
     name = name.split("/N_")[0]
 
     # measure error
-    idx = sim.variable_index_map
-    vz0 = sim.snapshots[0]["wcc"][idx("vz")]
-    vz1 = sim.snapshots[-1]["wcc"][idx("vz")]
-    error = linf_norm(vz1 - vz0)
+    idx = sim.params.variable_index_map
+    vz0 = sim.snapshot_history[0].w[idx("vz")]
+    vz1 = sim.snapshot_history[-1].w[idx("vz")]
+    error = vz1 - vz0
 
     # update dataframe
-    data.append(dict(name=name, N=sim.mesh.nx, error=error))
-    df = pd.DataFrame(data)
+    data.append(dict(name=name, N=sim.mesh.nx, L1=l1_norm(error), Linf=linf_norm(error)))
+    df = pd.DataFrame(data).sort_values(["name", "N"])
+    previous = df.groupby("name")[["N", "L1", "Linf"]].shift()
+    for norm in ("L1", "Linf"):
+        # Undefined rates (first resolution or zero error) are left blank.
+        valid = (previous[norm] > 0) & (df[norm] > 0)
+        df[f"{norm}_rate"] = np.log(previous[norm].where(valid) / df[norm].where(valid)) / np.log(
+            df["N"] / previous["N"]
+        )
+    df.to_csv(csv_path, index=False)
 
     # plot error curves of p over N
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -133,7 +169,7 @@ def plot_error(name, sim):
             style["label"] = name
         ax.plot(
             df_name["N"],
-            df_name["error"],
+            df_name["Linf"],
             **(dict(markersize=5, linewidth=2, alpha=0.7) | style),
         )
     ax.legend()
@@ -148,10 +184,15 @@ if os.path.exists(plot_path):
 run_multiple_simulations(
     {
         f"{name}/N_{N}/": (
-            dict(nx=N, ny=N, **init_params, **config),
+            dict(nx=N, ny=N, CFL=choose_CFL(config["p"], N), **init_params, **config),
             dict(
-                muscl_hancock=False if name == "MUSCL-RK3" else True,
-                time_degree=2 if name == "MUSCL-RK3" else None,
+                time_integrator=(
+                    "ssprk3"
+                    if "RK3" in name
+                    else (
+                        "muscl_hancock" if config.get("use_MUSCL", False) else "match_p_up_to_rk4"
+                    )
+                ),
                 **run_params,
             ),
         )

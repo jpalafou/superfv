@@ -24,8 +24,8 @@ from superfv import CUPY_AVAILABLE, HydroSolver, ics
             lazy_primitive_mode="full",
             flux_quadrature="gauss_legendre",
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade="muscl0", max_revs=3),
-        dict(p=7, use_MOOD=True, fallback_cascade="full", max_revs=7),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="muscl0", max_revs=3),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", max_revs=7),
     ],
 )
 def test_sedov(scheme):

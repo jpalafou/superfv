@@ -128,12 +128,14 @@ def test_square_with_unlimited_schemes(scheme, dims):
         dict(
             p=7,
             use_MOOD=True,
+            positivity_guard=False,
             fallback_cascade="muscl",
             max_revs=1,
         ),
         dict(
             p=7,
             use_MOOD=True,
+            positivity_guard=False,
             fallback_cascade="muscl",
             max_revs=1,
             flux_recipe="cons_lim_prim",
@@ -141,10 +143,11 @@ def test_square_with_unlimited_schemes(scheme, dims):
         dict(
             p=7,
             use_MOOD=True,
+            positivity_guard=False,
             fallback_cascade="muscl0",
             max_revs=3,
         ),
-        dict(p=7, use_MOOD=True, fallback_cascade="full", max_revs=7),
+        dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", max_revs=7),
     ],
 )
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz"])

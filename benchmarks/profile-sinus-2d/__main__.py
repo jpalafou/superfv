@@ -31,8 +31,10 @@ apriori = dict(
 )
 aposteriori = dict(
     use_MOOD=True,
+    positivity_guard=False,
     lazy_primitive_mode="full",
     MUSCL_limiter="pp2d",
+    detect_closing_troubles=False,
 )
 aposteriori_1rev = dict(
     fallback_cascade="muscl",
