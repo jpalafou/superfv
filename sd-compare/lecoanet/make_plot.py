@@ -106,16 +106,16 @@ if __name__ == "__main__":
     axs[0, 0].set_title(f"dedalus (N={Nref})")
     plot_dedalus(axs[0, 0], dedalus_filename)
 
-    axs[0, 1].set_title(f"FV4 (N=2048, 7.4 hrs)")
+    axs[0, 1].set_title("FV4 (N=2048, 7.4 hrs)")
     plot_fv(axs[0, 1], fv4_nolim)
 
-    axs[0, 2].set_title(f"SD4 (N=2048, 9.4 hrs)")
+    axs[0, 2].set_title("SD4 (N=2048, 9.4 hrs)")
     plot_sd(axs[0, 2], sd4_nolim)
 
-    axs[1, 1].set_title(f"FV4-MM (N=2048, 14.1 hrs)")
+    axs[1, 1].set_title("FV4-MM (N=2048, 14.1 hrs)")
     plot_fv(axs[1, 1], fv4_mm)
 
-    axs[1, 2].set_title(f"SD4-MM (N=2048, 66.8 hrs)")
+    axs[1, 2].set_title("SD4-MM (N=2048, 66.8 hrs)")
     plot_sd(axs[1, 2], sd4_mm)
 
     fig.savefig(
