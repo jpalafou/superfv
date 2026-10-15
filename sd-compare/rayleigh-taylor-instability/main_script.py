@@ -189,7 +189,22 @@ def plot_fv_density(ax, sim, i=-1, **kwargs):
 
 
 def plot_sd_density(ax, sim, uniform=False, **kwargs):
-    raise NotImplementedError("SD plotting not implemented yet")
+    """Plot SD cell averages, or reconstructed density on a uniform grid."""
+    rho = sim.dm.W_cv[0:1]
+    if uniform:
+        x, y = sim.regular_faces()
+        if sim.p > 1:
+            # regular_mesh expects point values rather than cell averages.
+            rho = sim.regular_mesh(sim.compute_sp_from_cv(rho))
+    else:
+        ngh = sim.Nghc
+        x = sim.faces["x"][ngh:-ngh]
+        y = sim.faces["y"][ngh:-ngh]
+    rho = sim.transpose_to_fv(rho)[0]
+
+    x, y, rho = (sim.dm.asnumpy(a) for a in (x, y, rho))
+    ax.pcolormesh(x, y, rho, shading="flat", **kwargs)
+    ax.set_aspect("equal")
 
 
 if __name__ == "__main__":
