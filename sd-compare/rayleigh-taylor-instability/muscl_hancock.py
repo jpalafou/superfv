@@ -1,11 +1,11 @@
 from functools import partial
+from pathlib import Path
 
 import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 from spd.finite_volume.muscl import Slope_limiter as spd_muscl_limiter
 from spd.sdfb_simulator import SDFB_Simulator
-from pathlib import Path
 
 from superfv import HydroSolver, ics
 
@@ -13,7 +13,7 @@ N = 192
 T = 1.95
 
 output = Path("sd-compare/rayleigh-taylor-instability/results/muscl_hancock.png")
-output.unlink() # remove the output file if it exists
+output.unlink(missing_ok=True)  # remove the output file if it exists
 
 
 def run_fv():
