@@ -1,11 +1,16 @@
+import os
+import shutil
 from functools import partial
 from pathlib import Path
 
 import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
+import spd.initial_conditions as spd_ics
+from spd.sdfb_simulator import SPD_Simulator
 
-from superfv import HydroSolver, HydroSolverOutput, ics
+from superfv import HydroSolver, HydroSolverOutput
+from superfv import ics as superfv_ics
 
 gamma = 5 / 3
 t = 1.95
@@ -27,8 +32,8 @@ def nu_from_Re(Re, P_background):
     return nu
 
 
-def run_muscl_hancock_simulation(t, ny, limiter="pp2d", sed=True, P_background=1.0, Re=None):
-    params = f"{t=}_{ny=}_{limiter=}_{sed=}_{P_background=}_Re={Re}"
+def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
+    params = f"{t=}_{ny=}_{sed=}_{P_background=}_Re={Re}"
     path = base_output_path / ("muscl_hancock_" + params)
 
     if path.exists():
@@ -46,7 +51,7 @@ def run_muscl_hancock_simulation(t, ny, limiter="pp2d", sed=True, P_background=1
     nu = nu_from_Re(Re, P_background) if Re is not None else 0.0
 
     sim = HydroSolver(
-        ic=partial(ics.rayleigh_taylor, gamma=gamma, P0=P_background),
+        ic=partial(superfv_ics.rayleigh_taylor, gamma=gamma, P0=P_background),
         gamma=gamma,
         source=gravity,
         nu=nu,
@@ -60,7 +65,7 @@ def run_muscl_hancock_simulation(t, ny, limiter="pp2d", sed=True, P_background=1
         CFL=0.8,
         use_MUSCL=True,
         use_SED=sed,
-        MUSCL_limiter=limiter,
+        MUSCL_limiter="moncen",
         cupy=True,
         output_path=path,
     )
@@ -69,8 +74,8 @@ def run_muscl_hancock_simulation(t, ny, limiter="pp2d", sed=True, P_background=1
     return sim
 
 
-def run_fv_simulation(t, ny, p, rtol, MUSCL_limiter="pp2d", sed=True, P_background=1.0, Re=None):
-    params = f"{t=}_{ny=}_{p=}_{rtol=}_{MUSCL_limiter=}_{sed=}_{P_background=}_Re={Re}"
+def run_fv_simulation(t, ny, p, rtol, omit_vars=None, sed=True, P_background=1.0, Re=None):
+    params = f"{t=}_{ny=}_{p=}_{rtol=}_{omit_vars=}_{sed=}_{P_background=}_Re={Re}"
     path = base_output_path / ("fv_" + params)
 
     if path.exists():
@@ -88,7 +93,7 @@ def run_fv_simulation(t, ny, p, rtol, MUSCL_limiter="pp2d", sed=True, P_backgrou
     nu = nu_from_Re(Re, P_background) if Re is not None else 0.0
 
     sim = HydroSolver(
-        ic=partial(ics.rayleigh_taylor, gamma=gamma, P0=P_background),
+        ic=partial(superfv_ics.rayleigh_taylor, gamma=gamma, P0=P_background),
         gamma=gamma,
         source=gravity,
         nu=nu,
@@ -102,14 +107,70 @@ def run_fv_simulation(t, ny, p, rtol, MUSCL_limiter="pp2d", sed=True, P_backgrou
         CFL=0.8,
         use_MOOD=True,
         positivity_guard=False,
+        omit_vars=omit_vars,
         use_SED=sed,
         rtol=rtol,
-        MUSCL_limiter=MUSCL_limiter,
+        MUSCL_limiter="moncen",
         cupy=True,
         output_path=path,
     )
     sim.run(t)
 
+    return sim
+
+
+def run_sd_simulation(
+    t, ndofy, p, rtol, limiting_variables=[0, 1, 2, 4], sed=True, P_background=1.0, Re=None
+):
+    params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{sed=}_{P_background=}_Re={Re}"
+    path = base_output_path / ("sd_" + params)
+
+    nelemsy = ndofy // (p + 1)
+    nu = nu_from_Re(Re, P_background) if Re is not None else 0.0
+
+    sim = SPD_Simulator(
+        p=p,
+        N=(nelemsy // 4, nelemsy),
+        xlim=(0.0, 0.25),
+        ylim=(0.0, 1.0),
+        gamma=gamma,
+        viscosity=bool(nu),
+        nu=nu,
+        chi=nu,
+        min_rho=1e-12,
+        min_P=1e-12,
+        BC=(
+            ("periodic", "periodic"),
+            ("reflective", "reflective"),
+        ),
+        init_fct=spd_ics.RTI(P0=P_background, gamma=gamma),
+        cfl_coeff={3: 0.8, 7: 0.5}[p],
+        use_cupy=True,
+        time_integrator="rk3",
+        scheme="SDFB",
+        fallback="MUSCL",
+        slope_limiter="moncen",
+        potential=True,
+        limiting_variables=limiting_variables,
+        PAD=True,
+        SED=sed,
+        blending=False,
+        folder=path,
+    )
+
+    try:
+        sim.load_output()
+        print(f"Loaded output from '{path}'")
+        return sim
+    except Exception as e:
+        print(f"Failed to load output from '{path}' with: {e}")
+        if os.path.exists(path):
+            print(f"Removing bad output at '{path}'")
+            shutil.rmtree(path)
+
+    sim.output()
+    sim.perform_time_evolution(t)
+    sim.output()
     return sim
 
 
@@ -125,6 +186,10 @@ def plot_fv_density(ax, sim, i=-1, **kwargs):
 
     ax.pcolormesh(x, y, rho.T, shading="flat", **kwargs)
     ax.set_aspect("equal")
+
+
+def plot_sd_density(ax, sim, uniform=False, **kwargs):
+    raise NotImplementedError("SD plotting not implemented yet")
 
 
 if __name__ == "__main__":
