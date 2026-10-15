@@ -1,4 +1,3 @@
-import os
 import shutil
 from functools import partial
 from pathlib import Path
@@ -15,7 +14,7 @@ from superfv import ics as superfv_ics
 gamma = 5 / 3
 t = 1.95
 
-base_output_path = Path("/scratch/gpfs/jp7427/scratch/gpfs/jp7427/FVvsSD/rti2")
+base_output_path = Path("/scratch/gpfs/jp7427/FVvsSD/rti2")
 output_plot = Path("sd-compare/rayleigh-taylor-instability/results/test.png")
 output_plot.unlink(missing_ok=True)  # remove the output file if it exists
 
@@ -36,8 +35,15 @@ def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
     params = f"{t=}_{ny=}_{sed=}_{P_background=}_Re={Re}"
     path = base_output_path / ("muscl_hancock_" + params)
 
-    if path.exists():
-        return HydroSolverOutput(path)
+    try:
+        sim = HydroSolverOutput(path)
+        print(f"Loaded superfv output from '{path}'")
+        return sim
+    except Exception:
+        if path.exists():
+            print(f"Removing bad superfv output at '{path}'")
+            shutil.rmtree(path)
+        print(f"Running superfv simulation with output path '{path}'")
 
     def gravity(idx, u, *, xp):
         gx = 0.0
@@ -74,12 +80,19 @@ def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
     return sim
 
 
-def run_fv_simulation(t, ny, p, rtol, omit_vars=None, sed=True, P_background=1.0, Re=None):
-    params = f"{t=}_{ny=}_{p=}_{rtol=}_{omit_vars=}_{sed=}_{P_background=}_Re={Re}"
+def run_fv_simulation(t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None):
+    params = f"{t=}_{ny=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
     path = base_output_path / ("fv_" + params)
 
-    if path.exists():
-        return HydroSolverOutput(path)
+    try:
+        sim = HydroSolverOutput(path)
+        print(f"Loaded superfv output from '{path}'")
+        return sim
+    except Exception:
+        if path.exists():
+            print(f"Removing bad superfv output at '{path}'")
+            shutil.rmtree(path)
+        print(f"Running superfv simulation with output path '{path}'")
 
     def gravity(idx, u, *, xp):
         gx = 0.0
@@ -107,7 +120,7 @@ def run_fv_simulation(t, ny, p, rtol, omit_vars=None, sed=True, P_background=1.0
         CFL=0.8,
         use_MOOD=True,
         positivity_guard=False,
-        omit_vars=omit_vars,
+        omit_vars=None if vx_vy_nad else ["vx", "vy"],
         use_SED=sed,
         rtol=rtol,
         MUSCL_limiter="moncen",
@@ -119,10 +132,8 @@ def run_fv_simulation(t, ny, p, rtol, omit_vars=None, sed=True, P_background=1.0
     return sim
 
 
-def run_sd_simulation(
-    t, ndofy, p, rtol, limiting_variables=[0, 1, 2, 4], sed=True, P_background=1.0, Re=None
-):
-    params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{sed=}_{P_background=}_Re={Re}"
+def run_sd_simulation(t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None):
+    params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
     path = base_output_path / ("sd_" + params)
 
     nelemsy = ndofy // (p + 1)
@@ -151,22 +162,24 @@ def run_sd_simulation(
         fallback="MUSCL",
         slope_limiter="moncen",
         potential=True,
-        limiting_variables=limiting_variables,
+        NAD="",
+        tolerance=rtol,
+        limiting_variables=[0, 1, 2, 4] if vx_vy_nad else [0, 4],
         PAD=True,
         SED=sed,
         blending=False,
-        folder=path,
+        folder=str(path),
     )
 
     try:
         sim.load_output()
-        print(f"Loaded output from '{path}'")
+        print(f"Loaded spd output from '{path}'")
         return sim
-    except Exception as e:
-        print(f"Failed to load output from '{path}' with: {e}")
-        if os.path.exists(path):
-            print(f"Removing bad output at '{path}'")
+    except Exception:
+        if path.exists():
+            print(f"Removing bad spd output at '{path}'")
             shutil.rmtree(path)
+        print(f"Running spd simulation with output path '{path}'")
 
     sim.output()
     sim.perform_time_evolution(t)
@@ -188,8 +201,7 @@ def plot_fv_density(ax, sim, i=-1, **kwargs):
     ax.set_aspect("equal")
 
 
-def plot_sd_density(ax, sim, uniform=False, **kwargs):
-    """Plot SD cell averages, or reconstructed density on a uniform grid."""
+def get_sd_density_array(sim, uniform=False):
     rho = sim.dm.W_cv[0:1]
     if uniform:
         x, y = sim.regular_faces()
@@ -201,31 +213,84 @@ def plot_sd_density(ax, sim, uniform=False, **kwargs):
         x = sim.faces["x"][ngh:-ngh]
         y = sim.faces["y"][ngh:-ngh]
     rho = sim.transpose_to_fv(rho)[0]
+    return rho, x, y
+
+
+def plot_sd_density(ax, sim, uniform=False, **kwargs):
+    rho, x, y = get_sd_density_array(sim, uniform=uniform)
 
     x, y, rho = (sim.dm.asnumpy(a) for a in (x, y, rho))
     ax.pcolormesh(x, y, rho, shading="flat", **kwargs)
     ax.set_aspect("equal")
 
 
+def get_fv_rho_maxmin(sim):
+    rho = sim.snapshot_history[-1].u[sim.params.variable_index_map("rho"), :, :, 0]
+    return (rho.max(), rho.min())
+
+
+def get_sd_rho_maxmin(sim, uniform=False):
+    rho, _, _ = get_sd_density_array(sim, uniform=uniform)
+    return (rho.max(), rho.min())
+
+
+def get_simulation_rho_maxmin(sims, uniform_sd=False):
+    maxmins = [
+        (
+            get_fv_rho_maxmin(sim)
+            if isinstance(sim, HydroSolver) or isinstance(sim, HydroSolverOutput)
+            else get_sd_rho_maxmin(sim, uniform_sd)
+        )
+        for sim in sims
+    ]
+    rhomax = max(x[0] for x in maxmins)
+    rhomin = min(x[1] for x in maxmins)
+    return rhomax, rhomin
+
+
 if __name__ == "__main__":
-    sim1 = run_muscl_hancock_simulation(t=t, ny=768)
-    sim2 = run_fv_simulation(t=t, ny=768, p=3, rtol=1e-5)
-    sim3 = run_fv_simulation(t=t, ny=768, p=3, rtol=1e-3)
-    sim4 = run_fv_simulation(t=t, ny=768, p=3, rtol=1e-1)
+    N = 768
 
-    rhomin = min(
-        sim.snapshot_history[-1].u[sim1.params.variable_index_map("rho")].min()
-        for sim in [sim1, sim2, sim3, sim4]
-    )
-    rhomax = max(
-        sim.snapshot_history[-1].u[sim1.params.variable_index_map("rho")].max()
-        for sim in [sim1, sim2, sim3, sim4]
-    )
+    sim1 = run_muscl_hancock_simulation(t=t, ny=N)
+    sim2 = run_fv_simulation(t=t, ny=N, p=3, rtol=1e-5)
+    sim3 = run_fv_simulation(t=t, ny=N, p=3, rtol=1e-3)
+    sim4 = run_fv_simulation(t=t, ny=N, p=3, rtol=1e-1)
+    sim5 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5)
+    sim6 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3)
+    sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1)
+    sim_list = [sim1, sim2, sim3, sim4, sim5, sim6, sim7]
 
-    fig, axs = plt.subplots(1, 4, figsize=(16, 16), sharex=True, sharey=True)
-    plot_fv_density(axs[0], sim1, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_fv_density(axs[1], sim2, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_fv_density(axs[2], sim3, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_fv_density(axs[3], sim4, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    uniform_sd = True
 
+    print("Computing global min/max density for color scaling...")
+    rhomax, rhomin = get_simulation_rho_maxmin(sim_list, uniform_sd=uniform_sd)
+    print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
+
+    print("Plotting results...")
+    fig, axs = plt.subplots(2, 4, figsize=(8, 16), sharex=True, sharey=True)
+
+    axs[0, 0].set_title("MUSCL-Hancock")
+    plot_fv_density(axs[0, 0], sim1, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[0, 1].set_title(r"FV4, $\epsilon=10^{-5}$")
+    plot_fv_density(axs[0, 1], sim2, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[0, 2].set_title(r"FV4, $\epsilon=10^{-3}$")
+    plot_fv_density(axs[0, 2], sim3, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[0, 3].set_title(r"FV4, $\epsilon=10^{-1}$")
+    plot_fv_density(axs[0, 3], sim4, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[1, 1].set_title(r"SD4, $\epsilon=10^{-5}$")
+    plot_sd_density(axs[1, 1], sim5, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[1, 2].set_title(r"SD4, $\epsilon=10^{-3}$")
+    plot_sd_density(axs[1, 2], sim6, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[1, 3].set_title(r"SD4, $\epsilon=10^{-1}$")
+    plot_sd_density(axs[1, 3], sim7, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    print("Saving figure...")
     fig.savefig(output_plot, dpi=300)
+
+    print("Done!")
