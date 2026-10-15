@@ -2,6 +2,7 @@ import pickle
 import shutil
 import time
 import warnings
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 from types import ModuleType
@@ -867,74 +868,78 @@ class HydroSolver:
             ),
         )
 
-    def _start_timer(self, cat: str, sync: bool = True):
-        if self.params.profile or cat == "take_step":
-            self.step_summary.timer.start(cat, self.params.cupy and sync)
-
-    def _stop_timer(self, cat: str, sync: bool = True):
-        if self.params.profile or cat == "take_step":
-            self.step_summary.timer.stop(cat, self.params.cupy and sync)
+    @contextmanager
+    def _time(self, cat: str, sync: bool = True):
+        enabled = self.params.profile or cat == "take_step"
+        timer = self.step_summary.timer
+        cuda_sync = self.params.cupy and sync
+        if enabled:
+            timer.start(cat, cuda_sync)
+        try:
+            yield
+        finally:
+            if enabled:
+                timer.stop(cat, cuda_sync)
 
     def _take_snapshot(self):
-        self._start_timer("take_snapshot")  # TIMER START
-        params = self.params
-        idx = params.variable_index_map
-        hp = params.hydro
-        output_path = params.output_path
+        with self._time("take_snapshot"):
+            params = self.params
+            idx = params.variable_index_map
+            hp = params.hydro
+            output_path = params.output_path
 
-        u = self.arrays["u"]
-        w = self.arrays["w"]
+            u = self.arrays["u"]
+            w = self.arrays["w"]
 
-        cons_to_prim(u, w, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+            cons_to_prim(u, w, idx, hp.gamma, hp.isothermal, hp.iso_cs)
 
-        if output_path is None:
-            path = None
-        else:
-            n = len(self.snapshot_history)
-            ndigits = params.output_n_digits
-            path = output_path / f"output_{n:0{ndigits}d}.pkl"
+            if output_path is None:
+                path = None
+            else:
+                n = len(self.snapshot_history)
+                ndigits = params.output_n_digits
+                path = output_path / f"output_{n:0{ndigits}d}.pkl"
 
-        snapshot = Snapshot(
-            t=self.t,
-            data=SnapshotData(
-                u=self.arrays.get_numpy_copy("u"),
-                w=self.arrays.get_numpy_copy("w"),
-                has_shock=(
-                    self.arrays.get_numpy_copy("has_shock_log")
-                    if params.fv_scheme.shock_detection_params.use_shock_detection
-                    else np.empty((0,))
+            snapshot = Snapshot(
+                t=self.t,
+                data=SnapshotData(
+                    u=self.arrays.get_numpy_copy("u"),
+                    w=self.arrays.get_numpy_copy("w"),
+                    has_shock=(
+                        self.arrays.get_numpy_copy("has_shock_log")
+                        if params.fv_scheme.shock_detection_params.use_shock_detection
+                        else np.empty((0,))
+                    ),
+                    theta=(
+                        self.arrays.get_numpy_copy("theta_log")
+                        if params.fv_scheme.zhang_shu_params.use_ZS
+                        else np.empty((0,))
+                    ),
+                    troubles=(
+                        self.arrays.get_numpy_copy("troubles_log")
+                        if params.fv_scheme.mood_params.use_MOOD
+                        else np.empty((0,))
+                    ),
+                    cascade_idx=(
+                        self.arrays.get_numpy_copy("cascade_idx_log")
+                        if params.fv_scheme.mood_params.use_MOOD
+                        else np.empty((0,))
+                    ),
                 ),
-                theta=(
-                    self.arrays.get_numpy_copy("theta_log")
-                    if params.fv_scheme.zhang_shu_params.use_ZS
-                    else np.empty((0,))
-                ),
-                troubles=(
-                    self.arrays.get_numpy_copy("troubles_log")
-                    if params.fv_scheme.mood_params.use_MOOD
-                    else np.empty((0,))
-                ),
-                cascade_idx=(
-                    self.arrays.get_numpy_copy("cascade_idx_log")
-                    if params.fv_scheme.mood_params.use_MOOD
-                    else np.empty((0,))
-                ),
-            ),
-            path=path,
-        )
+                path=path,
+            )
 
-        self.bonus_snapshot_routine(snapshot)
+            self.bonus_snapshot_routine(snapshot)
 
-        if snapshot.path is not None:
-            if len(self.step_history) > 1:
-                print()  # for better separation of snapshot logs in the terminal
+            if snapshot.path is not None:
+                if len(self.step_history) > 1:
+                    print()  # for better separation of snapshot logs in the terminal
 
-            with open(snapshot.path.parent / "output_times.txt", "a") as f:
-                f.write(f"{snapshot.path.name},{snapshot.t}\n")
-            snapshot.dump(params.discard_after_writing)
+                with open(snapshot.path.parent / "output_times.txt", "a") as f:
+                    f.write(f"{snapshot.path.name},{snapshot.t}\n")
+                snapshot.dump(params.discard_after_writing)
 
-        self.snapshot_history.append(snapshot)
-        self._stop_timer("take_snapshot")  # TIMER STOP
+            self.snapshot_history.append(snapshot)
 
     def _write_params_files(self):
         output_path = self.params.output_path
@@ -992,101 +997,96 @@ class HydroSolver:
     # ODE solver functions
 
     def f(self, t: float, u: ArrayLike, dt: float, hancock: bool = False) -> ArrayLike:
-        self._start_timer("f")  # TIMER START
-        params = self.params
-        idx = params.variable_index_map
-        base_scheme = params.fv_scheme
-        use_shock_detection = base_scheme.shock_detection_params.use_shock_detection
-        bc_params = params.bc
-        hydro_params = params.hydro
-        mesh = self.mesh
-        active_dims = params.mesh.active_dims
-        arrays = self.arrays
+        with self._time("f"):
+            params = self.params
+            idx = params.variable_index_map
+            base_scheme = params.fv_scheme
+            use_shock_detection = base_scheme.shock_detection_params.use_shock_detection
+            bc_params = params.bc
+            hydro_params = params.hydro
+            mesh = self.mesh
+            active_dims = params.mesh.active_dims
+            arrays = self.arrays
 
-        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-            update_fv_workspace(
-                u,
-                arrays["_u_"],
-                arrays["_w_"],
-                arrays["_w1_"],
-                arrays["_has_shock_"] if use_shock_detection else np.array([]),
-                t,
-                idx,
-                mesh,
-                base_scheme,
-                bc_params,
-                hydro_params,
-                self.step_summary.timer if self.params.profile else None,
-            )
-
-            update_fv_fluxes(
-                arrays["_u_"],
-                arrays["_w_"],
-                arrays["_w1_"],
-                arrays["_F_"] if "x" in active_dims else np.array([]),
-                arrays["_G_"] if "y" in active_dims else np.array([]),
-                arrays["_H_"] if "z" in active_dims else np.array([]),
-                arrays["_theta_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
-                arrays["_qcc_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
-                arrays["_alpha_"],
-                idx,
-                active_dims,
-                mesh,
-                base_scheme,
-                hydro_params,
-                dt if hancock else 0.0,
-                self.step_summary.timer if self.params.profile else None,
-            )
-
-            # Compute source term
-            if self.params.source is not None:
-                arrays["source"][...] = self.params.source(idx, u, xp=self.xp)
-
-            if base_scheme.mood_params.use_MOOD:
-                self._start_timer("mood_loop")  # TIMER START
-                mood_loop(
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                update_fv_workspace(
+                    u,
                     arrays["_u_"],
                     arrays["_w_"],
                     arrays["_w1_"],
-                    arrays["_unew_"],
-                    arrays["_wnew_"],
-                    arrays["_alpha_"],
-                    np.array([]),  # fallback schemes could in principle use ZS
-                    np.array([]),  # fallback schemes could in principle use ZS
-                    arrays["_troubles_"],
-                    arrays["revisable_troubles"],
-                    arrays["_cascade_idx_"],
-                    arrays["_F_"] if "x" in active_dims else np.array([]),
-                    arrays["_G_"] if "y" in active_dims else np.array([]),
-                    arrays["_H_"] if "z" in active_dims else np.array([]),
-                    arrays["_F_fallback_"] if "x" in active_dims else np.array([]),
-                    arrays["_G_fallback_"] if "y" in active_dims else np.array([]),
-                    arrays["_H_fallback_"] if "z" in active_dims else np.array([]),
-                    arrays["source"],
-                    idx,
+                    arrays["_has_shock_"] if use_shock_detection else np.array([]),
                     t,
-                    dt,
+                    idx,
                     mesh,
                     base_scheme,
                     bc_params,
                     hydro_params,
-                    self.substep_summary,
                     self.step_summary.timer if self.params.profile else None,
                 )
-                self._stop_timer("mood_loop")  # TIMER STOP
 
-        try:
-            self._start_timer("compute_dudt")  # TIMER START
-            return compute_fv_dudt(
-                arrays["F"] if "x" in active_dims else np.array([]),
-                arrays["G"] if "y" in active_dims else np.array([]),
-                arrays["H"] if "z" in active_dims else np.array([]),
-                arrays["source"],
-                mesh,
-            )
-        finally:
-            self._stop_timer("compute_dudt")  # TIMER STOP
-            self._stop_timer("f")  # TIMER STOP
+                update_fv_fluxes(
+                    arrays["_u_"],
+                    arrays["_w_"],
+                    arrays["_w1_"],
+                    arrays["_F_"] if "x" in active_dims else np.array([]),
+                    arrays["_G_"] if "y" in active_dims else np.array([]),
+                    arrays["_H_"] if "z" in active_dims else np.array([]),
+                    arrays["_theta_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
+                    arrays["_qcc_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
+                    arrays["_alpha_"],
+                    idx,
+                    active_dims,
+                    mesh,
+                    base_scheme,
+                    hydro_params,
+                    dt if hancock else 0.0,
+                    self.step_summary.timer if self.params.profile else None,
+                )
+
+                # Compute source term
+                if self.params.source is not None:
+                    arrays["source"][...] = self.params.source(idx, u, xp=self.xp)
+
+                if base_scheme.mood_params.use_MOOD:
+                    with self._time("mood_loop"):
+                        mood_loop(
+                            arrays["_u_"],
+                            arrays["_w_"],
+                            arrays["_w1_"],
+                            arrays["_unew_"],
+                            arrays["_wnew_"],
+                            arrays["_alpha_"],
+                            np.array([]),  # fallback schemes could in principle use ZS
+                            np.array([]),  # fallback schemes could in principle use ZS
+                            arrays["_troubles_"],
+                            arrays["revisable_troubles"],
+                            arrays["_cascade_idx_"],
+                            arrays["_F_"] if "x" in active_dims else np.array([]),
+                            arrays["_G_"] if "y" in active_dims else np.array([]),
+                            arrays["_H_"] if "z" in active_dims else np.array([]),
+                            arrays["_F_fallback_"] if "x" in active_dims else np.array([]),
+                            arrays["_G_fallback_"] if "y" in active_dims else np.array([]),
+                            arrays["_H_fallback_"] if "z" in active_dims else np.array([]),
+                            arrays["source"],
+                            idx,
+                            t,
+                            dt,
+                            mesh,
+                            base_scheme,
+                            bc_params,
+                            hydro_params,
+                            self.substep_summary,
+                            self.step_summary.timer if self.params.profile else None,
+                        )
+
+            with self._time("compute_dudt"):
+                return compute_fv_dudt(
+                    arrays["F"] if "x" in active_dims else np.array([]),
+                    arrays["G"] if "y" in active_dims else np.array([]),
+                    arrays["H"] if "z" in active_dims else np.array([]),
+                    arrays["source"],
+                    mesh,
+                )
 
     def _summarize_substep(self):
         Step_summary = self.step_summary
@@ -1194,10 +1194,8 @@ class HydroSolver:
 
     def _open_step(self):
         self._update_log_arrays("reset")
-        self._start_timer("take_step")  # TIMER START
 
     def _close_step(self, take_snapshot: bool):
-        self._stop_timer("take_step")  # TIMER STOP
         self._update_log_arrays("substep_average")
         self._summarize_step(take_snapshot)
 
@@ -1300,25 +1298,23 @@ class HydroSolver:
         unew = arrays["unew"]
 
         # Compute dt
-        self._start_timer("compute_dt")  # TIMER START
-        dt = compute_fv_dt(u, idx, mesh, params.hydro)
-        self._check_dt(dt)
-        if dt_min is not None:
-            dt = min(dt, dt_min)
-        self._stop_timer("compute_dt")  # TIMER STOP
+        with self._time("compute_dt"):
+            dt = compute_fv_dt(u, idx, mesh, params.hydro)
+            self._check_dt(dt)
+            if dt_min is not None:
+                dt = min(dt, dt_min)
 
         # Compute new state
-        self._start_timer("update_unew")  # TIMER START
-        self._update_unew(t, u, dt, time_integrator)
+        with self._time("update_unew"):
+            self._update_unew(t, u, dt, time_integrator)
 
-        # Revise time-step size if needed
-        if self.params.fv_scheme.zhang_shu_params.adaptive_dt:
-            while self._check_unew_for_dt_revision():
-                dt /= 2
-                self._check_dt(dt)
-                self._update_unew(t, u, dt, time_integrator)
-                self.step_summary.n_dt_revisions += 1
-        self._stop_timer("update_unew")  # TIMER STOP
+            # Revise time-step size if needed
+            if self.params.fv_scheme.zhang_shu_params.adaptive_dt:
+                while self._check_unew_for_dt_revision():
+                    dt /= 2
+                    self._check_dt(dt)
+                    self._update_unew(t, u, dt, time_integrator)
+                    self.step_summary.n_dt_revisions += 1
 
         # Update the state
         u[...] = unew
@@ -1386,7 +1382,8 @@ class HydroSolver:
             ) or snapshot_mode == "every"
 
             self._open_step()
-            self._take_step(time_integrator)
+            with self._time("take_step"):
+                self._take_step(time_integrator)
             self._close_step(take_snapshot_this_step)
 
             if print_update and (i % print_frequency == 0 or i == n):
@@ -1453,15 +1450,17 @@ class HydroSolver:
 
         while target_times:
             self._open_step()
-            self._take_step(
-                time_integrator, dt_min=None if allow_overshoot else target_times[0] - self.t
-            )
+            with self._time("take_step"):
+                self._take_step(
+                    time_integrator,
+                    dt_min=None if allow_overshoot else target_times[0] - self.t,
+                )
 
-            take_snapshot_this_step = snapshot_mode == "every"
-            if self.t >= target_times[0]:
-                if snapshot_mode == "target":
-                    take_snapshot_this_step = True
-                target_times.pop(0)
+                take_snapshot_this_step = snapshot_mode == "every"
+                if self.t >= target_times[0]:
+                    if snapshot_mode == "target":
+                        take_snapshot_this_step = True
+                    target_times.pop(0)
             self._close_step(take_snapshot_this_step)
 
             n_steps = self.step_history[-1].step
