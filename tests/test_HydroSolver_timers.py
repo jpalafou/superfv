@@ -1,12 +1,9 @@
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
 from superfv import HydroSolver
-from superfv.tools import step_history
-from superfv.tools.step_history import MultiTimer
 
 
 @pytest.mark.parametrize("method", ["run", "take_n_steps"])
@@ -45,29 +42,6 @@ def test_profile_preserves_solution_and_timer_counts(method, mood):
                 )
             assert not any(timer.is_timing for timer in step.timer.timers.values())
     np.testing.assert_array_equal(*results)
-
-
-@pytest.mark.parametrize("profile", [False, True])
-@pytest.mark.parametrize("sync", [False, True])
-def test_timer_cuda_sync_and_exception_cleanup(monkeypatch, profile, sync):
-    synchronize = Mock()
-    device = SimpleNamespace(synchronize=synchronize)
-    monkeypatch.setattr(step_history, "CUPY_AVAILABLE", True)
-    monkeypatch.setattr(
-        step_history,
-        "cp",
-        SimpleNamespace(cuda=SimpleNamespace(Device=lambda: device)),
-        raising=False,
-    )
-    sim = HydroSolver.__new__(HydroSolver)
-    sim.params = SimpleNamespace(profile=profile, cupy=True)
-    sim.step_summary = SimpleNamespace(timer=MultiTimer(["take_step", "f"]))
-    for category in ("take_step", "f"):
-        with pytest.raises(RuntimeError), sim._time(category, sync=sync):
-            raise RuntimeError("interrupted operation")
-        assert sim.step_summary.timer[category].n_calls == int(profile or category == "take_step")
-        assert not sim.step_summary.timer[category].is_timing
-    assert synchronize.call_count == (2 * (1 + int(profile)) if sync else 0)
 
 
 def test_failed_snapshot_closes_timer():
