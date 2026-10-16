@@ -132,8 +132,12 @@ def run_fv_simulation(t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0
     return sim
 
 
-def run_sd_simulation(t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None):
+def run_sd_simulation(
+    t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=False
+):
     params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
+    if nad_cfl:
+        params += "_nad_cfl"
     path = base_output_path / ("sd_" + params)
 
     nelemsy = ndofy // (p + 1)
@@ -164,6 +168,7 @@ def run_sd_simulation(t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=
         potential=True,
         NAD="",
         tolerance=rtol,
+        NAD_cfl=nad_cfl,
         limiting_variables=[0, 1, 2, 4] if vx_vy_nad else [0, 4],
         PAD=True,
         SED=sed,
@@ -258,7 +263,10 @@ if __name__ == "__main__":
     sim5 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5)
     sim6 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3)
     sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1)
-    sim_list = [sim1, sim2, sim3, sim4, sim5, sim6, sim7]
+    sim8 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, nad_cfl=True)
+    sim9 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, nad_cfl=True)
+    sim10 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, nad_cfl=True)
+    sim_list = [sim1, sim2, sim3, sim4, sim5, sim6, sim7, sim8, sim9, sim10]
 
     uniform_sd = True
 
@@ -267,7 +275,7 @@ if __name__ == "__main__":
     print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
 
     print("Plotting results...")
-    fig, axs = plt.subplots(2, 4, figsize=(8, 16), sharex=True, sharey=True)
+    fig, axs = plt.subplots(3, 4, figsize=(8, 24), sharex=True, sharey=True)
 
     axs[0, 0].set_title("MUSCL-Hancock")
     plot_fv_density(axs[0, 0], sim1, cmap="afmhot", vmin=rhomin, vmax=rhomax)
@@ -289,6 +297,17 @@ if __name__ == "__main__":
 
     axs[1, 3].set_title(r"SD4, $\epsilon=10^{-1}$")
     plot_sd_density(axs[1, 3], sim7, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[2, 1].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-5}$")
+    plot_sd_density(axs[2, 1], sim8, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[2, 2].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-3}$")
+    plot_sd_density(axs[2, 2], sim9, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    axs[2, 3].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-1}$")
+    plot_sd_density(axs[2, 3], sim10, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+
+    plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
     print("Saving figure...")
     fig.savefig(output_plot, dpi=300)
