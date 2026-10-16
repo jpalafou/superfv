@@ -262,13 +262,36 @@ if __name__ == "__main__":
     sim4 = run_fv_simulation(t=t, ny=N, p=7, rtol=1e-5)
     sim5 = run_fv_simulation(t=t, ny=N, p=7, rtol=1e-3)
     sim6 = run_fv_simulation(t=t, ny=N, p=7, rtol=1e-1)
-    sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, nad_cfl=True)
-    sim8 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, nad_cfl=True)
-    sim9 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, nad_cfl=True)
-    sim10 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5, nad_cfl=True)
-    sim11 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3, nad_cfl=True)
-    sim12 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-1, nad_cfl=True)
-    sim_list = [sim1, sim2, sim3, sim4, sim5, sim6, sim7, sim8, sim9, sim10, sim11, sim12]
+    sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5)
+    sim8 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3)
+    sim9 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1)
+    sim10 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5)
+    sim11 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3)
+    sim12 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, nad_cfl=True)
+    sim13 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, nad_cfl=True)
+    sim14 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, nad_cfl=True)
+    sim15 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5, nad_cfl=True)
+    sim16 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3, nad_cfl=True)
+    sim17 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-1, nad_cfl=True)
+    sim_list = [
+        sim1,
+        sim2,
+        sim3,
+        sim4,
+        sim5,
+        sim6,
+        sim7,
+        sim8,
+        sim9,
+        sim10,
+        sim11,
+        sim12,
+        sim13,
+        sim14,
+        sim15,
+        sim16,
+        sim17,
+    ]
 
     uniform_sd = False
 
@@ -277,7 +300,7 @@ if __name__ == "__main__":
     print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
 
     print("Plotting results...")
-    fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
+    fig, axs = plt.subplots(3, 6, figsize=(15, 18), sharex=True, sharey=True)
 
     axs[0, 0].set_title(r"FV4, $\epsilon=10^{-5}$")
     plot_fv_density(axs[0, 0], sim1, cmap="afmhot", vmin=rhomin, vmax=rhomax)
@@ -292,18 +315,31 @@ if __name__ == "__main__":
     axs[0, 5].set_title(r"FV8, $\epsilon=10^{-1}$")
     plot_fv_density(axs[0, 5], sim6, cmap="afmhot", vmin=rhomin, vmax=rhomax)
 
-    axs[1, 0].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-5}$")
+    axs[1, 0].set_title(r"SD4, $\epsilon=10^{-5}$")
     plot_sd_density(axs[1, 0], sim7, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[1, 1].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-3}$")
+    axs[1, 1].set_title(r"SD4, $\epsilon=10^{-3}$")
     plot_sd_density(axs[1, 1], sim8, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[1, 2].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-1}$")
+    axs[1, 2].set_title(r"SD4, $\epsilon=10^{-1}$")
     plot_sd_density(axs[1, 2], sim9, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[1, 3].set_title(r"SD8, $\epsilon_{\Delta x}=10^{-5}$")
+    axs[1, 3].set_title(r"SD8, $\epsilon=10^{-5}$")
     plot_sd_density(axs[1, 3], sim10, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[1, 4].set_title(r"SD8, $\epsilon_{\Delta x}=10^{-3}$")
+    axs[1, 4].set_title(r"SD8, $\epsilon=10^{-3}$")
     plot_sd_density(axs[1, 4], sim11, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[1, 5].set_title(r"SD8, $\epsilon_{\Delta x}=10^{-1}$")
-    plot_sd_density(axs[1, 5], sim12, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    axs[1, 5].set_title(r"SD8, $\epsilon=10^{-1}$ ($\Delta t$ collapsed)")
+    # no plot because of dt collapse
+
+    axs[2, 0].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-5}$")
+    plot_sd_density(axs[2, 0], sim12, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    axs[2, 1].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-3}$")
+    plot_sd_density(axs[2, 1], sim13, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    axs[2, 2].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-1}$")
+    plot_sd_density(axs[2, 2], sim14, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    axs[2, 3].set_title(r"SD8, $\epsilon_{\Delta x}=10^{-5}$")
+    plot_sd_density(axs[2, 3], sim15, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    axs[2, 4].set_title(r"SD8, $\epsilon_{\Delta x}=10^{-3}$")
+    plot_sd_density(axs[2, 4], sim16, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    axs[2, 5].set_title(r"SD8, $\epsilon_{\Delta x}=10^{-1}$")
+    plot_sd_density(axs[2, 5], sim17, uniform=uniform_sd, cmap="afmhot", vmin=rhomin, vmax=rhomax)
 
     plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
