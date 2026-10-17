@@ -183,6 +183,7 @@ class HydroSolver:
         discard_after_writing: bool = True,
         overwrite: bool = False,
         bonus_snapshot_routine: Optional[Callable[[Snapshot], None]] = None,
+        scale_by_cfl: bool = False,
     ):
         """
         Initialize the HydroSolver with the specified parameters.
@@ -296,6 +297,8 @@ class HydroSolver:
             rtol: Relative tolerance for numerical admissibility detection.
             atol: Absolute tolerance for numerical admissibility detection.
             delta: If True, enable delta-based numerical admissibility detection.
+            scale_by_cfl: Scale rtol by min(1, c_max * dt / h), where dt is the current substep
+                size and h is the maximum uniform mesh spacing.
 
         Slope limiting parameters (MOOD):
             use_MOOD: If True, enable MOOD scheme.
@@ -505,6 +508,7 @@ class HydroSolver:
                     SED_params=SED_params if use_NAD and use_MOOD else null_SED,
                     omit_vars=omit_vars or [],
                     delta=delta,
+                    scale_by_cfl=scale_by_cfl,
                     include_corners=include_corners,
                     use_global_bounds=use_global_bounds,
                 ),

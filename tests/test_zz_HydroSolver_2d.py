@@ -104,6 +104,7 @@ def test_preservation_of_maximum_principle(scheme):
         dict(p=3, flux_quadrature="gauss_legendre"),
         dict(p=7, flux_quadrature="gauss_legendre"),
         dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="muscl0", max_revs=3),
+        dict(p=3, use_MOOD=True, positivity_guard=False, scale_by_cfl=True),
     ],
 )
 @pytest.mark.parametrize("dim1_dim2", [("x", "y"), ("y", "z"), ("x", "z")])

@@ -121,6 +121,7 @@ class NumericalAdmissibilityDetectionParameters:
     delta: bool = False
     include_corners: bool = True
     use_global_bounds: bool = False
+    scale_by_cfl: bool = False
 
     def __post_init__(self):
         if not self.use_NAD and self.SED_params.use_SED:
