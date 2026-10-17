@@ -197,6 +197,18 @@ class UniformFiniteVolumeMesh:
         return self.core.hz
 
     @property
+    def hmax(self) -> float:
+        active_dims = self.active_dims
+        hx, hy, hz = self.hx, self.hy, self.hz
+        return max([h for dim, h in zip(["x", "y", "z"], [hx, hy, hz]) if dim in active_dims])
+
+    @property
+    def hmin(self) -> float:
+        active_dims = self.active_dims
+        hx, hy, hz = self.hx, self.hy, self.hz
+        return min([h for dim, h in zip(["x", "y", "z"], [hx, hy, hz]) if dim in active_dims])
+
+    @property
     def faces(self) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         return self.core.faces
 

@@ -148,6 +148,7 @@ def test_square_with_unlimited_schemes(scheme, dims):
             max_revs=3,
         ),
         dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", max_revs=7),
+        dict(p=3, use_MOOD=True, positivity_guard=False, scale_by_cfl=True),
     ],
 )
 @pytest.mark.parametrize("dims", ["x", "y", "z", "xy", "xz", "yz"])

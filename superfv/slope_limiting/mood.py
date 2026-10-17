@@ -15,7 +15,7 @@ from superfv.configs import (
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.finite_volume_driver import apply_fv_bc, compute_fv_dudt, get_interior_view
-from superfv.hydro import cons_to_prim
+from superfv.hydro import cons_to_prim, prim_to_cs
 from superfv.hydro_driver import update_hydro_fluxes
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.slope_limiting import apply_global_bounds, compute_dmp
@@ -69,14 +69,16 @@ def numerical_admissibility_detection(
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     params: MOOD_Parameters,
     primitives: bool,
+    actual_rtol: float,
 ):
     """
     Update `_troubles_` based on NAD criteria compute from `_qold_` and `_qnew_` with
     optional relaxation from the smooth extrema detector `_alpha_`. Renders a single
     ghost cell layer along each active dimension of the output array invalid.
+    `actual_rtol` is the effective relative tolerance for this candidate substep.
     """
     NAD_params = params.NAD_params
-    rtol = NAD_params.rtol
+    rtol = actual_rtol
     atol = NAD_params.atol
 
     _NAD_troubles_ = np.zeros_like(_qold_, dtype=bool)
@@ -131,6 +133,28 @@ def apply_troubles_bc(
     )
 
 
+def compute_vmax(
+    _w_: ArrayLike,
+    idx: VariableIndexMap,
+    hydro_params: HydroParameters,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+) -> float:
+    xp = cp if CUPY_AVAILABLE and isinstance(_w_, cp.ndarray) else np
+    hp = hydro_params
+    ndim = len(active_dims)
+
+    _v_ = xp.zeros_like(_w_[0])
+    _cs_ = xp.empty_like(_w_[0])
+
+    prim_to_cs(_w_, _cs_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
+    _v_ += ndim * _cs_
+
+    for dim in active_dims:
+        _v_ += xp.abs(_w_[idx("v" + dim)])
+
+    return _v_.max().item()
+
+
 def detect_troubled_cells(
     _uold_: ArrayLike,
     _wold_: ArrayLike,
@@ -144,6 +168,8 @@ def detect_troubled_cells(
     mesh: UniformFiniteVolumeMesh,
     base_scheme: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
+    dt: float,
+    hydro_params: Optional[HydroParameters] = None,
 ) -> int:
     """
     Update "_troubles_" and return the number of revisable troubled cells.
@@ -168,6 +194,16 @@ def detect_troubled_cells(
     # Update smooth extrema
     if NAD_params.use_NAD and NAD_params.SED_params.use_SED:
         compute_alpha(_qold_, _alpha_, active_dims, NAD_params.SED_params.clip_zero_tol)
+
+    # compute rtol scaled by CFL if requested
+    if NAD_params.use_NAD and NAD_params.scale_by_cfl:
+        if hydro_params is None:
+            raise ValueError("NAD rtol scaling by CFL requires hydro_params to compute vmax.")
+        vmax = compute_vmax(_wold_[interior], idx, hydro_params, active_dims)
+        h = mesh.hmax
+        actual_rtol = min(1.0, vmax * dt / h) * NAD_params.rtol
+    else:
+        actual_rtol = NAD_params.rtol
 
     if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray):
         # Detect troubled cells with CuPy using a custom kernel
@@ -208,14 +244,22 @@ def detect_troubled_cells(
             NAD_params.SED_params.use_SED,
             PAD_params.use_PAD,
             NAD_params.delta,
-            NAD_params.rtol,
+            actual_rtol,
             NAD_params.atol,
         )
     else:
         # Detect troubled cells with NumPy
         if NAD_params.use_NAD:
             numerical_admissibility_detection(
-                _qold_, _qnew_, _troubles_, _alpha_, idx, active_dims, mood_params, primitives
+                _qold_,
+                _qnew_,
+                _troubles_,
+                _alpha_,
+                idx,
+                active_dims,
+                mood_params,
+                primitives,
+                actual_rtol,
             )
 
         if PAD_params.use_PAD and not NAD_params.use_global_bounds:
@@ -602,6 +646,8 @@ def mood_loop(
             mesh,
             base_scheme,
             bc_params,
+            dt,
+            hydro_params,
         )
         substep_summary.n_troubles_hist.append(n_troubles)
         timer is not None and timer.stop("detect_troubles", using_cupy)  # TIMER STOP
@@ -688,6 +734,8 @@ def mood_loop(
             mesh,
             base_scheme,
             bc_params,
+            dt,
+            hydro_params,
         )
         substep_summary.n_troubles_hist.append(n_closing_troubles)
         timer is not None and timer.stop("detect_troubles", using_cupy)  # TIMER STOP

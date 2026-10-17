@@ -160,6 +160,7 @@ def test_preservation_of_maximum_principle(scheme):
         dict(p=3, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="full"),
         dict(p=7, use_ZS=True, adaptive_dt=True, lazy_primitive_mode="full"),
         dict(p=7, use_MOOD=True, positivity_guard=False, fallback_cascade="full", max_revs=7),
+        dict(p=3, use_MOOD=True, positivity_guard=False, scale_by_cfl=True),
     ],
 )
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
