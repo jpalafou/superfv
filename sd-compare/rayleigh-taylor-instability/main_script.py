@@ -80,8 +80,12 @@ def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
     return sim
 
 
-def run_fv_simulation(t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None):
+def run_fv_simulation(
+    t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=True
+):
     params = f"{t=}_{ny=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
+    if nad_cfl:
+        params += "_nad_cfl"
     path = base_output_path / ("fv_" + params)
 
     try:
@@ -123,6 +127,7 @@ def run_fv_simulation(t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0
         omit_vars=None if vx_vy_nad else ["vx", "vy"],
         use_SED=sed,
         rtol=rtol,
+        scale_by_cfl=nad_cfl,
         MUSCL_limiter="moncen",
         cupy=True,
         output_path=path,
@@ -133,7 +138,7 @@ def run_fv_simulation(t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0
 
 
 def run_sd_simulation(
-    t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=False
+    t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=True
 ):
     params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
     if nad_cfl:
@@ -255,7 +260,7 @@ def get_simulation_rho_maxmin(sims, uniform_sd=False):
 
 if __name__ == "__main__":
     N = 768
-    P_background = 100.0
+    P_background = 1.0
 
     sim1 = run_fv_simulation(t=t, ny=N, p=3, rtol=1e-5, P_background=P_background)
     sim2 = run_fv_simulation(t=t, ny=N, p=3, rtol=1e-3, P_background=P_background)
@@ -263,12 +268,12 @@ if __name__ == "__main__":
     sim4 = run_fv_simulation(t=t, ny=N, p=7, rtol=1e-5, P_background=P_background)
     sim5 = run_fv_simulation(t=t, ny=N, p=7, rtol=1e-3, P_background=P_background)
     sim6 = run_fv_simulation(t=t, ny=N, p=7, rtol=1e-1, P_background=P_background)
-    sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, nad_cfl=True, P_background=P_background)
-    sim8 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, nad_cfl=True, P_background=P_background)
-    sim9 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, nad_cfl=True, P_background=P_background)
-    sim10 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5, nad_cfl=True, P_background=P_background)
-    sim11 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3, nad_cfl=True, P_background=P_background)
-    sim12 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-1, nad_cfl=True, P_background=P_background)
+    sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, P_background=P_background)
+    sim8 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, P_background=P_background)
+    sim9 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, P_background=P_background)
+    sim10 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5, P_background=P_background)
+    sim11 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3, P_background=P_background)
+    sim12 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-1, P_background=P_background)
     sim_list = [sim1, sim2, sim3, sim4, sim5, sim6, sim7, sim8, sim9, sim10, sim11, sim12]
 
     uniform_sd = False
@@ -280,17 +285,17 @@ if __name__ == "__main__":
     print("Plotting results...")
     fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
 
-    axs[0, 0].set_title(r"FV4, $\epsilon=10^{-5}$")
+    axs[0, 0].set_title(r"FV4, $\epsilon_{\Delta x}=10^{-5}$")
     plot_fv_density(axs[0, 0], sim1, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 1].set_title(r"FV4, $\epsilon=10^{-3}$")
+    axs[0, 1].set_title(r"FV4, $\epsilon_{\Delta x}=10^{-3}$")
     plot_fv_density(axs[0, 1], sim2, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 2].set_title(r"FV4, $\epsilon=10^{-1}$")
+    axs[0, 2].set_title(r"FV4, $\epsilon_{\Delta x}=10^{-1}$")
     plot_fv_density(axs[0, 2], sim3, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 3].set_title(r"FV8, $\epsilon=10^{-5}$")
+    axs[0, 3].set_title(r"FV8, $\epsilon_{\Delta x}=10^{-5}$")
     plot_fv_density(axs[0, 3], sim4, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 4].set_title(r"FV8, $\epsilon=10^{-3}$")
+    axs[0, 4].set_title(r"FV8, $\epsilon_{\Delta x}=10^{-3}$")
     plot_fv_density(axs[0, 4], sim5, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 5].set_title(r"FV8, $\epsilon=10^{-1}$")
+    axs[0, 5].set_title(r"FV8, $\epsilon_{\Delta x}=10^{-1}$")
     plot_fv_density(axs[0, 5], sim6, cmap="afmhot", vmin=rhomin, vmax=rhomax)
 
     axs[1, 0].set_title(r"SD4, $\epsilon_{\Delta x}=10^{-5}$")
