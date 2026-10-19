@@ -164,8 +164,6 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
         raise ValueError("Dirichlet boundary condition requires a time value.")
     if sampling_p is None:
         raise ValueError("Dirichlet boundary condition requires a quadrature order.")
-    if gamma is None:
-        raise ValueError("Dirichlet boundary condition requires gamma.")
 
     if lower:
         outer_slice = crop(axis, (None, nghost), ndim=4)
@@ -174,9 +172,14 @@ def apply_dirichlet_bc(_u_: ArrayLike, context: BCcontext):
 
     def conservative_boundary(X, Y, Z):
         w = f(idx, X, Y, Z, t, xp=xp)
-        u = xp.empty_like(w)
-        prim_to_cons(w, u, idx, gamma)
-        return u
+        if gamma is None:
+            # ADVECTION CASE
+            return w
+        else:
+            # HYDRO CASE
+            u = xp.empty_like(w)
+            prim_to_cons(w, u, idx, gamma)
+            return u
 
     _u_[outer_slice] = mesh.perform_GaussLegendre_quadrature(
         conservative_boundary,

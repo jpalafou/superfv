@@ -399,7 +399,7 @@ def apply_fv_bc(
     mesh: UniformFiniteVolumeMesh,
     t: float,
     bc_params: BoundaryConditionParameters,
-    hydro_params: HydroParameters,
+    hydro_params: Optional[HydroParameters] = None,
 ):
     """
     Update the ghost-cell-padded array of conservative cell averages `_u_` in-place with the
@@ -421,7 +421,7 @@ def apply_fv_bc(
         mesh,
         t,
         bc_params.sampling_p,
-        hydro_params.gamma,
+        hydro_params.gamma if hydro_params is not None else None,
     )
 
 
