@@ -15,7 +15,7 @@ from superfv.configs import (
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.finite_volume_driver import apply_fv_bc, get_interior_view
 from superfv.hydro import cons_to_prim
-from superfv.hydro_driver import compute_fv_dudt, update_fv_fluxes
+from superfv.hydro_driver import compute_hydro_dudt, update_hydro_fluxes
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.slope_limiting import apply_global_bounds, compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
@@ -41,7 +41,7 @@ def compute_candidate_solution(
     hydro_params: HydroParameters,
 ):
     interior = get_interior_view(mesh.active_dims, mesh.nghost)
-    dudt = compute_fv_dudt(F, G, H, S, mesh)
+    dudt = compute_hydro_dudt(F, G, H, S, mesh)
     _unew_[interior] = _uold_[interior] + dt * dudt
 
     apply_fv_bc(_unew_, idx, mesh, t, bc_params, hydro_params)
@@ -558,7 +558,7 @@ def mood_loop(
         if i_max == i_max_computed + 1:
             next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
             timer is not None and timer.start("fallback_fluxes", using_cupy)  # TIMER START
-            update_fv_fluxes(
+            update_hydro_fluxes(
                 _uold_,
                 _wold_,
                 _w1old_,

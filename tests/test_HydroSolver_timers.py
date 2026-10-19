@@ -55,7 +55,7 @@ def test_failed_snapshot_closes_timer():
 def test_failed_step_closes_timers(monkeypatch):
     sim = HydroSolver(nx=8, profile=True)
     monkeypatch.setattr(
-        "superfv.hydro_solver.compute_fv_dt",
+        "superfv.hydro_solver.compute_hydro_dt",
         Mock(side_effect=RuntimeError("timestep failed")),
     )
     with pytest.raises(RuntimeError, match="timestep failed"):

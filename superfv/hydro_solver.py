@@ -39,11 +39,11 @@ from .field import MultivarField, SourceTerm, UnivarField
 from .finite_volume_driver import get_interior_view
 from .hydro import cons_to_prim, prim_to_cons
 from .hydro_driver import (
-    compute_fv_dt,
-    compute_fv_dudt,
-    compute_fv_nghost,
-    update_fv_fluxes,
-    update_fv_workspace,
+    compute_hydro_dt,
+    compute_hydro_dudt,
+    compute_hydro_nghost,
+    update_hydro_fluxes,
+    update_hydro_workspace,
 )
 from .mesh import UniformFiniteVolumeMesh
 from .slope_limiting.mood import mood_loop
@@ -528,7 +528,7 @@ class HydroSolver:
             nx=nx,
             ny=ny,
             nz=nz,
-            nghost=compute_fv_nghost(
+            nghost=compute_hydro_nghost(
                 fv_scheme_params,
                 len(active_dims),
                 viscosity=hydro_params.diffusion,
@@ -1009,7 +1009,7 @@ class HydroSolver:
             arrays = self.arrays
 
             with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-                update_fv_workspace(
+                update_hydro_workspace(
                     u,
                     arrays["_u_"],
                     arrays["_w_"],
@@ -1024,7 +1024,7 @@ class HydroSolver:
                     self.step_summary.timer if self.params.profile else None,
                 )
 
-                update_fv_fluxes(
+                update_hydro_fluxes(
                     arrays["_u_"],
                     arrays["_w_"],
                     arrays["_w1_"],
@@ -1080,7 +1080,7 @@ class HydroSolver:
                         )
 
             with self._time("compute_dudt"):
-                return compute_fv_dudt(
+                return compute_hydro_dudt(
                     arrays["F"] if "x" in active_dims else np.array([]),
                     arrays["G"] if "y" in active_dims else np.array([]),
                     arrays["H"] if "z" in active_dims else np.array([]),
@@ -1299,7 +1299,7 @@ class HydroSolver:
 
         # Compute dt
         with self._time("compute_dt"):
-            dt = compute_fv_dt(u, idx, mesh, params.hydro)
+            dt = compute_hydro_dt(u, idx, mesh, params.hydro)
             self._check_dt(dt)
             if dt_min is not None:
                 dt = min(dt, dt_min)

@@ -20,10 +20,10 @@ from superfv.finite_volume_driver import get_interior_view
 from superfv.hydro import prim_to_cons
 from superfv.hydro_driver import (
     add_viscuous_fluxes,
-    compute_fv_dudt,
-    compute_fv_nghost,
-    update_fv_fluxes,
-    update_fv_workspace,
+    compute_hydro_dudt,
+    compute_hydro_nghost,
+    update_hydro_fluxes,
+    update_hydro_workspace,
 )
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.tools.device_management import xp
@@ -180,7 +180,7 @@ def test_fv_rhs_is_finite(
         nx=N if "x" in active_dims else 1,
         ny=N if "y" in active_dims else 1,
         nz=N if "z" in active_dims else 1,
-        nghost=compute_fv_nghost(base_scheme, len(active_dims)),
+        nghost=compute_hydro_nghost(base_scheme, len(active_dims)),
         active_dims=active_dims,
     )
 
@@ -232,7 +232,7 @@ def test_fv_rhs_is_finite(
     prim_to_cons(w, u, idx, hydro_params.gamma)
 
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-        update_fv_workspace(
+        update_hydro_workspace(
             u,
             _u_,
             _w_,
@@ -245,7 +245,7 @@ def test_fv_rhs_is_finite(
             bc_params,
             hydro_params,
         )
-        update_fv_fluxes(
+        update_hydro_fluxes(
             _u_,
             _w_,
             _w1_,
@@ -263,7 +263,7 @@ def test_fv_rhs_is_finite(
         )
 
     interior = get_interior_view(mesh.active_dims, mesh.nghost)
-    dudt = compute_fv_dudt(
+    dudt = compute_hydro_dudt(
         (
             _F_[replace_slice(interior, DIM_TO_AXIS["x"], slice(None))]
             if "x" in active_dims

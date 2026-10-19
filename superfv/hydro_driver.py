@@ -93,7 +93,7 @@ def fv_cons_to_prim(
     timer is not None and timer.stop("primitive_conservative", using_cupy)  # TIMER STOP
 
 
-def update_fv_workspace(
+def update_hydro_workspace(
     u: ArrayLike,
     _u_: ArrayLike,
     _w_: ArrayLike,
@@ -859,7 +859,7 @@ def update_MUSCL_fluxes(
             )
 
 
-def update_fv_fluxes(
+def update_hydro_fluxes(
     _u_: ArrayLike,
     _w_: ArrayLike,
     _w1_: ArrayLike,
@@ -945,7 +945,7 @@ def update_fv_fluxes(
         )
 
 
-def compute_fv_dudt(
+def compute_hydro_dudt(
     F: ArrayLike,
     G: ArrayLike,
     H: ArrayLike,
@@ -976,7 +976,7 @@ def compute_fv_dudt(
     return dudt
 
 
-def compute_fv_dt(
+def compute_hydro_dt(
     u: ArrayLike,
     idx: VariableIndexMap,
     mesh: UniformFiniteVolumeMesh,
@@ -1018,7 +1018,7 @@ def compute_fv_dt(
     return dt
 
 
-def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool = False) -> int:
+def compute_hydro_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool = False) -> int:
     """
     Returns the number of ghost cells required in the padded arrays of the HydroSolver based on
     the provided `fv_scheme`.
@@ -1038,7 +1038,7 @@ def compute_fv_nghost(fv_scheme: FV_SchemeParameters, ndim: int, viscosity: bool
         riemann_cost = 1
         return face_node_cost + riemann_cost
 
-    # Cost of update_fv_workspace
+    # Cost of update_hydro_workspace
     match fv_scheme.lazy_primitive_mode:
         case "none":
             w_workspace_setup_cost = cell_center_reach + transverse_reach
