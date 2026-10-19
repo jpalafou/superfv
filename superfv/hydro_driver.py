@@ -8,16 +8,12 @@ from superfv.tools.slicing import crop, merge_slices
 from superfv.tools.step_history import MultiTimer
 
 from .axes import DIM_TO_AXIS, XYZ_TUPLE
-from .configs import (
-    BoundaryConditionParameters,
-    FV_SchemeParameters,
-    HydroParameters,
-    ZhangShuParameters,
-)
+from .configs import BoundaryConditionParameters, FV_SchemeParameters, HydroParameters
 from .finite_volume_driver import (
     Stencil,
     _stencil_cache,
     apply_fv_bc,
+    apply_zhang_shu_limiter,
     get_interior_view,
     integrate_cell_averages,
     integrate_gauss_legendre_face_nodes,
@@ -29,11 +25,9 @@ from .finite_volume_driver import (
 from .hydro import cons_to_prim, prim_to_cs
 from .mesh import UniformFiniteVolumeMesh
 from .riemann_solvers import solve_riemann_problem
-from .slope_limiting import apply_global_bounds, compute_dmp
 from .slope_limiting.muscl import compute_MUSCL_slopes, reconstruct_MUSCL_faces
 from .slope_limiting.shock_detection import detect_shocks
 from .slope_limiting.smooth_extrema_detection import compute_alpha
-from .slope_limiting.zhang_and_shu import compute_theta
 from .stencils import (
     conservative_interpolation,
     finite_difference,
@@ -202,15 +196,6 @@ def update_hydro_workspace(
         return
 
 
-def _apply_zhang_shu_limiter_to_node_array(nodes: ArrayLike, fallback: ArrayLike, theta: ArrayLike):
-    xp = cp if CUPY_AVAILABLE and isinstance(nodes, cp.ndarray) else np
-    na = xp.newaxis
-
-    xp.subtract(nodes, fallback[..., na], out=nodes)  # wj - w
-    xp.multiply(nodes, theta[..., na], out=nodes)  # theta * (wj - w)
-    xp.add(nodes, fallback[..., na], out=nodes)  # theta * (wj - w) + w
-
-
 def reconstruct_centroid(
     _u_: ArrayLike,
     _w_: ArrayLike,
@@ -249,96 +234,6 @@ def reconstruct_centroid(
             interpolate_cell_centers(_w_, _qcc_, active_dims, fv_params.p, timer)
         case _:
             raise ValueError(f"Unknown flux_recipe: {fv_params.flux_recipe}")
-
-
-def apply_zhang_shu_limiter(
-    _q_: ArrayLike,
-    _qcc_: ArrayLike,
-    _x_nodes_: ArrayLike,
-    _y_nodes_: ArrayLike,
-    _z_nodes_: ArrayLike,
-    _theta_: ArrayLike,
-    _alpha_: ArrayLike,
-    idx: VariableIndexMap,
-    primitives: bool,
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
-    p: int,
-    params: ZhangShuParameters,
-    timer: Optional[MultiTimer] = None,
-):
-    cupy = CUPY_AVAILABLE and isinstance(_q_, cp.ndarray)
-    xp = cp if cupy else np
-    na = xp.newaxis
-    timer is not None and timer.start("zhang_shu_limiter", cupy)  # TIMER START
-
-    # Validate input
-    if _q_.ndim != 4:
-        raise ValueError("_q_ must be 4D.")
-    if _q_.shape != _qcc_.shape:
-        raise ValueError("_q_ and _qcc_ must have the same shape.")
-    if _theta_.shape != _q_.shape:
-        raise ValueError("_theta_ must have the same shape as _q_.")
-    if _alpha_.shape != _q_.shape:
-        raise ValueError("_alpha_ must have the same shape as _q_.")
-
-    # Allocate temporary arrays
-    _M_ = xp.empty_like(_q_)
-    _m_ = xp.empty_like(_q_)
-    _Mj_ = xp.empty_like(_q_)
-    _mj_ = xp.empty_like(_q_)
-
-    # Gather node arrays into dict
-    node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {
-        dim: nodes
-        for dim, nodes in zip(("x", "y", "z"), (_x_nodes_, _y_nodes_, _z_nodes_))
-        if dim in active_dims
-    }
-
-    # 1) Gather all node arrays to get nodal minima and maxima
-    if p > 1:
-        _qj_ = xp.concatenate([_qcc_[..., na]] + [node_dict[dim] for dim in active_dims], axis=4)
-    else:
-        _qj_ = xp.concatenate([node_dict[dim] for dim in active_dims], axis=4)
-
-    # 2) Update _M_ and _m_ with discrete maximum principle or global bounds
-    if params.use_global_bounds:
-        apply_global_bounds(_M_, _m_, params.PAD_params.bounds, idx, primitives)
-    else:
-        compute_dmp(_q_, _M_, _m_, active_dims, params.include_corners)
-
-    # 3) Update _Mj_ and _mj_ with nodal maxima and minima and _theta_ with the Zhang-Shu limiter
-    compute_theta(
-        _q_, _qj_, _M_, _m_, _Mj_, _mj_, _theta_, params.theta_denom_tol
-    )  # update _Mj_, _mj_, and _theta_
-
-    # 4) Relax _theta_ with smooth extrema detection and omit variables from limiting
-    if params.SED_params.use_SED:
-        if _alpha_ is None:
-            raise ValueError("_alpha_ must be provided if detect_smooth_extrema is True")
-        compute_alpha(_q_, _alpha_, active_dims, params.SED_params.clip_zero_tol)
-
-        if params.PAD_params.use_PAD and primitives:
-            _physical_ = xp.ones_like(_alpha_[0], dtype=bool)  # TEMP ARRAY
-            for v, (lb, ub) in params.PAD_params.bounds.items():
-                if ub is not None:
-                    _physical_ &= _Mj_[idx(v)] <= ub
-                if lb is not None:
-                    _physical_ &= _mj_[idx(v)] >= lb
-            _alpha_ *= _physical_
-        xp.maximum(_theta_, _alpha_ >= 1, out=_theta_)
-
-    if "omitted" in idx.group_var_map:
-        _theta_[idx("omitted")] = 1.0
-
-    # Apply limiter to node arrays
-    if "x" in active_dims:
-        _apply_zhang_shu_limiter_to_node_array(_x_nodes_, _q_, _theta_)
-    if "y" in active_dims:
-        _apply_zhang_shu_limiter_to_node_array(_y_nodes_, _q_, _theta_)
-    if "z" in active_dims:
-        _apply_zhang_shu_limiter_to_node_array(_z_nodes_, _q_, _theta_)
-
-    timer is not None and timer.stop("zhang_shu_limiter", cupy)  # TIMER STOP
 
 
 def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
