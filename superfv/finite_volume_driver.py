@@ -546,6 +546,21 @@ def get_interior_view(
     return _get_interior_view(active_dims, nghost, ndim)
 
 
+@lru_cache(maxsize=None)
+def get_riemann_solver_slices(
+    axis: int, n_nodes_per_face: int, n_ghost: int
+) -> Tuple[Tuple[slice, ...], Tuple[slice, ...]]:
+    # Get slice left of interface
+    minus = crop(4, (n_nodes_per_face, 2 * n_nodes_per_face), ndim=5)  # Cell right face state
+    minus = merge_slices(minus, crop(axis, (n_ghost - 1, -n_ghost), ndim=5))
+
+    # Get slice right of interface
+    plus = crop(4, (None, n_nodes_per_face), ndim=5)  # Cell left face state
+    plus = merge_slices(plus, crop(axis, (n_ghost, -n_ghost + 1), ndim=5))
+
+    return minus, plus
+
+
 def compute_fv_dudt(
     F: ArrayLike,
     G: ArrayLike,

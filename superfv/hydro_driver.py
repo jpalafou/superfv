@@ -1,10 +1,8 @@
-from functools import lru_cache
 from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.tools.slicing import crop, merge_slices
 from superfv.tools.step_history import MultiTimer
 
 from .axes import DIM_TO_AXIS, XYZ_TUPLE
@@ -15,6 +13,7 @@ from .finite_volume_driver import (
     apply_fv_bc,
     apply_zhang_shu_limiter,
     get_interior_view,
+    get_riemann_solver_slices,
     integrate_cell_averages,
     integrate_gauss_legendre_face_nodes,
     integrate_transverse_nodes,
@@ -259,21 +258,6 @@ def enforce_positive_nodes(
     wj[...] = np.where(nonpositive_nodes, w1[..., na], wj)
 
 
-@lru_cache(maxsize=None)
-def _get_riemann_solver_slices(
-    axis: int, n_nodes_per_face: int, n_ghost: int
-) -> Tuple[Tuple[slice, ...], Tuple[slice, ...]]:
-    # Get slice left of interface
-    minus = crop(4, (n_nodes_per_face, 2 * n_nodes_per_face), ndim=5)  # Cell right face state
-    minus = merge_slices(minus, crop(axis, (n_ghost - 1, -n_ghost), ndim=5))
-
-    # Get slice right of interface
-    plus = crop(4, (None, n_nodes_per_face), ndim=5)  # Cell left face state
-    plus = merge_slices(plus, crop(axis, (n_ghost, -n_ghost + 1), ndim=5))
-
-    return minus, plus
-
-
 def add_viscuous_fluxes(
     _w_: ArrayLike,
     _f_: ArrayLike,
@@ -498,7 +482,7 @@ def update_weno_fluxes(
     # 2) Solve Riemann problem at each face node and integrate to get fluxes
     for dim in active_dims:
         axis = DIM_TO_AXIS[dim]
-        minus, plus = _get_riemann_solver_slices(axis, n_nodes, nghost)
+        minus, plus = get_riemann_solver_slices(axis, n_nodes, nghost)
 
         _nodes_ = node_dict[dim]
         _left_nodes_ = _nodes_[minus]
@@ -718,7 +702,7 @@ def update_MUSCL_fluxes(
             enforce_positive_nodes(_faces_, _w_, idx, hp)
 
         # Solve Riemann problem at faces
-        minus, plus = _get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
+        minus, plus = get_riemann_solver_slices(DIM_TO_AXIS[dim], 1, nghost)
         solve_riemann_problem(
             _faces_[minus],
             _faces_[plus],
