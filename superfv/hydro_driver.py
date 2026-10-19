@@ -13,6 +13,7 @@ from .finite_volume_driver import (
     apply_fv_bc,
     apply_zhang_shu_limiter,
     get_interior_view,
+    get_n_nodes_per_face,
     get_riemann_solver_slices,
     integrate_cell_averages,
     integrate_gauss_legendre_face_nodes,
@@ -235,14 +236,6 @@ def reconstruct_centroid(
             raise ValueError(f"Unknown flux_recipe: {fv_params.flux_recipe}")
 
 
-def _get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
-    if fv_params.flux_quadrature == "gauss_legendre":
-        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_params.p)
-        return n_gauss_legendre ** (ndim - 1)
-    else:
-        return 1
-
-
 def enforce_positive_nodes(
     wj: ArrayLike, w1: ArrayLike, idx: VariableIndexMap, hp: HydroParameters
 ):
@@ -445,7 +438,7 @@ def update_weno_fluxes(
     _q_ = _w_ if fv.flux_recipe == "prim_prim_lim" else _u_
 
     node_dict: Dict[Literal["x", "y", "z"], ArrayLike] = {}
-    n_nodes = _get_n_nodes_per_face(len(active_dims), fv)
+    n_nodes = get_n_nodes_per_face(len(active_dims), fv)
 
     for dim in active_dims:
         _nodes_ = xp.empty(_w_.shape + (2 * n_nodes,))  # TEMP ARRAY

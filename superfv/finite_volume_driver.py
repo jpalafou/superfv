@@ -9,7 +9,12 @@ from superfv.tools.step_history import MultiTimer
 
 from .axes import DIM_TO_AXIS
 from .boundary_conditions import apply_bc
-from .configs import BoundaryConditionParameters, HydroParameters, ZhangShuParameters
+from .configs import (
+    BoundaryConditionParameters,
+    FV_SchemeParameters,
+    HydroParameters,
+    ZhangShuParameters,
+)
 from .mesh import UniformFiniteVolumeMesh
 from .quadrature import perform_quadrature
 from .slope_limiting import apply_global_bounds, compute_dmp
@@ -544,6 +549,14 @@ def get_interior_view(
     (nvars, _nx_, _ny_, _nz_) or (nvars, _nx_, _ny_, _nz_, ninterps).
     """
     return _get_interior_view(active_dims, nghost, ndim)
+
+
+def get_n_nodes_per_face(ndim: int, fv_params: FV_SchemeParameters) -> int:
+    if fv_params.flux_quadrature == "gauss_legendre":
+        n_gauss_legendre = conservative_interpolation.n_gauss_legendre_nodes(fv_params.p)
+        return n_gauss_legendre ** (ndim - 1)
+    else:
+        return 1
 
 
 @lru_cache(maxsize=None)
