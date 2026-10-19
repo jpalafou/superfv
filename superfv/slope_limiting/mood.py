@@ -38,21 +38,26 @@ def compute_candidate_solution(
     dt: float,
     mesh: UniformFiniteVolumeMesh,
     bc_params: BoundaryConditionParameters,
-    hydro_params: HydroParameters,
+    hydro_params: Optional[HydroParameters] = None,
 ):
     interior = get_interior_view(mesh.active_dims, mesh.nghost)
     dudt = compute_fv_dudt(F, G, H, S, mesh)
     _unew_[interior] = _uold_[interior] + dt * dudt
-
     apply_fv_bc(_unew_, idx, mesh, t, bc_params, hydro_params)
-    cons_to_prim(
-        _unew_,
-        _wnew_,
-        idx,
-        hydro_params.gamma,
-        hydro_params.isothermal,
-        hydro_params.iso_cs,
-    )
+    if hydro_params is None:
+        # ADVECTION CASE
+        # might need to update _wnew_
+        raise NotImplementedError("Need to decide if we update _wnew_")
+    else:
+        # HYDRO CASE
+        cons_to_prim(
+            _unew_,
+            _wnew_,
+            idx,
+            hydro_params.gamma,
+            hydro_params.isothermal,
+            hydro_params.iso_cs,
+        )
 
 
 def numerical_admissibility_detection(
@@ -558,22 +563,28 @@ def mood_loop(
         if i_max == i_max_computed + 1:
             next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
             timer is not None and timer.start("fallback_fluxes", using_cupy)  # TIMER START
-            update_hydro_fluxes(
-                _uold_,
-                _wold_,
-                _w1old_,
-                _F_fallback_[i_max, ...] if "x" in active_dims else np.array([]),
-                _G_fallback_[i_max, ...] if "y" in active_dims else np.array([]),
-                _H_fallback_[i_max, ...] if "z" in active_dims else np.array([]),
-                _theta_,
-                _qcc_,
-                _alpha_,
-                idx,
-                active_dims,
-                mesh,
-                next_fallback_scheme,
-                hydro_params,
-            )
+            if hydro_params is None:
+                # ADVECTION CASE
+                raise NotImplementedError("update_advection_fluxes")
+                # update_advection_fluxes(...)
+            else:
+                # HYDRO CASE
+                update_hydro_fluxes(
+                    _uold_,
+                    _wold_,
+                    _w1old_,
+                    _F_fallback_[i_max, ...] if "x" in active_dims else np.array([]),
+                    _G_fallback_[i_max, ...] if "y" in active_dims else np.array([]),
+                    _H_fallback_[i_max, ...] if "z" in active_dims else np.array([]),
+                    _theta_,
+                    _qcc_,
+                    _alpha_,
+                    idx,
+                    active_dims,
+                    mesh,
+                    next_fallback_scheme,
+                    hydro_params,
+                )
             timer is not None and timer.stop("fallback_fluxes", using_cupy)  # TIMER STOP
             i_max_computed += 1
         elif i_max != i_max_computed:
