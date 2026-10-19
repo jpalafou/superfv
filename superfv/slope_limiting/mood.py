@@ -13,9 +13,9 @@ from superfv.configs import (
     MOOD_Parameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.finite_volume_driver import apply_fv_bc, get_interior_view
+from superfv.finite_volume_driver import apply_fv_bc, compute_fv_dudt, get_interior_view
 from superfv.hydro import cons_to_prim
-from superfv.hydro_driver import compute_hydro_dudt, update_hydro_fluxes
+from superfv.hydro_driver import update_hydro_fluxes
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.slope_limiting import apply_global_bounds, compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
@@ -41,7 +41,7 @@ def compute_candidate_solution(
     hydro_params: HydroParameters,
 ):
     interior = get_interior_view(mesh.active_dims, mesh.nghost)
-    dudt = compute_hydro_dudt(F, G, H, S, mesh)
+    dudt = compute_fv_dudt(F, G, H, S, mesh)
     _unew_[interior] = _uold_[interior] + dt * dudt
 
     apply_fv_bc(_unew_, idx, mesh, t, bc_params, hydro_params)

@@ -36,11 +36,10 @@ from .configs import (
     validate_literal_membership,
 )
 from .field import MultivarField, SourceTerm, UnivarField
-from .finite_volume_driver import get_interior_view
+from .finite_volume_driver import compute_fv_dudt, get_interior_view
 from .hydro import cons_to_prim, prim_to_cons
 from .hydro_driver import (
     compute_hydro_dt,
-    compute_hydro_dudt,
     compute_hydro_nghost,
     update_hydro_fluxes,
     update_hydro_workspace,
@@ -1080,7 +1079,7 @@ class HydroSolver:
                         )
 
             with self._time("compute_dudt"):
-                return compute_hydro_dudt(
+                return compute_fv_dudt(
                     arrays["F"] if "x" in active_dims else np.array([]),
                     arrays["G"] if "y" in active_dims else np.array([]),
                     arrays["H"] if "z" in active_dims else np.array([]),

@@ -16,11 +16,10 @@ from superfv.configs import (
     SmoothExtremaDetectionParameters,
     ZhangShuParameters,
 )
-from superfv.finite_volume_driver import get_interior_view
+from superfv.finite_volume_driver import compute_fv_dudt, get_interior_view
 from superfv.hydro import prim_to_cons
 from superfv.hydro_driver import (
     add_viscuous_fluxes,
-    compute_hydro_dudt,
     compute_hydro_nghost,
     update_hydro_fluxes,
     update_hydro_workspace,
@@ -263,7 +262,7 @@ def test_fv_rhs_is_finite(
         )
 
     interior = get_interior_view(mesh.active_dims, mesh.nghost)
-    dudt = compute_hydro_dudt(
+    dudt = compute_fv_dudt(
         (
             _F_[replace_slice(interior, DIM_TO_AXIS["x"], slice(None))]
             if "x" in active_dims

@@ -945,37 +945,6 @@ def update_hydro_fluxes(
         )
 
 
-def compute_hydro_dudt(
-    F: ArrayLike,
-    G: ArrayLike,
-    H: ArrayLike,
-    S: ArrayLike,
-    mesh: UniformFiniteVolumeMesh,
-) -> ArrayLike:
-    """
-    Compute the finite volume time derivative of the conserved variables.
-
-    F: shape (nvars, nx + 1, mesh.ny, mesh.nz) - Array to which the x-fluxes are written if
-        "x" is in active_dims.
-    G: shape (nvars, mesh.nx, ny + 1, mesh.nz) - Array to which the y-fluxes are written if
-        "y" is in active_dims.
-    H: shape (nvars, mesh.nx, mesh.ny, nz + 1) - Array to which the z-fluxes are written if
-        "z" is in active_dims.
-    S: shape (nvars, mesh.nx, mesh.ny, mesh.nz) - Array of source terms.
-    mesh: Mesh object containing information about the mesh and its dimensions.
-    """
-    dudt = S.copy()  # TEMP ARRAY
-    for dim in mesh.active_dims:
-        left = crop(DIM_TO_AXIS[dim], (None, -1), ndim=4)
-        right = crop(DIM_TO_AXIS[dim], (1, None), ndim=4)
-        fluxes = {"x": F, "y": G, "z": H}[dim]
-        h = getattr(mesh, "h" + dim)
-
-        dudt -= (fluxes[right] - fluxes[left]) / h
-
-    return dudt
-
-
 def compute_hydro_dt(
     u: ArrayLike,
     idx: VariableIndexMap,
