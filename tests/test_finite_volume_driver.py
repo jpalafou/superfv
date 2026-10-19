@@ -16,15 +16,15 @@ from superfv.configs import (
     SmoothExtremaDetectionParameters,
     ZhangShuParameters,
 )
-from superfv.finite_volume_driver import (
+from superfv.finite_volume_driver import get_interior_view
+from superfv.hydro import prim_to_cons
+from superfv.hydro_driver import (
     add_viscuous_fluxes,
     compute_fv_dudt,
     compute_fv_nghost,
-    get_interior_view,
     update_fv_fluxes,
     update_fv_workspace,
 )
-from superfv.hydro import prim_to_cons
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.tools.device_management import xp
 from superfv.tools.slicing import replace_slice

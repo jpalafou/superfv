@@ -36,15 +36,15 @@ from .configs import (
     validate_literal_membership,
 )
 from .field import MultivarField, SourceTerm, UnivarField
-from .finite_volume_driver import (
+from .finite_volume_driver import get_interior_view
+from .hydro import cons_to_prim, prim_to_cons
+from .hydro_driver import (
     compute_fv_dt,
     compute_fv_dudt,
     compute_fv_nghost,
-    get_interior_view,
     update_fv_fluxes,
     update_fv_workspace,
 )
-from .hydro import cons_to_prim, prim_to_cons
 from .mesh import UniformFiniteVolumeMesh
 from .slope_limiting.mood import mood_loop
 from .tools.device_management import CUPY_AVAILABLE, ArrayLike, ArrayManager, xp

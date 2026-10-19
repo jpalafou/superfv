@@ -13,13 +13,9 @@ from superfv.configs import (
     MOOD_Parameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
-from superfv.finite_volume_driver import (
-    apply_fv_bc,
-    compute_fv_dudt,
-    get_interior_view,
-    update_fv_fluxes,
-)
+from superfv.finite_volume_driver import apply_fv_bc, get_interior_view
 from superfv.hydro import cons_to_prim
+from superfv.hydro_driver import compute_fv_dudt, update_fv_fluxes
 from superfv.mesh import UniformFiniteVolumeMesh
 from superfv.slope_limiting import apply_global_bounds, compute_dmp
 from superfv.slope_limiting.smooth_extrema_detection import compute_alpha
