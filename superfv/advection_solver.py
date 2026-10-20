@@ -1,6 +1,7 @@
 import time
 from functools import partial
 from pathlib import Path
+from types import ModuleType
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -13,7 +14,7 @@ from .configs import HydroParameters, MUSCL_SlopeLimiter
 from .field import MultivarField, SourceTerm, UnivarField
 from .hydro_solver import HydroSolver
 from .tools.device_management import ArrayLike
-from .tools.snapshot import Snapshot, SnapshotData
+from .tools.snapshot import Snapshot
 
 
 class AdvectionSolver(HydroSolver):
@@ -177,70 +178,26 @@ class AdvectionSolver(HydroSolver):
     ) -> Dict[str, Tuple[Optional[float], Optional[float]]]:
         if PAD_bounds is None:
             PAD_bounds = {}
-        return {v: b for v, b in PAD_bounds.items() if v not in {"v", "vx", "vy", "vz"}}
-
-    def _define_base_variable_index_map(self) -> VariableIndexMap:
-        return VariableIndexMap(
-            {"rho": 0, "vx": 1, "vy": 2, "vz": 3}, group_var_map={"v": ["vx", "vy", "vz"]}
-        )
+        return {v: b for v, b in PAD_bounds.items() if v not in {"v", "vx", "vy", "vz", "P", "E"}}
 
     def _build_conservative_ic_u0_func(self):
         w0_func = self._primitive_ic_w0_func()
-        self.w0_func = w0_func
-        self.u0_func = w0_func
 
-    def _take_snapshot(self):
-        with self._time("take_snapshot"):
-            params = self.params
-            output_path = params.output_path
+        def u0_func(
+            idx: VariableIndexMap,
+            x: ArrayLike,
+            y: ArrayLike,
+            z: ArrayLike,
+            t: float,
+            *,
+            xp: ModuleType,
+        ) -> ArrayLike:
+            out = w0_func(idx, x, y, z, t, xp=xp)
+            out[idx("P")] = np.nan  # P and E share an unused slot for the Riemann solver.
+            return out
 
-            if output_path is None:
-                path = None
-            else:
-                n = len(self.snapshot_history)
-                ndigits = params.output_n_digits
-                path = output_path / f"output_{n:0{ndigits}d}.pkl"
-
-            snapshot = Snapshot(
-                t=self.t,
-                data=SnapshotData(
-                    u=self.arrays.get_numpy_copy("u"),
-                    w=np.array([]),
-                    has_shock=(
-                        self.arrays.get_numpy_copy("has_shock_log")
-                        if params.fv_scheme.shock_detection_params.use_shock_detection
-                        else np.empty((0,))
-                    ),
-                    theta=(
-                        self.arrays.get_numpy_copy("theta_log")
-                        if params.fv_scheme.zhang_shu_params.use_ZS
-                        else np.empty((0,))
-                    ),
-                    troubles=(
-                        self.arrays.get_numpy_copy("troubles_log")
-                        if params.fv_scheme.mood_params.use_MOOD
-                        else np.empty((0,))
-                    ),
-                    cascade_idx=(
-                        self.arrays.get_numpy_copy("cascade_idx_log")
-                        if params.fv_scheme.mood_params.use_MOOD
-                        else np.empty((0,))
-                    ),
-                ),
-                path=path,
-            )
-
-            self.bonus_snapshot_routine(snapshot)
-
-            if snapshot.path is not None:
-                if len(self.step_history) > 1:
-                    print()  # for better separation of snapshot logs in the terminal
-
-                with open(snapshot.path.parent / "output_times.txt", "a") as f:
-                    f.write(f"{snapshot.path.name},{snapshot.t}\n")
-                snapshot.dump(params.discard_after_writing)
-
-            self.snapshot_history.append(snapshot)
+        self.w0_func = u0_func
+        self.u0_func = u0_func
 
     def _summarize_step(self, take_snapshot: bool = False):
         step_summary = self.step_summary
