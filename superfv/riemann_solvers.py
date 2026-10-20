@@ -131,14 +131,10 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         v = np.where(np.abs(vl) > np.abs(vr), vl, vr)
 
         fluxes[idx("rho")] = v * np.where(v > 0, wl[idx("rho")], wr[idx("rho")])
-        fluxes[idx("mx")] = 0.0
-        fluxes[idx("my")] = 0.0
-        fluxes[idx("mz")] = 0.0
+        fluxes[idx("v")] = 0.0
         fluxes[idx("E")] = 0.0
         if "passives" in idx.group_var_map:
-            fluxes[idx("passives")] = fluxes[idx("rho")] * np.where(
-                v > 0, wl[idx("passives")], wr[idx("passives")]
-            )
+            fluxes[idx("passives")] = v * np.where(v > 0, wl[idx("passives")], wr[idx("passives")])
 
     def cuda_elementwise_kernel_body(self, npassives: int) -> str:
         body = """
@@ -151,7 +147,7 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         FE = 0.0;
         """
         for i in range(npassives):
-            body += f"\nFpass{i} = Frho * (v1 > 0 ? passl{i} : passr{i});"
+            body += f"\nFpass{i} = v1 * (v1 > 0 ? passl{i} : passr{i});"
         return body
 
 
