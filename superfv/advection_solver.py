@@ -29,9 +29,6 @@ class AdvectionSolver(HydroSolver):
         self,
         # Hydro params
         CFL: float = 0.8,
-        nu: float = 0.0,
-        Chi: float = 0.0,
-        nu_dye: float = 0.0,
         dt_min: float = 1e-15,
         # IC params
         ic: MultivarField = partial(ics.square, vx=1),
@@ -101,9 +98,9 @@ class AdvectionSolver(HydroSolver):
             gamma=np.nan,
             riemann_solver="upwind",
             CFL=CFL,
-            nu=nu,
-            Chi=Chi,
-            nu_dye=nu_dye,
+            nu=0.0,
+            Chi=0.0,
+            nu_dye=0.0,
             dt_min=dt_min,
             positivity_guard=False,
             rho_min=np.nan,
