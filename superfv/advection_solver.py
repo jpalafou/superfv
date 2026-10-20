@@ -9,12 +9,17 @@ import numpy as np
 from superfv.tools.variable_index_map import VariableIndexMap
 
 from . import initial_conditions as ics
-from .advection_driver import update_advection_fluxes, update_advection_workspace
+from .advection_driver import (
+    compute_advection_dt,
+    update_advection_fluxes,
+    update_advection_workspace,
+)
 from .boundary_conditions import BC, PatchBC
 from .configs import HydroParameters, MUSCL_SlopeLimiter
 from .field import MultivarField, SourceTerm, UnivarField
 from .finite_volume_driver import compute_fv_dudt
 from .hydro_solver import HydroSolver
+from .mesh import UniformFiniteVolumeMesh
 from .slope_limiting.mood import mood_loop
 from .tools.device_management import ArrayLike
 from .tools.snapshot import Snapshot
@@ -212,6 +217,35 @@ class AdvectionSolver(HydroSolver):
 
         self.step_history.append(step_summary)
         self._reset_step_summary(step_summary.step + 1)
+
+    def _compute_dt(
+        self,
+        u: ArrayLike,
+        idx: VariableIndexMap,
+        mesh: UniformFiniteVolumeMesh,
+        hydro_params: HydroParameters,
+    ) -> float:
+        return compute_advection_dt(u, idx, mesh, hydro_params.CFL)
+
+    def _check_unew_for_dt_revision(self) -> bool:
+        params = self.params
+        tol = params.fv_scheme.zhang_shu_params.adaptive_dt_tol
+        idx = params.variable_index_map
+
+        if not params.fv_scheme.zhang_shu_params.adaptive_dt:
+            raise RuntimeError(
+                "DT revision check called but adaptive_dt is not enabled in the parameters."
+            )
+
+        unew = self.arrays["unew"]
+
+        for v, (lb, ub) in params.fv_scheme.zhang_shu_params.PAD_params.bounds.items():
+            if lb is not None and self.xp.any(unew[idx(v)] < lb - tol):
+                return True
+            if ub is not None and self.xp.any(unew[idx(v)] > ub + tol):
+                return True
+
+        return False
 
     def f(self, t: float, u: ArrayLike, dt: float, hancock: bool = False) -> ArrayLike:
         with self._time("f"):

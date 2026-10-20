@@ -1250,6 +1250,15 @@ class HydroSolver:
     def _print_message(self, message: str):
         print(f"\r{message}", end="", flush=True)
 
+    def _compute_dt(
+        self,
+        u: ArrayLike,
+        idx: VariableIndexMap,
+        mesh: UniformFiniteVolumeMesh,
+        hydro_params: HydroParameters,
+    ) -> float:
+        return compute_hydro_dt(u, idx, mesh, hydro_params)
+
     def _check_dt(self, dt: float):
         if not np.isfinite(dt):
             raise RuntimeError(f"Computed dt={dt} is not finite.")
@@ -1298,7 +1307,7 @@ class HydroSolver:
 
         # Compute dt
         with self._time("compute_dt"):
-            dt = compute_hydro_dt(u, idx, mesh, params.hydro)
+            dt = self._compute_dt(u, idx, mesh, params.hydro)
             self._check_dt(dt)
             if dt_min is not None:
                 dt = min(dt, dt_min)
