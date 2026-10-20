@@ -167,7 +167,7 @@ class AdvectionSolver(HydroSolver):
             skip_trouble_counts=skip_trouble_counts,
             detect_closing_troubles=detect_closing_troubles,
             # Shared Zhang-Shu / MOOD params
-            omit_vars=omit_vars,
+            omit_vars=["vx", "vy", "vz", "P"] + (omit_vars if omit_vars is not None else []),
             include_corners=include_corners,
             use_global_bounds=use_global_bounds,
             # Solver params
