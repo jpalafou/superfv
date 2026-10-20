@@ -14,7 +14,7 @@ from .advection_driver import (
     update_advection_workspace,
 )
 from .boundary_conditions import BC, PatchBC
-from .configs import HydroParameters, MUSCL_SlopeLimiter
+from .configs import FluxQuadrature, HydroParameters, MUSCL_SlopeLimiter
 from .field import MultivarField, SourceTerm, UnivarField
 from .finite_volume_driver import compute_fv_dudt
 from .hydro_solver import HydroSolver
@@ -58,6 +58,7 @@ class AdvectionSolver(HydroSolver):
         zlims: Tuple[float, float] = (0.0, 1.0),
         # Finite volume scheme params
         p: int = 0,
+        flux_quadrature: FluxQuadrature = "transverse",
         # SED params
         use_SED: bool = True,
         clip_zero_tol: float = 1e-15,
@@ -135,7 +136,7 @@ class AdvectionSolver(HydroSolver):
             # Finite volume scheme params
             p=p,
             flux_recipe="cons_prim_lim",
-            flux_quadrature="transverse",
+            flux_quadrature=flux_quadrature,
             lazy_primitive_mode="full",
             # SED params
             use_SED=use_SED,
