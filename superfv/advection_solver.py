@@ -25,6 +25,39 @@ from .tools.snapshot import Snapshot
 
 
 class AdvectionSolver(HydroSolver):
+    """
+    SuperFV solver for the advection equation in 1D, 2D, or 3D.
+
+    Initialize the solver with the desired parameters:
+
+        from superfv import AdvectionSolver, ics
+        sim = AdvectionSolver(ic=ics.square, ...)
+
+    Then call the `take_n_steps` or `run` methods to advance the simulation in time. For
+    example, to take 10 steps:
+
+        sim.take_n_steps(n=10, ...)
+
+    or to run until t=1.0:
+
+        sim.run(t=1.0, ...)
+
+    Refer to the `step_history` to access the simulation history and the `snapshot_history`
+    to access the snapshots. For example, to get the minimum density across all steps:
+
+        sim.step_history.get_history("rho_min")
+
+    or to get the density field from the 5th snapshot:
+
+        idx = sim.params.variable_index_map
+        sim.snapshot_history[5].u[idx("rho")]
+
+    or to get a passive field named "dye" at time t=1.0:
+
+        sim.snapshot_history(1.0).u[idx("dye")]
+
+    """
+
     def __init__(
         self,
         # Hydro params
@@ -93,6 +126,119 @@ class AdvectionSolver(HydroSolver):
         overwrite: bool = False,
         bonus_snapshot_routine: Optional[Callable[[Snapshot], None]] = None,
     ):
+        """
+        Initialize the AdvectionSolver with the specified parameters.
+
+        Advection parameters:
+            CFL: CFL number for time step calculation.
+            dt_min: Minimum allowed time step size.
+
+        Initial condition parameters:
+            ic: Initial condition function that takes (idx, x, y, z, t, xp=xp) and returns an
+                array of shape (nvars, nx, ny, nz).
+            passive_ics: Optional dictionary with keys as variable names and values as functions
+                that take (x, y, z, t, xp=xp) and return an array of shape (nx, ny, nz).
+            sampling_p: If specified, use this polynomial degree for Gauss-Legendre quadrature when
+                computing cell averages from the initial condition or Dirichlet boundary
+                conditions. If None, defaults to the polynomial degree `p`.
+
+        Source term parameters:
+            source: Optional source term function that takes (idx, u, xp=xp) and returns an array
+                of shape (nvars, nx, ny, nz).
+
+        Boundary condition parameters:
+            bcx, bcy, bcz: Boundary conditions for x, y, z directions. Each is a tuple of two
+                boundary condition literals (lower, upper).
+                "periodic": Wrap ghost cells from the opposite side; both sides must be periodic.
+                "dirichlet": Fill ghost cells from the corresponding boundary callable.
+                "free": Copy the adjacent interior value; useful for outflow boundaries.
+                "symmetric": Mirror interior values into ghost cells.
+                "reflective": Mirror interior values and flip the normal velocity.
+                "zeros": Fill ghost cells with 0.
+                "ones": Fill ghost cells with 1.
+                "patch": Let a `PatchBC` callable mutate the boundary region directly.
+                "none": Leave the boundary untouched; used internally for inactive dimensions.
+                "ic": Use the initial condition as a Dirichlet boundary.
+            bcx_callable_lower, bcx_callable_upper, bcy_callable_lower,
+            bcy_callable_upper, bcz_callable_lower, bcz_callable_upper: Optional callable functions
+                for Dirichlet boundary conditions. Each should take (idx, x, y, z, t, xp=xp) and
+                return an array of shape (nvars, nx, ny, nz).
+
+        Mesh parameters:
+            nx, ny, nz: Number of cells in x, y, z directions for a uniform mesh.
+            xlims, ylims, zlims: Tuples specifying the lower and upper bounds of the domain in
+                x, y, z directions.
+
+        Finite volume scheme parameters:
+            p: Polynomial degree for the base finite volume scheme.
+            flux_quadrature: Flux quadrature literal.
+                "transverse": Use transverse face-node integration in 2D and 3D runs.
+                "gauss_legendre": Use Gauss-Legendre face quadrature in 2D and 3D runs.
+                "none": Use no face quadrature; required and selected automatically in 1D.
+
+        Slope limiting parameters (smooth extrema detection):
+            use_SED: If True, enable smooth extrema detection.
+            clip_zero_tol: Tolerance for clipping near-zero values in SED.
+
+        Slope limiting parameters (MUSCL):
+            use_MUSCL: If True, enable MUSCL scheme.
+            MUSCL_limiter: Slope limiter literal.
+                "minmod": Most diffusive TVD limiter.
+                "moncen": Monotonized central limiter; less diffusive default.
+                "pp2d": Positivity-preserving 2D limiter; requires exactly two active dimensions.
+                "none": Use unlimited centered slopes.
+
+        Slope limiting parameters (physical admissibility detection):
+            PAD_bounds: Optional dictionary specifying lower and upper bounds for physical
+                admissibility detection. Keys are variable names, and values are tuples of
+                (lower_bound, upper_bound).
+
+        Slope limiting parameters (Zhang-Shu):
+            use_ZS: If True, enable Zhang-Shu limiter.
+            adaptive_dt: If True, enable adaptive time stepping based on Zhang-Shu limiter.
+            adaptive_dt_tol: Tolerance for adaptive time stepping.
+            theta_denom_tol: Tolerance for denominator in theta calculation.
+
+        Slope limiting parameters (MOOD, numerical admissibility detection):
+            use_NAD: If True, enable numerical admissibility detection.
+            rtol: Relative tolerance for numerical admissibility detection.
+            atol: Absolute tolerance for numerical admissibility detection.
+            delta: If True, enable delta-based numerical admissibility detection.
+
+        Slope limiting parameters (MOOD):
+            use_MOOD: If True, enable MOOD scheme.
+            fallback_cascade: Fallback cascade literal.
+                "full": Fall back through progressively lower polynomial degrees down to p=0.
+                "muscl": Fall back to a MUSCL scheme.
+                "muscl0": Fall back to MUSCL, then to first-order.
+                "first_order": Fall back directly to p=0.
+            max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
+                number of fallback schemes in the cascade.
+            blend_troubles: If True, blend troubled cells in MOOD scheme.
+            skip_trouble_counts: If True, skip counting troubled cells in MOOD scheme.
+            detect_closing_troubles: If True, detect closing troubled cells in MOOD scheme.
+
+        Slope limiting parameters (shared between Zhang-Shu and MOOD):
+            omit_vars: Optional list of variable names to omit from Zhang-Shu limiter or NAD. Note
+                that PAD may still be active in other parts of the code, such as the Zhang-Shu
+                adaptive time step check or MOOD troubled cell detection.
+            include_corners: If True, include corner cells when computing the discrete maximum
+                principle.
+            use_global_bounds: If True, set M and m to global bounds determined by the provided
+                `PAD_bounds` in Zhang-Shu or MOOD schemes. Cannot be used with SED and turns off
+                PAD in MOOD schemes. Expects all simulation variables to be included in either
+                `PAD_bounds` or `omit_vars`.
+
+        Solver parameters:
+            cupy: If True, use CuPy for GPU acceleration (requires CuPy to be installed).
+            profile: If True, many timers are added to the solver beyond "take_step".
+            output_path: Optional path to save simulation outputs. If None, no outputs are saved.
+            discard_after_writing: If True, discard arrays after writing to disk to save memory.
+            overwrite: If True, overwrite existing output directory if it exists.
+            bonus_snapshot_routine: Optional callable function that takes a `Snapshot` object and
+                performs additional operations on it after a snapshot is taken. If None, no
+                additional operations are performed.
+        """
         super().__init__(
             # Hydro params
             gamma=np.nan,
