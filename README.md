@@ -8,7 +8,10 @@
 
 ## Overview
 
-SuperFV is a high-order finite volume solver for the Euler equations of hydrodynamics in 1D, 2D, and 3D.
+SuperFV is a high-order finite volume solver for conservation laws in 1D, 2D, and 3D that can run on either CPU or GPU.
+It provides the `AdvectionSolver` class for solving the linear advection equation
+and the `HydroSolver` class for solving the Euler equations of hydrodynamics,
+which may be extended to the Navier-Stokes equations via the addition of viscosity.
 
 ## Features
 
