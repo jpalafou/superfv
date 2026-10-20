@@ -168,7 +168,7 @@ def test_teyssier_compute_fluxes(euler_slicer):
 
 @pytest.mark.parametrize(
     "solver_cls",
-    [UpwindRiemannSolver, LLF_RiemannSolver, HLLC_RiemannSolver],
+    [LLF_RiemannSolver, HLLC_RiemannSolver],
 )
 @pytest.mark.parametrize("dim", ["x", "y", "z"])
 @pytest.mark.parametrize("isothermal", [False, True])
@@ -209,3 +209,44 @@ def test_passive_scalars_are_density_weighted_and_advected(
     assert linf_norm(flux[idx("passive_scalar1")] - expected_flux[idx("passive_scalar1")]) == 0
     assert linf_norm(flux[idx("passive_scalar2")] - expected_flux[idx("passive_scalar2")]) == 0
     assert linf_norm(flux[idx("passive_scalar3")] - expected_flux[idx("passive_scalar3")]) == 0
+
+
+@pytest.mark.parametrize("dim", ["x", "y", "z"])
+@pytest.mark.parametrize("npassives", [0, 2])
+@pytest.mark.parametrize("pressure", [np.nan, -10.0, 100.0])
+def test_upwind_advection(dim, npassives, pressure):
+    passives = {f"scalar{i + 1}": i + 5 for i in range(npassives)}
+    idx = VariableIndexMap(
+        {
+            "rho": 0,
+            "vx": 1,
+            "vy": 2,
+            "vz": 3,
+            "P": 4,
+            "mx": 1,
+            "my": 2,
+            "mz": 3,
+            "E": 4,
+            **passives,
+        },
+        {"v": ["vx", "vy", "vz"], **({"passives": list(passives.keys())} if npassives else {})},
+    )
+    wl = xp.full((idx.nvars, 6), 2.0)
+    wr = xp.full_like(wl, 3.0)
+    wl[idx(f"v{dim}")] = xp.array([2, -3, 1, -1, 0, 1])
+    wr[idx(f"v{dim}")] = xp.array([1, -2, -2, 1, 0, -1])
+    wl[idx("P")] = pressure
+    wr[idx("P")] = pressure
+    if npassives:
+        wl[idx("passives")] = xp.array([[5], [7]])
+        wr[idx("passives")] = xp.array([[11], [13]])
+    flux = xp.full_like(wl, xp.nan)
+
+    UpwindRiemannSolver(npassives)(wl, wr, flux, dim, idx, gamma=np.nan)
+
+    assert linf_norm(flux[idx("rho")] - xp.array([4, -9, -6, 2, 0, -3])) == 0
+    assert linf_norm(flux[idx("v")]) == 0
+    assert linf_norm(flux[idx("E")]) == 0
+    if npassives:
+        expected = xp.array([[10, -33, -22, 5, 0, -11], [14, -39, -26, 7, 0, -13]])
+        assert linf_norm(flux[idx("passives")] - expected) == 0
