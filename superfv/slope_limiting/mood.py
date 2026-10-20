@@ -4,6 +4,7 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 
+from superfv.advection_driver import update_advection_fluxes
 from superfv.axes import DIM_TO_AXIS
 from superfv.boundary_conditions import BC, apply_bc
 from superfv.configs import (
@@ -46,8 +47,7 @@ def compute_candidate_solution(
     apply_fv_bc(_unew_, idx, mesh, t, bc_params, hydro_params)
     if hydro_params is None:
         # ADVECTION CASE
-        # might need to update _wnew_
-        raise NotImplementedError("Need to decide if we update _wnew_")
+        _wnew_[...] = _unew_
     else:
         # HYDRO CASE
         cons_to_prim(
@@ -361,6 +361,60 @@ def get_face_mask(
     return _fv_[interior]
 
 
+def compute_fallback_fluxes(
+    _uold_: ArrayLike,
+    _F_fallback_: ArrayLike,
+    _G_fallback_: ArrayLike,
+    _H_fallback_: ArrayLike,
+    _theta_: ArrayLike,
+    _qcc_: ArrayLike,
+    _alpha_: ArrayLike,
+    idx: VariableIndexMap,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    mesh: UniformFiniteVolumeMesh,
+    fallback_scheme: FV_SchemeParameters,
+    _wold_: Optional[ArrayLike] = None,
+    _w1old_: Optional[ArrayLike] = None,
+    hydro_params: Optional[HydroParameters] = None,
+):
+    if hydro_params is None:
+        # ADVECTION CASE
+        update_advection_fluxes(
+            _uold_,
+            _F_fallback_,
+            _G_fallback_,
+            _H_fallback_,
+            _theta_,
+            _qcc_,
+            _alpha_,
+            idx,
+            active_dims,
+            mesh,
+            fallback_scheme,
+        )
+        return
+
+    # HYDRO CASE
+    if _wold_ is None or _w1old_ is None:
+        raise ValueError("Hydrodynamic fallback fluxes require _wold_ and _w1old_.")
+    update_hydro_fluxes(
+        _uold_,
+        _wold_,
+        _w1old_,
+        _F_fallback_,
+        _G_fallback_,
+        _H_fallback_,
+        _theta_,
+        _qcc_,
+        _alpha_,
+        idx,
+        active_dims,
+        mesh,
+        fallback_scheme,
+        hydro_params,
+    )
+
+
 def blend_fluxes(
     F_high_order: ArrayLike, F_fallback: ArrayLike, theta: ArrayLike, F_blended: ArrayLike
 ):
@@ -563,28 +617,22 @@ def mood_loop(
         if i_max == i_max_computed + 1:
             next_fallback_scheme = mood_params.fallback_cascade[i_max - 1]
             timer is not None and timer.start("fallback_fluxes", using_cupy)  # TIMER START
-            if hydro_params is None:
-                # ADVECTION CASE
-                raise NotImplementedError("update_advection_fluxes")
-                # update_advection_fluxes(...)
-            else:
-                # HYDRO CASE
-                update_hydro_fluxes(
-                    _uold_,
-                    _wold_,
-                    _w1old_,
-                    _F_fallback_[i_max, ...] if "x" in active_dims else np.array([]),
-                    _G_fallback_[i_max, ...] if "y" in active_dims else np.array([]),
-                    _H_fallback_[i_max, ...] if "z" in active_dims else np.array([]),
-                    _theta_,
-                    _qcc_,
-                    _alpha_,
-                    idx,
-                    active_dims,
-                    mesh,
-                    next_fallback_scheme,
-                    hydro_params,
-                )
+            compute_fallback_fluxes(
+                _uold_,
+                _F_fallback_[i_max, ...] if "x" in active_dims else np.array([]),
+                _G_fallback_[i_max, ...] if "y" in active_dims else np.array([]),
+                _H_fallback_[i_max, ...] if "z" in active_dims else np.array([]),
+                _theta_,
+                _qcc_,
+                _alpha_,
+                idx,
+                active_dims,
+                mesh,
+                next_fallback_scheme,
+                _wold_,
+                _w1old_,
+                hydro_params,
+            )
             timer is not None and timer.stop("fallback_fluxes", using_cupy)  # TIMER STOP
             i_max_computed += 1
         elif i_max != i_max_computed:
