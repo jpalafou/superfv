@@ -190,7 +190,6 @@ class HydroSolver:
         Hydro parameters:
             gamma: Adiabatic index for the ideal gas equation of state.
             riemann_solver: Riemann solver literal.
-                "upwind": Upwind density/passive advection with zero momentum and energy fluxes.
                 "llf": Local Lax-Friedrichs solver; robust and diffusive.
                 "hll": Two-wave Harten-Lax-van Leer approximate Riemann solver.
                 "hllc": Contact-resolving HLLC solver; default for Euler runs.

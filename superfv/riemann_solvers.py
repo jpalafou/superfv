@@ -113,6 +113,8 @@ class RiemmannSolverBase(ABC):
 class UpwindRiemannSolver(RiemmannSolverBase):
     """
     Advect density and passive scalars with the upwind scheme and set all other fluxes to zero.
+    This solver is incorrect for the full Euler equations and is intended to be used for the
+    advection equation only.
     """
 
     def numpy_func(
@@ -149,6 +151,23 @@ class UpwindRiemannSolver(RiemmannSolverBase):
         for i in range(npassives):
             body += f"\nFpass{i} = v1 * (v1 > 0 ? passl{i} : passr{i});"
         return body
+
+    def __call__(
+        self,
+        wl: ArrayLike,
+        wr: ArrayLike,
+        fluxes: ArrayLike,
+        dim: Literal["x", "y", "z"],
+        idx: VariableIndexMap,
+        gamma: float,
+        isothermal: bool = False,
+        iso_cs: float = 1.0,
+    ):
+        if not np.isnan(gamma):
+            raise ValueError(
+                "Upwind Riemann solver is only compatible with the advection equation."
+            )
+        super().__call__(wl, wr, fluxes, dim, idx, gamma, isothermal, iso_cs)
 
 
 class LLF_RiemannSolver(RiemmannSolverBase):
