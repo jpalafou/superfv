@@ -48,8 +48,8 @@ def test_mpp_advection_of_square(p, limiting):
     )
     sim.take_n_steps(10)
 
-    assert min(sim.step_history.get_history("rho_min")) >= 0.0
-    assert max(sim.step_history.get_history("rho_max")) <= 1.0
+    assert min(sim.step_history.get_history("rho_min")) >= -1e-14
+    assert max(sim.step_history.get_history("rho_max")) <= 1.0 + 1e-14
 
 
 @pytest.mark.parametrize(

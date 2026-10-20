@@ -6,7 +6,7 @@
 #SBATCH --mem-per-cpu=1G                    # memory per cpu-core (4G is default)
 #SBATCH --time=00:15:00                     # total run time limit (HH:MM:SS)
 #SBATCH --mail-user=jp7427@princeton.edu    # email address for notifications
-#SBATCH --mail-type=NONE                    # notifications for job done & fail
+#SBATCH --mail-type=ALL                     # notifications for job done & fail
 #SBATCH --output=out/slurm-%j.out           # output file
 
 module purge
