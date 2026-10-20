@@ -1,5 +1,6 @@
 from . import initial_conditions as ics
 from . import visualization as vis
+from .advection_solver import AdvectionSolver
 from .hydro_solver import HydroSolver
 from .hydro_solver_output import HydroSolverOutput
 from .tools.device_management import CUPY_AVAILABLE
@@ -13,6 +14,7 @@ __all__ = [
     "ics",
     "vis",
     # classes
+    "AdvectionSolver",
     "HydroSolver",
     "HydroSolverOutput",
     # functions
