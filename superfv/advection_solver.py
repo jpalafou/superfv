@@ -9,10 +9,13 @@ import numpy as np
 from superfv.tools.variable_index_map import VariableIndexMap
 
 from . import initial_conditions as ics
+from .advection_driver import update_advection_fluxes, update_advection_workspace
 from .boundary_conditions import BC, PatchBC
 from .configs import HydroParameters, MUSCL_SlopeLimiter
 from .field import MultivarField, SourceTerm, UnivarField
+from .finite_volume_driver import compute_fv_dudt
 from .hydro_solver import HydroSolver
+from .slope_limiting.mood import mood_loop
 from .tools.device_management import ArrayLike
 from .tools.snapshot import Snapshot
 
@@ -211,4 +214,84 @@ class AdvectionSolver(HydroSolver):
         self._reset_step_summary(step_summary.step + 1)
 
     def f(self, t: float, u: ArrayLike, dt: float, hancock: bool = False) -> ArrayLike:
-        raise NotImplementedError("f")
+        with self._time("f"):
+            params = self.params
+            idx = params.variable_index_map
+            base_scheme = params.fv_scheme
+            bc_params = params.bc
+            mesh = self.mesh
+            active_dims = params.mesh.active_dims
+            arrays = self.arrays
+
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                update_advection_workspace(
+                    u,
+                    arrays["_u_"],
+                    t,
+                    idx,
+                    mesh,
+                    bc_params,
+                    self.step_summary.timer if self.params.profile else None,
+                )
+
+                update_advection_fluxes(
+                    arrays["_u_"],
+                    arrays["_F_"] if "x" in active_dims else np.array([]),
+                    arrays["_G_"] if "y" in active_dims else np.array([]),
+                    arrays["_H_"] if "z" in active_dims else np.array([]),
+                    arrays["_theta_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
+                    arrays["_qcc_"] if base_scheme.zhang_shu_params.use_ZS else np.array([]),
+                    arrays["_alpha_"],
+                    idx,
+                    active_dims,
+                    mesh,
+                    base_scheme,
+                    dt if hancock else 0.0,
+                    self.step_summary.timer if self.params.profile else None,
+                )
+
+                # Compute source term
+                if self.params.source is not None:
+                    arrays["source"][...] = self.params.source(idx, u, xp=self.xp)
+
+                if base_scheme.mood_params.use_MOOD:
+                    with self._time("mood_loop"):
+                        # Primitive and conservative states are identical for advection.
+                        mood_loop(
+                            arrays["_u_"],
+                            arrays["_u_"],
+                            arrays["_u_"],
+                            arrays["_unew_"],
+                            arrays["_unew_"],
+                            arrays["_alpha_"],
+                            np.array([]),  # fallback schemes could in principle use ZS
+                            np.array([]),  # fallback schemes could in principle use ZS
+                            arrays["_troubles_"],
+                            arrays["revisable_troubles"],
+                            arrays["_cascade_idx_"],
+                            arrays["_F_"] if "x" in active_dims else np.array([]),
+                            arrays["_G_"] if "y" in active_dims else np.array([]),
+                            arrays["_H_"] if "z" in active_dims else np.array([]),
+                            arrays["_F_fallback_"] if "x" in active_dims else np.array([]),
+                            arrays["_G_fallback_"] if "y" in active_dims else np.array([]),
+                            arrays["_H_fallback_"] if "z" in active_dims else np.array([]),
+                            arrays["source"],
+                            idx,
+                            t,
+                            dt,
+                            mesh,
+                            base_scheme,
+                            bc_params,
+                            self.substep_summary,
+                            None,
+                            self.step_summary.timer if self.params.profile else None,
+                        )
+
+            with self._time("compute_dudt"):
+                return compute_fv_dudt(
+                    arrays["F"] if "x" in active_dims else np.array([]),
+                    arrays["G"] if "y" in active_dims else np.array([]),
+                    arrays["H"] if "z" in active_dims else np.array([]),
+                    arrays["source"],
+                    mesh,
+                )

@@ -1073,8 +1073,8 @@ class HydroSolver:
                             mesh,
                             base_scheme,
                             bc_params,
-                            hydro_params,
                             self.substep_summary,
+                            hydro_params,
                             self.step_summary.timer if self.params.profile else None,
                         )
 

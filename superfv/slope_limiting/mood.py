@@ -490,8 +490,8 @@ def mood_loop(
     mesh: UniformFiniteVolumeMesh,
     base_scheme: FV_SchemeParameters,
     bc_params: BoundaryConditionParameters,
-    hydro_params: HydroParameters,
     substep_summary: SubstepSummary,
+    hydro_params: Optional[HydroParameters] = None,
     timer: Optional[MultiTimer] = None,
 ):
     """
