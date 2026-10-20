@@ -843,6 +843,7 @@ class HydroSolver:
             t_wall=np.nan,
             n_dt_revisions=0,
             rho_min=np.nan,
+            rho_max=np.nan,
             E_total=np.nan,
             substeps=[],
             timer=MultiTimer(
@@ -985,6 +986,7 @@ class HydroSolver:
 
         step_summary.t_wall = time.time() - self.t_wall_start
         step_summary.rho_min = self.xp.min(u[idx("rho")]).item()
+        step_summary.rho_max = self.xp.max(u[idx("rho")]).item()
         step_summary.E_total = self.xp.sum(u[idx("E")]).item()
 
         if take_snapshot:

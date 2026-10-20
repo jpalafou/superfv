@@ -108,6 +108,7 @@ class StepSummary:
     t_wall: float
     n_dt_revisions: int
     rho_min: float
+    rho_max: float
     E_total: float
     substeps: List[SubstepSummary]
     timer: MultiTimer

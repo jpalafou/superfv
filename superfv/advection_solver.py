@@ -1,4 +1,3 @@
-import time
 from functools import partial
 from pathlib import Path
 from types import ModuleType
@@ -206,17 +205,6 @@ class AdvectionSolver(HydroSolver):
 
         self.w0_func = u0_func
         self.u0_func = u0_func
-
-    def _summarize_step(self, take_snapshot: bool = False):
-        step_summary = self.step_summary
-
-        step_summary.t_wall = time.time() - self.t_wall_start
-
-        if take_snapshot:
-            self._take_snapshot()  # updates step_summary.timer
-
-        self.step_history.append(step_summary)
-        self._reset_step_summary(step_summary.step + 1)
 
     def _compute_dt(
         self,
