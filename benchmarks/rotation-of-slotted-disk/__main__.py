@@ -46,8 +46,8 @@ def run_simulation(folder_name, **kwargs):
     try:
         sim = HydroSolverOutput(output_path)
     except FileNotFoundError:
-        sim = AdvectionSolver(**kwargs, **config)
-        sim.run(times)
+        sim = AdvectionSolver(output_path=output_path, **kwargs, **config)
+        sim.run(times, print_frequency=1)
     print_rho_min_max(sim)
     plot_result(sim)
 
@@ -77,9 +77,9 @@ run_simulation(
 )
 
 run_simulation(
-    "a_posteriori_8th_order_3rev",
+    "a_posteriori_8th_order_10rev",
     p=7,
     use_MOOD=True,
-    max_revs=3,
-    fallback_cascade="muscl0",
+    max_revs=8,
+    fallback_cascade="full",
 )
