@@ -1,12 +1,14 @@
 from functools import partial
+from pathlib import Path
 
 import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 
 from superfv import AdvectionSolver, ics
+from superfv.hydro_solver_output import HydroSolverOutput
 
-output = "/scratch/gpfs/jp7427/siam-nnp26/slotted_disk/"
+output = Path("/scratch/gpfs/jp7427/siam-nnp26/slotted_disk/")
 
 times = [float(i + 1) * 2 * np.pi for i in range(10)]
 
@@ -29,56 +31,55 @@ def print_rho_min_max(sim):
 
 def plot_result(sim):
     fig, ax = plt.subplots()
+    ax.set_box_aspect(1)
 
     x = cp.asnumpy(sim.mesh.faces[0])
     y = cp.asnumpy(sim.mesh.faces[1])
-    z = sim.snapshot_history[-1].u[sim.idx("rho"), :, :, 0].T
+    z = sim.snapshot_history[-1].u[sim.params.variable_index_map("rho"), :, :, 0].T
     ax.pcolormesh(x, y, z, shading="flat", cmap="jet")
-    fig.savefig(sim.params.output_path + "/final_rho.png", dpi=300)
+    fig.savefig(sim.params.output_path / Path("final_rho.png"), dpi=300)
 
 
-sim = AdvectionSolver(
+def run_simulation(folder_name, **kwargs):
+    output_path = output / Path(folder_name)
+
+    try:
+        sim = HydroSolverOutput(output_path)
+    except FileNotFoundError:
+        sim = AdvectionSolver(**kwargs, **config)
+        sim.run(times)
+    print_rho_min_max(sim)
+    plot_result(sim)
+
+
+run_simulation(
+    "a_priori_8th_order_transverse",
     p=7,
     use_ZS=True,
     flux_quadrature="transverse",
-    output_path=output + "a_priori_8th_order_transverse",
-    **config,
 )
-sim.run(times)
-print_rho_min_max(sim)
-plot_result(sim)
 
-sim = AdvectionSolver(
+
+run_simulation(
+    "a_priori_8th_order_gauss_legendre",
     p=7,
     use_ZS=True,
     flux_quadrature="gauss_legendre",
-    output_path=output + "a_priori_8th_order_gauss_legendre",
-    **config,
+    adaptive_dt=True,
 )
-sim.run(times)
-print_rho_min_max(sim)
-plot_result(sim)
 
-sim = AdvectionSolver(
+run_simulation(
+    "a_posteriori_8th_order_1rev",
     p=7,
     use_MOOD=True,
     max_revs=1,
     fallback_cascade="muscl",
-    output_path=output + "a_posteriori_8th_order_1rev",
-    **config,
 )
-sim.run(times)
-print_rho_min_max(sim)
-plot_result(sim)
 
-sim = AdvectionSolver(
+run_simulation(
+    "a_posteriori_8th_order_3rev",
     p=7,
     use_MOOD=True,
     max_revs=3,
     fallback_cascade="muscl0",
-    output_path=output + "a_posteriori_8th_order_3rev",
-    **config,
 )
-sim.run(times)
-print_rho_min_max(sim)
-plot_result(sim)
