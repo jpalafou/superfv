@@ -66,14 +66,9 @@ def compute_fv_upwind_Omega_h_over_a_harmonic_trace(p, n=100):
         evaluated over a trigonometric periodic grid as an array of shape (n,)
     """
     Omega_h_over_a = derive_fv_upwind_Omega_h_over_a(p)
-
-    def get_complex_numeric(kh_expression, kh_value):
-        x = kh_expression.subs(k * h, kh_value)
-        return float(sp.re(x)) + 1j * float(sp.im(x))
-
-    kh = np.linspace(-np.pi, np.pi, n)
-    Omega_h_over_a_values = np.array([get_complex_numeric(Omega_h_over_a, x) for x in kh])
-    return Omega_h_over_a_values
+    kh = sp.symbols("kh", real=True)
+    evaluate_Omega_h_over_a = sp.lambdify(kh, Omega_h_over_a.subs(k * h, kh), modules="numpy")
+    return np.asarray(evaluate_Omega_h_over_a(np.linspace(-np.pi, np.pi, n)), dtype=complex)
 
 
 def plot_fv_upwind_Omega_h_over_a_harmonic_trace(ax, p, n=100, **kwargs):

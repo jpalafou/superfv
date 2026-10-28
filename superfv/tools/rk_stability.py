@@ -51,14 +51,8 @@ def plot_stability_region(ax, amplification, z_real_1D, z_imag_1D, real_cfl, fil
     amplification_simplified = sp.simplify(
         amplification.subs(Omega * h / a, zsym).subs(cfl, real_cfl)
     )
-
-    def evaluate_amplification(z_expression, z_value):
-        return float(z_expression.subs(zsym, z_value))
-
-    vectorized_eval = np.vectorize(
-        lambda z_value: evaluate_amplification(amplification_simplified, z_value)
-    )
-    amplification_values = vectorized_eval(z)
+    evaluate_amplification = sp.lambdify(zsym, amplification_simplified, modules="numpy")
+    amplification_values = evaluate_amplification(z)
 
     if fill:
         ax.contourf(z_real, z_imag, amplification_values, **kwargs)
