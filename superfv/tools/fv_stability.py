@@ -47,7 +47,7 @@ def derive_fv_upwind_Omega_h_over_a(p):
     """
     p: the polynomial representing the finite volume scheme
     returns: the harmonic mode representation of the upwind finite volume scheme's Omega * h / a in
-        terms of theta, which should only appear inside trigonometric functions
+        terms of theta, which should only appear linearly inside trigonometric functions
     """
     upwind_rhs = derive_fv_upwind_rhs(p)
     upwind_harmonic_rhs = inject_harmonic_modes(upwind_rhs)
@@ -56,7 +56,12 @@ def derive_fv_upwind_Omega_h_over_a(p):
     Omega = sp.simplify(upwind_harmonic_rhs / z)
     Omega_h_over_a = sp.simplify(Omega * h / a)
     Omega_h_over_a = Omega_h_over_a.rewrite(sp.sin).subs(k * h, theta)
-    # TODO: check that all theta terms are inside trigonometric functions
+
+    # Check that theta appears only linearly inside trigonometric functions
+    trig_terms = Omega_h_over_a.atoms(sp.sin, sp.cos)
+    assert not Omega_h_over_a.xreplace({term: sp.Dummy() for term in trig_terms}).has(theta)
+    assert all(sp.diff(term.args[0], theta, 2) == 0 for term in trig_terms)
+
     return Omega_h_over_a
 
 
