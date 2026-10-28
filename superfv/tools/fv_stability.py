@@ -11,8 +11,8 @@ from superfv.tools.polynomials import (
     shift_stencil_indices,
 )
 
-a, x_i = sp.symbols("a x_i", real=True)
-k = sp.symbols("k", real=False)
+a, x_i, theta = sp.symbols("a x_i theta", real=True)
+k = sp.symbols("k", complex=True)
 
 
 def inject_harmonic_modes(stencil):
@@ -46,7 +46,8 @@ def derive_fv_upwind_rhs(p):
 def derive_fv_upwind_Omega_h_over_a(p):
     """
     p: the polynomial representing the finite volume scheme
-    returns: the harmonic mode representation of the upwind finite volume scheme's Omega * h / a
+    returns: the harmonic mode representation of the upwind finite volume scheme's Omega * h / a in
+        terms of theta, which should only appear inside trigonometric functions
     """
     upwind_rhs = derive_fv_upwind_rhs(p)
     upwind_harmonic_rhs = inject_harmonic_modes(upwind_rhs)
@@ -54,7 +55,8 @@ def derive_fv_upwind_Omega_h_over_a(p):
     z = sp.exp(k * 1j * x_i)
     Omega = sp.simplify(upwind_harmonic_rhs / z)
     Omega_h_over_a = sp.simplify(Omega * h / a)
-    Omega_h_over_a = Omega_h_over_a.rewrite(sp.sin)
+    Omega_h_over_a = Omega_h_over_a.rewrite(sp.sin).subs(k * h, theta)
+    # TODO: check that all theta terms are inside trigonometric functions
     return Omega_h_over_a
 
 
@@ -66,8 +68,7 @@ def compute_fv_upwind_Omega_h_over_a_harmonic_trace(p, n=100):
         evaluated over a trigonometric periodic grid as an array of shape (n,)
     """
     Omega_h_over_a = derive_fv_upwind_Omega_h_over_a(p)
-    kh = sp.symbols("kh", real=True)
-    evaluate_Omega_h_over_a = sp.lambdify(kh, Omega_h_over_a.subs(k * h, kh), modules="numpy")
+    evaluate_Omega_h_over_a = sp.lambdify(theta, Omega_h_over_a.subs(k * h, theta), modules="numpy")
     return np.asarray(evaluate_Omega_h_over_a(np.linspace(-np.pi, np.pi, n)), dtype=complex)
 
 
