@@ -17,6 +17,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "pyyaml",
+    "sympy",
 ]
 
 [project.optional-dependencies]
