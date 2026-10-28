@@ -92,6 +92,30 @@ def compute_stencil(p, x_eval):
     return sp.simplify(poly.subs(x, x_eval))
 
 
+def get_index_from_U_i(U_i):
+    """
+    U_i: symbol representing a cell average
+    returns: the index of the cell average
+    """
+    numbers = ""
+    for i, x in enumerate(str(U_i).split("U_")[-1]):
+        if x.isdigit() or (x == "-" and i == 0):
+            numbers += x
+        else:
+            break
+    return int(numbers)
+
+
+def get_coeff_from_U_i(U_i):
+    """
+    U_i: symbol representing a cell average
+    returns: the coefficient of the cell average in the term
+    """
+    index = get_index_from_U_i(U_i)
+    term = sp.Symbol(f"U_{index}", real=True)
+    return U_i / term
+
+
 def shift_stencil_indices(stencil, shift):
     """
     stencil: expression representing the stencil in terms of U_i
@@ -101,8 +125,8 @@ def shift_stencil_indices(stencil, shift):
     terms = stencil.as_ordered_terms()
 
     def shift_term(term, shift):
-        index = int(str(term).split("_")[-1].split("/")[0])
+        index = get_index_from_U_i(term)
         new_index = index + shift
-        return sp.Symbol(f"U_{new_index}", real=True) * term.as_coeff_Mul()[0]
+        return sp.Symbol(f"U_{new_index}", real=True) * get_coeff_from_U_i(term)
 
     return sum(shift_term(term, shift) for term in terms)
