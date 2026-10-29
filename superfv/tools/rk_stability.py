@@ -79,7 +79,7 @@ def rk4_amplification():
     return get_amplification_factor(rk4_update)
 
 
-def compute_fv_upwinding_rk_amplification(p, rk="ssprk3"):
+def compute_fv_upwinding_rk_amplification(p, rk="ssprk3", sub_in_cfl=True):
     omega_h_over_a = derive_fv_upwind_Omega_h_over_a(p)
     omega = omega_h_over_a * a / h
 
@@ -95,7 +95,10 @@ def compute_fv_upwinding_rk_amplification(p, rk="ssprk3"):
         case _:
             raise ValueError(f"Unknown Runge-Kutta method: {rk}")
 
-    return amplification.subs(Omega, omega).subs(dt * a / h, cfl)
+    out = amplification.subs(Omega, omega)
+    if sub_in_cfl:
+        out = out.subs(dt * a / h, cfl)
+    return out
 
 
 def plot_stability_region(ax, amplification, z_real_1D, z_imag_1D, fill=False, **kwargs):
