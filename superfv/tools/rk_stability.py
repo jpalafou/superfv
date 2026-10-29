@@ -3,7 +3,7 @@
 import numpy as np
 import sympy as sp
 
-from superfv.tools.fv_stability import a, derive_fv_upwind_Omega_h_over_a
+from superfv.tools.fv_advection_stability import a, derive_fv_upwind_Omega_h_over_a
 from superfv.tools.polynomials import h
 
 dt, cfl = sp.symbols("dt CFL", real=True)
