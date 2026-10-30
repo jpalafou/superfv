@@ -297,8 +297,9 @@ class HydroSolver:
             rtol: Relative tolerance for numerical admissibility detection.
             atol: Absolute tolerance for numerical admissibility detection.
             delta: If True, enable delta-based numerical admissibility detection.
-            scale_by_cfl: Scale rtol by min(1, c_max * dt / h), where dt is the current substep
-                size and h is the maximum uniform mesh spacing.
+            scale_by_cfl: Scale rtol by the local factor min(1, (max(|vx|, |vy|, |vz|)
+                + cs) * dt / h), where dt is the current substep size and h is the maximum
+                uniform mesh spacing.
 
         Slope limiting parameters (MOOD):
             use_MOOD: If True, enable MOOD scheme.

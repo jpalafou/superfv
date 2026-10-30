@@ -12,6 +12,7 @@ from superfv.configs import (
     FV_SchemeParameters,
     HydroParameters,
     MOOD_Parameters,
+    NumericalAdmissibilityDetectionParameters,
 )
 from superfv.cuda_params import DEFAULT_THREADS_PER_BLOCK
 from superfv.finite_volume_driver import apply_fv_bc, compute_fv_dudt, get_interior_view
@@ -63,22 +64,21 @@ def compute_candidate_solution(
 def numerical_admissibility_detection(
     _qold_: np.ndarray,
     _qnew_: np.ndarray,
+    _rtol_: np.ndarray,
     _troubles_: np.ndarray,
     _alpha_: np.ndarray,
     idx: VariableIndexMap,
     active_dims: Tuple[Literal["x", "y", "z"], ...],
     params: MOOD_Parameters,
     primitives: bool,
-    actual_rtol: float,
 ):
     """
     Update `_troubles_` based on NAD criteria compute from `_qold_` and `_qnew_` with
     optional relaxation from the smooth extrema detector `_alpha_`. Renders a single
     ghost cell layer along each active dimension of the output array invalid.
-    `actual_rtol` is the effective relative tolerance for this candidate substep.
+    `_rtol_` is the effective relative tolerance for this candidate substep.
     """
     NAD_params = params.NAD_params
-    rtol = actual_rtol
     atol = NAD_params.atol
 
     _NAD_troubles_ = np.zeros_like(_qold_, dtype=bool)
@@ -94,11 +94,11 @@ def numerical_admissibility_detection(
     # compute lower and upper bounds for NAD
     if NAD_params.delta:
         _delta_ = _dmp_M_ - _dmp_m_  # TEMP ARRAY
-        _lower_ = _dmp_m_ - rtol * _delta_ - atol  # TEMP ARRAY
-        _upper_ = _dmp_M_ + rtol * _delta_ + atol  # TEMP ARRAY
+        _lower_ = _dmp_m_ - _rtol_ * _delta_ - atol  # TEMP ARRAY
+        _upper_ = _dmp_M_ + _rtol_ * _delta_ + atol  # TEMP ARRAY
     else:
-        _lower_ = _dmp_m_ - rtol * np.abs(_dmp_m_) - atol  # TEMP ARRAY
-        _upper_ = _dmp_M_ + rtol * np.abs(_dmp_M_) + atol  # TEMP ARRAY
+        _lower_ = _dmp_m_ - _rtol_ * np.abs(_dmp_m_) - atol  # TEMP ARRAY
+        _upper_ = _dmp_M_ + _rtol_ * np.abs(_dmp_M_) + atol  # TEMP ARRAY
 
     # Detect NAD violations
     _NAD_troubles_ |= _qnew_ < _lower_
@@ -133,26 +133,40 @@ def apply_troubles_bc(
     )
 
 
-def compute_vmax(
+def compute_local_vmax(
     _w_: ArrayLike,
     idx: VariableIndexMap,
     hydro_params: HydroParameters,
-    active_dims: Tuple[Literal["x", "y", "z"], ...],
-) -> float:
+) -> ArrayLike:
     xp = cp if CUPY_AVAILABLE and isinstance(_w_, cp.ndarray) else np
     hp = hydro_params
-    ndim = len(active_dims)
 
-    _v_ = xp.zeros_like(_w_[0])
     _cs_ = xp.empty_like(_w_[0])
-
     prim_to_cs(_w_, _cs_, idx, hp.gamma, hp.isothermal, hp.iso_cs)
-    _v_ += ndim * _cs_
 
-    for dim in active_dims:
-        _v_ += xp.abs(_w_[idx("v" + dim)])
+    _vmax_ = xp.maximum(xp.abs(_w_[idx("vx")]), xp.abs(_w_[idx("vy")]))
+    xp.maximum(_vmax_, xp.abs(_w_[idx("vz")]), out=_vmax_)
+    _vmax_ += _cs_
+    return _vmax_
 
-    return _v_.max().item()
+
+def compute_local_rtol(
+    _wold_: ArrayLike,
+    idx: VariableIndexMap,
+    NAD_params: NumericalAdmissibilityDetectionParameters,
+    dt: float,
+    h: float,
+    hydro_params: Optional[HydroParameters] = None,
+) -> ArrayLike:
+    xp = cp if CUPY_AVAILABLE and isinstance(_wold_, cp.ndarray) else np
+    if NAD_params.use_NAD and NAD_params.scale_by_cfl:
+        if hydro_params is None:
+            raise ValueError("Local NAD rtol scaling requires hydro_params to compute vmax.")
+        _vmax_ = compute_local_vmax(_wold_, idx, hydro_params)
+        _rtol_ = xp.minimum(1.0, _vmax_ * dt / h) * NAD_params.rtol
+    else:
+        _rtol_ = xp.full_like(_wold_[0], NAD_params.rtol)
+    return _rtol_
 
 
 def detect_troubled_cells(
@@ -195,15 +209,8 @@ def detect_troubled_cells(
     if NAD_params.use_NAD and NAD_params.SED_params.use_SED:
         compute_alpha(_qold_, _alpha_, active_dims, NAD_params.SED_params.clip_zero_tol)
 
-    # compute rtol scaled by CFL if requested
-    if NAD_params.use_NAD and NAD_params.scale_by_cfl:
-        if hydro_params is None:
-            raise ValueError("NAD rtol scaling by CFL requires hydro_params to compute vmax.")
-        vmax = compute_vmax(_wold_[interior], idx, hydro_params, active_dims)
-        h = mesh.hmax
-        actual_rtol = min(1.0, vmax * dt / h) * NAD_params.rtol
-    else:
-        actual_rtol = NAD_params.rtol
+    # compute the locally scaled rtol if requested
+    _rtol_ = compute_local_rtol(_wold_, idx, NAD_params, dt, mesh.hmax, hydro_params)
 
     if CUPY_AVAILABLE and isinstance(_uold_, cp.ndarray):
         # Detect troubled cells with CuPy using a custom kernel
@@ -235,6 +242,7 @@ def detect_troubled_cells(
             _qnew_,
             _M_,
             _m_,
+            _rtol_,
             NAD_mask,
             _alpha_,
             _wnew_,
@@ -244,7 +252,6 @@ def detect_troubled_cells(
             NAD_params.SED_params.use_SED,
             PAD_params.use_PAD,
             NAD_params.delta,
-            actual_rtol,
             NAD_params.atol,
         )
     else:
@@ -253,13 +260,13 @@ def detect_troubled_cells(
             numerical_admissibility_detection(
                 _qold_,
                 _qnew_,
+                _rtol_,
                 _troubles_,
                 _alpha_,
                 idx,
                 active_dims,
                 mood_params,
                 primitives,
-                actual_rtol,
             )
 
         if PAD_params.use_PAD and not NAD_params.use_global_bounds:
@@ -771,6 +778,7 @@ if CUPY_AVAILABLE:
             const double* qnew,
             const double* __restrict__ M,
             const double* __restrict__ m,
+            const double* __restrict__ rtol,
             const int* __restrict__ NAD_mask,
             const double* __restrict__ alpha,
             const double* wnew,
@@ -780,7 +788,6 @@ if CUPY_AVAILABLE:
             const bool use_SED,
             const bool use_PAD,
             const bool delta_NAD,
-            const double rtol,
             const double atol,
             const int nvars,
             const int nx,
@@ -790,6 +797,7 @@ if CUPY_AVAILABLE:
             // qnew                     (nvars, nx, ny, nz), NAD argument
             // M                        (nvars, nx, ny, nz), NAD argument
             // m                        (nvars, nx, ny, nz), NAD argument
+            // rtol                     (nx, ny, nz), NAD argument
             // NAD_mask                 (nvars,), NAD argument
             // alpha                    (nvars, nx, ny, nz), NAD argument
             // wnew                     (nvars, nx, ny, nz), PAD argument
@@ -808,6 +816,7 @@ if CUPY_AVAILABLE:
                 const int ix = t % nx; t /= nx;
 
                 bool found_trouble = false;
+                const double cell_rtol = rtol[ixyz];
 
                 for (int iv = 0; iv < nvars; iv++) {
                     const long long i = (((long long)iv * nx + ix) * ny + iy) * nz + iz;
@@ -821,11 +830,11 @@ if CUPY_AVAILABLE:
 
                         if (delta_NAD) {
                             double delta = M[i] - m[i];
-                            lower_bound = m[i] - rtol * delta - atol;
-                            upper_bound = M[i] + rtol * delta + atol;
+                            lower_bound = m[i] - cell_rtol * delta - atol;
+                            upper_bound = M[i] + cell_rtol * delta + atol;
                         } else {
-                            lower_bound = m[i] - rtol * fabs(m[i]) - atol;
-                            upper_bound = M[i] + rtol * fabs(M[i]) + atol;
+                            lower_bound = m[i] - cell_rtol * fabs(m[i]) - atol;
+                            upper_bound = M[i] + cell_rtol * fabs(M[i]) + atol;
                         }
 
                         if (qnew[i] < lower_bound || qnew[i] > upper_bound) {
@@ -868,6 +877,7 @@ if CUPY_AVAILABLE:
         qnew: cp.ndarray,
         M: cp.ndarray,
         m: cp.ndarray,
+        rtol: cp.ndarray,
         NAD_mask: cp.ndarray,
         alpha: cp.ndarray,
         wnew: cp.ndarray,
@@ -877,7 +887,6 @@ if CUPY_AVAILABLE:
         use_SED: bool,
         use_PAD: bool,
         delta_NAD: bool,
-        rtol: float,
         atol: float,
     ) -> Tuple[slice, ...]:
         if not qnew.flags.c_contiguous or qnew.dtype != cp.float64:
@@ -886,6 +895,10 @@ if CUPY_AVAILABLE:
             raise ValueError("M must be a C-contiguous float64 array with same shape as qnew.")
         if not m.flags.c_contiguous or m.dtype != cp.float64 or m.shape != qnew.shape:
             raise ValueError("M must be a C-contiguous float64 array with same shape as qnew.")
+        if not rtol.flags.c_contiguous or rtol.dtype != cp.float64 or rtol.shape != qnew.shape[1:]:
+            raise ValueError(
+                "rtol must be a C-contiguous float64 array with the spatial shape of qnew."
+            )
         if (
             not NAD_mask.flags.c_contiguous
             or NAD_mask.dtype != cp.int32
@@ -934,6 +947,7 @@ if CUPY_AVAILABLE:
                 qnew,
                 M,
                 m,
+                rtol,
                 NAD_mask,
                 alpha,
                 wnew,
@@ -943,7 +957,6 @@ if CUPY_AVAILABLE:
                 use_SED,
                 use_PAD,
                 delta_NAD,
-                rtol,
                 atol,
                 nvars,
                 nx,
