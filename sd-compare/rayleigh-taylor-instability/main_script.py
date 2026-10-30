@@ -256,61 +256,98 @@ def get_simulation_rho_maxmin(sims, uniform_sd=False):
 
 
 if __name__ == "__main__":
-    output_plot = Path("sd-compare/rayleigh-taylor-instability/results/sd_fixed_nad.png")
-    output_plot.unlink(missing_ok=True)  # remove the output file if it exists
-
     t = 1.95
     N = 768
 
-    sim1 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, P_background=1.0, nad_cfl=False)
-    sim2 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, P_background=1.0, nad_cfl=False)
-    sim3 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, P_background=1.0, nad_cfl=False)
-    sim4 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5, P_background=1.0, nad_cfl=False)
-    sim5 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3, P_background=1.0, nad_cfl=False)
-    sim6 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-1, P_background=1.0, nad_cfl=False)
-    sim7 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-5, P_background=100.0, nad_cfl=False)
-    sim8 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-3, P_background=100.0, nad_cfl=False)
-    sim9 = run_sd_simulation(t=t, ndofy=N, p=3, rtol=1e-1, P_background=100.0, nad_cfl=False)
-    sim10 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-5, P_background=100.0, nad_cfl=False)
-    sim11 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-3, P_background=100.0, nad_cfl=False)
-    sim12 = run_sd_simulation(t=t, ndofy=N, p=7, rtol=1e-1, P_background=100.0, nad_cfl=False)
+    simulations = {}
 
-    sim_list = [sim1, sim2, sim3, sim4, sim5, sim6, sim7, sim8, sim9, sim10, sim11, sim12]
+    def get_name(solver, p, rtol, P_background, nad_cfl):
+        return f"{solver=}_{p=}_{rtol=}_{P_background=}_{nad_cfl=}"
+
+    def add_simulation(solver, p, rtol, P_background, nad_cfl):
+        name = get_name(solver, p, rtol, P_background, nad_cfl)
+        if solver == "sd":
+            sim = run_sd_simulation(
+                t=t, ndofy=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
+            )
+        elif solver == "fv":
+            sim = run_fv_simulation(
+                t=t, ndofy=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
+            )
+        else:
+            raise ValueError(f"Unsupported solver: {solver}")
+        simulations[name] = sim
+
+    def get_simulation(solver, p, rtol, P_background, nad_cfl):
+        name = get_name(solver, p, rtol, P_background, nad_cfl)
+        return simulations.get(name)
+
+    def plot_simulation(ax, solver, p, rtol, P_background, nad_cfl, **kwargs):
+        sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
+        if solver == "fv":
+            plot_fv_density(ax, sim, **kwargs)
+        elif solver == "sd":
+            plot_sd_density(ax, sim, **kwargs)
+        else:
+            raise ValueError(f"Unsupported solver: {solver}")
+
+    for solver in ["sd", "fv"]:
+        for p in [3, 7]:
+            for rtol in [1e-5, 1e-3, 1e-1]:
+                for P_background in [1.0, 100.0]:
+                    for nad_cfl in [False, True]:
+                        if (
+                            solver == "sd"
+                            and p == 7
+                            and rtol == 1e-1
+                            and P_background == 100.0
+                            and not nad_cfl
+                        ):
+                            continue  # skip this case because dt collapses
+                        add_simulation(solver, p, rtol, P_background, nad_cfl=nad_cfl)
 
     uniform_sd = False
 
     print("Computing global min/max density for color scaling...")
-    rhomax, rhomin = get_simulation_rho_maxmin(sim_list, uniform_sd=uniform_sd)
+    rhomax, rhomin = get_simulation_rho_maxmin(list(simulations.values()), uniform_sd=uniform_sd)
     print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
 
     print("Plotting results...")
-    fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
+    plot_configs = dict(cmap="afmhot", vmin=rhomin, vmax=rhomax)
 
-    axs[0, 0].set_ylabel(r"$P_0=1$")
-    axs[1, 0].set_ylabel(r"$P_0=100$")
+    for solver in ["sd", "fv"]:
+        for nad_cfl in [False, True]:
+            fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
 
-    axs[0, 0].set_title(r"SD4, $\epsilon=10^{-5}$")
-    plot_sd_density(axs[0, 0], sim1, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_sd_density(axs[1, 0], sim7, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 1].set_title(r"SD4, $\epsilon=10^{-3}$")
-    plot_sd_density(axs[0, 1], sim2, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_sd_density(axs[1, 1], sim8, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 2].set_title(r"SD4, $\epsilon=10^{-1}$")
-    plot_sd_density(axs[0, 2], sim3, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_sd_density(axs[1, 2], sim9, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 3].set_title(r"SD8, $\epsilon=10^{-5}$")
-    plot_sd_density(axs[0, 3], sim4, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_sd_density(axs[1, 3], sim10, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 4].set_title(r"SD8, $\epsilon=10^{-3}$")
-    plot_sd_density(axs[0, 4], sim5, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_sd_density(axs[1, 4], sim11, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    axs[0, 5].set_title(r"SD8, $\epsilon=10^{-1}$")
-    plot_sd_density(axs[0, 5], sim6, cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_sd_density(axs[1, 5], sim12, cmap="afmhot", vmin=rhomin, vmax=rhomax)
+            axs[0, 0].set_title(rf"{solver.upper()}4, $\epsilon=10^{-5}$")
+            plot_simulation(axs[0, 0], solver, 3, 1e-5, 1.0, False, **plot_configs)
+            plot_simulation(axs[1, 0], solver, 3, 1e-5, 100.0, False, **plot_configs)
+            axs[0, 1].set_title(rf"{solver.upper()}4, $\epsilon=10^{-3}$")
+            plot_simulation(axs[0, 1], solver, 3, 1e-3, 1.0, False, **plot_configs)
+            plot_simulation(axs[1, 1], solver, 3, 1e-3, 100.0, False, **plot_configs)
+            axs[0, 2].set_title(rf"{solver.upper()}4, $\epsilon=10^{-1}$")
+            plot_simulation(axs[0, 2], solver, 3, 1e-1, 1.0, False, **plot_configs)
+            plot_simulation(axs[1, 2], solver, 3, 1e-1, 100.0, False, **plot_configs)
+            axs[0, 3].set_title(rf"{solver.upper()}8, $\epsilon=10^{-5}$")
+            plot_simulation(axs[0, 3], solver, 7, 1e-5, 1.0, False, **plot_configs)
+            plot_simulation(axs[1, 3], solver, 7, 1e-5, 100.0, False, **plot_configs)
+            axs[0, 4].set_title(rf"{solver.upper()}8, $\epsilon=10^{-3}$")
+            plot_simulation(axs[0, 4], solver, 7, 1e-3, 1.0, False, **plot_configs)
+            plot_simulation(axs[1, 4], solver, 7, 1e-3, 100.0, False, **plot_configs)
+            axs[0, 5].set_title(rf"{solver.upper()}8, $\epsilon=10^{-1}$")
+            plot_simulation(axs[0, 5], solver, 7, 1e-1, 1.0, False, **plot_configs)
+            plot_simulation(axs[1, 5], solver, 7, 1e-1, 100.0, False, **plot_configs)
 
-    plt.subplots_adjust(wspace=0.1, hspace=0.1)
+            plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
-    print("Saving figure...")
-    fig.savefig(output_plot, dpi=300)
+            output_plot = Path(
+                f"out/rti/{solver}_{nad_cfl=}.png"
+            )
+            output_plot.unlink(missing_ok=True)
+            fig.savefig(output_plot, dpi=300)
+
+            plt.close(fig)
+
+            print("Finished plotting.")
 
     print("Done!")
