@@ -272,7 +272,7 @@ if __name__ == "__main__":
             )
         elif solver == "fv":
             sim = run_fv_simulation(
-                t=t, ndofy=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
+                t=t, ny=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
             )
         else:
             raise ValueError(f"Unsupported solver: {solver}")
@@ -284,6 +284,11 @@ if __name__ == "__main__":
 
     def plot_simulation(ax, solver, p, rtol, P_background, nad_cfl, **kwargs):
         sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
+
+        if sim is None:
+            ax.set_axis_off()
+            return
+
         if solver == "fv":
             plot_fv_density(ax, sim, **kwargs)
         elif solver == "sd":
@@ -320,29 +325,27 @@ if __name__ == "__main__":
             fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
 
             axs[0, 0].set_title(rf"{solver.upper()}4, $\epsilon=10^{-5}$")
-            plot_simulation(axs[0, 0], solver, 3, 1e-5, 1.0, False, **plot_configs)
-            plot_simulation(axs[1, 0], solver, 3, 1e-5, 100.0, False, **plot_configs)
+            plot_simulation(axs[0, 0], solver, 3, 1e-5, 1.0, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 0], solver, 3, 1e-5, 100.0, nad_cfl, **plot_configs)
             axs[0, 1].set_title(rf"{solver.upper()}4, $\epsilon=10^{-3}$")
-            plot_simulation(axs[0, 1], solver, 3, 1e-3, 1.0, False, **plot_configs)
-            plot_simulation(axs[1, 1], solver, 3, 1e-3, 100.0, False, **plot_configs)
+            plot_simulation(axs[0, 1], solver, 3, 1e-3, 1.0, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 1], solver, 3, 1e-3, 100.0, nad_cfl, **plot_configs)
             axs[0, 2].set_title(rf"{solver.upper()}4, $\epsilon=10^{-1}$")
-            plot_simulation(axs[0, 2], solver, 3, 1e-1, 1.0, False, **plot_configs)
-            plot_simulation(axs[1, 2], solver, 3, 1e-1, 100.0, False, **plot_configs)
+            plot_simulation(axs[0, 2], solver, 3, 1e-1, 1.0, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 2], solver, 3, 1e-1, 100.0, nad_cfl, **plot_configs)
             axs[0, 3].set_title(rf"{solver.upper()}8, $\epsilon=10^{-5}$")
-            plot_simulation(axs[0, 3], solver, 7, 1e-5, 1.0, False, **plot_configs)
-            plot_simulation(axs[1, 3], solver, 7, 1e-5, 100.0, False, **plot_configs)
+            plot_simulation(axs[0, 3], solver, 7, 1e-5, 1.0, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 3], solver, 7, 1e-5, 100.0, nad_cfl, **plot_configs)
             axs[0, 4].set_title(rf"{solver.upper()}8, $\epsilon=10^{-3}$")
-            plot_simulation(axs[0, 4], solver, 7, 1e-3, 1.0, False, **plot_configs)
-            plot_simulation(axs[1, 4], solver, 7, 1e-3, 100.0, False, **plot_configs)
+            plot_simulation(axs[0, 4], solver, 7, 1e-3, 1.0, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 4], solver, 7, 1e-3, 100.0, nad_cfl, **plot_configs)
             axs[0, 5].set_title(rf"{solver.upper()}8, $\epsilon=10^{-1}$")
-            plot_simulation(axs[0, 5], solver, 7, 1e-1, 1.0, False, **plot_configs)
-            plot_simulation(axs[1, 5], solver, 7, 1e-1, 100.0, False, **plot_configs)
+            plot_simulation(axs[0, 5], solver, 7, 1e-1, 1.0, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 5], solver, 7, 1e-1, 100.0, nad_cfl, **plot_configs)
 
             plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
-            output_plot = Path(
-                f"out/rti/{solver}_{nad_cfl=}.png"
-            )
+            output_plot = Path(f"out/rti/{solver}_{nad_cfl=}.png")
             output_plot.unlink(missing_ok=True)
             fig.savefig(output_plot, dpi=300)
 
