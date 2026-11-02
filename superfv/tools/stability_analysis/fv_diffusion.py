@@ -2,10 +2,9 @@
 
 import sympy as sp
 
-from .fv_advection import inject_harmonic_modes, k, theta, x_i
-from .polynomials import derive_conservative_interpolation_polynomial, h, x
-
-nu = sp.symbols("nu", real=True)
+from .fv_advection import inject_harmonic_modes
+from .polynomials import derive_conservative_interpolation_polynomial
+from .variables import h, k, nu, theta, x, x_i
 
 
 def derive_interpolation_of_derivative_at_face(p, face):

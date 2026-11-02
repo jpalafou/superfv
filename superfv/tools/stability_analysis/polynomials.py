@@ -2,7 +2,7 @@
 
 import sympy as sp
 
-x, h = sp.symbols("x h", real=True)
+from .variables import h, x
 
 
 def lagrange_interpolation_polynomial(x_nodes, f_nodes):
@@ -98,9 +98,9 @@ def get_index_from_U_i(U_i):
     returns: the index of the cell average
     """
     numbers = ""
-    for i, x in enumerate(str(U_i).split("U_")[-1]):
-        if x.isdigit() or (x == "-" and i == 0):
-            numbers += x
+    for i, char in enumerate(str(U_i).split("U_")[-1]):
+        if char.isdigit() or (char == "-" and i == 0):
+            numbers += char
         else:
             break
     return int(numbers)

@@ -7,11 +7,9 @@ from .polynomials import (
     compute_stencil,
     get_coeff_from_U_i,
     get_index_from_U_i,
-    h,
     shift_stencil_indices,
 )
-
-a, x_i, k, theta = sp.symbols("a x_i k theta", real=True)
+from .variables import a, h, k, theta, x_i
 
 
 def inject_harmonic_modes(stencil):

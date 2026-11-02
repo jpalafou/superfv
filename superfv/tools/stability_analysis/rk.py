@@ -3,12 +3,9 @@
 import numpy as np
 import sympy as sp
 
-from .fv_advection import a, derive_fv_upwind_Omega_h_over_a
+from .fv_advection import derive_fv_upwind_Omega_h_over_a
 from .fv_diffusion import derive_fv_diffusion_Omega
-from .polynomials import h
-
-dt, cfl = sp.symbols("dt CFL", real=True)
-u0, Omega, z = sp.symbols("u^0 Omega z", complex=True)
+from .variables import Omega, a, cfl, dt, h, u0, z
 
 
 def module_variable(func):
