@@ -3,7 +3,7 @@
 import numpy as np
 import sympy as sp
 
-from superfv.tools.polynomials import (
+from .polynomials import (
     compute_stencil,
     get_coeff_from_U_i,
     get_index_from_U_i,

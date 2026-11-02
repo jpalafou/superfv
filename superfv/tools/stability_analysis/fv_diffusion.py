@@ -2,8 +2,8 @@
 
 import sympy as sp
 
-from superfv.tools.fv_advection_stability import inject_harmonic_modes, k, theta, x_i
-from superfv.tools.polynomials import derive_conservative_interpolation_polynomial, h, x
+from .fv_advection import inject_harmonic_modes, k, theta, x_i
+from .polynomials import derive_conservative_interpolation_polynomial, h, x
 
 nu = sp.symbols("nu", real=True)
 
