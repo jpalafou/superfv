@@ -2,7 +2,7 @@
 
 import sympy as sp
 
-from superfv.tools.fv_advection_stability import inject_harmonic_modes
+from superfv.tools.fv_advection_stability import inject_harmonic_modes, k, theta, x_i
 from superfv.tools.polynomials import derive_conservative_interpolation_polynomial, h, x
 
 nu = sp.symbols("nu", real=True)
@@ -30,5 +30,19 @@ def derive_fv_diffusion_rhs(p):
 
 def derive_fv_diffusion_harmonic_rhs(p):
     rhs = derive_fv_diffusion_rhs(p)
-    # .rewrite(sp.sin)
     return sp.simplify(inject_harmonic_modes(rhs))
+
+
+def derive_fv_diffusion_Omega(p):
+    rhs = derive_fv_diffusion_harmonic_rhs(p)
+    z = sp.exp(k * sp.I * x_i)
+    Omega = sp.simplify(rhs / z)
+    Omega = sp.simplify(sp.expand_complex(Omega))
+    Omega = Omega.subs(k * h, theta)
+
+    # Check that theta appears only linearly inside trigonometric functions
+    trig_terms = Omega.atoms(sp.sin, sp.cos)
+    assert not Omega.xreplace({term: sp.Dummy() for term in trig_terms}).has(theta)
+    assert all(sp.diff(term.args[0], theta, 2) == 0 for term in trig_terms)
+
+    return Omega

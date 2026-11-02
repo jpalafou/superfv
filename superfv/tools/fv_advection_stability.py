@@ -11,8 +11,7 @@ from superfv.tools.polynomials import (
     shift_stencil_indices,
 )
 
-a, x_i, theta = sp.symbols("a x_i theta", real=True)
-k = sp.symbols("k", complex=True)
+a, x_i, k, theta = sp.symbols("a x_i k theta", real=True)
 
 
 def inject_harmonic_modes(stencil):
@@ -26,7 +25,7 @@ def inject_harmonic_modes(stencil):
 
     def inject_term(term):
         index = get_index_from_U_i(term)
-        return sp.exp(k * 1j * (x_i + index * h)) * get_coeff_from_U_i(term)
+        return sp.exp(k * sp.I * (x_i + index * h)) * get_coeff_from_U_i(term)
 
     return sum(inject_term(term) for term in terms)
 
@@ -52,7 +51,7 @@ def derive_fv_upwind_Omega_h_over_a(p):
     upwind_rhs = derive_fv_upwind_rhs(p)
     upwind_harmonic_rhs = inject_harmonic_modes(upwind_rhs)
 
-    z = sp.exp(k * 1j * x_i)
+    z = sp.exp(k * sp.I * x_i)
     Omega = sp.simplify(upwind_harmonic_rhs / z)
     Omega_h_over_a = sp.simplify(Omega * h / a)
     Omega_h_over_a = Omega_h_over_a.rewrite(sp.sin).subs(k * h, theta)
