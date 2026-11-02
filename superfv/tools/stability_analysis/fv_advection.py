@@ -3,7 +3,7 @@
 import numpy as np
 import sympy as sp
 
-from .polynomials import (
+from .fv_polynomials import (
     compute_stencil,
     get_coeff_from_U_i,
     get_index_from_U_i,

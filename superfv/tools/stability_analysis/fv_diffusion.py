@@ -3,7 +3,7 @@
 import sympy as sp
 
 from .fv_advection import inject_harmonic_modes
-from .polynomials import derive_conservative_interpolation_polynomial
+from .fv_polynomials import derive_conservative_interpolation_polynomial
 from .variables import h, k, nu, theta, x, x_i
 
 
