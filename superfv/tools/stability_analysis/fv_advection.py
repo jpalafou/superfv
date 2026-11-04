@@ -1,5 +1,7 @@
 # mypy: ignore-errors
 
+from functools import lru_cache
+
 import numpy as np
 import sympy as sp
 
@@ -40,6 +42,7 @@ def derive_fv_upwind_rhs(p):
     return upwind_rhs
 
 
+@lru_cache(maxsize=None)
 def derive_fv_upwind_Omega_h_over_a(p):
     """
     p: the polynomial representing the finite volume scheme
@@ -61,6 +64,17 @@ def derive_fv_upwind_Omega_h_over_a(p):
 
     return Omega_h_over_a
 
+@lru_cache(maxsize=None)
+def derive_fv_upwind_Omega_h_over_a_trace_func(p):
+    """
+    p: polynomial degree
+    returns: a function that takes an array of theta values and returns the harmonic mode
+        representation of the upwind finite volume scheme's Omega * h / a evaluated at those
+        theta values
+    """
+    Omega_h_over_a = derive_fv_upwind_Omega_h_over_a(p)
+    Omega_h_over_a_func = sp.lambdify(theta, Omega_h_over_a, modules="numpy")
+    return Omega_h_over_a_func
 
 def compute_fv_upwind_Omega_h_over_a_harmonic_trace(p, n=100):
     """
