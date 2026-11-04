@@ -5,6 +5,23 @@ import sympy as sp
 from .variables import h, x
 
 
+def unweighted_lagrange_interpolation_polynomials(x_nodes):
+    """
+    x_nodes: list of x-coordinates of the nodes
+    returns: list of unweighted Lagrange interpolation polynomials in terms of x
+    """
+    n = len(x_nodes)
+    polynomials = []
+    for j in range(n):
+        L_j = 1
+        for k in range(n):
+            if j == k:
+                continue
+            L_j *= (x - x_nodes[k]) / (x_nodes[j] - x_nodes[k])
+        polynomials.append(sp.simplify(L_j))
+    return polynomials
+
+
 def lagrange_interpolation_polynomial(x_nodes, f_nodes):
     """
     x_nodes: list of x-coordinates of the nodes
@@ -13,16 +30,9 @@ def lagrange_interpolation_polynomial(x_nodes, f_nodes):
     """
     if len(x_nodes) != len(f_nodes):
         raise ValueError("x_nodes and f_nodes must have the same length.")
-    n = len(x_nodes)
-    poly = 0
-    for j in range(n):
-        L_j = 1
-        for k in range(n):
-            if j == k:
-                continue
-            L_j *= (x - x_nodes[k]) / (x_nodes[j] - x_nodes[k])
-        poly += f_nodes[j] * L_j
-    return poly
+    unweighted = unweighted_lagrange_interpolation_polynomials(x_nodes)
+    polynomial = sum(f_nodes[j] * unweighted[j] for j in range(len(x_nodes)))
+    return sp.simplify(polynomial)
 
 
 def cumulate_masses(averages):
