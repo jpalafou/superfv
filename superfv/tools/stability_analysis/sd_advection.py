@@ -134,21 +134,21 @@ def derive_sd_upwind_Omega_h_over_a_matrix(k, p):
     return mat
 
 
-def compute_sd_upwind_Omega_h_over_a_eigenvalues(k, p):
+def compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p):
     """
-    k: wave number
+    k_values: array of wave numbers
     p: polynomial degree
     returns: the eigenvalues of the matrix representation of the upwind SD scheme's Omega * h / a
     """
-    mat = derive_sd_upwind_Omega_h_over_a_matrix(k, p)
-    eigenvalues = np.linalg.eigvals(mat)
+    eigenvalues = np.empty((len(k_values), p + 1), dtype=np.complex128)
+    for i, k in enumerate(k_values):
+        mat = derive_sd_upwind_Omega_h_over_a_matrix(k, p)
+        eigenvalues[i, :] = np.linalg.eigvals(mat)
     return eigenvalues
 
 
 def plot_sd_advection_stability_trace(ax, p, k_values, **kwargs):
-    eigenvalues = np.empty((len(k_values), p + 1), dtype=np.complex128)
-    for i, k in enumerate(k_values):
-        eigenvalues[i, :] = compute_sd_upwind_Omega_h_over_a_eigenvalues(k, p)
+    eigenvalues = compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p)
 
     ax.plot(
         eigenvalues.real.flat,
