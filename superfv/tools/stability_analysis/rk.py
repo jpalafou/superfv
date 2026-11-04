@@ -3,6 +3,10 @@
 import numpy as np
 import sympy as sp
 
+from superfv.tools.stability_analysis.sd_advection import (
+    compute_sd_upwind_Omega_h_over_a_eigenvalues,
+)
+
 from .fv_advection import derive_fv_upwind_Omega_h_over_a
 from .fv_diffusion import derive_fv_diffusion_Omega
 from .variables import Omega, a, cfl, dt, h, u0, z
@@ -102,6 +106,37 @@ def compute_fv_rk_amplification(p, rk="ssprk3", operator="advection", sub_in_cfl
     if operator == "advection" and sub_in_cfl:
         out = out.subs(dt * a / h, cfl)
     return out
+
+
+def compute_sd_rk_amplification(p, k_values, cfl_value=None, rk="ssprk3", operator="advection"):
+    if operator == "advection":
+        if cfl_value is None:
+            raise ValueError("cfl_value must be provided for advection operator with SD schemes.")
+        omega_h_over_a_eigen = compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p)
+        omega_dt = omega_h_over_a_eigen * cfl_value
+    elif operator == "diffusion":
+        raise NotImplementedError("Diffusion operator is not implemented for SD schemes.")
+    else:
+        raise ValueError(f"Unknown operator: {operator}")
+
+    match rk:
+        case "forward_euler":
+            amplification = forward_euler_amplification
+        case "ssprk2":
+            amplification = ssprk2_amplification
+        case "ssprk3":
+            amplification = ssprk3_amplification
+        case "rk4":
+            amplification = rk4_amplification
+        case _:
+            raise ValueError(f"Unknown Runge-Kutta method: {rk}")
+
+    Omega_dt = sp.symbols("Omega_dt")
+    amplification = amplification.subs(Omega * dt, Omega_dt)
+    # create lambdified function for amplification
+    amplification_func = sp.lambdify(Omega_dt, amplification, modules="numpy")
+    amplification_values = amplification_func(omega_dt.flatten())
+    return np.max(np.abs(amplification_values))
 
 
 def plot_stability_region(ax, amplification, z_real_1D, z_imag_1D, fill=False, **kwargs):
