@@ -64,6 +64,7 @@ def derive_fv_upwind_Omega_h_over_a(p):
 
     return Omega_h_over_a
 
+
 @lru_cache(maxsize=None)
 def derive_fv_upwind_Omega_h_over_a_trace_func(p):
     """
@@ -75,6 +76,7 @@ def derive_fv_upwind_Omega_h_over_a_trace_func(p):
     Omega_h_over_a = derive_fv_upwind_Omega_h_over_a(p)
     Omega_h_over_a_func = sp.lambdify(theta, Omega_h_over_a, modules="numpy")
     return Omega_h_over_a_func
+
 
 def compute_fv_upwind_Omega_h_over_a_harmonic_trace(p, n=100):
     """

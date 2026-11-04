@@ -7,9 +7,8 @@ from superfv.tools.stability_analysis.sd_advection import (
     compute_sd_upwind_Omega_h_over_a_eigenvalues,
 )
 
-from .fv_advection import derive_fv_upwind_Omega_h_over_a, derive_fv_upwind_Omega_h_over_a_trace_func
-from .fv_diffusion import derive_fv_diffusion_Omega
-from .variables import Omega, dt, u0, z, theta
+from .fv_advection import derive_fv_upwind_Omega_h_over_a_trace_func
+from .variables import Omega, dt, u0, z
 
 Omega_dt = sp.symbols("Omega_dt")
 
@@ -26,6 +25,7 @@ def get_amplification_factor(update):
     given an RK update for u1 in terms of u0, return the amplification factor |u1 / u0|
     """
     return sp.Abs(update / u0)
+
 
 def get_amplification_function(update):
     """
@@ -45,9 +45,11 @@ def forward_euler_update():
 def forward_euler_amplification():
     return get_amplification_factor(forward_euler_update)
 
+
 @module_variable
 def forward_euler_amplification_function():
     return get_amplification_function(forward_euler_update)
+
 
 @module_variable
 def ssprk2_update():
@@ -62,9 +64,11 @@ def ssprk2_update():
 def ssprk2_amplification():
     return get_amplification_factor(ssprk2_update)
 
+
 @module_variable
 def ssprk2_amplification_function():
     return get_amplification_function(ssprk2_update)
+
 
 @module_variable
 def ssprk3_update():
@@ -81,9 +85,11 @@ def ssprk3_update():
 def ssprk3_amplification():
     return get_amplification_factor(ssprk3_update)
 
+
 @module_variable
 def ssprk3_amplification_function():
     return get_amplification_function(ssprk3_update)
+
 
 @module_variable
 def rk4_update():
@@ -98,6 +104,7 @@ def rk4_update():
 @module_variable
 def rk4_amplification():
     return get_amplification_factor(rk4_update)
+
 
 @module_variable
 def rk4_amplification_function():
@@ -119,8 +126,7 @@ def compute_fv_rk_amplification(
             raise ValueError("Specify dt_value for diffusion operator with FV schemes.")
         if cfl_value is not None:
             raise ValueError("Leave cfl_value unspecified for diffusion operator with FV schemes.")
-        omega = derive_fv_diffusion_Omega(p)
-        omega_dt = omega * dt_value
+        raise NotImplementedError("Diffusion operator is not implemented for FV schemes.")
     else:
         raise ValueError(f"Unknown operator: {operator}")
 
@@ -145,7 +151,7 @@ def compute_sd_rk_amplification(p, k_values, *, cfl_value=None, rk="ssprk3", ope
         if cfl_value is None:
             raise ValueError("cfl_value must be provided for advection operator with SD schemes.")
         omega_h_over_a_eigen = compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p)
-        omega_dt = omega_h_over_a_eigen * cfl_value
+        omega_dt_values = omega_h_over_a_eigen * cfl_value
     elif operator == "diffusion":
         raise NotImplementedError("Diffusion operator is not implemented for SD schemes.")
     else:
@@ -165,7 +171,7 @@ def compute_sd_rk_amplification(p, k_values, *, cfl_value=None, rk="ssprk3", ope
 
     amplification = amplification.subs(Omega * dt, Omega_dt)
     amplification_func = sp.lambdify(Omega_dt, amplification, modules="numpy")
-    amplification_values = amplification_func(omega_dt.flatten())
+    amplification_values = amplification_func(omega_dt_values.flatten())
     return np.max(np.abs(amplification_values))
 
 
