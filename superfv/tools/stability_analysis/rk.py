@@ -7,9 +7,11 @@ from superfv.tools.stability_analysis.sd_advection import (
     compute_sd_upwind_Omega_h_over_a_eigenvalues,
 )
 
-from .fv_advection import derive_fv_upwind_Omega_h_over_a
+from .fv_advection import derive_fv_upwind_Omega_h_over_a, derive_fv_upwind_Omega_h_over_a_trace_func
 from .fv_diffusion import derive_fv_diffusion_Omega
-from .variables import Omega, a, cfl, dt, h, u0, z
+from .variables import Omega, dt, u0, z, theta
+
+Omega_dt = sp.symbols("Omega_dt")
 
 
 def module_variable(func):
@@ -25,6 +27,14 @@ def get_amplification_factor(update):
     """
     return sp.Abs(update / u0)
 
+def get_amplification_function(update):
+    """
+    given an RK update for u1 in terms of u0, return a function that returns the amplification
+    factor |u1 / u0| as a function of Omega_dt
+    """
+    in_terms_of_z = update.subs(Omega * dt, z)
+    return sp.lambdify(z, get_amplification_factor(in_terms_of_z), modules="numpy")
+
 
 @module_variable
 def forward_euler_update():
@@ -35,6 +45,9 @@ def forward_euler_update():
 def forward_euler_amplification():
     return get_amplification_factor(forward_euler_update)
 
+@module_variable
+def forward_euler_amplification_function():
+    return get_amplification_function(forward_euler_update)
 
 @module_variable
 def ssprk2_update():
@@ -49,6 +62,9 @@ def ssprk2_update():
 def ssprk2_amplification():
     return get_amplification_factor(ssprk2_update)
 
+@module_variable
+def ssprk2_amplification_function():
+    return get_amplification_function(ssprk2_update)
 
 @module_variable
 def ssprk3_update():
@@ -65,6 +81,9 @@ def ssprk3_update():
 def ssprk3_amplification():
     return get_amplification_factor(ssprk3_update)
 
+@module_variable
+def ssprk3_amplification_function():
+    return get_amplification_function(ssprk3_update)
 
 @module_variable
 def rk4_update():
@@ -80,35 +99,48 @@ def rk4_update():
 def rk4_amplification():
     return get_amplification_factor(rk4_update)
 
+@module_variable
+def rk4_amplification_function():
+    return get_amplification_function(rk4_update)
 
-def compute_fv_rk_amplification(p, rk="ssprk3", operator="advection", sub_in_cfl=True):
+
+def compute_fv_rk_amplification(
+    p, k_values, *, cfl_value=None, dt_value=None, rk="ssprk3", operator="advection"
+):
     if operator == "advection":
-        omega_h_over_a = derive_fv_upwind_Omega_h_over_a(p)
-        omega = omega_h_over_a * a / h
+        if cfl_value is None:
+            raise ValueError("Specify cfl_value for advection operator with FV schemes.")
+        if dt_value is not None:
+            raise ValueError("Leave dt_value unspecified for advection operator with FV schemes.")
+        omega_h_over_a_func = derive_fv_upwind_Omega_h_over_a_trace_func(p)
+        omega_dt_values = omega_h_over_a_func(k_values) * cfl_value
     elif operator == "diffusion":
+        if dt_value is None:
+            raise ValueError("Specify dt_value for diffusion operator with FV schemes.")
+        if cfl_value is not None:
+            raise ValueError("Leave cfl_value unspecified for diffusion operator with FV schemes.")
         omega = derive_fv_diffusion_Omega(p)
+        omega_dt = omega * dt_value
     else:
         raise ValueError(f"Unknown operator: {operator}")
 
     match rk:
         case "forward_euler":
-            amplification = forward_euler_amplification
+            amplification_function = forward_euler_amplification_function
         case "ssprk2":
-            amplification = ssprk2_amplification
+            amplification_function = ssprk2_amplification_function
         case "ssprk3":
-            amplification = ssprk3_amplification
+            amplification_function = ssprk3_amplification_function
         case "rk4":
-            amplification = rk4_amplification
+            amplification_function = rk4_amplification_function
         case _:
             raise ValueError(f"Unknown Runge-Kutta method: {rk}")
 
-    out = amplification.subs(Omega, omega)
-    if operator == "advection" and sub_in_cfl:
-        out = out.subs(dt * a / h, cfl)
-    return out
+    amplification_values = amplification_function(omega_dt_values)
+    return np.max(np.abs(amplification_values))
 
 
-def compute_sd_rk_amplification(p, k_values, cfl_value=None, rk="ssprk3", operator="advection"):
+def compute_sd_rk_amplification(p, k_values, *, cfl_value=None, rk="ssprk3", operator="advection"):
     if operator == "advection":
         if cfl_value is None:
             raise ValueError("cfl_value must be provided for advection operator with SD schemes.")
@@ -131,9 +163,7 @@ def compute_sd_rk_amplification(p, k_values, cfl_value=None, rk="ssprk3", operat
         case _:
             raise ValueError(f"Unknown Runge-Kutta method: {rk}")
 
-    Omega_dt = sp.symbols("Omega_dt")
     amplification = amplification.subs(Omega * dt, Omega_dt)
-    # create lambdified function for amplification
     amplification_func = sp.lambdify(Omega_dt, amplification, modules="numpy")
     amplification_values = amplification_func(omega_dt.flatten())
     return np.max(np.abs(amplification_values))
