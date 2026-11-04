@@ -13,7 +13,7 @@ def derive_interpolation_of_derivative_at_face(p, face):
     """
     Return the
     """
-    n = (p + 1) // 2
+    n = (p + 2) // 2
     poly = derive_conservative_interpolation_polynomial(n, n, derivative_order=2)
     if face == "left":
         return sp.simplify(poly.subs(x, -h / 2) / h)
