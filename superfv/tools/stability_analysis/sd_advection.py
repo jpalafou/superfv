@@ -1,6 +1,8 @@
 # mypy: ignore-errors
 
 
+from functools import lru_cache
+
 import numpy as np
 import sympy as sp
 from numpy.polynomial.legendre import leggauss
@@ -41,6 +43,7 @@ def compute_solution_and_flux_point_coordinates(p):
     return sps * rescale, fps * rescale
 
 
+@lru_cache(maxsize=None)
 def sp_to_fp_matrix(p):
     """
     p: polynomial degree
@@ -59,6 +62,7 @@ def sp_to_fp_matrix(p):
     return mat
 
 
+@lru_cache(maxsize=None)
 def fp_to_sp_prime_matrix(p):
     """
     p: polynomial degree
@@ -108,7 +112,6 @@ def solution_vector(k, p, m=0):
     return np.array(dofs)
 
 
-# @lru_cache(maxsize=None)
 def derive_sd_upwind_Omega_h_over_a_matrix(k, p):
     """
     k: wave number
@@ -140,3 +143,18 @@ def compute_sd_upwind_Omega_h_over_a_eigenvalues(k, p):
     mat = derive_sd_upwind_Omega_h_over_a_matrix(k, p)
     eigenvalues = np.linalg.eigvals(mat)
     return eigenvalues
+
+
+def plot_sd_advection_stability_trace(ax, p, k_values, **kwargs):
+    eigenvalues = np.empty((len(k_values), p + 1), dtype=np.complex128)
+    for i, k in enumerate(k_values):
+        eigenvalues[i, :] = compute_sd_upwind_Omega_h_over_a_eigenvalues(k, p)
+
+    ax.plot(
+        eigenvalues.real.flat,
+        eigenvalues.imag.flat,
+        linestyle="none",
+        marker=".",
+        mfc="none",
+        **kwargs,
+    )
