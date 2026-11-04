@@ -3,6 +3,9 @@
 import numpy as np
 import sympy as sp
 
+from superfv.tools.stability_analysis.fv_diffusion import (
+    derive_fv_diffusion_Omega_h_squared_over_nu_trace_func,
+)
 from superfv.tools.stability_analysis.sd_advection import (
     compute_sd_upwind_Omega_h_over_a_eigenvalues,
 )
@@ -112,21 +115,20 @@ def rk4_amplification_function():
 
 
 def compute_fv_rk_amplification(
-    p, k_values, *, cfl_value=None, dt_value=None, rk="ssprk3", operator="advection"
+    p, k_values, *, cfl_value=None, alpha_value=None, rk="ssprk3", operator="advection"
 ):
     if operator == "advection":
         if cfl_value is None:
             raise ValueError("Specify cfl_value for advection operator with FV schemes.")
-        if dt_value is not None:
-            raise ValueError("Leave dt_value unspecified for advection operator with FV schemes.")
         omega_h_over_a_func = derive_fv_upwind_Omega_h_over_a_trace_func(p)
         omega_dt_values = omega_h_over_a_func(k_values) * cfl_value
     elif operator == "diffusion":
-        if dt_value is None:
-            raise ValueError("Specify dt_value for diffusion operator with FV schemes.")
-        if cfl_value is not None:
-            raise ValueError("Leave cfl_value unspecified for diffusion operator with FV schemes.")
-        raise NotImplementedError("Diffusion operator is not implemented for FV schemes.")
+        if alpha_value is None:
+            raise ValueError("Specify alpha_value for diffusion operator with FV schemes.")
+        omega_h_squared_over_nu_func = derive_fv_diffusion_Omega_h_squared_over_nu_trace_func(p)
+        omega_h_squared_over_nu_values = omega_h_squared_over_nu_func(k_values)
+        # dt = alpha * h^2 / nu -> alpha = dt * nu / h^2
+        omega_dt_values = omega_h_squared_over_nu_values * alpha_value
     else:
         raise ValueError(f"Unknown operator: {operator}")
 
