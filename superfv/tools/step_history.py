@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -98,6 +98,7 @@ class SubstepSummary:
     t_wall: float
     n_MOOD_revisions: int
     n_troubles_hist: List[int]
+    fallback_counts: Dict[int, int]
 
 
 @dataclass

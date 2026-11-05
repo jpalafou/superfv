@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, Tuple
+from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 
@@ -563,6 +563,19 @@ def assign_fluxes(
         F_out[...] = combined_fluxes
 
 
+def generate_fallback_summary(_cascade_idx_: ArrayLike, n_fallback_schemes: int) -> Dict[int, int]:
+    """
+    _cascade_idx_: cascade index array.
+    n_fallback_schemes: number of fallback schemes.
+    returns: summary of the number of cells that used each fallback scheme.
+    """
+    xp = cp if CUPY_AVAILABLE and isinstance(_cascade_idx_, cp.ndarray) else np
+    summary: Dict[int, int] = {}
+    for i in range(1, n_fallback_schemes + 1):
+        summary[i] = int(xp.sum(_cascade_idx_ == i).item())
+    return summary
+
+
 def mood_loop(
     _uold_: ArrayLike,
     _wold_: ArrayLike,
@@ -703,6 +716,8 @@ def mood_loop(
         timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
 
     if mood_params.detect_closing_troubles:
+        substep_summary.fallback_counts = generate_fallback_summary(_cascade_idx_, n_cascade)
+
         timer is not None and timer.start("candidate_solution", using_cupy)  # TIMER START
         compute_candidate_solution(
             _uold_,

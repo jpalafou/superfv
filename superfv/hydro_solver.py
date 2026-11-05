@@ -835,7 +835,7 @@ class HydroSolver:
 
     def _reset_substep_summary(self):
         self.substep_summary = SubstepSummary(
-            substep=-1, t_wall=np.nan, n_MOOD_revisions=0, n_troubles_hist=[]
+            substep=-1, t_wall=np.nan, n_MOOD_revisions=0, n_troubles_hist=[], fallback_counts={}
         )
 
     def _reset_step_summary(self, n: int = 0):
