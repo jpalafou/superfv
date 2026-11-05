@@ -312,7 +312,8 @@ class HydroSolver:
             max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
                 number of fallback schemes in the cascade.
             blend_troubles: If True, blend troubled cells in MOOD scheme.
-            detect_closing_troubles: If True, detect closing troubled cells in MOOD scheme.
+            detect_closing_troubles: If True, log the number of cells using each fallback scheme
+                            and detect closing troubled cells in MOOD scheme.
 
         Slope limiting parameters (shared between Zhang-Shu and MOOD):
             omit_vars: Optional list of variable names to omit from Zhang-Shu limiter or NAD. Note
