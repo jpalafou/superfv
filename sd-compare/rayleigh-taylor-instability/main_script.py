@@ -1,4 +1,5 @@
 import shutil
+import warnings
 from functools import partial
 from pathlib import Path
 
@@ -231,6 +232,49 @@ def plot_sd_density(ax, sim, uniform=False, **kwargs):
     ax.set_aspect("equal")
 
 
+def apply_moving_average(t, data, n_avg):
+    kernel = np.ones(n_avg) / n_avg
+    data = np.convolve(data, kernel, mode="valid")
+    t = t[n_avg - 1 :]
+    return t, data
+
+
+def plot_fv_fallback_history(ax, sim, n_avg=None, **kwargs):
+    ntotal = sim.mesh.nx * sim.mesh.ny
+    t = np.array([s.t_sim for s in sim.step_history.steps])
+    fallback_rates = np.array(
+        [
+            sum(ss.fallback_counts[1] for ss in s.substeps) / 3 / ntotal
+            for s in sim.step_history.steps
+        ]
+    )
+    assert len(t) == len(fallback_rates)
+
+    if n_avg is not None:
+        t, fallback_rates = apply_moving_average(t, fallback_rates, n_avg)
+
+    ax.plot(t, fallback_rates, **kwargs)
+
+
+def plot_sd_fallback_history(ax, sim, n_avg=None, **kwargs):
+    warnings.warn("plot_sd_fallback_history plots over an average time step size.")
+
+    ntotal = sim.domain_size * sim.comms.size
+    fallback_counts = np.asarray(sim.trouble_counts, dtype=float)
+    assert fallback_counts.size % 3 == 0
+    fallback_counts = fallback_counts.reshape(-1, 3).mean(axis=1)
+    fallback_rates = fallback_counts / ntotal
+
+    n_steps = len(fallback_counts)
+    dt_avg = sim.time / n_steps
+    t = dt_avg * np.arange(1, n_steps + 1)
+
+    if n_avg is not None:
+        t, fallback_rates = apply_moving_average(t, fallback_rates, n_avg)
+
+    ax.plot(t, fallback_rates, **kwargs)
+
+
 def get_fv_rho_maxmin(sim):
     rho = sim.snapshot_history[-1].u[sim.params.variable_index_map("rho"), :, :, 0]
     return (rho.max(), rho.min())
@@ -296,7 +340,21 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unsupported solver: {solver}")
 
-    for solver in ["fv", "sd"]:
+    def plot_fallback_history(ax, solver, p, rtol, P_background, nad_cfl, n_avg=None, **kwargs):
+        sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
+
+        if sim is None:
+            ax.set_axis_off()
+            return
+
+        if solver == "fv":
+            plot_fv_fallback_history(ax, sim, n_avg, **kwargs)
+        elif solver == "sd":
+            plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
+        else:
+            raise ValueError(f"Unsupported solver: {solver}")
+
+    for solver in ["sd", "fv"]:
         for p in [3, 7]:
             for rtol in [1e-5, 1e-3, 1e-1]:
                 for P_background in [1.0, 100.0]:
@@ -322,6 +380,8 @@ if __name__ == "__main__":
 
     for P_background in [1.0, 100.0]:
         for nad_cfl in [True]:
+            # Plot density maps
+
             fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
             axs[0, 0].set_ylabel("FV")
             axs[1, 0].set_ylabel("SD")
@@ -350,7 +410,150 @@ if __name__ == "__main__":
             output_plot = Path(f"out/rti/{P_background=}_{nad_cfl=}.png")
             output_plot.unlink(missing_ok=True)
             fig.savefig(output_plot, dpi=300)
+            plt.close(fig)
 
+            # Plot fallback history
+
+            fig, axs = plt.subplots(2, 2, figsize=(15, 15), sharex=True, sharey=True)
+            axs[0, 0].set_title("FV")
+            axs[0, 1].set_title("SD")
+            axs[0, 0].set_ylabel(r"$p=3$")
+            axs[1, 0].set_ylabel(r"$p=7$")
+            axs[1, 0].set_xlabel(r"$t$")
+            axs[1, 1].set_xlabel(r"$t$")
+            axs[0, 0].set_yscale("log")
+
+            n_avg = 100
+
+            plot_fallback_history(
+                axs[0, 0],
+                "fv",
+                3,
+                1e-5,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-5}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[0, 0],
+                "fv",
+                3,
+                1e-3,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-3}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[0, 0],
+                "fv",
+                3,
+                1e-1,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-1}$",
+                n_avg=n_avg,
+            )
+
+            plot_fallback_history(
+                axs[0, 1],
+                "sd",
+                3,
+                1e-5,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-5}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[0, 1],
+                "sd",
+                3,
+                1e-3,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-3}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[0, 1],
+                "sd",
+                3,
+                1e-1,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-1}$",
+                n_avg=n_avg,
+            )
+
+            plot_fallback_history(
+                axs[1, 0],
+                "fv",
+                7,
+                1e-5,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-5}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[1, 0],
+                "fv",
+                7,
+                1e-3,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-3}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[1, 0],
+                "fv",
+                7,
+                1e-1,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-1}$",
+                n_avg=n_avg,
+            )
+
+            plot_fallback_history(
+                axs[1, 1],
+                "sd",
+                7,
+                1e-5,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-5}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[1, 1],
+                "sd",
+                7,
+                1e-3,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-3}$",
+                n_avg=n_avg,
+            )
+            plot_fallback_history(
+                axs[1, 1],
+                "sd",
+                7,
+                1e-1,
+                P_background,
+                nad_cfl,
+                label=r"$\epsilon=10^{-1}$",
+                n_avg=n_avg,
+            )
+
+            axs[0, 0].legend()
+
+            output_plot = Path(f"out/rti/fallback_history_{P_background=}_{nad_cfl=}.png")
+            output_plot.unlink(missing_ok=True)
+            fig.savefig(output_plot, dpi=300)
             plt.close(fig)
 
             print("Finished plotting.")
