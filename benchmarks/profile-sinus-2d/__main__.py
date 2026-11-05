@@ -12,7 +12,6 @@ run_params = dict(n=11, snapshot_mode="none")
 init_params = dict(
     ic=partial(ics.sinus, rho_min=1, rho_max=2, vx=2, vy=1, P=1),
     gamma=1.4,
-    skip_trouble_counts=True,
     cupy=cupy,
     profile=False,
 )

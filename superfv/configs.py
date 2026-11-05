@@ -136,7 +136,6 @@ class MOOD_Parameters:
     fallback_cascade: List[FV_SchemeParameters]
     max_revs: int
     blend_troubles: bool
-    skip_trouble_counts: bool = False
     detect_closing_troubles: bool = True
 
     def __post_init__(self):

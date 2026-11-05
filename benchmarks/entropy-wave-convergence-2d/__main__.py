@@ -31,7 +31,6 @@ init_params = dict(
     ic=partial(entropy_wave, gamma=gamma),
     gamma=gamma,
     use_SED=True,
-    skip_trouble_counts=True,
     cupy=True,
 )
 

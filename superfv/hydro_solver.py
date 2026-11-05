@@ -170,7 +170,6 @@ class HydroSolver:
         fallback_riemann_solver: Optional[RiemannSolver] = None,
         max_revs: int = 1,
         blend_troubles: bool = False,
-        skip_trouble_counts: bool = False,
         detect_closing_troubles: bool = True,
         # Shared Zhang-Shu / MOOD params
         omit_vars: Optional[List[str]] = None,
@@ -313,7 +312,6 @@ class HydroSolver:
             max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
                 number of fallback schemes in the cascade.
             blend_troubles: If True, blend troubled cells in MOOD scheme.
-            skip_trouble_counts: If True, skip counting troubled cells in MOOD scheme.
             detect_closing_troubles: If True, detect closing troubled cells in MOOD scheme.
 
         Slope limiting parameters (shared between Zhang-Shu and MOOD):
@@ -516,7 +514,6 @@ class HydroSolver:
                 fallback_cascade=fallback_cascade_list,
                 max_revs=max_revs,
                 blend_troubles=blend_troubles,
-                skip_trouble_counts=skip_trouble_counts,
                 detect_closing_troubles=detect_closing_troubles,
             ),
             shock_detection_params=ShockDetectionParameters(
