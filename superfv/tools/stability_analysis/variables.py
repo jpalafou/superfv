@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 import sympy as sp
 
 # real variables
