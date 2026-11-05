@@ -563,16 +563,26 @@ def assign_fluxes(
         F_out[...] = combined_fluxes
 
 
-def generate_fallback_summary(_cascade_idx_: ArrayLike, n_fallback_schemes: int) -> Dict[int, int]:
+def generate_fallback_summary(
+    _cascade_idx_: ArrayLike,
+    n_fallback_schemes: int,
+    active_dims: Tuple[Literal["x", "y", "z"], ...],
+    nghost: int,
+) -> Dict[int, int]:
     """
     _cascade_idx_: cascade index array.
     n_fallback_schemes: number of fallback schemes.
+    active_dims: active dimensions of the mesh.
+    nghost: number of ghost cells.
+
     returns: summary of the number of cells that used each fallback scheme.
     """
     xp = cp if CUPY_AVAILABLE and isinstance(_cascade_idx_, cp.ndarray) else np
+    cascade_idx = _cascade_idx_[get_interior_view(active_dims, nghost)]
+
     summary: Dict[int, int] = {}
     for i in range(1, n_fallback_schemes + 1):
-        summary[i] = int(xp.sum(_cascade_idx_ == i).item())
+        summary[i] = int(xp.sum(cascade_idx == i).item())
     return summary
 
 
@@ -667,6 +677,10 @@ def mood_loop(
 
         # Do not revise if no revisable troubled cells
         if n_troubles == 0:
+            if mood_params.detect_closing_troubles:
+                substep_summary.fallback_counts = generate_fallback_summary(
+                    _cascade_idx_, n_cascade, active_dims, mesh.nghost
+                )
             return
 
         # Update cascade index and compute new fluxes
@@ -716,7 +730,9 @@ def mood_loop(
         timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
 
     if mood_params.detect_closing_troubles:
-        substep_summary.fallback_counts = generate_fallback_summary(_cascade_idx_, n_cascade)
+        substep_summary.fallback_counts = generate_fallback_summary(
+            _cascade_idx_, n_cascade, active_dims, mesh.nghost
+        )
 
         timer is not None and timer.start("candidate_solution", using_cupy)  # TIMER START
         compute_candidate_solution(
