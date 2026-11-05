@@ -13,7 +13,7 @@ from superfv import ics as superfv_ics
 
 gamma = 5 / 3
 
-base_output_path = Path("/scratch/gpfs/jp7427/FVvsSD/rti2")
+base_output_path = Path("/scratch/gpfs/jp7427/FVvsSD/rti")
 
 
 def nu_from_Re(Re, P_background):
@@ -257,7 +257,7 @@ def get_simulation_rho_maxmin(sims, uniform_sd=False):
 
 if __name__ == "__main__":
     t = 1.95
-    N = 768
+    N = 192
 
     simulations = {}
 
@@ -296,11 +296,11 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unsupported solver: {solver}")
 
-    for solver in ["sd", "fv"]:
+    for solver in ["fv", "sd"]:
         for p in [3, 7]:
             for rtol in [1e-5, 1e-3, 1e-1]:
                 for P_background in [1.0, 100.0]:
-                    for nad_cfl in [False, True]:
+                    for nad_cfl in [True]:
                         if (
                             solver == "sd"
                             and p == 7
@@ -320,32 +320,34 @@ if __name__ == "__main__":
     print("Plotting results...")
     plot_configs = dict(cmap="afmhot", vmin=rhomin, vmax=rhomax)
 
-    for solver in ["sd", "fv"]:
-        for nad_cfl in [False, True]:
+    for P_background in [1.0, 100.0]:
+        for nad_cfl in [True]:
             fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
+            axs[0, 0].set_ylabel("FV")
+            axs[1, 0].set_ylabel("SD")
 
-            axs[0, 0].set_title(rf"{solver.upper()}4, $\epsilon=10^{-5}$")
-            plot_simulation(axs[0, 0], solver, 3, 1e-5, 1.0, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 0], solver, 3, 1e-5, 100.0, nad_cfl, **plot_configs)
-            axs[0, 1].set_title(rf"{solver.upper()}4, $\epsilon=10^{-3}$")
-            plot_simulation(axs[0, 1], solver, 3, 1e-3, 1.0, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 1], solver, 3, 1e-3, 100.0, nad_cfl, **plot_configs)
-            axs[0, 2].set_title(rf"{solver.upper()}4, $\epsilon=10^{-1}$")
-            plot_simulation(axs[0, 2], solver, 3, 1e-1, 1.0, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 2], solver, 3, 1e-1, 100.0, nad_cfl, **plot_configs)
-            axs[0, 3].set_title(rf"{solver.upper()}8, $\epsilon=10^{-5}$")
-            plot_simulation(axs[0, 3], solver, 7, 1e-5, 1.0, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 3], solver, 7, 1e-5, 100.0, nad_cfl, **plot_configs)
-            axs[0, 4].set_title(rf"{solver.upper()}8, $\epsilon=10^{-3}$")
-            plot_simulation(axs[0, 4], solver, 7, 1e-3, 1.0, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 4], solver, 7, 1e-3, 100.0, nad_cfl, **plot_configs)
-            axs[0, 5].set_title(rf"{solver.upper()}8, $\epsilon=10^{-1}$")
-            plot_simulation(axs[0, 5], solver, 7, 1e-1, 1.0, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 5], solver, 7, 1e-1, 100.0, nad_cfl, **plot_configs)
+            axs[0, 0].set_title(r"$p=3$, $\epsilon=10^{-5}$")
+            plot_simulation(axs[0, 0], "fv", 3, 1e-5, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 0], "sd", 3, 1e-5, P_background, nad_cfl, **plot_configs)
+            axs[0, 1].set_title(r"$p=3$, $\epsilon=10^{-3}$")
+            plot_simulation(axs[0, 1], "fv", 3, 1e-3, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 1], "sd", 3, 1e-3, P_background, nad_cfl, **plot_configs)
+            axs[0, 2].set_title(r"$p=3$, $\epsilon=10^{-1}$")
+            plot_simulation(axs[0, 2], "fv", 3, 1e-1, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 2], "sd", 3, 1e-1, P_background, nad_cfl, **plot_configs)
+            axs[0, 3].set_title(r"$p=7$, $\epsilon=10^{-5}$")
+            plot_simulation(axs[0, 3], "fv", 7, 1e-5, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 3], "sd", 7, 1e-5, P_background, nad_cfl, **plot_configs)
+            axs[0, 4].set_title(r"$p=7$, $\epsilon=10^{-3}$")
+            plot_simulation(axs[0, 4], "fv", 7, 1e-3, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 4], "sd", 7, 1e-3, P_background, nad_cfl, **plot_configs)
+            axs[0, 5].set_title(r"$p=7$, $\epsilon=10^{-1}$")
+            plot_simulation(axs[0, 5], "fv", 7, 1e-1, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 5], "sd", 7, 1e-1, P_background, nad_cfl, **plot_configs)
 
             plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
-            output_plot = Path(f"out/rti/{solver}_{nad_cfl=}.png")
+            output_plot = Path(f"out/rti/{P_background=}_{nad_cfl=}.png")
             output_plot.unlink(missing_ok=True)
             fig.savefig(output_plot, dpi=300)
 
