@@ -136,7 +136,7 @@ class MOOD_Parameters:
     fallback_cascade: List[FV_SchemeParameters]
     max_revs: int
     blend_troubles: bool
-    detect_closing_troubles: bool = True
+    count_cell_fallbacks: bool = True
 
     def __post_init__(self):
         if not self.use_MOOD:

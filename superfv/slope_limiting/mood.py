@@ -677,11 +677,7 @@ def mood_loop(
 
         # Do not revise if no revisable troubled cells
         if n_troubles == 0:
-            if mood_params.detect_closing_troubles:
-                substep_summary.fallback_counts = generate_fallback_summary(
-                    _cascade_idx_, n_cascade, active_dims, mesh.nghost
-                )
-            return
+            break
 
         # Update cascade index and compute new fluxes
         xp.minimum(_cascade_idx_ + _troubles_, n_cascade, out=_cascade_idx_)
@@ -729,47 +725,10 @@ def mood_loop(
         )
         timer is not None and timer.stop("assign_fluxes", using_cupy)  # TIMER STOP
 
-    if mood_params.detect_closing_troubles:
+    if mood_params.count_cell_fallbacks:
         substep_summary.fallback_counts = generate_fallback_summary(
             _cascade_idx_, n_cascade, active_dims, mesh.nghost
         )
-
-        timer is not None and timer.start("candidate_solution", using_cupy)  # TIMER START
-        compute_candidate_solution(
-            _uold_,
-            _F_[Finterior] if using_x else np.array([]),
-            _G_[Ginterior] if using_y else np.array([]),
-            _H_[Hinterior] if using_z else np.array([]),
-            S,
-            _unew_,
-            _wnew_,
-            idx,
-            t,
-            dt,
-            mesh,
-            bc_params,
-            hydro_params,
-        )
-        timer is not None and timer.stop("candidate_solution", using_cupy)  # TIMER STOP
-        timer is not None and timer.start("detect_troubles", using_cupy)  # TIMER START
-        n_closing_troubles = detect_troubled_cells(
-            _uold_,
-            _wold_,
-            _unew_,
-            _wnew_,
-            _troubles_,
-            _cascade_idx_,
-            revisable_troubles,
-            _alpha_,
-            idx,
-            mesh,
-            base_scheme,
-            bc_params,
-            dt,
-            hydro_params,
-        )
-        substep_summary.n_troubles_hist.append(n_closing_troubles)
-        timer is not None and timer.stop("detect_troubles", using_cupy)  # TIMER STOP
 
 
 if CUPY_AVAILABLE:

@@ -112,7 +112,7 @@ class AdvectionSolver(HydroSolver):
         fallback_cascade: Literal["full", "muscl", "muscl0", "first_order"] = "muscl",
         max_revs: int = 1,
         blend_troubles: bool = False,
-        detect_closing_troubles: bool = True,
+        count_cell_fallbacks: bool = True,
         # Shared Zhang-Shu / MOOD params
         omit_vars: Optional[List[str]] = None,
         include_corners: bool = True,
@@ -214,8 +214,8 @@ class AdvectionSolver(HydroSolver):
             max_revs: Maximum number of revisions allowed in MOOD scheme. Must be at least the
                 number of fallback schemes in the cascade.
             blend_troubles: If True, blend troubled cells in MOOD scheme.
-            detect_closing_troubles: If True, log the number of cells using each fallback scheme
-                and detect closing troubled cells in MOOD scheme.
+            count_cell_fallbacks: If True, count the number of cells using each fallback scheme
+                after the MOOD loop has completed.
 
         Slope limiting parameters (shared between Zhang-Shu and MOOD):
             omit_vars: Optional list of variable names to omit from Zhang-Shu limiter or NAD. Note
@@ -306,7 +306,7 @@ class AdvectionSolver(HydroSolver):
             fallback_riemann_solver=None,
             max_revs=max_revs,
             blend_troubles=blend_troubles,
-            detect_closing_troubles=detect_closing_troubles,
+            count_cell_fallbacks=count_cell_fallbacks,
             # Shared Zhang-Shu / MOOD params
             omit_vars=["vx", "vy", "vz", "P"] + (omit_vars if omit_vars is not None else []),
             include_corners=include_corners,
