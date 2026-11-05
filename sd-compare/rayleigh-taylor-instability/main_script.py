@@ -326,7 +326,7 @@ if __name__ == "__main__":
         name = get_name(solver, p, rtol, P_background, nad_cfl)
         return simulations.get(name)
 
-    def plot_simulation(ax, solver, p, rtol, P_background, nad_cfl, **kwargs):
+    def plot_simulation(ax, solver, p, rtol, P_background, nad_cfl, uniform_sd=False, **kwargs):
         sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
 
         if sim is None:
@@ -336,7 +336,7 @@ if __name__ == "__main__":
         if solver == "fv":
             plot_fv_density(ax, sim, **kwargs)
         elif solver == "sd":
-            plot_sd_density(ax, sim, **kwargs)
+            plot_sd_density(ax, sim, uniform_sd, **kwargs)
         else:
             raise ValueError(f"Unsupported solver: {solver}")
 
@@ -369,10 +369,10 @@ if __name__ == "__main__":
                             continue  # skip this case because dt collapses
                         add_simulation(solver, p, rtol, P_background, nad_cfl=nad_cfl)
 
-    uniform_sd = False
+    uni = True
 
     print("Computing global min/max density for color scaling...")
-    rhomax, rhomin = get_simulation_rho_maxmin(list(simulations.values()), uniform_sd=uniform_sd)
+    rhomax, rhomin = get_simulation_rho_maxmin(list(simulations.values()), uniform_sd=uni)
     print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
 
     print("Plotting results...")
@@ -388,26 +388,26 @@ if __name__ == "__main__":
 
             axs[0, 0].set_title(r"$p=3$, $\epsilon=10^{-5}$")
             plot_simulation(axs[0, 0], "fv", 3, 1e-5, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 0], "sd", 3, 1e-5, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 0], "sd", 3, 1e-5, P_background, nad_cfl, uni, **plot_configs)
             axs[0, 1].set_title(r"$p=3$, $\epsilon=10^{-3}$")
             plot_simulation(axs[0, 1], "fv", 3, 1e-3, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 1], "sd", 3, 1e-3, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 1], "sd", 3, 1e-3, P_background, nad_cfl, uni, **plot_configs)
             axs[0, 2].set_title(r"$p=3$, $\epsilon=10^{-1}$")
             plot_simulation(axs[0, 2], "fv", 3, 1e-1, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 2], "sd", 3, 1e-1, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 2], "sd", 3, 1e-1, P_background, nad_cfl, uni, **plot_configs)
             axs[0, 3].set_title(r"$p=7$, $\epsilon=10^{-5}$")
             plot_simulation(axs[0, 3], "fv", 7, 1e-5, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 3], "sd", 7, 1e-5, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 3], "sd", 7, 1e-5, P_background, nad_cfl, uni, **plot_configs)
             axs[0, 4].set_title(r"$p=7$, $\epsilon=10^{-3}$")
             plot_simulation(axs[0, 4], "fv", 7, 1e-3, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 4], "sd", 7, 1e-3, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 4], "sd", 7, 1e-3, P_background, nad_cfl, uni, **plot_configs)
             axs[0, 5].set_title(r"$p=7$, $\epsilon=10^{-1}$")
             plot_simulation(axs[0, 5], "fv", 7, 1e-1, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 5], "sd", 7, 1e-1, P_background, nad_cfl, **plot_configs)
+            plot_simulation(axs[1, 5], "sd", 7, 1e-1, P_background, nad_cfl, uni, **plot_configs)
 
             plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
-            output_plot = Path(f"out/rti/{P_background=}_{nad_cfl=}.png")
+            output_plot = Path(f"out/rti/{N=}_{P_background=}_{nad_cfl=}.png")
             output_plot.unlink(missing_ok=True)
             fig.savefig(output_plot, dpi=300)
             plt.close(fig)
@@ -551,7 +551,7 @@ if __name__ == "__main__":
 
             axs[0, 0].legend()
 
-            output_plot = Path(f"out/rti/fallback_history_{P_background=}_{nad_cfl=}.png")
+            output_plot = Path(f"out/rti/fallback_history_{N=}_{P_background=}_{nad_cfl=}.png")
             output_plot.unlink(missing_ok=True)
             fig.savefig(output_plot, dpi=300)
             plt.close(fig)
