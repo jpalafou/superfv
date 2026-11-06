@@ -120,7 +120,7 @@ def compute_rk_amplification(
 ):
     """
     p: polynomial degree of spatial discretization
-    k_values: array of wave numbers
+    k_values: array of nondimensional wave numbers k * h, where h is the subcell spacing
     cfl_value: CFL number (dt * a / h for advection, dt * nu / h^2 for diffusion)
     scheme: "fv" or "sd"
     rk: Runge-Kutta method, one of "forward_euler", "ssprk2", "ssprk3", "rk4"
@@ -146,6 +146,8 @@ def compute_rk_amplification(
         elif operator == "diffusion":
             eigen_values = compute_sd_diffusion_Omega_h_squared_over_nu_eigenvalues(k_values, p)
             omega_dt_values = eigen_values.flatten() * cfl_value
+        else:
+            raise ValueError(f"Unknown operator: {operator}")
     else:
         raise ValueError(f"Unknown scheme: {scheme}")
 
