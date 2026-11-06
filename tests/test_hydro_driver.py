@@ -57,6 +57,7 @@ idx = VariableIndexMap(
 hydro_params = HydroParameters(
     gamma=1.4,
     CFL=0.8,
+    CFL_diffusion=np.nan,
 )
 
 null_SED = SmoothExtremaDetectionParameters(False)

@@ -848,12 +848,12 @@ def compute_hydro_dt(
         s = xp.abs(w[idx("v" + dim)]) + cs
         sum_of_s_over_h += s / h
 
-    max_speed = xp.max(sum_of_s_over_h).item()
-    dt = hp.CFL / max_speed
+    max_speed_over_length = xp.max(sum_of_s_over_h).item()
+    dt = hp.CFL / max_speed_over_length
 
     if hp.diffusion:
         inv_h2 = sum(1.0 / getattr(mesh, f"h{dim}") ** 2 for dim in mesh.active_dims)
-        dt_nu = hp.CFL / (2.0 * hp.nu * inv_h2)
+        dt_nu = hp.CFL_diffusion / (hp.nu * inv_h2)
         dt = min(dt, dt_nu)
 
     return dt

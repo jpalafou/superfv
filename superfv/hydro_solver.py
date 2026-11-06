@@ -107,6 +107,7 @@ class HydroSolver:
         gamma: float = 1.4,
         riemann_solver: RiemannSolver = "hllc",
         CFL: float = 0.8,
+        CFL_diffusion: float = 0.2,
         nu: float = 0.0,
         Chi: float = 0.0,
         nu_dye: float = 0.0,
@@ -194,7 +195,11 @@ class HydroSolver:
                 "hll": Two-wave Harten-Lax-van Leer approximate Riemann solver.
                 "hllc": Contact-resolving HLLC solver; default for Euler runs.
                 "hllc_teyssier": 1D HLLC variant adapted from teyssier/; no passives or CuPy.
-            CFL: CFL number for time step calculation.
+            CFL: CFL number for advection time step calculation of the form
+                dt = CFL * h / |v|.
+            CFL_diffusion: CFL number for diffusion time step calculation of the form
+                dt = CFL_diffusion * h^2 / nu.
+                Ignored if `nu` and `nu_dye` are both 0.
             nu: Kinematic viscosity for viscous fluxes. If 0.0, viscous fluxes are not computed.
             Chi: Thermal conductivity for thermal fluxes. If 0.0, thermal fluxes are not computed.
             nu_dye: Diffusion coefficient for a passive scalar named "dye". If 0.0, dye
@@ -395,6 +400,7 @@ class HydroSolver:
         hydro_params = HydroParameters(
             gamma=gamma,
             CFL=CFL,
+            CFL_diffusion=CFL_diffusion,
             nu=nu,
             Chi=Chi,
             nu_dye=nu_dye,

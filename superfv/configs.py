@@ -227,6 +227,7 @@ class FV_SchemeParameters:
 class HydroParameters:
     gamma: float
     CFL: float
+    CFL_diffusion: float
     diffusion: bool = False
     nu: float = 0.0
     Chi: float = 0.0

@@ -243,6 +243,7 @@ class AdvectionSolver(HydroSolver):
             gamma=np.nan,
             riemann_solver="upwind",
             CFL=CFL,
+            CFL_diffusion=np.nan,
             nu=0.0,
             Chi=0.0,
             nu_dye=0.0,
