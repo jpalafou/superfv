@@ -265,7 +265,6 @@ def add_viscuous_fluxes(
     use_GL: bool,
     nu: float,
     Chi: float,
-    nu_dye: float,
     timer: Optional[MultiTimer] = None,
 ):
     cupy = CUPY_AVAILABLE and isinstance(_w_, cp.ndarray)
@@ -361,12 +360,12 @@ def add_viscuous_fluxes(
         )
         _f_[idx("E"), ...] += -Chi * rho * dTdx[0, *in1]
 
-    # dye concentration flux
-    if nu_dye > 0.0:
-        dcdx = xp.empty((*_w_[idx("rho", keepdims=True)].shape, 1))  # TEMP ARRAY
+    # passive scalar fluxes
+    if nu > 0.0 and "passives" in idx.group_var_map:
+        dcdx = xp.empty((*_w_[idx("passives")].shape, 1))  # TEMP ARRAY
         h = {"x": hx, "y": hy, "z": hz}[dim]
         interpolate_interface_nodes(
-            _w_[idx("dye", keepdims=True), ...],
+            _w_[idx("passives"), ...],
             dcdx,
             dim,
             active_dims,
@@ -376,7 +375,7 @@ def add_viscuous_fluxes(
             h=h,
             timer=timer,
         )
-        _f_[idx("dye"), ...] += -rho * nu_dye * dcdx[0, *in1]
+        _f_[idx("passives"), ...] += -rho * nu * dcdx[:, *in1]
 
 
 def update_weno_fluxes(
@@ -523,7 +522,6 @@ def update_weno_fluxes(
                 use_GL,
                 hydro_params.nu,
                 hydro_params.Chi,
-                hydro_params.nu_dye,
                 timer,
             )
 
@@ -726,7 +724,6 @@ def update_MUSCL_fluxes(
                 False,
                 hydro_params.nu,
                 hydro_params.Chi,
-                hydro_params.nu_dye,
                 timer,
             )
 

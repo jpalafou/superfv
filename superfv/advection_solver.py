@@ -246,7 +246,6 @@ class AdvectionSolver(HydroSolver):
             CFL_diffusion=np.nan,
             nu=0.0,
             Chi=0.0,
-            nu_dye=0.0,
             dt_min=dt_min,
             positivity_guard=False,
             rho_min=np.nan,

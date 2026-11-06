@@ -231,7 +231,6 @@ class HydroParameters:
     diffusion: bool = False
     nu: float = 0.0
     Chi: float = 0.0
-    nu_dye: float = 0.0
     dt_min: float = 1e-15
     rho_min: float = 1e-12
     P_min: float = 1e-12
@@ -344,13 +343,6 @@ class SolverParameters:
     def __post_init__(self):
         if self.cupy and not CUPY_AVAILABLE:
             raise ValueError("CuPy is not available but cupy is set to True.")
-        if self.hydro.nu_dye > 0.0 and "dye":
-            if (
-                "dye" not in self.variable_index_map.var_idx_map
-                or "dye" not in self.variable_index_map.group_var_map.get("passives", [])
-            ):
-                raise ValueError('nu_dye > 0 requires a passive variable named "dye".')
-            raise ValueError('nu_dye > 0 requires a passive variable named "dye".')
 
         # PAD bound dicts must contain variables only in the "primitive" group
         def _check_PAD_bounds_in_primitives(PAD_params):

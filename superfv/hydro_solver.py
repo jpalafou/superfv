@@ -110,7 +110,6 @@ class HydroSolver:
         CFL_diffusion: float = 0.2,
         nu: float = 0.0,
         Chi: float = 0.0,
-        nu_dye: float = 0.0,
         dt_min: float = 1e-15,
         positivity_guard: bool = True,
         rho_min: float = 1e-12,
@@ -199,11 +198,9 @@ class HydroSolver:
                 dt = CFL * h / |v|.
             CFL_diffusion: CFL number for diffusion time step calculation of the form
                 dt = CFL_diffusion * h^2 / nu.
-                Ignored if `nu` and `nu_dye` are both 0.
-            nu: Kinematic viscosity for viscous fluxes. If 0.0, viscous fluxes are not computed.
+            nu: Kinematic viscosity for viscous and passive-scalar diffusive fluxes. If 0.0,
+                these fluxes are not computed.
             Chi: Thermal conductivity for thermal fluxes. If 0.0, thermal fluxes are not computed.
-            nu_dye: Diffusion coefficient for a passive scalar named "dye". If 0.0, dye
-                diffusion is not computed.
             dt_min: Minimum allowed time step size.
             positivity_guard: If True, enforce positivity of density and pressure by setting lower
                 bounds, `rho_min` and `P_min`, respectively. Violations of the face reconstruction
@@ -396,14 +393,13 @@ class HydroSolver:
             sampling_p=sampling_p if sampling_p is not None else p,
         )
 
-        diffusion = nu > 0.0 or Chi > 0.0 or nu_dye > 0.0
+        diffusion = nu > 0.0 or Chi > 0.0
         hydro_params = HydroParameters(
             gamma=gamma,
             CFL=CFL,
             CFL_diffusion=CFL_diffusion,
             nu=nu,
             Chi=Chi,
-            nu_dye=nu_dye,
             diffusion=diffusion,
             dt_min=dt_min,
             rho_min=rho_min,
