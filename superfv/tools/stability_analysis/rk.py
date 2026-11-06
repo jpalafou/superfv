@@ -7,11 +7,11 @@ from superfv.tools.stability_analysis.fv_diffusion import (
     derive_fv_diffusion_Omega_h_squared_over_nu_trace_func,
 )
 from superfv.tools.stability_analysis.sd_advection import (
-    compute_sd_upwind_Omega_h_over_a_eigenvalues,
+    derive_sd_upwind_Omega_h_over_a_matrix,
 )
 
 from .fv_advection import derive_fv_upwind_Omega_h_over_a_trace_func
-from .sd_diffusion import compute_sd_diffusion_Omega_h_squared_over_nu_eigenvalues
+from .sd_diffusion import derive_sd_diffusion_Omega_h_squared_over_nu_matrix
 from .variables import Omega, dt, u0, z
 
 Omega_dt = sp.symbols("Omega_dt")
@@ -116,38 +116,55 @@ def rk4_amplification_function():
 
 
 def compute_rk_amplification(
-    p, k_values, cfl_value, scheme="fv", rk="ssprk3", operator="advection"
+    p, k_values, scheme="fv", rk="ssprk3", operator="advection", *, coeff_C=None, coeff_D=None
 ):
     """
     p: polynomial degree of spatial discretization
     k_values: array of nondimensional wave numbers k * h, where h is the subcell spacing
-    cfl_value: CFL number (dt * a / h for advection, dt * nu / h^2 for diffusion)
     scheme: "fv" or "sd"
     rk: Runge-Kutta method, one of "forward_euler", "ssprk2", "ssprk3", "rk4"
-    operator: "advection" or "diffusion"
+    operator: "advection", "diffusion", or "both"
+    coeff_C: advection coefficient C = dt * a / h
+    coeff_D: diffusion coefficient D = dt * nu / h^2
+
     returns: the maximum amplification factor over all wave numbers for the given spatial
-        discretization, CFL number, and Runge-Kutta method
+        discretization, operator coefficients, and Runge-Kutta method
     """
+    if operator not in ("advection", "diffusion", "both"):
+        raise ValueError(f"Unknown operator: {operator}")
+
+    omega_dt_values = 0.0
     if scheme == "fv":
-        if operator == "advection":
-            func = derive_fv_upwind_Omega_h_over_a_trace_func(p)
-            omega_h_over_a_values = func(k_values)
-            omega_dt_values = omega_h_over_a_values * cfl_value
-        elif operator == "diffusion":
-            func = derive_fv_diffusion_Omega_h_squared_over_nu_trace_func(p)
-            omega_h_squared_over_nu_values = func(k_values)
-            omega_dt_values = omega_h_squared_over_nu_values * cfl_value
-        else:
-            raise ValueError(f"Unknown operator: {operator}")
+        if operator in ("advection", "both"):
+            if coeff_C is None:
+                raise ValueError("coeff_C must be provided for advection operator")
+            afunc = derive_fv_upwind_Omega_h_over_a_trace_func(p)
+            omega_h_over_a_values = afunc(k_values)
+            omega_dt_values += omega_h_over_a_values * coeff_C
+        if operator in ("diffusion", "both"):
+            if coeff_D is None:
+                raise ValueError("coeff_D must be provided for diffusion operator")
+            dfunc = derive_fv_diffusion_Omega_h_squared_over_nu_trace_func(p)
+            omega_h_squared_over_nu_values = dfunc(k_values)
+            omega_dt_values += omega_h_squared_over_nu_values * coeff_D
     elif scheme == "sd":
-        if operator == "advection":
-            eigen_values = compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p)
-            omega_dt_values = eigen_values.flatten() * cfl_value
-        elif operator == "diffusion":
-            eigen_values = compute_sd_diffusion_Omega_h_squared_over_nu_eigenvalues(k_values, p)
-            omega_dt_values = eigen_values.flatten() * cfl_value
-        else:
-            raise ValueError(f"Unknown operator: {operator}")
+        mat = np.zeros((len(k_values), p + 1, p + 1), dtype=np.complex128)
+        eigenvalues = np.empty((len(k_values), p + 1), dtype=np.complex128)
+        if operator in ("advection", "both"):
+            if coeff_C is None:
+                raise ValueError("coeff_C must be provided for advection operator")
+            for i, kval in enumerate(k_values):
+                amat = derive_sd_upwind_Omega_h_over_a_matrix(kval, p)
+                mat[i] += coeff_C * amat
+        if operator in ("diffusion", "both"):
+            if coeff_D is None:
+                raise ValueError("coeff_D must be provided for diffusion operator")
+            for i, kval in enumerate(k_values):
+                dmat = derive_sd_diffusion_Omega_h_squared_over_nu_matrix(kval, p)
+                mat[i] += coeff_D * dmat
+        for i in range(len(k_values)):
+            eigenvalues[i] = np.linalg.eigvals(mat[i])
+        omega_dt_values = eigenvalues.flatten()
     else:
         raise ValueError(f"Unknown scheme: {scheme}")
 

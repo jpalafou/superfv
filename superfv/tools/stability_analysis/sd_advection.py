@@ -112,6 +112,7 @@ def solution_vector(k, p, m=0):
     return np.array(dofs)
 
 
+@lru_cache(maxsize=None)
 def derive_sd_upwind_Omega_h_over_a_matrix(k, p):
     """
     k: wave number
