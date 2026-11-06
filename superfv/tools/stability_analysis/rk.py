@@ -11,6 +11,7 @@ from superfv.tools.stability_analysis.sd_advection import (
 )
 
 from .fv_advection import derive_fv_upwind_Omega_h_over_a_trace_func
+from .sd_diffusion import compute_sd_diffusion_Omega_h_squared_over_nu_eigenvalues
 from .variables import Omega, dt, u0, z
 
 Omega_dt = sp.symbols("Omega_dt")
@@ -114,23 +115,39 @@ def rk4_amplification_function():
     return get_amplification_function(rk4_update)
 
 
-def compute_fv_rk_amplification(
-    p, k_values, *, cfl_value=None, alpha_value=None, rk="ssprk3", operator="advection"
+def compute_rk_amplification(
+    p, k_values, cfl_value, scheme="fv", rk="ssprk3", operator="advection"
 ):
-    if operator == "advection":
-        if cfl_value is None:
-            raise ValueError("Specify cfl_value for advection operator with FV schemes.")
-        omega_h_over_a_func = derive_fv_upwind_Omega_h_over_a_trace_func(p)
-        omega_dt_values = omega_h_over_a_func(k_values) * cfl_value
-    elif operator == "diffusion":
-        if alpha_value is None:
-            raise ValueError("Specify alpha_value for diffusion operator with FV schemes.")
-        omega_h_squared_over_nu_func = derive_fv_diffusion_Omega_h_squared_over_nu_trace_func(p)
-        omega_h_squared_over_nu_values = omega_h_squared_over_nu_func(k_values)
-        # dt = alpha * h^2 / nu -> alpha = dt * nu / h^2
-        omega_dt_values = omega_h_squared_over_nu_values * alpha_value
+    """
+    p: polynomial degree of spatial discretization
+    k_values: array of wave numbers
+    cfl_value: CFL number (dt * a / h for advection, dt * nu / h^2 for diffusion)
+    scheme: "fv" or "sd"
+    rk: Runge-Kutta method, one of "forward_euler", "ssprk2", "ssprk3", "rk4"
+    operator: "advection" or "diffusion"
+    returns: the maximum amplification factor over all wave numbers for the given spatial
+        discretization, CFL number, and Runge-Kutta method
+    """
+    if scheme == "fv":
+        if operator == "advection":
+            func = derive_fv_upwind_Omega_h_over_a_trace_func(p)
+            omega_h_over_a_values = func(k_values)
+            omega_dt_values = omega_h_over_a_values * cfl_value
+        elif operator == "diffusion":
+            func = derive_fv_diffusion_Omega_h_squared_over_nu_trace_func(p)
+            omega_h_squared_over_nu_values = func(k_values)
+            omega_dt_values = omega_h_squared_over_nu_values * cfl_value
+        else:
+            raise ValueError(f"Unknown operator: {operator}")
+    elif scheme == "sd":
+        if operator == "advection":
+            eigen_values = compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p)
+            omega_dt_values = eigen_values.flatten() * cfl_value
+        elif operator == "diffusion":
+            eigen_values = compute_sd_diffusion_Omega_h_squared_over_nu_eigenvalues(k_values, p)
+            omega_dt_values = eigen_values.flatten() * cfl_value
     else:
-        raise ValueError(f"Unknown operator: {operator}")
+        raise ValueError(f"Unknown scheme: {scheme}")
 
     match rk:
         case "forward_euler":
@@ -148,36 +165,15 @@ def compute_fv_rk_amplification(
     return np.max(np.abs(amplification_values))
 
 
-def compute_sd_rk_amplification(p, k_values, *, cfl_value=None, rk="ssprk3", operator="advection"):
-    if operator == "advection":
-        if cfl_value is None:
-            raise ValueError("cfl_value must be provided for advection operator with SD schemes.")
-        omega_h_over_a_eigen = compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p)
-        omega_dt_values = omega_h_over_a_eigen * cfl_value
-    elif operator == "diffusion":
-        raise NotImplementedError("Diffusion operator is not implemented for SD schemes.")
-    else:
-        raise ValueError(f"Unknown operator: {operator}")
-
-    match rk:
-        case "forward_euler":
-            amplification = forward_euler_amplification
-        case "ssprk2":
-            amplification = ssprk2_amplification
-        case "ssprk3":
-            amplification = ssprk3_amplification
-        case "rk4":
-            amplification = rk4_amplification
-        case _:
-            raise ValueError(f"Unknown Runge-Kutta method: {rk}")
-
-    amplification = amplification.subs(Omega * dt, Omega_dt)
-    amplification_func = sp.lambdify(Omega_dt, amplification, modules="numpy")
-    amplification_values = amplification_func(omega_dt_values.flatten())
-    return np.max(np.abs(amplification_values))
-
-
 def plot_stability_region(ax, amplification, z_real_1D, z_imag_1D, fill=False, **kwargs):
+    """
+    ax: matplotlib axis
+    amplification: sympy expression for the amplification factor |u1 / u0| as a function of z
+    z_real_1D: 1D array of real parts of z values
+    z_imag_1D: 1D array of imaginary parts of z values
+    fill: if True, use contourf; if False, use contour
+    kwargs: additional keyword arguments to pass to contour or contourf
+    """
     z_real, z_imag = np.meshgrid(z_real_1D, z_imag_1D)
     z_complex = z_real + 1j * z_imag
 
