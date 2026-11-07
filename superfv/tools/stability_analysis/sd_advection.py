@@ -119,20 +119,15 @@ def derive_sd_upwind_Omega_h_over_a_matrix(k, p):
     p: polynomial degree
     returns: the matrix representation of the upwind SD scheme's Omega * h / a
     """
-    M1 = np.empty((p + 2, p + 1), dtype=np.complex128)
-    M2 = np.empty((p + 1, p + 2), dtype=np.complex128)
+    sp_to_fp = sp_to_fp_matrix(p).astype(np.complex128)
+    fp_to_sp_prime = fp_to_sp_prime_matrix(p).astype(np.complex128)
+    phase = np.exp(1j * k * (p + 1))
 
-    M1[...] = sp_to_fp_matrix(p)
-    M2[...] = fp_to_sp_prime_matrix(p)
+    # Choose the left state before differentiating the flux.
+    sp_to_fp_upwind = sp_to_fp.copy()
+    sp_to_fp_upwind[0] = sp_to_fp[-1] / phase
 
-    u = solution_vector(k, p)
-    u_left = solution_vector(k, p, m=-1)
-
-    # apply upwinding modification
-    M1[0, :] = M1[-1, :] * u_left / u
-
-    mat = -M2 @ M1
-    return mat
+    return -fp_to_sp_prime @ sp_to_fp_upwind
 
 
 def compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p):
