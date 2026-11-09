@@ -69,13 +69,15 @@ def run_muscl_hancock_simulation(t, nx, sed=True):
 
     try:
         sim = HydroSolverOutput(path)
-        print(f"Loaded superfv output from '{path}'")
-        return sim
     except Exception:
         if path.exists():
             print(f"Removing bad superfv output at '{path}'")
             shutil.rmtree(path)
         print(f"Running superfv simulation with output path '{path}'")
+    else:
+        print(f"Loaded superfv output from '{path}'")
+        save_density_plot(sim, path)
+        return sim
 
     sim = HydroSolver(
         **fv_dmr_params(nx),
@@ -88,6 +90,7 @@ def run_muscl_hancock_simulation(t, nx, sed=True):
         output_path=path,
     )
     sim.run(t, "muscl_hancock")
+    save_density_plot(sim, path)
 
     return sim
 
@@ -98,13 +101,15 @@ def run_fv_simulation(t, nx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
 
     try:
         sim = HydroSolverOutput(path)
-        print(f"Loaded superfv output from '{path}'")
-        return sim
     except Exception:
         if path.exists():
             print(f"Removing bad superfv output at '{path}'")
             shutil.rmtree(path)
         print(f"Running superfv simulation with output path '{path}'")
+    else:
+        print(f"Loaded superfv output from '{path}'")
+        save_density_plot(sim, path)
+        return sim
 
     sim = HydroSolver(
         **fv_dmr_params(nx),
@@ -121,6 +126,7 @@ def run_fv_simulation(t, nx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
         output_path=path,
     )
     sim.run(t)
+    save_density_plot(sim, path)
 
     return sim
 
@@ -163,17 +169,20 @@ def run_sd_simulation(t, ndofx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True)
 
     try:
         sim.load_output()
-        print(f"Loaded spd output from '{path}'")
-        return sim
     except Exception:
         if path.exists():
             print(f"Removing bad spd output at '{path}'")
             shutil.rmtree(path)
         print(f"Running spd simulation with output path '{path}'")
+    else:
+        print(f"Loaded spd output from '{path}'")
+        save_density_plot(sim, path)
+        return sim
 
     sim.output()
     sim.perform_time_evolution(t)
     sim.output()
+    save_density_plot(sim, path)
     return sim
 
 
@@ -212,6 +221,23 @@ def plot_sd_density(ax, sim, uniform=False, **kwargs):
     x, y, rho = (sim.dm.asnumpy(a) for a in (x, y, rho))
     ax.pcolormesh(x, y, rho, shading="flat", **kwargs)
     ax.set_aspect("equal")
+
+
+def save_density_plot(sim, snapshot_dir):
+    if isinstance(sim, SPD_Simulator) and sim.rank != 0:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 2.5))
+    if isinstance(sim, (HydroSolver, HydroSolverOutput)):
+        plot_fv_density(ax, sim, cmap="afmhot")
+        t = sim.snapshot_history[-1].t
+    else:
+        plot_sd_density(ax, sim, uniform=True, cmap="afmhot")
+        t = sim.time
+    ax.set_title(rf"$\rho$ at $t={t:.3g}$")
+    fig.tight_layout()
+    fig.savefig(Path(snapshot_dir) / "rho.png", dpi=150)
+    plt.close(fig)
 
 
 def apply_moving_average(t, data, n_avg):
