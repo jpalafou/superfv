@@ -3,7 +3,7 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 
-from .axes import XYZ_TUPLE
+from .axes import XYZ_TUPLE, get_transverse_dims
 from .tools.device_management import ArrayLike
 from .tools.variable_index_map import VariableIndexMap
 
@@ -371,7 +371,7 @@ def sod_shock_tube_1d(
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim1]
-        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dim1]
+        orth_dim1, orth_dim2 = get_transverse_dims(dim1)
         out[idx("rho")] = xp.where(r < pos1, rhol, rhor)
         out[idx("v" + dim1)] = xp.where(r < pos1, vl, vr)
         out[idx("v" + orth_dim1)] = 0
@@ -425,7 +425,7 @@ def velocity_ramp(
     # Validate variables in VariableIndexMap
     if {"rho", "vx", "vy", "vz", "P"} - set(idx.var_idx_map) != {}:
         r = {"x": x, "y": y, "z": z}[dim1]
-        orth_dim1, orth_dim2 = [dim for dim in "xyz" if dim != dim1]
+        orth_dim1, orth_dim2 = get_transverse_dims(dim1)
         out[idx("rho")] = rho0
         out[idx("v" + dim1)] = H0 * (r - 0.5)
         out[idx("v" + orth_dim1)] = 0

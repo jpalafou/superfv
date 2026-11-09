@@ -7,7 +7,7 @@ import numpy as np
 from superfv.tools.slicing import crop, merge_slices
 from superfv.tools.step_history import MultiTimer
 
-from .axes import DIM_TO_AXIS
+from .axes import DIM_TO_AXIS, get_transverse_dims
 from .boundary_conditions import apply_bc
 from .configs import (
     BoundaryConditionParameters,
@@ -223,7 +223,7 @@ def interpolate_face_nodes(
 
             _qtemp1_ = xp.empty((*base_shape, 2))
 
-            trans_dim = [d for d in active_dims if d != dim][0]
+            (trans_dim,) = get_transverse_dims(dim, active_dims)
             stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
             stencil_sweep(_qtemp1_, gl_stencil, _qj_, trans_dim)
         elif ndim == 3:
@@ -235,9 +235,7 @@ def interpolate_face_nodes(
             _qtemp1_ = xp.empty((*base_shape, 2))
             _qtemp2_ = xp.empty((*base_shape, 2 * ngl))
 
-            trans_dims = [d for d in active_dims if d != dim]
-            trans_dim1 = trans_dims[0]
-            trans_dim2 = trans_dims[1]
+            trans_dim1, trans_dim2 = get_transverse_dims(dim, active_dims)
             stencil_sweep(_q_[..., na], lr_stencil, _qtemp1_, dim)
             stencil_sweep(_qtemp1_, gl_stencil, _qtemp2_, trans_dim1)
             stencil_sweep(_qtemp2_, gl_stencil, _qj_, trans_dim2)
@@ -251,16 +249,14 @@ def interpolate_face_nodes(
         if ndim == 2:
             _qtemp1_ = xp.empty_like(_q_[..., na])
 
-            trans_dim = [d for d in active_dims if d != dim][0]
+            (trans_dim,) = get_transverse_dims(dim, active_dims)
             stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim)
             stencil_sweep(_qtemp1_, lr_stencil, _qj_, dim)
         elif ndim == 3:
             _qtemp1_ = xp.empty_like(_q_[..., na])
             _qtemp2_ = xp.empty_like(_q_[..., na])
 
-            trans_dims = [d for d in active_dims if d != dim]
-            trans_dim1 = trans_dims[0]
-            trans_dim2 = trans_dims[1]
+            trans_dim1, trans_dim2 = get_transverse_dims(dim, active_dims)
             stencil_sweep(_q_[..., na], cc_stencil, _qtemp1_, trans_dim2)
             stencil_sweep(_qtemp1_, cc_stencil, _qtemp2_, trans_dim1)
             stencil_sweep(_qtemp2_, lr_stencil, _qj_, dim)
@@ -311,14 +307,12 @@ def interpolate_interface_nodes(
     if ndim == 1:
         stencil_sweep(_q_[..., na], interface_stencil, _qf_, dim)
     elif ndim == 2:
-        trans_dim = [d for d in active_dims if d != dim][0]
+        (trans_dim,) = get_transverse_dims(dim, active_dims)
         _qtemp_ = xp.empty((*_q_.shape, 1))
         stencil_sweep(_q_[..., na], interface_stencil, _qtemp_, dim)
         stencil_sweep(_qtemp_, center_stencil, _qf_, trans_dim)
     elif ndim == 3:
-        trans_dims = [d for d in active_dims if d != dim]
-        trans_dim1 = trans_dims[0]
-        trans_dim2 = trans_dims[1]
+        trans_dim1, trans_dim2 = get_transverse_dims(dim, active_dims)
         _qtemp1_ = xp.empty((*_q_.shape, 1))
         _qtemp2_ = xp.empty((*_q_.shape, 1))
         stencil_sweep(_q_[..., na], interface_stencil, _qtemp1_, dim)
@@ -387,14 +381,12 @@ def integrate_transverse_nodes(
     if ndim == 1:
         raise ValueError("Cannot integrate transverse face nodes in 1D.")
     if ndim == 2:
-        trans_dim = [d for d in active_dims if d != dim][0]
+        (trans_dim,) = get_transverse_dims(dim, active_dims)
         stencil_sweep(_qj_, stencil, _qF_[..., na], trans_dim)
     elif ndim == 3:
         _qtemp_ = xp.empty_like(_qj_)
 
-        trans_dims = [d for d in active_dims if d != dim]
-        trans_dim1 = trans_dims[0]
-        trans_dim2 = trans_dims[1]
+        trans_dim1, trans_dim2 = get_transverse_dims(dim, active_dims)
         stencil_sweep(_qj_, stencil, _qtemp_, trans_dim1)
         stencil_sweep(_qtemp_, stencil, _qF_[..., na], trans_dim2)
 
