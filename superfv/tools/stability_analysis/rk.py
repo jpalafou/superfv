@@ -7,11 +7,15 @@ from superfv.tools.stability_analysis.fv_diffusion import (
     derive_fv_diffusion_Omega_h_squared_over_nu_trace_func,
 )
 from superfv.tools.stability_analysis.sd_advection import (
+    derive_MUSCL_upwind_Omega_h_over_a_matrix,
     derive_sd_upwind_Omega_h_over_a_matrix,
 )
 
 from .fv_advection import derive_fv_upwind_Omega_h_over_a_trace_func
-from .sd_diffusion import derive_sd_diffusion_Omega_h_squared_over_nu_matrix
+from .sd_diffusion import (
+    derive_MUSCL_diffusion_Omega_h_squared_over_nu_matrix,
+    derive_sd_diffusion_Omega_h_squared_over_nu_matrix,
+)
 from .variables import Omega, dt, u0, z
 
 Omega_dt = sp.symbols("Omega_dt")
@@ -121,7 +125,7 @@ def compute_rk_amplification(
     """
     p: polynomial degree of spatial discretization
     k_values: array of nondimensional wave numbers k * h, where h is the subcell spacing
-    scheme: "fv" or "sd"
+    scheme: "fv", "sd", or "sd_fallback"
     rk: Runge-Kutta method, one of "forward_euler", "ssprk2", "ssprk3", "rk4"
     operator: "advection", "diffusion", or "both"
     coeff_C: advection coefficient C = dt * a / h
@@ -147,20 +151,27 @@ def compute_rk_amplification(
             dfunc = derive_fv_diffusion_Omega_h_squared_over_nu_trace_func(p)
             omega_h_squared_over_nu_values = dfunc(k_values)
             omega_dt_values += omega_h_squared_over_nu_values * coeff_D
-    elif scheme == "sd":
+    elif scheme in ("sd", "sd_fallback"):
+        if scheme == "sd":
+            derive_advection_matrix = derive_sd_upwind_Omega_h_over_a_matrix
+            derive_diffusion_matrix = derive_sd_diffusion_Omega_h_squared_over_nu_matrix
+        else:
+            derive_advection_matrix = derive_MUSCL_upwind_Omega_h_over_a_matrix
+            derive_diffusion_matrix = derive_MUSCL_diffusion_Omega_h_squared_over_nu_matrix
+
         mat = np.zeros((len(k_values), p + 1, p + 1), dtype=np.complex128)
         eigenvalues = np.empty((len(k_values), p + 1), dtype=np.complex128)
         if operator in ("advection", "both"):
             if coeff_C is None:
                 raise ValueError("coeff_C must be provided for advection operator")
             for i, kval in enumerate(k_values):
-                amat = derive_sd_upwind_Omega_h_over_a_matrix(kval, p)
+                amat = derive_advection_matrix(kval, p)
                 mat[i] += coeff_C * amat
         if operator in ("diffusion", "both"):
             if coeff_D is None:
                 raise ValueError("coeff_D must be provided for diffusion operator")
             for i, kval in enumerate(k_values):
-                dmat = derive_sd_diffusion_Omega_h_squared_over_nu_matrix(kval, p)
+                dmat = derive_diffusion_matrix(kval, p)
                 mat[i] += coeff_D * dmat
         for i in range(len(k_values)):
             eigenvalues[i] = np.linalg.eigvals(mat[i])

@@ -10,6 +10,7 @@ from numpy.polynomial.legendre import leggauss
 from .fv_polynomials import unweighted_lagrange_interpolation_polynomials
 from .variables import h, x
 
+na = np.newaxis
 h_ave = h
 u0 = sp.symbols("u0", real=True)  # reference solution value inside element m=0
 
@@ -128,6 +129,36 @@ def derive_sd_upwind_Omega_h_over_a_matrix(k, p):
     sp_to_fp_upwind[0] = sp_to_fp[-1] / phase
 
     return -fp_to_sp_prime @ sp_to_fp_upwind
+
+
+@lru_cache(maxsize=None)
+def derive_MUSCL_upwind_Omega_h_over_a_matrix(k, p):
+    """
+    k: wave number
+    p: SD polynomial degree defining the nonuniform finite volume subcells
+    returns: the matrix representation of the unlimited MUSCL scheme's Omega * h / a,
+        where h is the average subcell spacing
+    """
+    _, flux_points = compute_solution_and_flux_point_coordinates(p)
+    cell_widths = flux_points[1:] - flux_points[:-1]
+    cell_centers = 0.5 * (flux_points[:-1] + flux_points[1:])
+    phase = np.exp(1j * k * (p + 1))
+
+    identity = np.eye(p + 1, dtype=np.complex128)
+    cell_to_left = np.roll(identity, 1, axis=0)
+    cell_to_left[0] /= phase
+    cell_to_right = np.roll(identity, -1, axis=0)
+    cell_to_right[-1] *= phase
+
+    left_spacing = cell_centers - np.roll(cell_centers, 1)
+    left_spacing[0] += p + 1
+    right_spacing = np.roll(cell_centers, -1) - cell_centers
+    right_spacing[-1] += p + 1
+
+    central_difference = (cell_to_right - cell_to_left) / (left_spacing + right_spacing)[:, na]
+    cell_to_right_face = identity + 0.5 * cell_widths[:, na] * central_difference
+
+    return -(identity - cell_to_left) @ cell_to_right_face / cell_widths[:, na]
 
 
 def compute_sd_upwind_Omega_h_over_a_eigenvalues(k_values, p):
