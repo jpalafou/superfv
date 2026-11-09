@@ -1,6 +1,5 @@
 import shutil
 import warnings
-from functools import partial
 from pathlib import Path
 
 import cupy as cp
@@ -11,26 +10,61 @@ from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import HydroSolver, HydroSolverOutput
 from superfv import ics as superfv_ics
+from superfv.boundary_conditions import apply_free_bc, apply_reflective_bc
+from superfv.tools.slicing import crop
 
-gamma = 5 / 3
+gamma = 1.4
 
-base_output_path = Path("/scratch/gpfs/jp7427/FVvsSD/rti")
-
-
-def nu_from_Re(Re, P_background):
-    L = 1.0
-    yc = 0.5
-    rho1 = 2.0
-
-    dv = np.sqrt(gamma * (P_background + rho1 * yc - P_background + 1) / rho1)
-    vmag = 0.025 * dv
-
-    nu = vmag * L / Re
-    return nu
+base_output_path = Path("/scratch/gpfs/jp7427/FVvsSD/dmr")
 
 
-def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
-    params = f"{t=}_{ny=}_{sed=}_{P_background=}_Re={Re}"
+def dirichlet_x0(idx, x, y, z, t, xp):
+    out = xp.zeros((len(idx.idxs), *x.shape))
+    out[idx("rho")] = 8.0
+    out[idx("vx")] = 8.25 * np.cos(np.pi / 6)
+    out[idx("vy")] = -4.125
+    out[idx("P")] = 116.5
+    return out
+
+
+def dirichlet_y1(idx, x, y, z, t, xp):
+    shock_x = 10 * t / xp.sin(np.pi / 3) + 1 / 6 + y / xp.tan(np.pi / 3)
+    behind_shock = x < shock_x
+
+    out = xp.zeros((len(idx.idxs), *x.shape))
+    out[idx("rho")] = xp.where(behind_shock, 8.0, gamma)
+    out[idx("vx")] = xp.where(behind_shock, 8.25 * np.cos(np.pi / 6), 0.0)
+    out[idx("vy")] = xp.where(behind_shock, -4.125, 0.0)
+    out[idx("P")] = xp.where(behind_shock, 116.5, 1.0)
+    return out
+
+
+def patch_bc(u, context):
+    x = cp.asnumpy(context.mesh.Centers[0][:, 0, 0])
+    i = np.max(np.where(x < 1 / 6)[0]).item() + context.nghost
+
+    apply_free_bc(u[crop(1, (None, i), ndim=4)], context)
+    apply_reflective_bc(u[crop(1, (i, None), ndim=4)], context)
+
+
+def fv_dmr_params(nx):
+    return dict(
+        ic=superfv_ics.double_mach_reflection,
+        gamma=gamma,
+        xlims=(0, 4),
+        ylims=(0, 1),
+        nx=nx,
+        ny=nx // 4,
+        bcx=("dirichlet", "free"),
+        bcy=("patch", "dirichlet"),
+        bcx_callable_lower=dirichlet_x0,
+        bcy_callable_lower=patch_bc,
+        bcy_callable_upper=dirichlet_y1,
+    )
+
+
+def run_muscl_hancock_simulation(t, nx, sed=True):
+    params = f"{t=}_{nx=}_{sed=}"
     path = base_output_path / ("muscl_hancock_" + params)
 
     try:
@@ -43,28 +77,8 @@ def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
             shutil.rmtree(path)
         print(f"Running superfv simulation with output path '{path}'")
 
-    def gravity(idx, u, *, xp):
-        gx = 0.0
-        gy = 1.0
-        out = xp.zeros_like(u)
-        out[idx("mx")] = u[idx("rho")] * gx
-        out[idx("my")] = u[idx("rho")] * gy
-        out[idx("E")] = u[idx("mx")] * gx + u[idx("my")] * gy
-        return out
-
-    nu = nu_from_Re(Re, P_background) if Re is not None else 0.0
-
     sim = HydroSolver(
-        ic=partial(superfv_ics.rayleigh_taylor, gamma=gamma, P0=P_background),
-        gamma=gamma,
-        source=gravity,
-        nu=nu,
-        Chi=nu,
-        xlims=(0, 0.25),
-        ylims=(0, 1),
-        nx=ny // 4,
-        ny=ny,
-        bcy=("reflective", "reflective"),
+        **fv_dmr_params(nx),
         p=1,
         CFL=0.8,
         use_MUSCL=True,
@@ -78,12 +92,8 @@ def run_muscl_hancock_simulation(t, ny, sed=True, P_background=1.0, Re=None):
     return sim
 
 
-def run_fv_simulation(
-    t, ny, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=True
-):
-    params = f"{t=}_{ny=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
-    if nad_cfl:
-        params += "_nad_cfl"
+def run_fv_simulation(t, nx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
+    params = f"{t=}_{nx=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{nad_cfl=}"
     path = base_output_path / ("fv_" + params)
 
     try:
@@ -96,28 +106,8 @@ def run_fv_simulation(
             shutil.rmtree(path)
         print(f"Running superfv simulation with output path '{path}'")
 
-    def gravity(idx, u, *, xp):
-        gx = 0.0
-        gy = 1.0
-        out = xp.zeros_like(u)
-        out[idx("mx")] = u[idx("rho")] * gx
-        out[idx("my")] = u[idx("rho")] * gy
-        out[idx("E")] = u[idx("mx")] * gx + u[idx("my")] * gy
-        return out
-
-    nu = nu_from_Re(Re, P_background) if Re is not None else 0.0
-
     sim = HydroSolver(
-        ic=partial(superfv_ics.rayleigh_taylor, gamma=gamma, P0=P_background),
-        gamma=gamma,
-        source=gravity,
-        nu=nu,
-        Chi=nu,
-        xlims=(0, 0.25),
-        ylims=(0, 1),
-        nx=ny // 4,
-        ny=ny,
-        bcy=("reflective", "reflective"),
+        **fv_dmr_params(nx),
         p=p,
         CFL=0.8,
         use_MOOD=True,
@@ -135,40 +125,32 @@ def run_fv_simulation(
     return sim
 
 
-def run_sd_simulation(
-    t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=True
-):
-    params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
-    if nad_cfl:
-        params += "_nad_cfl"
+def run_sd_simulation(t, ndofx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
+    params = f"{t=}_{ndofx=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{nad_cfl=}"
     path = base_output_path / ("sd_" + params)
 
-    nelemsy = ndofy // (p + 1)
-    nu = nu_from_Re(Re, P_background) if Re is not None else 0.0
+    nelemsx = ndofx // (p + 1)
 
     sim = SPD_Simulator(
         p=p,
-        N=(nelemsy // 4, nelemsy),
-        xlim=(0.0, 0.25),
+        N=(nelemsx, nelemsx // 4),
+        xlim=(0.0, 4.0),
         ylim=(0.0, 1.0),
         gamma=gamma,
-        viscosity=bool(nu),
-        nu=nu,
-        chi=nu,
         min_rho=1e-12,
         min_P=1e-12,
         BC=(
-            ("periodic", "periodic"),
-            ("reflective", "reflective"),
+            ("doublemach", "doublemach"),
+            ("doublemach", "doublemach"),
         ),
-        init_fct=spd_ics.RTI(P0=P_background, gamma=gamma),
+        init_fct=spd_ics.double_mach_reflection(gamma=gamma),
         cfl_coeff={3: 0.8, 7: 0.5}[p],
         use_cupy=True,
         time_integrator="rk3",
         scheme="SDFB",
         fallback="MUSCL",
         slope_limiter="moncen",
-        potential=True,
+        potential=False,
         NAD="",
         tolerance=rtol,
         NAD_cfl=nad_cfl,
@@ -300,262 +282,88 @@ def get_simulation_rho_maxmin(sims, uniform_sd=False):
 
 
 if __name__ == "__main__":
-    t = 1.95
+    t = 0.2
     N = 192
+    nad_cfl = True
+    configs = [(p, rtol) for p in [3, 7] for rtol in [1e-5, 1e-3, 1e-1]]
 
+    muscl_hancock = run_muscl_hancock_simulation(t=t, nx=N)
     simulations = {}
 
-    def get_name(solver, p, rtol, P_background, nad_cfl):
-        return f"{solver=}_{p=}_{rtol=}_{P_background=}_{nad_cfl=}"
-
-    def add_simulation(solver, p, rtol, P_background, nad_cfl):
-        name = get_name(solver, p, rtol, P_background, nad_cfl)
-        if solver == "sd":
-            sim = run_sd_simulation(
-                t=t, ndofy=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
-            )
-        elif solver == "fv":
-            sim = run_fv_simulation(
-                t=t, ny=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
-            )
-        else:
-            raise ValueError(f"Unsupported solver: {solver}")
-        simulations[name] = sim
-
-    def get_simulation(solver, p, rtol, P_background, nad_cfl):
-        name = get_name(solver, p, rtol, P_background, nad_cfl)
-        return simulations.get(name)
-
-    def plot_simulation(ax, solver, p, rtol, P_background, nad_cfl, uniform_sd=False, **kwargs):
-        sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
-
-        if sim is None:
-            ax.set_axis_off()
-            return
-
+    def plot_simulation(ax, solver, p, rtol, uniform_sd=False, **kwargs):
+        sim = simulations[solver, p, rtol]
         if solver == "fv":
             plot_fv_density(ax, sim, **kwargs)
-        elif solver == "sd":
-            plot_sd_density(ax, sim, uniform_sd, **kwargs)
         else:
-            raise ValueError(f"Unsupported solver: {solver}")
+            plot_sd_density(ax, sim, uniform_sd, **kwargs)
 
-    def plot_fallback_history(ax, solver, p, rtol, P_background, nad_cfl, n_avg=None, **kwargs):
-        sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
-
-        if sim is None:
-            ax.set_axis_off()
-            return
-
+    def plot_fallback_history(ax, solver, p, rtol, n_avg=None, **kwargs):
+        sim = simulations[solver, p, rtol]
         if solver == "fv":
             plot_fv_fallback_history(ax, sim, n_avg, **kwargs)
-        elif solver == "sd":
-            plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
         else:
-            raise ValueError(f"Unsupported solver: {solver}")
+            plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
 
     for solver in ["sd", "fv"]:
-        for p in [3, 7]:
-            for rtol in [1e-5, 1e-3, 1e-1]:
-                for P_background in [1.0, 100.0]:
-                    for nad_cfl in [True]:
-                        if (
-                            solver == "sd"
-                            and p == 7
-                            and rtol == 1e-1
-                            and P_background == 100.0
-                            and not nad_cfl
-                        ):
-                            continue  # skip this case because dt collapses
-                        add_simulation(solver, p, rtol, P_background, nad_cfl=nad_cfl)
+        for p, rtol in configs:
+            if solver == "sd":
+                sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+            else:
+                sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+            simulations[solver, p, rtol] = sim
 
     uni = True
 
     print("Computing global min/max density for color scaling...")
-    rhomax, rhomin = get_simulation_rho_maxmin(list(simulations.values()), uniform_sd=uni)
+    rhomax, rhomin = get_simulation_rho_maxmin(
+        [muscl_hancock, *simulations.values()], uniform_sd=uni
+    )
     print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
 
     print("Plotting results...")
     plot_configs = dict(cmap="afmhot", vmin=rhomin, vmax=rhomax)
+    output_dir = Path("out/dmr")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    for P_background in [1.0, 100.0]:
-        for nad_cfl in [True]:
-            # Plot density maps
+    fig = plt.figure(figsize=(21, 5))
+    grid = fig.add_gridspec(2, len(configs) + 1)
+    ax_muscl = fig.add_subplot(grid[:, 0])
+    ax_muscl.set_title("MUSCL-Hancock")
+    plot_fv_density(ax_muscl, muscl_hancock, **plot_configs)
+    for row, solver in enumerate(["fv", "sd"]):
+        for col, (p, rtol) in enumerate(configs):
+            ax = fig.add_subplot(grid[row, col + 1], sharex=ax_muscl, sharey=ax_muscl)
+            if row == 0:
+                ax.set_title(rf"$p={p}$, $\epsilon={rtol:.0e}$")
+            if col == 0:
+                ax.set_ylabel(solver.upper())
+            plot_simulation(ax, solver, p, rtol, uniform_sd=uni, **plot_configs)
+    fig.tight_layout()
+    fig.savefig(output_dir / f"{N=}_{nad_cfl=}.png", dpi=300)
+    plt.close(fig)
 
-            fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
-            axs[0, 0].set_ylabel("FV")
-            axs[1, 0].set_ylabel("SD")
+    fig, axs = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
+    for row, p in enumerate([3, 7]):
+        axs[row, 0].set_ylabel(rf"$p={p}$")
+        for col, solver in enumerate(["fv", "sd"]):
+            axs[0, col].set_title(solver.upper())
+            axs[row, col].set_yscale("log")
+            for rtol in [1e-5, 1e-3, 1e-1]:
+                plot_fallback_history(
+                    axs[row, col],
+                    solver,
+                    p,
+                    rtol,
+                    n_avg=100,
+                    label=rf"$\epsilon={rtol:.0e}$",
+                )
+    axs[1, 0].set_xlabel(r"$t$")
+    axs[1, 1].set_xlabel(r"$t$")
+    axs[0, 0].legend()
+    fig.tight_layout()
+    fig.savefig(output_dir / f"fallback_history_{N=}_{nad_cfl=}.png", dpi=300)
+    plt.close(fig)
 
-            axs[0, 0].set_title(r"$p=3$, $\epsilon=10^{-5}$")
-            plot_simulation(axs[0, 0], "fv", 3, 1e-5, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 0], "sd", 3, 1e-5, P_background, nad_cfl, uni, **plot_configs)
-            axs[0, 1].set_title(r"$p=3$, $\epsilon=10^{-3}$")
-            plot_simulation(axs[0, 1], "fv", 3, 1e-3, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 1], "sd", 3, 1e-3, P_background, nad_cfl, uni, **plot_configs)
-            axs[0, 2].set_title(r"$p=3$, $\epsilon=10^{-1}$")
-            plot_simulation(axs[0, 2], "fv", 3, 1e-1, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 2], "sd", 3, 1e-1, P_background, nad_cfl, uni, **plot_configs)
-            axs[0, 3].set_title(r"$p=7$, $\epsilon=10^{-5}$")
-            plot_simulation(axs[0, 3], "fv", 7, 1e-5, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 3], "sd", 7, 1e-5, P_background, nad_cfl, uni, **plot_configs)
-            axs[0, 4].set_title(r"$p=7$, $\epsilon=10^{-3}$")
-            plot_simulation(axs[0, 4], "fv", 7, 1e-3, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 4], "sd", 7, 1e-3, P_background, nad_cfl, uni, **plot_configs)
-            axs[0, 5].set_title(r"$p=7$, $\epsilon=10^{-1}$")
-            plot_simulation(axs[0, 5], "fv", 7, 1e-1, P_background, nad_cfl, **plot_configs)
-            plot_simulation(axs[1, 5], "sd", 7, 1e-1, P_background, nad_cfl, uni, **plot_configs)
-
-            plt.subplots_adjust(wspace=0.1, hspace=0.1)
-
-            output_plot = Path(f"out/rti/{N=}_{P_background=}_{nad_cfl=}.png")
-            output_plot.unlink(missing_ok=True)
-            fig.savefig(output_plot, dpi=300)
-            plt.close(fig)
-
-            # Plot fallback history
-
-            fig, axs = plt.subplots(2, 2, figsize=(15, 15), sharex=True, sharey=True)
-            axs[0, 0].set_title("FV")
-            axs[0, 1].set_title("SD")
-            axs[0, 0].set_ylabel(r"$p=3$")
-            axs[1, 0].set_ylabel(r"$p=7$")
-            axs[1, 0].set_xlabel(r"$t$")
-            axs[1, 1].set_xlabel(r"$t$")
-            axs[0, 0].set_yscale("log")
-
-            n_avg = 100
-
-            plot_fallback_history(
-                axs[0, 0],
-                "fv",
-                3,
-                1e-5,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-5}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[0, 0],
-                "fv",
-                3,
-                1e-3,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-3}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[0, 0],
-                "fv",
-                3,
-                1e-1,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-1}$",
-                n_avg=n_avg,
-            )
-
-            plot_fallback_history(
-                axs[0, 1],
-                "sd",
-                3,
-                1e-5,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-5}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[0, 1],
-                "sd",
-                3,
-                1e-3,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-3}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[0, 1],
-                "sd",
-                3,
-                1e-1,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-1}$",
-                n_avg=n_avg,
-            )
-
-            plot_fallback_history(
-                axs[1, 0],
-                "fv",
-                7,
-                1e-5,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-5}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[1, 0],
-                "fv",
-                7,
-                1e-3,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-3}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[1, 0],
-                "fv",
-                7,
-                1e-1,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-1}$",
-                n_avg=n_avg,
-            )
-
-            plot_fallback_history(
-                axs[1, 1],
-                "sd",
-                7,
-                1e-5,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-5}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[1, 1],
-                "sd",
-                7,
-                1e-3,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-3}$",
-                n_avg=n_avg,
-            )
-            plot_fallback_history(
-                axs[1, 1],
-                "sd",
-                7,
-                1e-1,
-                P_background,
-                nad_cfl,
-                label=r"$\epsilon=10^{-1}$",
-                n_avg=n_avg,
-            )
-
-            axs[0, 0].legend()
-
-            output_plot = Path(f"out/rti/fallback_history_{N=}_{P_background=}_{nad_cfl=}.png")
-            output_plot.unlink(missing_ok=True)
-            fig.savefig(output_plot, dpi=300)
-            plt.close(fig)
-
-            print("Finished plotting.")
+    print("Finished plotting.")
 
     print("Done!")
