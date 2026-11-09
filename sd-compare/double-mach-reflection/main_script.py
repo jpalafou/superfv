@@ -313,83 +313,28 @@ if __name__ == "__main__":
     nad_cfl = True
     configs = [(p, rtol) for p in [3, 7] for rtol in [1e-5, 1e-3, 1e-1]]
 
-    muscl_hancock = run_muscl_hancock_simulation(t=t, nx=N)
-    simulations = {}
+    # run all the simulations
+    _ = run_muscl_hancock_simulation(t=t, nx=N)
+    for p, rtol in configs:
+        _ = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+        _ = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+
+    # plot them
 
     def plot_simulation(ax, solver, p, rtol, uniform_sd=False, **kwargs):
-        sim = simulations[solver, p, rtol]
         if solver == "fv":
+            sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
             plot_fv_density(ax, sim, **kwargs)
         else:
+            sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
             plot_sd_density(ax, sim, uniform_sd, **kwargs)
 
     def plot_fallback_history(ax, solver, p, rtol, n_avg=None, **kwargs):
-        sim = simulations[solver, p, rtol]
         if solver == "fv":
+            sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
             plot_fv_fallback_history(ax, sim, n_avg, **kwargs)
         else:
+            sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
             plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
-
-    for solver in ["sd", "fv"]:
-        for p, rtol in configs:
-            if solver == "sd":
-                sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-            else:
-                sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-            simulations[solver, p, rtol] = sim
-
-    uni = True
-
-    print("Computing global min/max density for color scaling...")
-    rhomax, rhomin = get_simulation_rho_maxmin(
-        [muscl_hancock, *simulations.values()], uniform_sd=uni
-    )
-    print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
-
-    print("Plotting results...")
-    plot_configs = dict(cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    output_dir = Path("out/dmr")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    fig = plt.figure(figsize=(21, 5))
-    grid = fig.add_gridspec(2, len(configs) + 1)
-    ax_muscl = fig.add_subplot(grid[:, 0])
-    ax_muscl.set_title("MUSCL-Hancock")
-    plot_fv_density(ax_muscl, muscl_hancock, **plot_configs)
-    for row, solver in enumerate(["fv", "sd"]):
-        for col, (p, rtol) in enumerate(configs):
-            ax = fig.add_subplot(grid[row, col + 1], sharex=ax_muscl, sharey=ax_muscl)
-            if row == 0:
-                ax.set_title(rf"$p={p}$, $\epsilon={rtol:.0e}$")
-            if col == 0:
-                ax.set_ylabel(solver.upper())
-            plot_simulation(ax, solver, p, rtol, uniform_sd=uni, **plot_configs)
-    fig.tight_layout()
-    fig.savefig(output_dir / f"{N=}_{nad_cfl=}.png", dpi=300)
-    plt.close(fig)
-
-    fig, axs = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
-    for row, p in enumerate([3, 7]):
-        axs[row, 0].set_ylabel(rf"$p={p}$")
-        for col, solver in enumerate(["fv", "sd"]):
-            axs[0, col].set_title(solver.upper())
-            axs[row, col].set_yscale("log")
-            for rtol in [1e-5, 1e-3, 1e-1]:
-                plot_fallback_history(
-                    axs[row, col],
-                    solver,
-                    p,
-                    rtol,
-                    n_avg=100,
-                    label=rf"$\epsilon={rtol:.0e}$",
-                )
-    axs[1, 0].set_xlabel(r"$t$")
-    axs[1, 1].set_xlabel(r"$t$")
-    axs[0, 0].legend()
-    fig.tight_layout()
-    fig.savefig(output_dir / f"fallback_history_{N=}_{nad_cfl=}.png", dpi=300)
-    plt.close(fig)
-
-    print("Finished plotting.")
 
     print("Done!")
