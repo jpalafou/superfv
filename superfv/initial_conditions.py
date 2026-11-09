@@ -960,7 +960,7 @@ def double_mach_reflection(
     dx = x - y / np.tan(np.pi / 3)
 
     rho = xp.where(dx < 1 / 6, 8.0, 1.4)
-    vx = xp.where(dx < 1 / 6, 7.145, 0.0)
+    vx = xp.where(dx < 1 / 6, 8.25 * np.cos(np.pi / 6), 0.0)
     vy = xp.where(dx < 1 / 6, -4.125, 0.0)
     P = xp.where(dx < 1 / 6, 116.5, 1.0)
 

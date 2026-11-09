@@ -16,7 +16,7 @@ gamma = 1.4
 def dirichlet_x0(idx, x, y, z, t, xp):
     out = xp.zeros((len(idx.idxs), *x.shape))
     out[idx("rho")] = 8.0
-    out[idx("vx")] = 7.145
+    out[idx("vx")] = 8.25 * np.cos(np.pi / 6)
     out[idx("vy")] = -4.125
     out[idx("P")] = 116.5
     return out
@@ -27,7 +27,7 @@ def dirichlet_y1(idx, x, y, z, t, xp):
     dx = (10 * t / xp.sin(theta)) + (1 / 6) + (y / xp.tan(theta))
 
     rho = xp.where(x < dx, 8.0, gamma)
-    vx = xp.where(x < dx, 7.145, 0.0)
+    vx = xp.where(x < dx, 8.25 * np.cos(np.pi / 6), 0.0)
     vy = xp.where(x < dx, -4.125, 0.0)
     P = xp.where(x < dx, 116.5, 1.0)
 
