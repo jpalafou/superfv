@@ -4,7 +4,6 @@ from functools import partial
 from pathlib import Path
 
 import numpy as np
-import spd.initial_conditions as spd_ics
 from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import HydroSolver, HydroSolverOutput
@@ -23,18 +22,17 @@ superfv_density_wave = partial(
     P=1.0,
 )
 
-_spd_sine_wave = partial(spd_ics.ic2d.sine_wave, A=0.5, vx=2.0, vy=1.0, P=1.0)
-
 
 def spd_density_wave(xy, case):
-    """Adapt SPD's unit-centered sine wave to the same primitive state as SuperFV."""
+    """Return the 2D density-wave primitive state using SPD's field indexing."""
+    x, y = xy
     if case == 0:
-        return _spd_sine_wave(xy, case) + 0.5
-    if case in (1, 2):
-        return _spd_sine_wave(xy, case)
-    if case == 4:
-        return np.ones_like(xy[0])
-    return np.zeros_like(xy[0])
+        return 1.5 + 0.5 * np.sin(2 * np.pi * (x + y))
+    if case == 1:
+        return np.full_like(x, 2.0)
+    if case in (2, 4):
+        return np.ones_like(x)
+    return np.zeros_like(x)
 
 
 def choose_cfl(p, n, time_integrator="rk4"):
