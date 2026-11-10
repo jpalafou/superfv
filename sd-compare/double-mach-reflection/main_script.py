@@ -92,7 +92,6 @@ def run_muscl_hancock_simulation(t, nx, sed=True):
     )
     sim.run(t, "muscl_hancock")
     save_density_plot(sim, path)
-
     return sim
 
 
@@ -128,7 +127,6 @@ def run_fv_simulation(t, nx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
     )
     sim.run(t)
     save_density_plot(sim, path)
-
     return sim
 
 
@@ -312,13 +310,23 @@ if __name__ == "__main__":
     t = 0.2
     N = 3200
     nad_cfl = True
-    configs = [(p, rtol) for p in [3, 7] for rtol in [1e-5, 1e-3, 1e-1]]
+    configs = [(p, rtol) for p in [3] for rtol in [1e-3]]
+    uniform_sd = True
 
     # run all the simulations
-    _ = run_muscl_hancock_simulation(t=t, nx=N)
+    rho_max, rho_min = -np.inf, np.inf
+
+    def update_rho_max_and_rho_min(new_max, new_min):
+        global rho_max, rho_min
+        rho_max = max(rho_max, new_max)
+        rho_min = min(rho_min, new_min)
+
     for p, rtol in configs:
-        _ = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-        _ = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+        sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+        update_rho_max_and_rho_min(*get_fv_rho_maxmin(sim))
+
+        sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
+        update_rho_max_and_rho_min(*get_sd_rho_maxmin(sim))
 
     # plot them
 
@@ -337,5 +345,11 @@ if __name__ == "__main__":
         else:
             sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
             plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
+
+    fig, axs = plt.subplots(2, 1, sharex=True, sharey=True)
+    plot_configs = dict(vmin=rho_min, vmax=rho_max, cmap="jet")
+    plot_simulation(axs[0], "fv", 3, 1e-3, **plot_configs)
+    plot_simulation(axs[1], "sd", 3, 1e-3, uniform_sd=uniform_sd, **plot_configs)
+    fig.savefig("out/dmr_compare.png", dpi=300)
 
     print("Done!")
