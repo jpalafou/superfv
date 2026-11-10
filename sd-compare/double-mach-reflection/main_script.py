@@ -1,5 +1,6 @@
 import shutil
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
 import cupy as cp
@@ -10,7 +11,7 @@ from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import HydroSolver, HydroSolverOutput
 from superfv import ics as superfv_ics
-from superfv.boundary_conditions import apply_free_bc, apply_reflective_bc
+from superfv.boundary_conditions import apply_dirichlet_bc, apply_reflective_bc
 from superfv.tools.slicing import crop
 
 gamma = 1.4
@@ -41,9 +42,9 @@ def dirichlet_y1(idx, x, y, z, t, xp):
 
 def patch_bc(u, context):
     x = cp.asnumpy(context.mesh.Centers[0][:, 0, 0])
-    i = np.max(np.where(x < 1 / 6)[0]).item() + context.nghost
+    i = np.max(np.where(x < 1 / 6)[0]).item() + 1 + context.nghost
 
-    apply_free_bc(u[crop(1, (None, i), ndim=4)], context)
+    apply_dirichlet_bc(u, replace(context, f=dirichlet_x0))
     apply_reflective_bc(u[crop(1, (i, None), ndim=4)], context)
 
 
