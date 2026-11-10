@@ -310,7 +310,7 @@ def get_simulation_rho_maxmin(sims, uniform_sd=False):
 
 if __name__ == "__main__":
     t = 0.2
-    N = 192
+    N = 3200
     nad_cfl = True
     configs = [(p, rtol) for p in [3, 7] for rtol in [1e-5, 1e-3, 1e-1]]
 
