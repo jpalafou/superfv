@@ -346,10 +346,13 @@ if __name__ == "__main__":
             sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
             plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
 
-    fig, axs = plt.subplots(2, 1, sharex=True, sharey=True)
+    fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(8, 6))
+    axs[1].set_xlim(0, 3)
+    axs[0].text(0.25, 0.75, "FV4")
+    axs[1].text(0.25, 0.75, "SD4")
     plot_configs = dict(vmin=rho_min, vmax=rho_max, cmap="jet")
     plot_simulation(axs[0], "fv", 3, 1e-3, **plot_configs)
     plot_simulation(axs[1], "sd", 3, 1e-3, uniform_sd=uniform_sd, **plot_configs)
-    fig.savefig("out/dmr_compare.png", dpi=300)
+    fig.savefig("out/dmr_compare.png", dpi=600)
 
     print("Done!")
