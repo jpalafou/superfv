@@ -3,6 +3,7 @@ import shutil
 from functools import partial
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 from spd.sdfb_simulator import SPD_Simulator
 
@@ -196,10 +197,12 @@ if __name__ == "__main__":
     output_dir = Path("out/sine-wave-convergence")
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "errors.csv"
+    plot_path = output_dir / "errors.pdf"
     fieldnames = ["solver", "p", "n", "riemann_solver", "L1", "L1_rate", "Linf", "Linf_rate"]
     with open(csv_path, "w", newline="") as f:
         csv.DictWriter(f, fieldnames=fieldnames).writeheader()
 
+    data = []
     previous = {}
     for riemann_solver in riemann_solvers:
         for solver in ("fv", "sd"):
@@ -233,5 +236,25 @@ if __name__ == "__main__":
                         if Linf > 0 and old["Linf"] > 0:
                             row["Linf_rate"] = np.log(old["Linf"] / Linf) / scale
                     previous[key] = row
+                    data.append(row)
                     with open(csv_path, "a", newline="") as f:
                         csv.DictWriter(f, fieldnames=fieldnames).writerow(row)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    for solver in ("fv", "sd"):
+        for p in polynomial_degrees:
+            rows = [row for row in data if row["solver"] == solver and row["p"] == p]
+            ax.plot(
+                [row["n"] for row in rows],
+                [row["Linf"] for row in rows],
+                marker="s" if p == 3 else "o",
+                label=f"{solver.upper()}, p={p}",
+            )
+    ax.set_xlabel("N")
+    ax.set_ylabel(r"$\mathcal{L}^\infty$ error")
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.grid()
+    ax.legend()
+    fig.savefig(plot_path, bbox_inches="tight")
+    plt.close(fig)
