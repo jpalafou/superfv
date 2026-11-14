@@ -130,8 +130,10 @@ def run_fv_simulation(t, nx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
     return sim
 
 
-def run_sd_simulation(t, ndofx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True):
+def run_sd_simulation(t, ndofx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True, cfl=None):
     params = f"{t=}_{ndofx=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{nad_cfl=}"
+    if cfl is not None:
+        params += f"_{cfl=}"
     path = base_output_path / ("sd_" + params)
 
     nelemsx = ndofx // (p + 1)
@@ -149,7 +151,7 @@ def run_sd_simulation(t, ndofx, p, rtol, vx_vy_nad=True, sed=True, nad_cfl=True)
             ("doublemach", "doublemach"),
         ),
         init_fct=spd_ics.double_mach_reflection(gamma=gamma),
-        cfl_coeff={3: 0.8, 7: 0.5}[p],
+        cfl_coeff={3: 0.8, 7: 0.5}[p] if cfl is None else cfl,
         use_cupy=True,
         time_integrator="rk3",
         scheme="SDFB",
@@ -310,8 +312,9 @@ if __name__ == "__main__":
     t = 0.2
     N = 3200
     nad_cfl = True
-    configs = [(p, rtol) for p in [3] for rtol in [1e-3]]
     uniform_sd = True
+    rtol = 1e-3
+    nad_cfl = False
 
     # run all the simulations
     rho_max, rho_min = -np.inf, np.inf
@@ -321,38 +324,25 @@ if __name__ == "__main__":
         rho_max = max(rho_max, new_max)
         rho_min = min(rho_min, new_min)
 
-    for p, rtol in configs:
-        sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-        update_rho_max_and_rho_min(*get_fv_rho_maxmin(sim))
+    sim = run_fv_simulation(t=t, nx=N, p=7, rtol=1e-1)
+    update_rho_max_and_rho_min(*get_fv_rho_maxmin(sim))
 
-        sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-        update_rho_max_and_rho_min(*get_sd_rho_maxmin(sim))
+    sim = run_sd_simulation(t=t, ndofx=N, p=7, rtol=1e-1, cfl=0.1)
+    update_rho_max_and_rho_min(*get_sd_rho_maxmin(sim))
 
     # plot them
 
-    def plot_simulation(ax, solver, p, rtol, uniform_sd=False, **kwargs):
-        if solver == "fv":
-            sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-            plot_fv_density(ax, sim, **kwargs)
-        else:
-            sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-            plot_sd_density(ax, sim, uniform_sd, **kwargs)
-
-    def plot_fallback_history(ax, solver, p, rtol, n_avg=None, **kwargs):
-        if solver == "fv":
-            sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-            plot_fv_fallback_history(ax, sim, n_avg, **kwargs)
-        else:
-            sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, nad_cfl=nad_cfl)
-            plot_sd_fallback_history(ax, sim, n_avg, **kwargs)
-
     fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(8, 6))
     axs[1].set_xlim(0, 3)
-    axs[0].text(0.25, 0.75, "FV4")
-    axs[1].text(0.25, 0.75, "SD4")
-    plot_configs = dict(vmin=rho_min, vmax=rho_max, cmap="jet")
-    plot_simulation(axs[0], "fv", 3, 1e-3, **plot_configs)
-    plot_simulation(axs[1], "sd", 3, 1e-3, uniform_sd=uniform_sd, **plot_configs)
-    fig.savefig("out/dmr_compare.png", dpi=600)
+    plot_configs = dict(cmap="viridis")  # dict(vmin=rho_min, vmax=rho_max, cmap="jet")
 
+    axs[0].text(0.25, 0.75, "FV8 1e-1")
+    sim = run_fv_simulation(t=t, nx=N, p=7, rtol=1e-1)
+    plot_fv_density(axs[0], sim, **plot_configs)
+
+    axs[1].text(0.25, 0.75, "SD8 1e-1")
+    sim = run_sd_simulation(t=t, ndofx=N, p=7, rtol=1e-1, cfl=0.1)
+    plot_sd_density(axs[1], sim, uniform=uniform_sd, **plot_configs)
+
+    fig.savefig("out/dmr_compare.png", dpi=600)
     print("Done!")

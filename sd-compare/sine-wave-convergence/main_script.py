@@ -1,6 +1,7 @@
 import csv
 import shutil
 from functools import partial
+from itertools import product
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -189,10 +190,12 @@ def density_error(sim, solver):
 
 if __name__ == "__main__":
     t = 1.0
-    resolutions = [32, 64, 128]
-    polynomial_degrees = [3, 7]
-    riemann_solvers = ["hllc"]
-    time_integrator = "rk4"
+
+    configs = []
+    for solver, riemann_solver, p, n in product(["fv", "sd"], ["hllc"], [3, 7], [32, 64, 128]):
+        configs.append((solver, riemann_solver, p, n))
+    for solver, riemann_solver, p, n in product(["fv", "sd"], ["llf"], [3, 7], [32, 64]):
+        configs.append((solver, riemann_solver, p, n))
 
     output_dir = Path("out/sine-wave-convergence")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -204,52 +207,54 @@ if __name__ == "__main__":
 
     data = []
     previous = {}
-    for riemann_solver in riemann_solvers:
-        for solver in ("fv", "sd"):
-            for p in polynomial_degrees:
-                for n in resolutions:
-                    runner = run_fv_simulation if solver == "fv" else run_sd_simulation
-                    sim = runner(
-                        t=t,
-                        n=n,
-                        p=p,
-                        riemann_solver=riemann_solver,
-                        time_integrator=time_integrator,
-                    )
-                    L1, Linf = density_error(sim, solver)
-                    key = (solver, p, riemann_solver)
-                    row = dict(
-                        solver=solver,
-                        p=p,
-                        n=n,
-                        riemann_solver=riemann_solver,
-                        L1=L1,
-                        L1_rate="",
-                        Linf=Linf,
-                        Linf_rate="",
-                    )
-                    if key in previous:
-                        old = previous[key]
-                        scale = np.log(n / old["n"])
-                        if L1 > 0 and old["L1"] > 0:
-                            row["L1_rate"] = np.log(old["L1"] / L1) / scale
-                        if Linf > 0 and old["Linf"] > 0:
-                            row["Linf_rate"] = np.log(old["Linf"] / Linf) / scale
-                    previous[key] = row
-                    data.append(row)
-                    with open(csv_path, "a", newline="") as f:
-                        csv.DictWriter(f, fieldnames=fieldnames).writerow(row)
+    for solver, riemann_solver, p, n in configs:
+        runner = run_fv_simulation if solver == "fv" else run_sd_simulation
+        sim = runner(
+            t=t,
+            n=n,
+            p=p,
+            riemann_solver=riemann_solver,
+        )
+        L1, Linf = density_error(sim, solver)
+        key = (solver, p, riemann_solver)
+        row = dict(
+            solver=solver,
+            p=p,
+            n=n,
+            riemann_solver=riemann_solver,
+            L1=L1,
+            L1_rate="",
+            Linf=Linf,
+            Linf_rate="",
+        )
+        if key in previous:
+            old = previous[key]
+            scale = np.log(n / old["n"])
+            if L1 > 0 and old["L1"] > 0:
+                row["L1_rate"] = np.log(old["L1"] / L1) / scale
+            if Linf > 0 and old["Linf"] > 0:
+                row["Linf_rate"] = np.log(old["Linf"] / Linf) / scale
+        previous[key] = row
+        data.append(row)
+        with open(csv_path, "a", newline="") as f:
+            csv.DictWriter(f, fieldnames=fieldnames).writerow(row)
 
     fig, ax = plt.subplots(figsize=(8, 8))
-    for solver in ("fv", "sd"):
-        for p in polynomial_degrees:
-            rows = [row for row in data if row["solver"] == solver and row["p"] == p]
-            ax.plot(
-                [row["n"] for row in rows],
-                [row["Linf"] for row in rows],
-                marker="s" if p == 3 else "o",
-                label=f"{solver.upper()}, p={p}",
-            )
+    for solver, riemann_solver, p, n in configs:
+        if n > 32:
+            continue
+        rows = [
+            row
+            for row in data
+            if row["solver"] == solver and row["riemann_solver"] == riemann_solver and row["p"] == p
+        ]
+        ax.plot(
+            [row["n"] for row in rows],
+            [row["Linf"] for row in rows],
+            marker="s" if p == 3 else "o",
+            linestyle="-" if riemann_solver == "hllc" else "--",
+            label=f"{solver.upper()}, p={p}, {riemann_solver}",
+        )
     ax.set_xlabel("N")
     ax.set_ylabel(r"$\mathcal{L}^\infty$ error")
     ax.set_xscale("log", base=2)
