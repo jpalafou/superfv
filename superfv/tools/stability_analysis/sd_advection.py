@@ -185,3 +185,50 @@ def plot_sd_advection_stability_trace(ax, p, k_values, **kwargs):
         mfc="none",
         **kwargs,
     )
+
+
+def chebyshev_zeros_symbolic(n):
+    if n == 0:
+        return []
+    return [sp.functions.special.polynomials.chebyshevt_root(n, i) for i in range(n)]
+
+
+def guass_legendre_points_symbolic(n):
+    Pnx = sp.legendre(n, x)
+    xi = sp.solve(Pnx, x)
+    return xi
+
+
+def compute_solution_and_flux_point_coordinates_symbolic(p):
+    sps = chebyshev_zeros_symbolic(p + 1)
+    fps = [-1] + guass_legendre_points_symbolic(p) + [1]
+    rescale = sp.Rational(p + 1, 2)  # let h=1
+    return [x * rescale for x in sps], [y * rescale for y in fps]
+
+
+@lru_cache(maxsize=None)
+def sp_to_fp_matrix_symbolic(p):
+    sps, fps = compute_solution_and_flux_point_coordinates_symbolic(p)
+
+    lagrange_polynomials = unweighted_lagrange_interpolation_polynomials(sps)
+
+    mat = np.empty((p + 2, p + 1), dtype=object)
+    for i, _x in enumerate(fps):
+        for j, Lj in enumerate(lagrange_polynomials):
+            mat[i, j] = Lj.subs(x, _x)
+
+    return mat
+
+
+@lru_cache(maxsize=None)
+def fp_to_sp_prime_matrix_symbolic(p):
+    sps, fps = compute_solution_and_flux_point_coordinates_symbolic(p)
+
+    lagrange_polynomials = unweighted_lagrange_interpolation_polynomials(fps)
+
+    mat = np.empty((p + 1, p + 2), dtype=object)
+    for i, _x in enumerate(sps):
+        for j, Lj in enumerate(lagrange_polynomials):
+            mat[i, j] = sp.diff(Lj, x).subs(x, _x)
+
+    return mat
