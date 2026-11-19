@@ -202,7 +202,7 @@ def guass_legendre_points_symbolic(n):
 def compute_solution_and_flux_point_coordinates_symbolic(p):
     sps = chebyshev_zeros_symbolic(p + 1)
     fps = [-1] + guass_legendre_points_symbolic(p) + [1]
-    rescale = sp.Rational(p + 1, 2)  # let h=1
+    rescale = sp.Rational(p + 1, 2) * h_ave
     return [x * rescale for x in sps], [y * rescale for y in fps]
 
 
