@@ -311,10 +311,10 @@ def get_simulation_rho_maxmin(sims, uniform_sd=False):
 if __name__ == "__main__":
     t = 0.2
     N = 3200
-    nad_cfl = True
     uniform_sd = True
-    rtol = 1e-3
-    nad_cfl = False
+    rtol = 1e-5
+    p = 3
+    sd_cfl = 0.4
 
     # run all the simulations
     rho_max, rho_min = -np.inf, np.inf
@@ -324,10 +324,10 @@ if __name__ == "__main__":
         rho_max = max(rho_max, new_max)
         rho_min = min(rho_min, new_min)
 
-    sim = run_fv_simulation(t=t, nx=N, p=7, rtol=1e-1)
+    sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol)
     update_rho_max_and_rho_min(*get_fv_rho_maxmin(sim))
 
-    sim = run_sd_simulation(t=t, ndofx=N, p=7, rtol=1e-1, cfl=0.1)
+    sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, cfl=sd_cfl)
     update_rho_max_and_rho_min(*get_sd_rho_maxmin(sim))
 
     # plot them
@@ -336,13 +336,13 @@ if __name__ == "__main__":
     axs[1].set_xlim(0, 3)
     plot_configs = dict(cmap="viridis")  # dict(vmin=rho_min, vmax=rho_max, cmap="jet")
 
-    axs[0].text(0.25, 0.75, "FV8 1e-1")
-    sim = run_fv_simulation(t=t, nx=N, p=7, rtol=1e-1)
+    axs[0].text(0.25, 0.75, f"FV{p+1} {rtol}")
+    sim = run_fv_simulation(t=t, nx=N, p=p, rtol=rtol)
     plot_fv_density(axs[0], sim, **plot_configs)
 
-    axs[1].text(0.25, 0.75, "SD8 1e-1")
-    sim = run_sd_simulation(t=t, ndofx=N, p=7, rtol=1e-1, cfl=0.1)
+    axs[1].text(0.25, 0.75, f"SD{p+1} {rtol}")
+    sim = run_sd_simulation(t=t, ndofx=N, p=p, rtol=rtol, cfl=sd_cfl)
     plot_sd_density(axs[1], sim, uniform=uniform_sd, **plot_configs)
 
-    fig.savefig("out/dmr_compare.png", dpi=600)
+    fig.savefig(f"out/dmr_compare_{p=}_{rtol=}_{sd_cfl=}.png", dpi=600)
     print("Done!")
