@@ -850,7 +850,8 @@ def compute_hydro_dt(
 
     if hp.diffusion:
         inv_h2 = sum(1.0 / getattr(mesh, f"h{dim}") ** 2 for dim in mesh.active_dims)
-        dt_nu = hp.CFL_diffusion / (hp.nu * inv_h2)
+        diffusivity = max(hp.nu, (hp.gamma - 1.0) * hp.Chi)
+        dt_nu = hp.CFL_diffusion / (diffusivity * inv_h2)
         dt = min(dt, dt_nu)
 
     return dt

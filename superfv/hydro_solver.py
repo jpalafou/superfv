@@ -196,8 +196,9 @@ class HydroSolver:
                 "hllc_teyssier": 1D HLLC variant adapted from teyssier/; no passives or CuPy.
             CFL: CFL number for advection time step calculation of the form
                 dt = CFL * h / |v|.
-            CFL_diffusion: CFL number for diffusion time step calculation of the form
-                dt = CFL_diffusion * h^2 / nu.
+            CFL_diffusion: Diffusion-number limit, giving dt = CFL_diffusion /
+                (diffusivity * sum(1 / h_d^2)) over active dimensions, where
+                diffusivity = max(nu, (gamma - 1) * Chi).
             nu: Kinematic viscosity for viscous and passive-scalar diffusive fluxes. If 0.0,
                 these fluxes are not computed.
             Chi: Thermal conductivity for thermal fluxes. If 0.0, thermal fluxes are not computed.
