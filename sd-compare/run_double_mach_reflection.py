@@ -133,5 +133,7 @@ if __name__ == "__main__":
 
     plot_sd_2d_density_map(axs[1], sim2, uniform=uniform_sd, **plot_configs)
 
-    fig.savefig("out/dmr/compare.png", dpi=600)
+    output_dir = Path("out/dmr")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_dir / "compare.png", dpi=600)
     print("Done!")

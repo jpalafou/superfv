@@ -14,4 +14,4 @@ module purge
 module load anaconda3/2025.12
 conda activate spd
 
-python sd-compare/run_double_mach_refelction.py
+python sd-compare/run_double_mach_reflection.py
