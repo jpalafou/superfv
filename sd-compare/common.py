@@ -44,7 +44,7 @@ def generate_muscl_runner(output_folder, **ic_config):
     return f
 
 
-def generate_fv_runner(output_folder, **ic_config):
+def generate_fv_runner(output_folder, *, time_integrator="ssprk3", **ic_config):
     """
     Returns function that runs or reads superfv simulation for a given:
         - output_folder
@@ -66,14 +66,14 @@ def generate_fv_runner(output_folder, **ic_config):
             return sim
 
         sim = HydroSolver(use_MUSCL=False, **ic_config, **solver_config, output_path=path)
-        sim.run(t, "ssprk3")
+        sim.run(t, time_integrator)
         print("Finished superfv simulation!\n")
         return sim
 
     return f
 
 
-def generate_sd_runner(output_folder, **ic_config):
+def generate_sd_runner(output_folder, *, time_integrator="rk3", **ic_config):
     """
     Returns function that runs or reads spd simulation for a given:
         - output_folder
@@ -83,7 +83,9 @@ def generate_sd_runner(output_folder, **ic_config):
     def f(t, **solver_config):
         path = _get_path("sd", output_folder, t, **solver_config)
 
-        sim = SPD_Simulator(time_integrator="rk3", **ic_config, **solver_config, folder=str(path))
+        sim = SPD_Simulator(
+            time_integrator=time_integrator, **ic_config, **solver_config, folder=str(path)
+        )
 
         try:
             sim.load_output()
