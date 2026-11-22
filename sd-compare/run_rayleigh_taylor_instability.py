@@ -1,3 +1,4 @@
+import gc
 from functools import partial
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from common import (
     plot_sd_fallback_history,
     update_maxmin,
 )
+from matplotlib.colors import Normalize
 
 from superfv import ics as superfv_ics
 
@@ -84,14 +86,46 @@ if __name__ == "__main__":
     nad_cfl = True
     uniform_sd = True
 
-    # run simulations
+    # Share the density color scale and finalize its limits before saving.
+    density_norm = Normalize()
+    density_figures = {}
+    rhomax, rhomin = -np.inf, np.inf
+    plot_configs = dict(cmap="afmhot", norm=density_norm)
+    plot_output_path = Path("out/rti")
+    plot_output_path.mkdir(parents=True, exist_ok=True)
+    n_avg = 100
 
-    simulations = {}
-    for solver in ("sd", "fv"):
-        for p in degrees:
-            for rtol in rtols:
-                for P_background in pressures:
-                    if solver == "sd":
+    for P_background in pressures:
+        fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
+        axs[0, 0].set_ylabel("FV")
+        axs[1, 0].set_ylabel("SD")
+
+        history_fig, history_axs = plt.subplots(2, 2, figsize=(15, 15), sharex=True, sharey=True)
+        history_axs[0, 0].set_title("FV")
+        history_axs[0, 1].set_title("SD")
+        history_axs[1, 0].set_xlabel(r"$t$")
+        history_axs[1, 1].set_xlabel(r"$t$")
+        history_axs[0, 0].set_yscale("log")
+
+        for i, p in enumerate(degrees):
+            history_axs[i, 0].set_ylabel(rf"$p={p}$")
+            for j, rtol in enumerate(rtols):
+                col = i * len(rtols) + j
+                exponent = int(np.log10(rtol))
+                axs[0, col].set_title(rf"$p={p}$, $\epsilon=10^{{{exponent}}}$")
+                for row, solver in enumerate(("fv", "sd")):
+                    if solver == "fv":
+                        sim = run_fv_simulation(
+                            t,
+                            ny=N,
+                            p=p,
+                            P_background=P_background,
+                            rtol=rtol,
+                            scale_by_cfl=nad_cfl,
+                        )
+                        plot_fv_2d_density_map(axs[row, col], sim, **plot_configs)
+                        plot_history = plot_fv_fallback_history
+                    else:
                         sim = run_sd_simulation(
                             t,
                             ndofy=N,
@@ -101,80 +135,34 @@ if __name__ == "__main__":
                             NAD_cfl=nad_cfl,
                             cfl_coeff=sd_cfl[p],
                         )
-                    else:
-                        sim = run_fv_simulation(
-                            t,
-                            ny=N,
-                            p=p,
-                            P_background=P_background,
-                            rtol=rtol,
-                            scale_by_cfl=nad_cfl,
+                        plot_sd_2d_density_map(
+                            axs[row, col], sim, uniform=uniform_sd, **plot_configs
                         )
-                    simulations[solver, p, rtol, P_background] = sim
-
-    print("Computing global min/max density for color scaling...")
-    rhomax, rhomin = -np.inf, np.inf
-    for sim in simulations.values():
-        rhomax, rhomin = update_maxmin(sim, rhomax, rhomin, uniform_sd=uniform_sd)
-    print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
-
-    print("Plotting results...")
-    plot_configs = dict(cmap="afmhot", vmin=rhomin, vmax=rhomax)
-    plot_output_path = Path("out/rti")
-    plot_output_path.mkdir(parents=True, exist_ok=True)
-
-    for P_background in pressures:
-        # density maps
-
-        fig, axs = plt.subplots(2, 6, figsize=(15, 15), sharex=True, sharey=True)
-        axs[0, 0].set_ylabel("FV")
-        axs[1, 0].set_ylabel("SD")
-        for i, p in enumerate(degrees):
-            for j, rtol in enumerate(rtols):
-                col = i * len(rtols) + j
-                exponent = int(np.log10(rtol))
-                axs[0, col].set_title(rf"$p={p}$, $\epsilon=10^{{{exponent}}}$")
-                plot_fv_2d_density_map(
-                    axs[0, col], simulations["fv", p, rtol, P_background], **plot_configs
-                )
-                plot_sd_2d_density_map(
-                    axs[1, col],
-                    simulations["sd", p, rtol, P_background],
-                    uniform=uniform_sd,
-                    **plot_configs,
-                )
-        fig.subplots_adjust(wspace=0.1, hspace=0.1)
-        fig.savefig(plot_output_path / f"{N=}_{P_background=}_{nad_cfl=}.png", dpi=300)
-        plt.close(fig)
-
-        # fallback histories
-
-        fig, axs = plt.subplots(2, 2, figsize=(15, 15), sharex=True, sharey=True)
-        axs[0, 0].set_title("FV")
-        axs[0, 1].set_title("SD")
-        axs[1, 0].set_xlabel(r"$t$")
-        axs[1, 1].set_xlabel(r"$t$")
-        axs[0, 0].set_yscale("log")
-        n_avg = 100
-        for row, p in enumerate(degrees):
-            axs[row, 0].set_ylabel(rf"$p={p}$")
-            for col, solver in enumerate(("fv", "sd")):
-                plot_history = (
-                    plot_fv_fallback_history if solver == "fv" else plot_sd_fallback_history
-                )
-                for rtol in rtols:
-                    exponent = int(np.log10(rtol))
+                        plot_history = plot_sd_fallback_history
+                    rhomax, rhomin = update_maxmin(sim, rhomax, rhomin, uniform_sd=uniform_sd)
                     plot_history(
-                        axs[row, col],
-                        simulations[solver, p, rtol, P_background],
+                        history_axs[i, row],
+                        sim,
                         n_avg=n_avg,
                         label=rf"$\epsilon=10^{{{exponent}}}$",
                     )
-        axs[0, 0].legend()
-        fig.savefig(
+                    del sim
+                    gc.collect()
+
+        fig.subplots_adjust(wspace=0.1, hspace=0.1)
+        density_figures[P_background] = fig
+        history_axs[0, 0].legend()
+        history_fig.savefig(
             plot_output_path / f"fallback_history_{N=}_{P_background=}_{nad_cfl=}.png",
             dpi=300,
         )
+        plt.close(history_fig)
+
+    print(f"Global density range: {rhomin:.3f} to {rhomax:.3f}")
+    density_norm.vmin = rhomin
+    density_norm.vmax = rhomax
+    for P_background, fig in density_figures.items():
+        fig.savefig(plot_output_path / f"{N=}_{P_background=}_{nad_cfl=}.png", dpi=300)
         plt.close(fig)
 
     print("Done!")
