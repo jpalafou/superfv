@@ -136,11 +136,22 @@ def run_fv_simulation(
 
 
 def run_sd_simulation(
-    t, ndofy, p, rtol, vx_vy_nad=True, sed=True, P_background=1.0, Re=None, nad_cfl=True
+    t,
+    ndofy,
+    p,
+    rtol,
+    vx_vy_nad=True,
+    sed=True,
+    P_background=1.0,
+    Re=None,
+    nad_cfl=True,
+    cfl=None,
 ):
     params = f"{t=}_{ndofy=}_{p=}_{rtol=}_{vx_vy_nad=}_{sed=}_{P_background=}_Re={Re}"
     if nad_cfl:
         params += "_nad_cfl"
+    if cfl is not None:
+        params += f"{cfl=}"
     path = base_output_path / ("sd_" + params)
 
     nelemsy = ndofy // (p + 1)
@@ -162,7 +173,7 @@ def run_sd_simulation(
             ("reflective", "reflective"),
         ),
         init_fct=spd_ics.RTI(P0=P_background, gamma=gamma),
-        cfl_coeff={3: 0.8, 7: 0.5}[p],
+        cfl_coeff={3: 0.8, 7: 0.4}[p] if cfl is None else cfl,
         use_cupy=True,
         time_integrator="rk3",
         scheme="SDFB",
@@ -305,14 +316,15 @@ if __name__ == "__main__":
 
     simulations = {}
 
-    def get_name(solver, p, rtol, P_background, nad_cfl):
-        return f"{solver=}_{p=}_{rtol=}_{P_background=}_{nad_cfl=}"
+    def get_name(solver, p, rtol, P_background, nad_cfl, sd_cfl=None):
+        out = f"{solver=}_{p=}_{rtol=}_{P_background=}_{nad_cfl=}_{sd_cfl=}"
+        return out
 
-    def add_simulation(solver, p, rtol, P_background, nad_cfl):
-        name = get_name(solver, p, rtol, P_background, nad_cfl)
+    def add_simulation(solver, p, rtol, P_background, nad_cfl, sd_cfl=None):
+        name = get_name(solver, p, rtol, P_background, nad_cfl, sd_cfl)
         if solver == "sd":
             sim = run_sd_simulation(
-                t=t, ndofy=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl
+                t=t, ndofy=N, p=p, rtol=rtol, P_background=P_background, nad_cfl=nad_cfl, cfl=sd_cfl
             )
         elif solver == "fv":
             sim = run_fv_simulation(
@@ -322,12 +334,14 @@ if __name__ == "__main__":
             raise ValueError(f"Unsupported solver: {solver}")
         simulations[name] = sim
 
-    def get_simulation(solver, p, rtol, P_background, nad_cfl):
-        name = get_name(solver, p, rtol, P_background, nad_cfl)
+    def get_simulation(solver, p, rtol, P_background, nad_cfl, sd_cfl=None):
+        name = get_name(solver, p, rtol, P_background, nad_cfl, sd_cfl)
         return simulations.get(name)
 
-    def plot_simulation(ax, solver, p, rtol, P_background, nad_cfl, uniform_sd=False, **kwargs):
-        sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
+    def plot_simulation(
+        ax, solver, p, rtol, P_background, nad_cfl, sd_cfl=None, uniform_sd=False, **kwargs
+    ):
+        sim = get_simulation(solver, p, rtol, P_background, nad_cfl, sd_cfl)
 
         if sim is None:
             ax.set_axis_off()
@@ -340,8 +354,10 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unsupported solver: {solver}")
 
-    def plot_fallback_history(ax, solver, p, rtol, P_background, nad_cfl, n_avg=None, **kwargs):
-        sim = get_simulation(solver, p, rtol, P_background, nad_cfl)
+    def plot_fallback_history(
+        ax, solver, p, rtol, P_background, nad_cfl, sd_cfl=None, n_avg=None, **kwargs
+    ):
+        sim = get_simulation(solver, p, rtol, P_background, nad_cfl, sd_cfl)
 
         if sim is None:
             ax.set_axis_off()
@@ -359,15 +375,14 @@ if __name__ == "__main__":
             for rtol in [1e-5, 1e-3, 1e-1]:
                 for P_background in [1.0, 100.0]:
                     for nad_cfl in [True]:
-                        if (
-                            solver == "sd"
-                            and p == 7
-                            and rtol == 1e-1
-                            and P_background == 100.0
-                            and not nad_cfl
-                        ):
-                            continue  # skip this case because dt collapses
-                        add_simulation(solver, p, rtol, P_background, nad_cfl=nad_cfl)
+                        add_simulation(
+                            solver,
+                            p,
+                            rtol,
+                            P_background,
+                            nad_cfl=nad_cfl,
+                            sd_cfl={3: 0.4, 7: 0.2}[p],
+                        )
 
     uni = True
 
