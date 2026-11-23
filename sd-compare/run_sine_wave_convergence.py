@@ -82,6 +82,7 @@ def run_sd_simulation(t, *, n, p, riemann_solver="hllc", cfl=None, **solver_conf
 
 
 def density_error(sim, solver):
+    weights = None
     if solver == "fv":
         irho = sim.params.variable_index_map("rho")
         rho0 = sim.snapshot_history[0].u[irho]
@@ -89,10 +90,14 @@ def density_error(sim, solver):
     elif solver == "sd":
         rho0 = sim.dm.asnumpy(sim.W_init_cv[0])
         rho1 = sim.dm.asnumpy(sim.dm.W_cv[0])
+        dx = np.diff(sim.fp["x"]) * sim.h["x"]
+        dy = np.diff(sim.fp["y"]) * sim.h["y"]
+        # SD arrays end in (subcell_y, subcell_x), repeated over elements.
+        weights = np.broadcast_to(dy[:, None] * dx[None, :], rho0.shape)
     else:
         raise ValueError(f"Unknown solver '{solver}'.")
     error = np.abs(rho1 - rho0)
-    return float(np.mean(error)), float(np.max(error))
+    return float(np.average(error, weights=weights)), float(np.max(error))
 
 
 if __name__ == "__main__":
