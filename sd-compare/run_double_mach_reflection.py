@@ -10,7 +10,9 @@ from common import (
     generate_muscl_runner,
     generate_sd_runner,
     plot_fv_2d_density_map,
+    plot_fv_fallback_history,
     plot_sd_2d_density_map,
+    plot_sd_fallback_history,
     update_maxmin,
 )
 
@@ -136,4 +138,15 @@ if __name__ == "__main__":
     output_dir = Path("out/dmr")
     output_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_dir / "compare.png", dpi=600)
+
+    history_fig, history_ax = plt.subplots(figsize=(8, 4))
+    plot_fv_fallback_history(history_ax, sim1, n_avg=100, label="FV")
+    plot_sd_fallback_history(history_ax, sim2, n_avg=100, label="SD")
+    history_ax.set_xlabel(r"$t$")
+    history_ax.set_ylabel("Fallback fraction")
+    history_ax.set_yscale("log")
+    history_ax.legend()
+    history_fig.tight_layout()
+    history_fig.savefig(output_dir / "fallback_compare.pdf")
+    plt.close(history_fig)
     print("Done!")
