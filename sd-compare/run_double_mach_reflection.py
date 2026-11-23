@@ -10,8 +10,10 @@ from common import (
     generate_muscl_runner,
     generate_sd_runner,
     plot_fv_2d_density_map,
+    plot_fv_2d_trouble_map,
     plot_fv_fallback_history,
     plot_sd_2d_density_map,
+    plot_sd_2d_trouble_map,
     plot_sd_fallback_history,
     update_maxmin,
 )
@@ -149,4 +151,12 @@ if __name__ == "__main__":
     history_fig.tight_layout()
     history_fig.savefig(output_dir / "fallback_compare.pdf")
     plt.close(history_fig)
+
+    trouble_fig, trouble_axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(8, 6))
+    trouble_axs[1].set_xlim(0, 3)
+    trouble_configs = dict(cmap="binary", vmin=0, vmax=1)
+    plot_fv_2d_trouble_map(trouble_axs[0], sim1, **trouble_configs)
+    plot_sd_2d_trouble_map(trouble_axs[1], sim2, uniform=False, **trouble_configs)
+    trouble_fig.savefig(output_dir / "trouble.png", dpi=600)
+    plt.close(trouble_fig)
     print("Done!")

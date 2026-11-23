@@ -1,10 +1,20 @@
 import shutil
+import warnings
+from dataclasses import replace
 
 import cupy as cp
 import numpy as np
 from spd.sdfb_simulator import SPD_Simulator
 
 from superfv import HydroSolver, HydroSolverOutput
+from superfv.finite_volume_driver import get_interior_view
+from superfv.hydro_driver import (
+    compute_hydro_dt,
+    update_hydro_fluxes,
+    update_hydro_workspace,
+)
+from superfv.slope_limiting.mood import mood_loop
+from superfv.tools.step_history import SubstepSummary
 
 
 def _get_path(solver, output_folder, t, **solver_config):
@@ -147,6 +157,155 @@ def plot_sd_2d_density_map(ax, sim, uniform=True, **kwargs):
 
     x, y, rho = (sim.dm.asnumpy(a) for a in (x, y, rho))
     ax.pcolormesh(x, y, rho, shading="flat", **kwargs)
+    ax.set_aspect("equal")
+
+
+def plot_fv_2d_trouble_map(ax, sim, i=-1, **kwargs):
+    """Recompute binary trouble flags from one forward-Euler candidate at snapshot i."""
+    params, mesh = sim.params, sim.mesh
+    scheme = params.fv_scheme
+    if not scheme.mood_params.use_MOOD:
+        raise ValueError("Trouble maps require a simulation configured with MOOD.")
+    if mesh.active_dims != ("x", "y"):
+        raise ValueError("Trouble maps require a 2D xy simulation.")
+
+    if scheme.lazy_primitive_mode != "full":
+        raise NotImplementedError("Trouble maps require full lazy primitives.")
+    # Detect only the initial candidate, regardless of the run's revision limit.
+    scheme = replace(
+        scheme, mood_params=replace(scheme.mood_params, max_revs=1, count_cell_fallbacks=False)
+    )
+
+    snapshot = sim.snapshot_history[i]
+    xp = cp if mesh.cupy else np
+    u = xp.asarray(snapshot.u)
+    idx = params.variable_index_map
+    dt = compute_hydro_dt(u, idx, mesh, params.hydro)
+    interior = get_interior_view(mesh.active_dims, mesh.nghost)
+    shape = (idx.nvars, *mesh._shape_)
+    uold, wold, unew, wnew = (xp.empty(shape) for _ in range(4))
+    alpha = xp.empty(shape)
+    troubles = xp.zeros((1, *mesh._shape_), dtype=xp.int32)
+    cascade = xp.zeros_like(troubles)
+    revisable = xp.zeros((1, *mesh.shape), dtype=xp.int32)
+    F = xp.empty((idx.nvars, mesh.nx + 1, mesh._shape_[1], mesh._shape_[2]))
+    G = xp.empty((idx.nvars, mesh._shape_[0], mesh.ny + 1, mesh._shape_[2]))
+    F_fallback = xp.empty((2, *F.shape))
+    G_fallback = xp.empty((2, *G.shape))
+    empty = xp.empty(0)
+
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        update_hydro_workspace(
+            u,
+            uold,
+            wold,
+            empty,
+            empty,
+            snapshot.t,
+            idx,
+            mesh,
+            scheme,
+            params.bc,
+            params.hydro,
+        )
+        update_hydro_fluxes(
+            uold,
+            wold,
+            empty,
+            F,
+            G,
+            empty,
+            empty,
+            empty,
+            alpha,
+            idx,
+            mesh.active_dims,
+            mesh,
+            scheme,
+            params.hydro,
+        )
+        source = xp.zeros_like(u) if params.source is None else params.source(idx, u, xp=xp)
+        mood_loop(
+            uold,
+            wold,
+            empty,
+            unew,
+            wnew,
+            alpha,
+            empty,
+            empty,
+            troubles,
+            revisable,
+            cascade,
+            F,
+            G,
+            empty,
+            F_fallback,
+            G_fallback,
+            empty,
+            source,
+            idx,
+            snapshot.t,
+            dt,
+            mesh,
+            scheme,
+            params.bc,
+            SubstepSummary(
+                substep=0,
+                t_wall=np.nan,
+                n_MOOD_revisions=0,
+                n_troubles_hist=[],
+                fallback_counts={},
+            ),
+            params.hydro,
+        )
+
+    x, y = mesh.faces[:2]
+    flags = troubles[interior][0, :, :, 0].T
+    if xp is cp:
+        x, y, flags = (cp.asnumpy(a) for a in (x, y, flags))
+    ax.pcolormesh(x, y, flags, shading="flat", **kwargs)
+    ax.set_aspect("equal")
+
+
+def plot_sd_2d_trouble_map(ax, sim, uniform=False, **kwargs):
+    """Recompute forward-Euler flags in place; call last when plotting a snapshot.
+
+    Leaves sim in FV layout and appends a diagnostic trouble count.
+    """
+    if uniform:
+        raise NotImplementedError("Uniform remapping of trouble flags is not implemented.")
+    if sim.ndim != 2:
+        raise ValueError("Trouble maps require a 2D simulation.")
+    if sim.ader:
+        raise NotImplementedError("Trouble maps currently require an RK simulation.")
+    if not hasattr(sim.lo_scheme.dm, "troubles") or sim.lo_scheme.godunov:
+        raise ValueError("Trouble maps require an SD simulation with trouble detection.")
+
+    warnings.warn(
+        "plot_sd_2d_trouble_map mutates sim: it leaves sim in FV layout and appends "
+        "a diagnostic trouble count. Call it last when plotting a snapshot.",
+        stacklevel=2,
+    )
+    sim.convert_solution(W=True, call_timer=False)
+    sim.compute_dt()
+    ho, lo = sim.ho_scheme, sim.lo_scheme
+    u = ho.get_solution()
+    if sim.WB:
+        u = u - ho.dm.U_eq_sp
+    ho.solve_faces(u, ader=False)
+    ho.switch_to_finite_volume(U_sp=u)
+    lo.working_arrays()
+    lo.store_high_order_fluxes(0, ader=False)
+    lo.W_cv[...] = ho.compute_primitives_cv(lo.U_cv, call_timer=False)
+    lo.apply_fluxes(sim.dt)
+    lo.detect_troubles(sim.dt)
+
+    ngh = sim.Nghc
+    x, y = (lo.faces[dim][ngh:-ngh] for dim in ("x", "y"))
+    flags = lo.dm.troubles[0]
+    x, y, flags = (lo.dm.asnumpy(a) for a in (x, y, flags))
+    ax.pcolormesh(x, y, flags, shading="flat", **kwargs)
     ax.set_aspect("equal")
 
 
