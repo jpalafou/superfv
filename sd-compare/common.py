@@ -341,15 +341,21 @@ def _apply_moving_average(t, data, n_avg):
 
 
 def plot_fv_fallback_history(ax, sim, n_avg=None, **kwargs):
-    ntotal = sim.mesh.nx * sim.mesh.ny
-    t = np.array([s.t_sim for s in sim.step_history.steps])
-    fallback_rates = np.array(
-        [
-            sum(ss.fallback_counts[1] for ss in s.substeps) / 3 / ntotal
-            for s in sim.step_history.steps
-        ]
-    )
-    assert len(t) == len(fallback_rates)
+    steps = sim.step_history.steps[1:]  # Skip the initial condition.
+    ntotal = sim.mesh.nx * sim.mesh.ny * sim.mesh.nz
+    t = np.array([s.t_sim for s in steps])
+    fallback_rates = np.empty(len(steps))
+    for i, s in enumerate(steps):
+        if s.n_dt_revisions:
+            raise NotImplementedError("FV limiting fractions do not support timestep revisions.")
+        if len(s.substeps) != 3:
+            raise NotImplementedError("FV limiting fractions currently require SSPRK3.")
+        if any(ss.n_MOOD_revisions > 1 for ss in s.substeps):
+            raise NotImplementedError(
+                "FV limiting fractions do not support multiple MOOD revisions."
+            )
+        n1, n2, n3 = (ss.n_troubles_hist[0] for ss in s.substeps)
+        fallback_rates[i] = (n1 + n2 + 4 * n3) / (6 * ntotal)
 
     if n_avg is not None:
         t, fallback_rates = _apply_moving_average(t, fallback_rates, n_avg)
@@ -358,12 +364,7 @@ def plot_fv_fallback_history(ax, sim, n_avg=None, **kwargs):
 
 
 def plot_sd_fallback_history(ax, sim, n_avg=None, **kwargs):
-    ntotal = sim.domain_size * sim.comms.size
-    fallback_counts = np.asarray(sim.trouble_counts, dtype=float)
-    assert fallback_counts.size % 3 == 0
-    fallback_counts = fallback_counts.reshape(-1, 3).mean(axis=1)
-    fallback_rates = fallback_counts / ntotal
-
+    fallback_rates = np.asarray(sim.limiting_fractions)
     t = np.asarray(sim.step_times)
     assert len(t) == len(fallback_rates)
 
