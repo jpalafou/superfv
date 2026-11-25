@@ -9,7 +9,9 @@ from common import (
     generate_fv_runner,
     generate_muscl_runner,
     generate_sd_runner,
+    plot_fv_2d_density_map,
     plot_fv_fallback_history,
+    plot_sd_2d_density_map,
     plot_sd_fallback_history,
 )
 
@@ -174,6 +176,58 @@ if __name__ == "__main__":
     history_fig.tight_layout()
     history_fig.savefig(plot_path)
     plt.close(history_fig)
+
+    del sim
+    fig, axs = plt.subplots(
+        4,
+        3,
+        sharex=True,
+        sharey=True,
+        figsize=(7, 9.5),
+        gridspec_kw=dict(wspace=0.14, hspace=0.16),
+    )
+    density_norm = plt.Normalize()
+    plot_configs = dict(cmap="viridis", norm=density_norm)
+
+    for j, tol in enumerate([1e-5, 1e-4, 1e-3]):
+        axs[0, j].set_title(rf"$\mathrm{{rtol}}=10^{{{int(np.log10(tol))}}}$")
+        for i, p in enumerate([3, 7]):
+            sim = run_fv_simulation(
+                t=t, nx=N, p=p, scale_by_cfl=cfl_nad, rtol=tol, omit_vars=["vx", "vy", "vz"]
+            )
+            plot_fv_2d_density_map(axs[2 * i, j], sim, **plot_configs)
+            del sim
+
+            sim = run_sd_simulation(
+                t=t,
+                ndofx=N,
+                p=p,
+                cfl_coeff=sd_cfl_lookup[p],
+                NAD_cfl=cfl_nad,
+                tolerance=tol,
+                limiting_variables=[0, 4],
+            )
+            plot_sd_2d_density_map(axs[2 * i + 1, j], sim, uniform=True, **plot_configs)
+            del sim
+
+    density_norm.autoscale(
+        [
+            value
+            for ax in axs.flat
+            for value in (ax.collections[0].get_array().min(), ax.collections[0].get_array().max())
+        ]
+    )
+    for i, label in enumerate([r"FV, $p=3$", r"SD, $p=3$", r"FV, $p=7$", r"SD, $p=7$"]):
+        axs[i, 0].set_ylabel(label)
+    for ax in axs[-1]:
+        ax.set_xlabel(r"$x$")
+    for ax in axs.flat:
+        ax.set(xlim=(2, 3), ylim=(0, 1), xticks=[2, 2.5, 3], yticks=[0, 0.5, 1], box_aspect=1)
+        ax.label_outer()
+    for ax in axs[2:].flat:
+        ax.set_position(ax.get_position().translated(0, -0.02))
+    fig.savefig(output_dir / "density_zoom_compare.png", dpi=600, bbox_inches="tight")
+    plt.close(fig)
 
     # # run simulations
 
