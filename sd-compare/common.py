@@ -363,8 +363,14 @@ def plot_fv_fallback_history(ax, sim, n_avg=None, **kwargs):
     ax.plot(t, fallback_rates, **kwargs)
 
 
-def plot_sd_fallback_history(ax, sim, n_avg=None, **kwargs):
-    fallback_rates = np.asarray(sim.limiting_fractions)
+def plot_sd_fallback_history(ax, sim, n_avg=None, *, volume_weighted=True, **kwargs):
+    """Plot stage-weighted trouble fractions by volume (default) or cell count."""
+    if volume_weighted:
+        fallback_rates = np.asarray(sim.limiting_fractions)
+    else:
+        weights = sim.scheme.dm.asnumpy(sim.scheme.dm.w_tp) if sim.ader else sim.integrator.b
+        counts = np.asarray(sim.trouble_counts, dtype=float).reshape(-1, len(weights))
+        fallback_rates = counts @ weights / (sim.domain_size * sim.comms.size)
     t = np.asarray(sim.step_times)
     assert len(t) == len(fallback_rates)
 
